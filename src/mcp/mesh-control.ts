@@ -40,15 +40,18 @@ export function createMeshControlHandlers(manager: MeshManager): MeshControlHand
 
 const agentSchema = z.object({
   id: z.string(),
-  harness: z.enum(["codex", "opencode", "claude"]),
+  harness: z.enum(["codex", "opencode", "claude"]).describe("agent harness type"),
   project: z.string().describe("relative working directory"),
-  role: z.enum(["router", "member"]),
+  role: z.enum(["router", "member"]).describe("'router' (exactly one per mesh) or 'member'"),
 });
-const meshSpecSchema = {
+const meshSpecShape = {
   name: z.string().describe("unique mesh name (filesystem-safe)"),
   agents: z.array(agentSchema).describe("agents; exactly one must have role 'router'"),
-  edges: z.array(z.tuple([z.string(), z.string()])).describe("directed [from,to] mail edges"),
+  edges: z
+    .array(z.tuple([z.string(), z.string()]))
+    .describe("directed [from, to] mail edges — both IDs must appear in agents[].id"),
 };
+const meshSpecSchema = z.object(meshSpecShape);
 
 export interface MeshControlServer {
   readonly url: string;
@@ -66,8 +69,8 @@ export async function createMeshControlServer(opts: {
 
   const server = new McpServer({ name: "mesh-control", version: "0.1.0" });
   server.registerTool("create_mesh",
-    { description: "Define a new mesh (validated + persisted; does not start it).", inputSchema: meshSpecSchema },
-    async (spec) => text(await opts.handlers.createMesh(spec as unknown as MeshConfig)));
+    { description: "Define a new mesh (validated + persisted; does not start it).", inputSchema: meshSpecShape },
+    async (spec) => text(await opts.handlers.createMesh(meshSpecSchema.parse(spec))));
   server.registerTool("start_mesh",
     { description: "Start a defined mesh (spawns its agents).", inputSchema: { name: z.string() } },
     async ({ name }) => text(await opts.handlers.startMesh(name)));
