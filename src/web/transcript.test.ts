@@ -1,0 +1,85 @@
+import { test, expect } from "bun:test";
+import { reduceTranscript } from "./transcript";
+import type { TranscriptItem } from "./types";
+
+const T = "2026-06-07T00:00:00.000Z";
+function fold(updates: any[]): TranscriptItem[] {
+  let items: TranscriptItem[] = [];
+  for (const u of updates) items = reduceTranscript(items, u, T).items;
+  return items;
+}
+
+test("coalesces consecutive agent_message_chunk into one message", () => {
+  const items = fold([
+    { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Hel" } },
+    { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "lo" } },
+  ]);
+  expect(items).toHaveLength(1);
+  expect(items[0]).toMatchObject({ kind: "message", role: "agent", text: "Hello", complete: false });
+});
+
+test("thought chunks coalesce into a thought item", () => {
+  const items = fold([
+    { sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "I should " } },
+    { sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "plan" } },
+  ]);
+  expect(items).toHaveLength(1);
+  expect(items[0]).toMatchObject({ kind: "thought", text: "I should plan" });
+});
+
+test("tool_call then tool_call_update merge into one card updated in place", () => {
+  const items = fold([
+    { sessionUpdate: "tool_call", toolCallId: "tc1", title: "Read file", kind: "read", status: "pending" },
+    { sessionUpdate: "tool_call_update", toolCallId: "tc1", status: "in_progress" },
+    {
+      sessionUpdate: "tool_call_update",
+      toolCallId: "tc1",
+      status: "completed",
+      content: [{ type: "content", content: { type: "text", text: "ok" } }],
+    },
+  ]);
+  expect(items).toHaveLength(1);
+  expect(items[0]).toMatchObject({ kind: "tool_call", toolCallId: "tc1", title: "Read file", status: "completed" });
+  expect((items[0] as any).output).toContain("ok");
+});
+
+test("a tool_call closes an open message; later text opens a new message", () => {
+  const items = fold([
+    { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "thinking" } },
+    { sessionUpdate: "tool_call", toolCallId: "tc1", title: "Run", status: "pending" },
+    { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "done" } },
+  ]);
+  expect(items.map((i) => i.kind)).toEqual(["message", "tool_call", "message"]);
+  expect(items[0]).toMatchObject({ complete: true });
+});
+
+test("tool_call_update before tool_call upserts the card", () => {
+  const items = fold([{ sessionUpdate: "tool_call_update", toolCallId: "tcX", status: "completed", title: "Late" }]);
+  expect(items).toHaveLength(1);
+  expect(items[0]).toMatchObject({ kind: "tool_call", toolCallId: "tcX", status: "completed" });
+});
+
+test("user echo update appends a completed user message", () => {
+  const items = fold([{ sessionUpdate: "user_message_chunk", content: { type: "text", text: "hi router" } }]);
+  expect(items[0]).toMatchObject({ kind: "message", role: "user", text: "hi router", complete: true });
+});
+
+test("ops report upsert for new item and patch for appended text", () => {
+  const first = reduceTranscript([], { sessionUpdate: "agent_message_chunk", content: { text: "a" } }, T);
+  expect(first.ops[0].op).toBe("upsert");
+  const second = reduceTranscript(first.items, { sessionUpdate: "agent_message_chunk", content: { text: "b" } }, T);
+  expect(second.ops[0]).toMatchObject({ op: "patch" });
+});
+
+test("__turn_end__ closes open message and emits a patch", () => {
+  const opened = reduceTranscript([], { sessionUpdate: "agent_message_chunk", content: { text: "x" } }, T);
+  const ended = reduceTranscript(opened.items, { sessionUpdate: "__turn_end__" }, T);
+  expect(ended.items[0]).toMatchObject({ complete: true });
+  expect(ended.ops.some((o) => o.op === "patch")).toBe(true);
+});
+
+test("unknown update kinds are ignored (no items, no ops)", () => {
+  const r = reduceTranscript([], { sessionUpdate: "available_commands_update", availableCommands: [] }, T);
+  expect(r.items).toHaveLength(0);
+  expect(r.ops).toHaveLength(0);
+});
