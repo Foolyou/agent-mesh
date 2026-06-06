@@ -1,6 +1,7 @@
-// Entry point. The real control console mounts here (Phase 8); a placeholder keeps
-// the bundler entry valid until then.
+// Entry point: mount the control console.
 import { createRoot } from "react-dom/client";
+import "./theme.css";
+import { App } from "./App";
 
 const root = document.getElementById("root");
-if (root) createRoot(root).render(<div style={{ fontFamily: "monospace" }}>mesh webui — loading…</div>);
+if (root) createRoot(root).render(<App />);

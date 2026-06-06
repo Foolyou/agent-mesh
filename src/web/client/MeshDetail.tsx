@@ -1,0 +1,304 @@
+// Right column = the TUI "mesh context" + the PoC three-pane intent, web-enhanced:
+// topology, router chat, per-member panels, permission cards, and activity/mail/
+// permission-history timelines for the selected mesh.
+import { useEffect, useState } from "react";
+import type { Store } from "./store";
+import type { GatewayState, MeshSummary, PerMeshState, ActivityEntry, MailEntry, ResolvedPermission, PermissionReq } from "../types";
+import { Dot, Btn, Composer, Empty, fmtTime } from "./ui";
+import { Transcript } from "./Transcript";
+import { Topology } from "./Topology";
+
+function Header({ m, store }: { m: MeshSummary; store: Store }) {
+  const live = m.status === "running" || m.status === "starting";
+  return (
+    <div className="detail-head">
+      <span className="mtitle">{m.name}</span>
+      <span className="row">
+        <Dot status={m.status} />
+        <span className="meta">{m.status}</span>
+      </span>
+      <span className="meta">router = {m.router}</span>
+      <span className="meta">{m.agents.length} agents</span>
+      <span style={{ flex: 1 }} />
+      {live ? (
+        <Btn kind="stop" onClick={() => void store.stopMesh(m.name)}>
+          stop mesh
+        </Btn>
+      ) : (
+        <Btn kind="go" onClick={() => void store.startMesh(m.name)}>
+          start mesh
+        </Btn>
+      )}
+    </div>
+  );
+}
+
+function PermissionCards({ pending, mesh, store }: { pending: PermissionReq[]; mesh: string; store: Store }) {
+  if (!pending.length) return null;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      {pending.map((p) => (
+        <div className="perm" key={p.requestId}>
+          <div className="ph">
+            <span className="warn">⚠ permission</span>
+            <span className="meta">{p.agent}</span>
+            <span className="q">{p.question}</span>
+          </div>
+          <div className="opts">
+            {p.options.map((o, i) => (
+              <span className="opt" key={o.id}>
+                <button className="btn sm" onClick={() => void store.resolvePermission(mesh, p.requestId, o.id)}>
+                  <span className="num">{i + 1}</span> {o.name}
+                </button>
+              </span>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ModeControl({ mesh, agent, store }: { mesh: string; agent: string; store: Store }) {
+  const [v, setV] = useState("");
+  return (
+    <span className="row" style={{ gap: 5 }}>
+      <span className="sub" style={{ fontSize: 10 }}>
+        mode
+      </span>
+      <input
+        className="inp"
+        style={{ width: 110, padding: "1px 6px", fontSize: 11 }}
+        value={v}
+        placeholder="mode id"
+        onChange={(e) => setV(e.target.value)}
+        onKeyDown={(e) => {
+          e.stopPropagation();
+          if (e.key === "Enter" && v.trim()) {
+            void store.setMode(mesh, agent, v.trim());
+            setV("");
+          }
+        }}
+      />
+    </span>
+  );
+}
+
+function AgentPanels({
+  m,
+  pm,
+  store,
+  active,
+  onActivate,
+}: {
+  m: MeshSummary;
+  pm: PerMeshState;
+  store: Store;
+  active: string | null;
+  onActivate: (id: string) => void;
+}) {
+  const members = m.agents.filter((a) => a.id !== m.router);
+  if (!members.length) return <Empty>no member agents</Empty>;
+  const cur = members.find((a) => a.id === active) ?? members[0];
+  const setTab = onActivate;
+  return (
+    <div className="panel">
+      <div className="head" style={{ padding: 0 }}>
+        <div className="tabs">
+          {members.map((a) => (
+            <span className={`tab ${a.id === cur.id ? "sel" : ""}`} key={a.id} onClick={() => setTab(a.id)}>
+              <Dot status={m.status === "running" || m.status === "starting" ? a.status : "stopped"} />
+              {a.id}
+            </span>
+          ))}
+        </div>
+      </div>
+      <div className="scroll-pane">
+        <div className="row" style={{ padding: "5px 10px", borderBottom: "1px solid var(--line)" }}>
+          <span className="sub">{cur.harness}</span>
+          <span style={{ flex: 1 }} />
+          <ModeControl mesh={m.name} agent={cur.id} store={store} />
+        </div>
+        <div className="chat">
+          <Transcript items={pm.transcripts[cur.id] ?? []} />
+          <Composer placeholder={`message ${cur.id}…`} onSend={(t) => void store.promptAgent(m.name, cur.id, t)} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Timeline({ activity }: { activity: ActivityEntry[] }) {
+  if (!activity.length) return <Empty>no activity yet</Empty>;
+  return (
+    <div className="tl">
+      {activity
+        .slice()
+        .reverse()
+        .map((e) => (
+          <div className="ent" key={e.id}>
+            <span className="ts">{fmtTime(e.ts)}</span>
+            <span className={`k ${e.kind}`}>{e.kind === "permission_resolved" ? "perm" : e.kind}</span>
+            <span className="tx">{e.text}</span>
+          </div>
+        ))}
+    </div>
+  );
+}
+
+function Mailbox({ mail }: { mail: MailEntry[] }) {
+  if (!mail.length) return <Empty>no mail yet</Empty>;
+  return (
+    <div className="tl">
+      {mail
+        .slice()
+        .reverse()
+        .map((e) => (
+          <div className="ent" key={e.id}>
+            <span className="ts">{fmtTime(e.ts)}</span>
+            <span className="k mail">
+              {e.from} → {e.to}
+            </span>
+            <span className="tx">{e.body}</span>
+          </div>
+        ))}
+    </div>
+  );
+}
+
+function History({ history }: { history: ResolvedPermission[] }) {
+  if (!history.length) return <Empty>no resolved permissions</Empty>;
+  return (
+    <div className="tl">
+      {history
+        .slice()
+        .reverse()
+        .map((e) => (
+          <div className="ent" key={e.requestId + e.ts}>
+            <span className="ts">{fmtTime(e.ts)}</span>
+            <span className="k permission_resolved">{e.by}</span>
+            <span className="tx">
+              {e.agent} · {e.requestId.slice(0, 8)} → {e.optionId}
+            </span>
+          </div>
+        ))}
+    </div>
+  );
+}
+
+export function MeshDetail({
+  state,
+  store,
+  meshName,
+  selectedAgent,
+  onSelectAgent,
+  fullscreen,
+  onToggleFull,
+}: {
+  state: GatewayState;
+  store: Store;
+  meshName: string;
+  selectedAgent: string | null;
+  onSelectAgent: (id: string) => void;
+  fullscreen: boolean;
+  onToggleFull: () => void;
+}) {
+  const m = state.meshes.find((x) => x.name === meshName);
+  const pm = state.perMesh[meshName];
+  // interrupt flash: highlight a node briefly when a new interrupt activity arrives
+  const [flashId, setFlashId] = useState<string | null>(null);
+  const lastInterrupt = pm?.activity.filter((a) => a.kind === "interrupt").slice(-1)[0];
+  useEffect(() => {
+    if (!lastInterrupt) return;
+    const target = lastInterrupt.text.split("→")[1]?.trim().split(":")[0]?.trim();
+    if (!target) return;
+    setFlashId(target);
+    const t = setTimeout(() => setFlashId(null), 1000);
+    return () => clearTimeout(t);
+  }, [lastInterrupt?.id]);
+
+  if (!m || !pm) return <Empty>select a mesh from the list</Empty>;
+
+  const routerItems = pm.transcripts[m.router] ?? [];
+  const routerChat = (
+    <div className="panel">
+      <div className="head">
+        <span className="ttl">router chat</span>
+        <span className="sub">{m.router}</span>
+        <span className="right">
+          <Btn small kind="ghost" onClick={onToggleFull} title="fullscreen (Ctrl-F)">
+            {fullscreen ? "⊟ exit" : "⊞ full"}
+          </Btn>
+        </span>
+      </div>
+      <div className="scroll-pane">
+        <div className="chat">
+          <Transcript items={routerItems} />
+          <Composer placeholder="talk to the router…" onSend={(t) => void store.promptRouter(m.name, t)} />
+        </div>
+      </div>
+    </div>
+  );
+
+  return (
+    <>
+      <Header m={m} store={store} />
+
+      {fullscreen ? (
+        <div style={{ flex: 1, minHeight: 360, display: "flex" }}>{routerChat}</div>
+      ) : (
+        <>
+          <div className="panel">
+            <div className="head">
+              <span className="ttl">topology</span>
+              <span className="sub">agents · mail edges</span>
+            </div>
+            <div className="body-scroll">
+              <Topology summary={m} selectedAgent={selectedAgent} onSelect={onSelectAgent} flashId={flashId} />
+            </div>
+          </div>
+
+          <PermissionCards pending={pm.pending} mesh={m.name} store={store} />
+
+          <div className="split">
+            <div style={{ display: "flex", minHeight: 320 }}>{routerChat}</div>
+            <div style={{ display: "flex", minHeight: 320 }}>
+              <AgentPanels m={m} pm={pm} store={store} active={selectedAgent} onActivate={onSelectAgent} />
+            </div>
+          </div>
+
+          <div className="split">
+            <div className="panel">
+              <div className="head">
+                <span className="ttl">activity</span>
+                <span className="sub">mail · interrupt · permission · log</span>
+              </div>
+              <div className="body-scroll" style={{ maxHeight: 240 }}>
+                <Timeline activity={pm.activity} />
+              </div>
+            </div>
+            <div className="panel">
+              <div className="head">
+                <span className="ttl">mailbox</span>
+                <span className="sub">inter-agent mail</span>
+              </div>
+              <div className="body-scroll" style={{ maxHeight: 240 }}>
+                <Mailbox mail={pm.mail} />
+              </div>
+            </div>
+          </div>
+
+          <div className="panel">
+            <div className="head">
+              <span className="ttl">permission history</span>
+              <span className="sub">{pm.history.length}</span>
+            </div>
+            <div className="body-scroll" style={{ maxHeight: 200 }}>
+              <History history={pm.history} />
+            </div>
+          </div>
+        </>
+      )}
+    </>
+  );
+}
