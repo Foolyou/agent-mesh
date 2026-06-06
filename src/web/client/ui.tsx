@@ -1,5 +1,5 @@
 // Shared presentational primitives for the console.
-import { useState, type ReactNode, type KeyboardEvent } from "react";
+import { useEffect, useState, type ReactNode, type KeyboardEvent } from "react";
 import type { AgentStatus, MeshStatus } from "../types";
 
 export function Dot({ status }: { status: AgentStatus | MeshStatus | string }) {
@@ -93,6 +93,46 @@ export function Composer({
 
 export function Empty({ children }: { children: ReactNode }) {
   return <div className="empty">{children}</div>;
+}
+
+/** Two-click confirm button (no native dialog) — first click arms, second confirms. */
+export function ConfirmButton({
+  children,
+  confirmLabel,
+  onConfirm,
+  kind,
+  small,
+  title,
+}: {
+  children: ReactNode;
+  confirmLabel?: string;
+  onConfirm: () => void;
+  kind?: "go" | "stop" | "ghost";
+  small?: boolean;
+  title?: string;
+}) {
+  const [armed, setArmed] = useState(false);
+  useEffect(() => {
+    if (!armed) return;
+    const t = setTimeout(() => setArmed(false), 3000);
+    return () => clearTimeout(t);
+  }, [armed]);
+  return (
+    <button
+      className={`btn ${armed ? "stop" : kind ?? ""} ${small ? "sm" : ""}`}
+      title={title}
+      onClick={() => {
+        if (armed) {
+          onConfirm();
+          setArmed(false);
+        } else {
+          setArmed(true);
+        }
+      }}
+    >
+      {armed ? confirmLabel ?? "confirm?" : children}
+    </button>
+  );
 }
 
 export function fmtTime(ts: string): string {

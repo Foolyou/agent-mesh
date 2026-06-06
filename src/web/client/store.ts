@@ -81,10 +81,18 @@ export function applyMsg(state: GatewayState, msg: ServerMsg): GatewayState {
 // ── The live store (browser) ─────────────────────────────────────────────────
 const enc = encodeURIComponent;
 
+export interface Toast {
+  id: number;
+  kind: "error" | "info";
+  text: string;
+}
+
 export interface Store {
   getState(): GatewayState;
   subscribe(cb: () => void): () => void;
   wsConnected(): boolean;
+  getToasts(): Toast[];
+  dismissToast(id: number): void;
   startMesh(name: string): Promise<any>;
   stopMesh(name: string): Promise<any>;
   reload(): Promise<any>;
@@ -100,6 +108,9 @@ export interface Store {
 export function createStore(): Store {
   let state = emptyState();
   let connected = false;
+  let everConnected = false;
+  let toasts: Toast[] = [];
+  let toastSeq = 0;
   const subs = new Set<() => void>();
   const emit = () => {
     for (const s of subs) s();
@@ -108,6 +119,22 @@ export function createStore(): Store {
     state = next;
     emit();
   };
+  function pushToast(kind: Toast["kind"], text: string) {
+    const id = ++toastSeq;
+    toasts = [...toasts, { id, kind, text }];
+    emit();
+    setTimeout(() => {
+      toasts = toasts.filter((t) => t.id !== id);
+      emit();
+    }, kind === "error" ? 7000 : 3500);
+  }
+  /** Surface a failed command as a toast (and still reject for inline handlers). */
+  function guard<T>(p: Promise<T>, label: string): Promise<T> {
+    return p.catch((e: any) => {
+      pushToast("error", `${label}: ${String(e?.message ?? e)}`);
+      throw e;
+    });
+  }
 
   let delay = 500;
   function connect() {
@@ -116,6 +143,8 @@ export function createStore(): Store {
     ws.onopen = () => {
       connected = true;
       delay = 500;
+      if (everConnected) pushToast("info", "reconnected");
+      everConnected = true;
       emit();
     };
     ws.onmessage = (ev) => {
@@ -126,7 +155,9 @@ export function createStore(): Store {
       }
     };
     ws.onclose = () => {
+      const was = connected;
       connected = false;
+      if (was) pushToast("info", "connection lost — reconnecting…");
       emit();
       const d = delay;
       delay = Math.min(delay * 2, 5000);
@@ -163,16 +194,23 @@ export function createStore(): Store {
       };
     },
     wsConnected: () => connected,
-    startMesh: (n) => post(`/api/meshes/${enc(n)}/start`),
-    stopMesh: (n) => post(`/api/meshes/${enc(n)}/stop`),
-    reload: () => post(`/api/meshes/reload`),
+    getToasts: () => toasts,
+    dismissToast: (id) => {
+      toasts = toasts.filter((t) => t.id !== id);
+      emit();
+    },
+    // fire-and-forget commands surface failures as toasts; defineMesh stays raw so
+    // the builder can show its validation error inline.
+    startMesh: (n) => guard(post(`/api/meshes/${enc(n)}/start`), `start ${n}`),
+    stopMesh: (n) => guard(post(`/api/meshes/${enc(n)}/stop`), `stop ${n}`),
+    reload: () => guard(post(`/api/meshes/reload`), "reload"),
     defineMesh: (c) => post(`/api/meshes`, c),
-    deleteMesh: (n) => send("DELETE", `/api/meshes/${enc(n)}`),
-    promptRouter: (n, t) => post(`/api/meshes/${enc(n)}/prompt`, { text: t }),
-    promptAgent: (n, a, t) => post(`/api/meshes/${enc(n)}/agents/${enc(a)}/prompt`, { text: t }),
-    promptMaster: (t) => post(`/api/master/prompt`, { text: t }),
-    resolvePermission: (n, r, o) => post(`/api/meshes/${enc(n)}/permissions/${enc(r)}/resolve`, { optionId: o }),
-    setMode: (n, a, m) => post(`/api/meshes/${enc(n)}/agents/${enc(a)}/mode`, { modeId: m }),
+    deleteMesh: (n) => guard(send("DELETE", `/api/meshes/${enc(n)}`), `delete ${n}`),
+    promptRouter: (n, t) => guard(post(`/api/meshes/${enc(n)}/prompt`, { text: t }), `prompt ${n}`),
+    promptAgent: (n, a, t) => guard(post(`/api/meshes/${enc(n)}/agents/${enc(a)}/prompt`, { text: t }), `prompt ${a}`),
+    promptMaster: (t) => guard(post(`/api/master/prompt`, { text: t }), "master"),
+    resolvePermission: (n, r, o) => guard(post(`/api/meshes/${enc(n)}/permissions/${enc(r)}/resolve`, { optionId: o }), "resolve permission"),
+    setMode: (n, a, m) => guard(post(`/api/meshes/${enc(n)}/agents/${enc(a)}/mode`, { modeId: m }), `set mode ${a}`),
   };
 }
 
@@ -181,4 +219,7 @@ export function useStore(store: Store): GatewayState {
 }
 export function useConnected(store: Store): boolean {
   return useSyncExternalStore(store.subscribe, store.wsConnected, store.wsConnected);
+}
+export function useToasts(store: Store): Toast[] {
+  return useSyncExternalStore(store.subscribe, store.getToasts, store.getToasts);
 }

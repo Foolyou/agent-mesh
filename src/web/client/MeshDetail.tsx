@@ -4,11 +4,11 @@
 import { useEffect, useState } from "react";
 import type { Store } from "./store";
 import type { GatewayState, MeshSummary, PerMeshState, ActivityEntry, MailEntry, ResolvedPermission, PermissionReq } from "../types";
-import { Dot, Btn, Composer, Empty, fmtTime } from "./ui";
+import { Dot, Btn, Composer, Empty, ConfirmButton, fmtTime } from "./ui";
 import { Transcript } from "./Transcript";
 import { Topology } from "./Topology";
 
-function Header({ m, store }: { m: MeshSummary; store: Store }) {
+function Header({ m, store, onDeleted }: { m: MeshSummary; store: Store; onDeleted: () => void }) {
   const live = m.status === "running" || m.status === "starting";
   return (
     <div className="detail-head">
@@ -25,9 +25,21 @@ function Header({ m, store }: { m: MeshSummary; store: Store }) {
           stop mesh
         </Btn>
       ) : (
-        <Btn kind="go" onClick={() => void store.startMesh(m.name)}>
-          start mesh
-        </Btn>
+        <>
+          <Btn kind="go" onClick={() => void store.startMesh(m.name)}>
+            start mesh
+          </Btn>
+          <ConfirmButton
+            kind="stop"
+            confirmLabel="delete?"
+            title="delete this mesh definition"
+            onConfirm={() => {
+              void store.deleteMesh(m.name).then(onDeleted, () => {});
+            }}
+          >
+            delete
+          </ConfirmButton>
+        </>
       )}
     </div>
   );
@@ -194,6 +206,7 @@ export function MeshDetail({
   onSelectAgent,
   fullscreen,
   onToggleFull,
+  onDeleted,
 }: {
   state: GatewayState;
   store: Store;
@@ -202,6 +215,7 @@ export function MeshDetail({
   onSelectAgent: (id: string) => void;
   fullscreen: boolean;
   onToggleFull: () => void;
+  onDeleted: () => void;
 }) {
   const m = state.meshes.find((x) => x.name === meshName);
   // a mesh defined after the initial snapshot may not have a perMesh entry yet;
@@ -252,7 +266,7 @@ export function MeshDetail({
 
   return (
     <>
-      <Header m={m} store={store} />
+      <Header m={m} store={store} onDeleted={onDeleted} />
 
       {fullscreen ? (
         <div style={{ flex: 1, minHeight: 360, display: "flex" }}>{routerChat}</div>
