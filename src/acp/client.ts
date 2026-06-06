@@ -12,6 +12,60 @@ import {
 
 export type PermissionDecision = { optionId: string } | "cancel";
 
+// --- process-tree teardown -------------------------------------------------
+// Harnesses launch as a node wrapper that spawns a real binary child (e.g.
+// codex-acp -> codex-acp-linux-x64). Killing only the wrapper orphans the
+// grandchild, so we kill the whole descendant tree. We also install one set of
+// process handlers so abrupt-but-catchable exits (SIGINT/SIGTERM/uncaught)
+// still reap every agent. (SIGKILL cannot be caught; nothing can help there.)
+function killTree(pid: number, signal: NodeJS.Signals = "SIGKILL"): void {
+  const descendants: number[] = [];
+  const collect = (p: number) => {
+    let out = "";
+    try {
+      out = Bun.spawnSync(["pgrep", "-P", String(p)]).stdout.toString();
+    } catch {}
+    for (const line of out.split("\n")) {
+      const child = Number.parseInt(line.trim(), 10);
+      if (child) {
+        descendants.push(child);
+        collect(child);
+      }
+    }
+  };
+  collect(pid);
+  for (const p of descendants.reverse()) {
+    try {
+      process.kill(p, signal);
+    } catch {}
+  }
+  try {
+    process.kill(pid, signal);
+  } catch {}
+}
+
+const LIVE = new Set<AcpAgentConnection>();
+let handlersInstalled = false;
+function installCleanupHandlers(): void {
+  if (handlersInstalled) return;
+  handlersInstalled = true;
+  const cleanup = () => {
+    for (const c of LIVE) c.kill();
+  };
+  process.on("exit", cleanup);
+  for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
+    process.on(sig, () => {
+      cleanup();
+      process.exit(130);
+    });
+  }
+  process.on("uncaughtException", (err) => {
+    console.error(err);
+    cleanup();
+    process.exit(1);
+  });
+}
+
 export interface AcpConnectionOptions {
   id: string;
   command: string;
@@ -45,6 +99,8 @@ export class AcpAgentConnection {
     });
     this.child = child;
     this.alive = true;
+    LIVE.add(this);
+    installCleanupHandlers();
 
     const output = new WritableStream<Uint8Array>({
       write: (chunk) => {
@@ -97,6 +153,7 @@ export class AcpAgentConnection {
 
     child.exited.then((code) => {
       self.alive = false;
+      LIVE.delete(self);
       self.opts.onExit?.(code);
     });
   }
@@ -164,8 +221,9 @@ export class AcpAgentConnection {
   }
 
   kill() {
-    try {
-      this.child?.kill();
-    } catch {}
+    LIVE.delete(this);
+    const pid = this.child?.pid;
+    if (pid) killTree(pid);
+    this.alive = false;
   }
 }
