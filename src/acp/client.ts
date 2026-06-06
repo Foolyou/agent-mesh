@@ -126,6 +126,11 @@ export class AcpAgentConnection {
     });
   }
 
+  /** Switch the session's permission/approval mode (e.g. codex "read-only"). */
+  async setMode(modeId: string) {
+    if (this.sessionId) await this.conn!.setSessionMode({ sessionId: this.sessionId, modeId });
+  }
+
   /** Interrupt the current turn (Router-authorized at the control-plane layer). */
   async cancel() {
     if (this.sessionId) await this.conn!.cancel({ sessionId: this.sessionId });

@@ -34,7 +34,7 @@ export type MeshEvent =
       agent: AgentId;
       requestId: string;
       question: string;
-      options: { id: string; name: string }[];
+      options: { id: string; name: string; kind?: string }[];
       ts: string;
     }
   | {

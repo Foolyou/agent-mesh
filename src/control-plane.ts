@@ -175,9 +175,10 @@ export class ControlPlane {
   // ---- permission escalation ----
   private handlePermission(agentId: AgentId, req: any): Promise<PermissionDecision> {
     const requestId = randomUUID();
-    const options: { id: string; name: string }[] = (req.options ?? []).map((o: any) => ({
+    const options = (req.options ?? []).map((o: any) => ({
       id: o.optionId,
       name: o.name,
+      kind: o.kind,
     }));
     const question = req.toolCall?.title ?? req.toolCall?.rawInput?.command ?? "permission requested";
 
