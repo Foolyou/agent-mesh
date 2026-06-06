@@ -8,7 +8,7 @@ import type { MeshConfig } from "./acp/types";
 export function validateMeshConfig(config: MeshConfig): void {
   const { name, agents, edges } = config;
 
-  if (!name || !/^[A-Za-z0-9._-]+$/.test(name) || name === "." || name === "..") {
+  if (!name || !/^[A-Za-z0-9._-]+$/.test(name) || name.includes("..")) {
     throw new Error(`invalid mesh name "${name}": use only letters, digits, '.', '_', '-'`);
   }
   if (!Array.isArray(agents) || agents.length === 0) {

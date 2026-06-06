@@ -20,6 +20,11 @@ test("rejects unsafe names", () => {
   expect(() => validateMeshConfig({ ...ok, name: "../escape" })).toThrow(/name/i);
 });
 
+test("rejects names containing '..' (path traversal)", () => {
+  expect(() => validateMeshConfig({ ...ok, name: "a..b" })).toThrow(/name/i);
+  expect(() => validateMeshConfig({ ...ok, name: ".." })).toThrow(/name/i);
+});
+
 test("rejects empty agents", () => {
   expect(() => validateMeshConfig({ ...ok, agents: [] })).toThrow(/at least one/i);
 });
