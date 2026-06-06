@@ -204,10 +204,20 @@ export function MeshDetail({
   onToggleFull: () => void;
 }) {
   const m = state.meshes.find((x) => x.name === meshName);
-  const pm = state.perMesh[meshName];
+  // a mesh defined after the initial snapshot may not have a perMesh entry yet;
+  // synthesize an empty one so its console (topology + empty panels) still renders.
+  const pm: PerMeshState =
+    state.perMesh[meshName] ?? {
+      config: { name: meshName, agents: [], edges: [] },
+      transcripts: {},
+      activity: [],
+      mail: [],
+      pending: [],
+      history: [],
+    };
   // interrupt flash: highlight a node briefly when a new interrupt activity arrives
   const [flashId, setFlashId] = useState<string | null>(null);
-  const lastInterrupt = pm?.activity.filter((a) => a.kind === "interrupt").slice(-1)[0];
+  const lastInterrupt = pm.activity.filter((a) => a.kind === "interrupt").slice(-1)[0];
   useEffect(() => {
     if (!lastInterrupt) return;
     const target = lastInterrupt.text.split("→")[1]?.trim().split(":")[0]?.trim();
@@ -217,7 +227,7 @@ export function MeshDetail({
     return () => clearTimeout(t);
   }, [lastInterrupt?.id]);
 
-  if (!m || !pm) return <Empty>select a mesh from the list</Empty>;
+  if (!m) return <Empty>select a mesh from the list</Empty>;
 
   const routerItems = pm.transcripts[m.router] ?? [];
   const routerChat = (

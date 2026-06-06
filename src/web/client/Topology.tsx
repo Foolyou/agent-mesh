@@ -55,9 +55,14 @@ export function Topology({
     return STATUS_COLOR[status] ?? STATUS_COLOR.stopped;
   }
 
+  const svgH = Math.min(320, H);
   return (
     <div className="topo">
-      <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet" style={{ maxHeight: 360 }}>
+      <svg
+        viewBox={`0 0 ${W} ${H}`}
+        preserveAspectRatio="xMidYMid meet"
+        style={{ width: "100%", height: svgH, display: "block" }}
+      >
         <defs>
           <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
             <path d="M0,0 L10,5 L0,10 z" fill="var(--line-bright)" />

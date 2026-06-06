@@ -140,6 +140,12 @@ body::after {
   flex-direction: column;
   gap: 12px;
 }
+/* keep each section at its natural height (the column scrolls) — otherwise flex
+   shrink collapses no-min-height panels like the topology. Inline flex:1 (the
+   fullscreen container) still wins and grows. */
+.detail > * {
+  flex-shrink: 0;
+}
 
 /* ── panel ─────────────────────────────────────────────────────────────── */
 .panel {

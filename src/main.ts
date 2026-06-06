@@ -7,6 +7,7 @@ import { MeshManager } from "./mesh-manager";
 import { MasterAgent } from "./master-agent";
 import { WebGateway } from "./web/gateway";
 import { startWebServer } from "./web/server";
+import { FakeManager, FakeMaster } from "./web/fake";
 import { DEMO_MESH } from "./config";
 
 function argPort(): number | undefined {
@@ -16,23 +17,29 @@ function argPort(): number | undefined {
 }
 const port = Number(process.env.MESH_WEB_PORT) || argPort() || 7317;
 const noMaster = process.argv.includes("--no-master");
+const fake = process.argv.includes("--fake");
 
-const manager = new MeshManager();
-await manager.loadDefinitions();
-// Seed the demo definition if absent (idempotent; validated on define).
-if (!manager.listMeshes().some((m) => m.name === DEMO_MESH.name)) {
-  await manager.defineMesh(DEMO_MESH);
+// `--fake`: a self-contained scripted demo (no real agents). Otherwise the real
+// MeshManager + optional MasterAgent over the unchanged subprocess-per-mesh model.
+const manager: any = fake ? new FakeManager() : new MeshManager();
+if (!fake) {
+  await manager.loadDefinitions();
+  if (!manager.listMeshes().some((m: { name: string }) => m.name === DEMO_MESH.name)) {
+    await manager.defineMesh(DEMO_MESH);
+  }
 }
 
-const master = noMaster ? undefined : new MasterAgent(manager);
+const master: any = fake ? new FakeMaster() : noMaster ? undefined : new MasterAgent(manager);
 const gateway = new WebGateway(manager, master);
 const server = startWebServer(gateway, { port });
 
-console.log(`\n  agent-mesh web console → ${server.url}\n`);
+console.log(`\n  agent-mesh web console → ${server.url}${fake ? "  (fake mode)" : ""}\n`);
 
-// Start the master agent in the background so the UI is available immediately.
-// Degrade gracefully if it cannot start (e.g. no local claude login).
-if (master) {
+if (fake) {
+  gateway.setMasterStatus("ready");
+} else if (master) {
+  // Start the master agent in the background so the UI is available immediately.
+  // Degrade gracefully if it cannot start (e.g. no local claude login).
   master
     .start()
     .then(() => gateway.setMasterStatus("ready"))
