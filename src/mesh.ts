@@ -1,0 +1,49 @@
+// Mesh: pure model of a mesh's membership, the Router (gateway) designation,
+// the directed interaction graph (who may mail whom), and per-agent liveness.
+import type { AgentConfig, AgentId, AgentStatus, MeshConfig } from "./acp/types";
+
+export class Mesh {
+  readonly config: MeshConfig;
+  private statuses = new Map<AgentId, AgentStatus>();
+
+  constructor(config: MeshConfig) {
+    this.config = config;
+    for (const a of config.agents) this.statuses.set(a.id, "spawning");
+  }
+
+  get name(): string {
+    return this.config.name;
+  }
+
+  get router(): AgentConfig {
+    const r = this.config.agents.find((a) => a.role === "router");
+    if (!r) throw new Error(`mesh ${this.config.name} has no router`);
+    return r;
+  }
+
+  get members(): AgentConfig[] {
+    return this.config.agents.filter((a) => a.role === "member");
+  }
+
+  get agents(): AgentConfig[] {
+    return this.config.agents;
+  }
+
+  agent(id: AgentId): AgentConfig | undefined {
+    return this.config.agents.find((a) => a.id === id);
+  }
+
+  /** May `from` send mail to `to`? Directed edge must exist and both must be members of the mesh. */
+  canMail(from: AgentId, to: AgentId): boolean {
+    if (!this.agent(from) || !this.agent(to)) return false;
+    return this.config.edges.some(([f, t]) => f === from && t === to);
+  }
+
+  setStatus(id: AgentId, status: AgentStatus): void {
+    this.statuses.set(id, status);
+  }
+
+  status(id: AgentId): AgentStatus | undefined {
+    return this.statuses.get(id);
+  }
+}
