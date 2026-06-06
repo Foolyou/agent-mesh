@@ -20,6 +20,7 @@ export function bridgeControlPlaneToSocket(cp: BridgeControlPlane, socket: net.S
   const send = (m: Parameters<typeof encodeFrame>[0]) => socket.write(encodeFrame(m));
   const unsubscribe = cp.on((event) => send({ t: "event", event }));
 
+  let stopping = false;
   const lb = new LineBuffer();
   socket.setEncoding("utf8");
   socket.on("data", async (chunk: string) => {
@@ -37,9 +38,12 @@ export function bridgeControlPlaneToSocket(cp: BridgeControlPlane, socket: net.S
           cp.setMode(msg.target, msg.modeId).catch(() => {});
           break;
         case "stop":
+          if (stopping) break;
+          stopping = true;
           unsubscribe();
           await cp.stop().catch(() => {});
           send({ t: "stopped" });
+          socket.destroy();
           break;
       }
     }

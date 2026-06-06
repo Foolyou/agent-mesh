@@ -52,6 +52,11 @@ test("bridge sends ready, relays events, applies commands, and stops", async () 
   expect(calls).toContain("prompt:router:hi");
   expect(got.some((m) => m.t === "event" && m.event.kind === "log")).toBe(true);
 
+  // setMode command is relayed to the cp
+  client.write(encodeFrame({ t: "setMode", target: "codex-1", modeId: "read-only" }));
+  await Bun.sleep(50);
+  expect(calls).toContain("setMode:codex-1:read-only");
+
   // stop -> cp.stop() called, {t:"stopped"} sent
   client.write(encodeFrame({ t: "stop" }));
   await Bun.sleep(50);
