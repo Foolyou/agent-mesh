@@ -42,6 +42,8 @@ export interface MeshSummary {
   status: MeshStatus;
   router: AgentId;
   agents: { id: AgentId; harness: HarnessId; role: AgentRole; status: AgentStatus }[];
+  /** Directed mail edges [from, to]; lets the topology render from the summary alone. */
+  edges: [AgentId, AgentId][];
 }
 
 export interface ActivityEntry {

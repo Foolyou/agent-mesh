@@ -95,6 +95,7 @@ export class WebGateway {
   /** A fresh, structurally-cloned copy of the full state. */
   snapshot(): GatewayState {
     this.refreshMeshes();
+    for (const m of this.state.meshes) this.ensureMesh(m.name);
     return structuredClone(this.state);
   }
 
@@ -126,6 +127,7 @@ export class WebGateway {
           role: a.role,
           status: (live ? tracked?.get(a.id) : undefined) ?? (live ? "spawning" : "dead"),
         })),
+        edges: config.edges,
       };
     });
   }
