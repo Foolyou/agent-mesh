@@ -60,9 +60,9 @@ export function reduceTranscript(
     const open = last();
     const sameOpen =
       !!open &&
+      (open.kind === "message" || open.kind === "thought") &&
       !open.complete &&
-      ((wantThought && open.kind === "thought") ||
-        (!wantThought && open.kind === "message" && open.role === role));
+      (wantThought ? open.kind === "thought" : open.kind === "message" && open.role === role);
     if (sameOpen && open) {
       const merged = { ...(open as any), text: (open as any).text + text } as TranscriptItem;
       next = [...next.slice(0, -1), merged];
