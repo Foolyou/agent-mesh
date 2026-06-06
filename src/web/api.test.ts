@@ -46,6 +46,9 @@ function fakeManager() {
     setMode(n: string, a: string, m: string) {
       calls.push(["setMode", n, a, m]);
     },
+    interruptAgent(n: string, a: string) {
+      calls.push(["interrupt", n, a]);
+    },
     async defineMesh(c: MeshConfig) {
       calls.push(["define", c.name]);
     },
@@ -96,6 +99,14 @@ test("POST /api/meshes/demo/agents/codex-1/mode delegates to setMode", async () 
   const r = await handleApi(gw, "POST", "/api/meshes/demo/agents/codex-1/mode", { modeId: "read-only" });
   expect(r.status).toBe(200);
   expect(m.calls).toContainEqual(["setMode", "demo", "codex-1", "read-only"]);
+});
+
+test("POST /api/meshes/demo/agents/codex-1/interrupt delegates to interruptAgent", async () => {
+  const m = fakeManager();
+  const gw = new WebGateway(m as any);
+  const r = await handleApi(gw, "POST", "/api/meshes/demo/agents/codex-1/interrupt", {});
+  expect(r.status).toBe(200);
+  expect(m.calls).toContainEqual(["interrupt", "demo", "codex-1"]);
 });
 
 test("POST /api/meshes/demo/permissions/r1/resolve delegates to resolvePermission", async () => {

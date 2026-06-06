@@ -103,6 +103,7 @@ export interface Store {
   promptMaster(text: string): Promise<any>;
   resolvePermission(name: string, requestId: string, optionId: string): Promise<any>;
   setMode(name: string, agentId: string, modeId: string): Promise<any>;
+  interruptAgent(name: string, agentId: string): Promise<any>;
 }
 
 export function createStore(): Store {
@@ -211,6 +212,7 @@ export function createStore(): Store {
     promptMaster: (t) => guard(post(`/api/master/prompt`, { text: t }), "master"),
     resolvePermission: (n, r, o) => guard(post(`/api/meshes/${enc(n)}/permissions/${enc(r)}/resolve`, { optionId: o }), "resolve permission"),
     setMode: (n, a, m) => guard(post(`/api/meshes/${enc(n)}/agents/${enc(a)}/mode`, { modeId: m }), `set mode ${a}`),
+    interruptAgent: (n, a) => guard(post(`/api/meshes/${enc(n)}/agents/${enc(a)}/interrupt`), `interrupt ${a}`),
   };
 }
 

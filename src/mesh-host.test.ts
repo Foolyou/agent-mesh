@@ -21,6 +21,7 @@ function fakeCp() {
     async prompt(target, text) { calls.push(`prompt:${target}:${text}`); listener?.({ kind: "log", text: "got prompt", ts: "t" }); return {}; },
     resolveDecision(requestId, optionId) { calls.push(`resolve:${requestId}:${optionId}`); return true; },
     async setMode(target, modeId) { calls.push(`setMode:${target}:${modeId}`); },
+    async interrupt(target) { calls.push(`interrupt:${target}`); },
     async stop() { calls.push("stop"); },
   };
   return { cp, calls };
@@ -56,6 +57,11 @@ test("bridge sends ready, relays events, applies commands, and stops", async () 
   client.write(encodeFrame({ t: "setMode", target: "codex-1", modeId: "read-only" }));
   await Bun.sleep(50);
   expect(calls).toContain("setMode:codex-1:read-only");
+
+  // interrupt command is relayed to the cp
+  client.write(encodeFrame({ t: "interrupt", target: "codex-1" }));
+  await Bun.sleep(50);
+  expect(calls).toContain("interrupt:codex-1");
 
   // stop -> cp.stop() called, {t:"stopped"} sent
   client.write(encodeFrame({ t: "stop" }));

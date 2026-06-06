@@ -147,6 +147,12 @@ try {
     if ((await page.locator(".perm").count()) !== 0) throw new Error("permission card did not clear");
   });
 
+  await step("operator interrupt cancels an agent's turn (activity from 'operator')", async () => {
+    // codex-1 panel is active from the tool-call step; click its interrupt button
+    await page.locator(".panel:has(.tabs) .btn", { hasText: "interrupt" }).first().click();
+    await page.waitForSelector('.panel:has(.head:has-text("activity")) .tx:has-text("operator")', { timeout: 6000 });
+  });
+
   await step("master chat: send instruction → user bubble + streamed reply", async () => {
     const input = page.locator('.panel:has(.head:has-text("master")) .composer input');
     await input.fill("create a build squad mesh");
@@ -186,6 +192,16 @@ try {
     // and it auto-opens its console (regression: post-snapshot mesh had no perMesh)
     await page.waitForSelector('.detail-head:has-text("squad-x")', { timeout: 4000 });
     await page.waitForSelector('.panel:has(.head:has-text("topology")) .node', { timeout: 4000 });
+  });
+
+  await step("edit a mesh prefills the builder with its config (name locked)", async () => {
+    await page.locator('.detail-head .btn:has-text("edit")').click();
+    await page.waitForSelector('.modal .mhead:has-text("edit mesh")', { timeout: 4000 });
+    const val = await page.locator('.modal .field:has(label:has-text("mesh name")) input').inputValue();
+    if (val !== "squad-x") throw new Error(`edit prefill wrong name: "${val}"`);
+    await page.locator('.modal .btn:has-text("save mesh")').click();
+    await page.waitForSelector(".modal", { state: "detached", timeout: 4000 });
+    await page.waitForSelector('.mrow:has-text("squad-x")', { timeout: 4000 });
   });
 
   await step("delete a stopped mesh (two-click confirm) removes it", async () => {

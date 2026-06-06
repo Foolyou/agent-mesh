@@ -94,6 +94,10 @@ export async function handleApi(
           gw.setMode(name, agentId, str(body?.modeId));
           return ok();
         }
+        if (p[4] === "interrupt") {
+          gw.interruptAgent(name, agentId);
+          return ok();
+        }
       }
     }
 

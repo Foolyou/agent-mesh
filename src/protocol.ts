@@ -14,6 +14,7 @@ export type ParentMsg =
   | { t: "prompt"; target: string; text: string }
   | { t: "resolve"; requestId: string; optionId: string }
   | { t: "setMode"; target: string; modeId: string }
+  | { t: "interrupt"; target: string }
   | { t: "stop" };
 
 export function encodeFrame(msg: ChildMsg | ParentMsg): string {

@@ -33,6 +33,7 @@ export interface ManagerLike {
   promptAgent(name: string, agentId: string, text: string): void;
   resolvePermission(name: string, requestId: string, optionId: string): void;
   setMode(name: string, agentId: string, modeId: string): void;
+  interruptAgent(name: string, agentId: string): void;
   defineMesh(config: MeshConfig): Promise<void>;
   deleteMesh(name: string): Promise<void>;
   loadDefinitions(): Promise<void>;
@@ -302,6 +303,9 @@ export class WebGateway {
   }
   setMode(name: string, agentId: string, modeId: string): void {
     this.manager.setMode(name, agentId, modeId);
+  }
+  interruptAgent(name: string, agentId: string): void {
+    this.manager.interruptAgent(name, agentId);
   }
   async promptMaster(text: string): Promise<void> {
     if (!this.master) throw new Error("master agent is not configured");
