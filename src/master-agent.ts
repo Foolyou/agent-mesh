@@ -18,19 +18,27 @@ export class MasterAgent {
 
   async start(): Promise<void> {
     this.mcp = await createMeshControlServer({ handlers: createMeshControlHandlers(this.manager) });
-    const spec = resolveHarness("claude");
-    const cwd = resolve(process.cwd(), this.opts.project ?? ".");
-    this.conn = new AcpAgentConnection({
-      id: "master",
-      command: spec.command,
-      args: spec.args,
-      cwd,
-      debug: this.opts.debug ?? false,
-      onUpdate: (u) => this.opts.onUpdate?.(u),
-    });
-    await this.conn.start();
-    await this.conn.initialize();
-    await this.conn.newSession([{ type: "http", name: "mesh-control", url: this.mcp.url, headers: [] }]);
+    try {
+      const spec = resolveHarness("claude");
+      const cwd = resolve(process.cwd(), this.opts.project ?? ".");
+      this.conn = new AcpAgentConnection({
+        id: "master",
+        command: spec.command,
+        args: spec.args,
+        cwd,
+        debug: this.opts.debug ?? false,
+        onUpdate: (u) => this.opts.onUpdate?.(u),
+      });
+      await this.conn.start();
+      await this.conn.initialize();
+      await this.conn.newSession([{ type: "http", name: "mesh-control", url: this.mcp.url, headers: [] }]);
+    } catch (err) {
+      this.conn?.kill();
+      this.conn = undefined;
+      this.mcp.close();
+      this.mcp = undefined;
+      throw err;
+    }
   }
 
   /** Feed a natural-language instruction to the master agent. */
