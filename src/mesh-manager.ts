@@ -6,6 +6,7 @@ import { resolve, join } from "node:path";
 import { MeshStore } from "./mesh-store";
 import { MeshHostClient } from "./mesh-host-client";
 import { Mesh } from "./mesh";
+import { now } from "./acp/types";
 import type { MeshConfig, MeshEvent } from "./acp/types";
 
 export type MeshStatus = "stopped" | "starting" | "running" | "dead";
@@ -54,11 +55,11 @@ export class MeshManager {
   }
 
   async defineMesh(config: MeshConfig): Promise<void> {
-    await this.store.define(config); // validates first
     const existing = this.entries.get(config.name);
     if (existing && existing.status === "running") {
       throw new Error(`mesh "${config.name}" is running; stop it before redefining`);
     }
+    await this.store.define(config); // validates + persists
     this.entries.set(config.name, { config, status: "stopped" });
   }
 
@@ -84,12 +85,18 @@ export class MeshManager {
       onExit: () => {
         if (entry.status === "running" || entry.status === "starting") {
           entry.status = "dead";
-          this.emit(name, { kind: "log", text: `mesh "${name}" host exited`, ts: new Date().toISOString() });
+          this.emit(name, { kind: "log", text: `mesh "${name}" host exited`, ts: now() });
         }
       },
     });
     entry.client = client;
-    await client.start();
+    try {
+      await client.start();
+    } catch (err) {
+      entry.status = "stopped";
+      entry.client = undefined;
+      throw err;
+    }
     entry.status = "running";
   }
 

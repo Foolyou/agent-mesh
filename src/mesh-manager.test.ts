@@ -53,3 +53,14 @@ test("startMesh twice errors", async () => {
   await mgr.startMesh("echo");
   await expect(mgr.startMesh("echo")).rejects.toThrow(/already running/i);
 });
+
+test("startMesh resets status to stopped when the host fails to start", async () => {
+  await mgr.defineMesh(cfg);
+  // point at a nonexistent host script so the child exits before ready
+  const bad = new MeshManager({ meshesDir: join(dir, "meshes"), runDir: join(dir, "run"), hostScript: join(dir, "nope.ts") });
+  await bad.defineMesh(cfg);
+  await expect(bad.startMesh("echo")).rejects.toThrow();
+  expect(bad.listMeshes()[0]!.status).toBe("stopped");
+  // and it can be retried (not stuck on "already running")
+  await expect(bad.startMesh("echo")).rejects.toThrow();
+});
