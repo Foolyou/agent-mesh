@@ -13,6 +13,7 @@ export interface BridgeControlPlane {
   prompt(target: string, text: string): Promise<unknown>;
   resolveDecision(requestId: string, optionId: string, by?: "human" | "timeout"): boolean;
   setMode(target: string, modeId: string): Promise<void>;
+  interrupt(target: string): Promise<void>;
   stop(): Promise<void>;
 }
 
@@ -40,6 +41,9 @@ export function bridgeControlPlaneToSocket(
           break;
         case "setMode":
           cp.setMode(msg.target, msg.modeId).catch(() => {});
+          break;
+        case "interrupt":
+          cp.interrupt(msg.target).catch(() => {});
           break;
         case "stop":
           if (stopping) break;

@@ -90,6 +90,7 @@ export class MeshHostClient {
   prompt(target: string, text: string): void { this.send({ t: "prompt", target, text }); }
   resolve(requestId: string, optionId: string): void { this.send({ t: "resolve", requestId, optionId }); }
   setMode(target: string, modeId: string): void { this.send({ t: "setMode", target, modeId }); }
+  interrupt(target: string): void { this.send({ t: "interrupt", target }); }
 
   async stop(timeoutMs = 5000): Promise<void> {
     if (this.stopping) return;

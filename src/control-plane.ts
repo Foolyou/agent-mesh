@@ -69,6 +69,13 @@ export class ControlPlane {
     return this.agent(id).setMode(modeId);
   }
 
+  /** Operator-initiated interrupt: cancel an agent's current turn and record it.
+   *  (The router can also interrupt via its mesh tool; this is the human path.) */
+  async interrupt(id: AgentId, by: AgentId = "operator"): Promise<void> {
+    this.emit({ kind: "interrupt", from: by, target: id, reason: "operator interrupt", ts: now() });
+    await this.agent(id).cancel();
+  }
+
   get mcpServer(): MeshServicesServer {
     if (!this.mcp) throw new Error("control plane not started");
     return this.mcp;

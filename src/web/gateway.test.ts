@@ -53,6 +53,9 @@ function fakeManager() {
     setMode(n: string, a: string, m: string) {
       calls.push(["setMode", n, a, m]);
     },
+    interruptAgent(n: string, a: string) {
+      calls.push(["interrupt", n, a]);
+    },
     async defineMesh(c: MeshConfig) {
       calls.push(["define", c.name]);
     },

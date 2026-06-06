@@ -8,7 +8,7 @@ import { Dot, Btn, Composer, Empty, ConfirmButton, fmtTime } from "./ui";
 import { Transcript } from "./Transcript";
 import { Topology } from "./Topology";
 
-function Header({ m, store, onDeleted }: { m: MeshSummary; store: Store; onDeleted: () => void }) {
+function Header({ m, store, onDeleted, onEdit }: { m: MeshSummary; store: Store; onDeleted: () => void; onEdit: () => void }) {
   const live = m.status === "running" || m.status === "starting";
   return (
     <div className="detail-head">
@@ -28,6 +28,9 @@ function Header({ m, store, onDeleted }: { m: MeshSummary; store: Store; onDelet
         <>
           <Btn kind="go" onClick={() => void store.startMesh(m.name)}>
             start mesh
+          </Btn>
+          <Btn kind="ghost" title="edit this mesh definition" onClick={onEdit}>
+            edit
           </Btn>
           <ConfirmButton
             kind="stop"
@@ -129,6 +132,11 @@ function AgentPanels({
         <div className="row" style={{ padding: "5px 10px", borderBottom: "1px solid var(--line)" }}>
           <span className="sub">{cur.harness}</span>
           <span style={{ flex: 1 }} />
+          {m.status === "running" || m.status === "starting" ? (
+            <Btn small kind="stop" title="cancel this agent's current turn" onClick={() => void store.interruptAgent(m.name, cur.id)}>
+              interrupt
+            </Btn>
+          ) : null}
           <ModeControl mesh={m.name} agent={cur.id} store={store} />
         </div>
         <div className="chat">
@@ -207,6 +215,7 @@ export function MeshDetail({
   fullscreen,
   onToggleFull,
   onDeleted,
+  onEdit,
 }: {
   state: GatewayState;
   store: Store;
@@ -216,6 +225,7 @@ export function MeshDetail({
   fullscreen: boolean;
   onToggleFull: () => void;
   onDeleted: () => void;
+  onEdit: () => void;
 }) {
   const m = state.meshes.find((x) => x.name === meshName);
   // a mesh defined after the initial snapshot may not have a perMesh entry yet;
@@ -250,6 +260,11 @@ export function MeshDetail({
         <span className="ttl">router chat</span>
         <span className="sub">{m.router}</span>
         <span className="right">
+          {m.status === "running" || m.status === "starting" ? (
+            <Btn small kind="stop" title="cancel the router's current turn" onClick={() => void store.interruptAgent(m.name, m.router)}>
+              interrupt
+            </Btn>
+          ) : null}
           <Btn small kind="ghost" onClick={onToggleFull} title="fullscreen (Ctrl-F)">
             {fullscreen ? "⊟ exit" : "⊞ full"}
           </Btn>
@@ -266,7 +281,7 @@ export function MeshDetail({
 
   return (
     <>
-      <Header m={m} store={store} onDeleted={onDeleted} />
+      <Header m={m} store={store} onDeleted={onDeleted} onEdit={onEdit} />
 
       {fullscreen ? (
         <div style={{ flex: 1, minHeight: 360, display: "flex" }}>{routerChat}</div>

@@ -31,6 +31,7 @@ function fakeManager() {
     promptAgent() {},
     resolvePermission() {},
     setMode() {},
+    interruptAgent() {},
     async defineMesh() {},
     async deleteMesh() {},
     async loadDefinitions() {},

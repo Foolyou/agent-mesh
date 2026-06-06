@@ -105,6 +105,9 @@ export class FakeManager {
   setMode(name: string, agentId: string, modeId: string): void {
     this.emit(name, { kind: "log", text: `${agentId} mode → ${modeId}`, ts: now() });
   }
+  interruptAgent(name: string, agentId: string): void {
+    this.emit(name, { kind: "interrupt", from: "operator", target: agentId, reason: "operator interrupt", ts: now() });
+  }
 
   /** Stream a short agent message word-by-word, then seal it. */
   private async reply(name: string, agent: AgentId, text: string): Promise<void> {

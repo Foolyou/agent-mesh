@@ -2,7 +2,7 @@
 // src/mesh-validate.ts; the server re-validates and any error is shown inline.
 import { useState } from "react";
 import type { Store } from "./store";
-import type { HarnessId, AgentRole } from "../types";
+import type { HarnessId, AgentRole, MeshConfig } from "../types";
 import { Btn } from "./ui";
 
 interface AgentDraft {
@@ -32,12 +32,23 @@ function validate(name: string, agents: AgentDraft[], edges: [string, string][])
   return null;
 }
 
-export function MeshBuilder({ store, onClose }: { store: Store; onClose: (created?: string) => void }) {
-  const [name, setName] = useState("");
-  const [agents, setAgents] = useState<AgentDraft[]>([
-    { id: "router", harness: "claude", role: "router", project: "test_mesh_0" },
-  ]);
-  const [edges, setEdges] = useState<[string, string][]>([]);
+export function MeshBuilder({
+  store,
+  onClose,
+  initial,
+}: {
+  store: Store;
+  onClose: (created?: string) => void;
+  initial?: MeshConfig;
+}) {
+  const editing = !!initial;
+  const [name, setName] = useState(initial?.name ?? "");
+  const [agents, setAgents] = useState<AgentDraft[]>(
+    initial?.agents?.length
+      ? initial.agents.map((a) => ({ id: a.id, harness: a.harness, role: a.role, project: a.project }))
+      : [{ id: "router", harness: "claude", role: "router", project: "test_mesh_0" }],
+  );
+  const [edges, setEdges] = useState<[string, string][]>(initial ? initial.edges.map((e) => [e[0], e[1]]) : []);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -74,15 +85,22 @@ export function MeshBuilder({ store, onClose }: { store: Store; onClose: (create
     <div className="scrim" onClick={() => onClose()}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <div className="mhead">
-          <span style={{ flex: 1 }}>define mesh</span>
+          <span style={{ flex: 1 }}>{editing ? `edit mesh "${initial!.name}"` : "define mesh"}</span>
           <Btn small kind="ghost" onClick={() => onClose()}>
             ✕ esc
           </Btn>
         </div>
         <div className="mbody">
           <div className="field">
-            <label>mesh name</label>
-            <input className="inp" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. build-squad" autoFocus />
+            <label>mesh name{editing ? " (locked)" : ""}</label>
+            <input
+              className="inp"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="e.g. build-squad"
+              autoFocus={!editing}
+              readOnly={editing}
+            />
           </div>
 
           <div className="field">
@@ -152,7 +170,7 @@ export function MeshBuilder({ store, onClose }: { store: Store; onClose: (create
               cancel
             </Btn>
             <Btn kind="go" onClick={submit} disabled={busy}>
-              {busy ? "defining…" : "define mesh"}
+              {busy ? "saving…" : editing ? "save mesh" : "define mesh"}
             </Btn>
           </div>
         </div>

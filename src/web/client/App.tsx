@@ -40,6 +40,18 @@ export function App() {
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
   const [fullscreen, setFullscreen] = useState(false);
   const [newMeshOpen, setNewMeshOpen] = useState(false);
+  const [editInitial, setEditInitial] = useState<import("../types").MeshConfig | null>(null);
+
+  async function openEditor(name: string) {
+    try {
+      const res = await fetch(`/api/meshes/${encodeURIComponent(name)}/config`);
+      if (!res.ok) throw new Error("config unavailable");
+      setEditInitial(await res.json());
+      setNewMeshOpen(true);
+    } catch {
+      /* ignore — editor just won't open */
+    }
+  }
 
   // persist the selected mesh across reloads
   const setSelectedMesh = (n: string | null) => {
@@ -86,7 +98,10 @@ export function App() {
     onNext: () => cycle(1),
     onReload: () => void store.reload(),
     onToggleFull: () => selectedMesh && setFullscreen((f) => !f),
-    onNewMesh: () => setNewMeshOpen(true),
+    onNewMesh: () => {
+      setEditInitial(null);
+      setNewMeshOpen(true);
+    },
     onEsc: () => {
       if (newMeshOpen) setNewMeshOpen(false);
       else if (fullscreen) setFullscreen(false);
@@ -127,7 +142,7 @@ export function App() {
           <span className="kbd">↑↓</span> select <span className="kbd">f</span> full <span className="kbd">n</span> new{" "}
           <span className="kbd">r</span> reload <span className="kbd">1-9</span> permit <span className="kbd">esc</span> back
         </span>
-        <Btn onClick={() => setNewMeshOpen(true)}>+ new mesh</Btn>
+        <Btn onClick={() => { setEditInitial(null); setNewMeshOpen(true); }}>+ new mesh</Btn>
         <Btn kind="ghost" onClick={() => void store.reload()}>
           ↻ reload
         </Btn>
@@ -139,7 +154,7 @@ export function App() {
           store={store}
           selected={selectedMesh}
           onSelect={setSelectedMesh}
-          onNewMesh={() => setNewMeshOpen(true)}
+          onNewMesh={() => { setEditInitial(null); setNewMeshOpen(true); }}
         />
         <div className="detail">
           {selectedMesh ? (
@@ -152,6 +167,7 @@ export function App() {
               fullscreen={fullscreen}
               onToggleFull={() => setFullscreen((f) => !f)}
               onDeleted={() => setSelectedMesh(null)}
+              onEdit={() => void openEditor(selectedMesh)}
             />
           ) : (
             <div className="empty" style={{ margin: "auto", maxWidth: 460 }}>
@@ -165,8 +181,10 @@ export function App() {
       {newMeshOpen ? (
         <MeshBuilder
           store={store}
+          initial={editInitial ?? undefined}
           onClose={(created) => {
             setNewMeshOpen(false);
+            setEditInitial(null);
             if (created) setSelectedMesh(created);
           }}
         />

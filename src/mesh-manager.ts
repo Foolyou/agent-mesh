@@ -146,6 +146,13 @@ export class MeshManager {
     this.require(name).client?.setMode(agentId, modeId);
   }
 
+  /** Operator-initiated interrupt of an agent's current turn. */
+  interruptAgent(name: string, agentId: string): void {
+    const entry = this.require(name);
+    if (entry.status !== "running" || !entry.client) throw new Error(`mesh "${name}" is not running`);
+    entry.client.interrupt(agentId);
+  }
+
   pidOf(name: string): number | undefined {
     return this.entries.get(name)?.client?.pid;
   }
