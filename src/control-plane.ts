@@ -173,16 +173,27 @@ export class ControlPlane {
   }
 
   // ---- permission escalation ----
-  private static readonly MESH_TOOLS = ["send_mail", "check_mail", "interrupt", "mesh_status"];
+  private static readonly MESH_TOOLS = new Set(["send_mail", "check_mail", "interrupt", "mesh_status"]);
+
+  /**
+   * Is this permission request for one of OUR injected mesh tools? Match the
+   * canonical tool identifier exactly (bare name, or the `mcp__mesh__<tool>`
+   * namespaced form emitted by MCP clients for our server, which we named
+   * "mesh"). We deliberately do NOT substring-match or trust agent-supplied
+   * free-text (e.g. rawInput.name / a file path), so a member's real op that
+   * merely contains "interrupt" still escalates to a human.
+   */
+  private isMeshTool(toolName: string): boolean {
+    if (ControlPlane.MESH_TOOLS.has(toolName)) return true;
+    const m = toolName.match(/^mcp__mesh__(.+)$/);
+    return m ? ControlPlane.MESH_TOOLS.has(m[1]!) : false;
+  }
 
   private handlePermission(agentId: AgentId, req: any): Promise<PermissionDecision> {
     // Internal mesh-coordination tools are pre-authorized by mesh membership;
     // only external/dangerous operations escalate to a human.
-    const toolName = String(req.toolCall?.title ?? req.toolCall?.toolName ?? req.toolCall?.rawInput?.name ?? "");
-    const isMeshTool =
-      /mesh__|mesh_services/.test(toolName) ||
-      ControlPlane.MESH_TOOLS.some((n) => toolName.includes(n));
-    if (isMeshTool) {
+    const toolName = String(req.toolCall?.toolName ?? req.toolCall?.title ?? "");
+    if (this.isMeshTool(toolName)) {
       const allow = (req.options ?? []).find((o: any) => o.kind === "allow_once") ?? (req.options ?? [])[0];
       this.log(`auto-approved mesh tool: ${toolName || "(unknown)"} for ${agentId}`);
       return Promise.resolve(allow ? { optionId: allow.optionId } : "cancel");
