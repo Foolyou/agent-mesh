@@ -117,13 +117,40 @@ export class AcpAgentConnection {
     return res;
   }
 
-  /** Send a prompt turn. Resolves with the PromptResponse (stopReason) when the turn ends. */
-  prompt(text: string) {
+  private busy = false;
+  private queue: { text: string; resolve: (r: any) => void; reject: (e: any) => void }[] = [];
+
+  /**
+   * Send a prompt turn. Resolves with the PromptResponse (stopReason) when the
+   * turn ends. Prompts to one agent are serialized: if a turn is in flight
+   * (e.g. the agent was woken by mail while still working), the new prompt is
+   * queued rather than sent concurrently (ACP allows one prompt turn at a time).
+   */
+  prompt(text: string): Promise<any> {
     if (!this.sessionId) throw new Error(`${this.id}: no session`);
-    return this.conn!.prompt({
-      sessionId: this.sessionId,
-      prompt: [{ type: "text", text }],
+    return new Promise((resolve, reject) => {
+      this.queue.push({ text, resolve, reject });
+      void this.pump();
     });
+  }
+
+  private async pump(): Promise<void> {
+    if (this.busy) return;
+    const job = this.queue.shift();
+    if (!job) return;
+    this.busy = true;
+    try {
+      const res = await this.conn!.prompt({
+        sessionId: this.sessionId!,
+        prompt: [{ type: "text", text: job.text }],
+      });
+      job.resolve(res);
+    } catch (err) {
+      job.reject(err);
+    } finally {
+      this.busy = false;
+      void this.pump();
+    }
   }
 
   /** Switch the session's permission/approval mode (e.g. codex "read-only"). */

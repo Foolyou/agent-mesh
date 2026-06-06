@@ -4,6 +4,9 @@
   "type": "module",
   "private": true,
   "scripts": {
+    "mesh": "bun run src/main.ts",
+    "e2e": "bun run src/e2e.ts",
+    "test": "bun test",
     "start": "bun run src/pty-room.ts",
     "demo": "bun run src/pty-room.ts --agent-name MockAgent --role \"Prototype Agent\" --task \"Inspect the Agent Room PTY prototype idea and report staged progress through the mailbox.\" --auto-exit",
     "demo:codex:two-step": "bun run src/codex-two-step-test.ts",

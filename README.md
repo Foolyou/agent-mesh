@@ -1,67 +1,83 @@
 # Agent Mesh
 
-PTY-first prototype for Agent Room / Agent Mesh.
+A PoC **Agent Mesh Controller**: one global control plane orchestrates a mesh of
+heterogeneous coding agents that connect over the **Agent Client Protocol (ACP)**.
 
-The prototype starts an agent CLI inside a real pseudo-terminal through the
-system `script` command, sends it a work packet, and asks the agent to write
-structured status updates to a mailbox file. Terminal output is still captured
-for observation, but mailbox events are treated as the reliable coordination
-channel.
+> The earlier PTY-based prototype (`src/pty-*.ts`, `src/codex-*-test.ts`,
+> `src/mock-agent.ts`, `src/work-packet.ts`) is retained as history but is no
+> longer used — PTY proved too unstable and was replaced by ACP.
 
-## Demo
+## Architecture
+
+```
+   Human ⇄ TUI ⇄ Control Plane (single global process)
+                  ├─ ACP Client        — sole "muscle": one connection per agent
+                  ├─ Orchestrator      — deterministic (no master agent yet)
+                  ├─ Mesh Services MCP — HTTP MCP server injected into every agent
+                  └─ Mailbox (NDJSON) + event bus
+                         │ ACP over stdio (one client, all agents)
+                   Mesh "demo"
+                   ├─ router      (claude)   — gateway: talks to user/other meshes, coordinates
+                   ├─ codex-1     (codex)    — member
+                   └─ opencode-1  (opencode) — member
+```
+
+- **Single global control plane** = a deterministic orchestrator + the *only*
+  ACP client. It spawns and drives every agent in every mesh.
+- **Every agent is a homogeneous ACP agent.** "Router" is just a member agent
+  *designated* as the mesh's gateway. Per the three-layer composition
+  **Project × Harness × Instance**, each agent is `(cwd, harness, ACP session)`.
+- **Agents get mesh tools via an injected HTTP MCP server** (`mcpServers` at
+  `session/new`): `send_mail`, `check_mail`, and — Router-only — `interrupt`,
+  `mesh_status`.
+- **Inter-agent messaging is async mailbox only** (no peer interrupts). Only the
+  Router may `interrupt` a member → the control plane issues `session/cancel`.
+- **Permission requests** (`session/request_permission`) escalate to a human via
+  the TUI; internal mesh-tool calls are pre-authorized.
+
+Harnesses (all real ACP agents): `codex` → `codex-acp`, `opencode` →
+`opencode acp`, `claude` → `claude-agent-acp`.
+
+## Run
 
 ```bash
 bun install
-bun run demo
 ```
 
-Requires the util-linux `script` command, which is normally available on Linux.
+Agents run in `test_mesh_0/` and use your existing local logins (codex via
+ChatGPT, opencode via its provider, claude via the Claude Agent SDK).
 
-The demo runs a mock agent and writes mailbox events to:
-
-```text
-.mesh/mailbox.ndjson
-```
-
-Watch mailbox events:
+**Interactive TUI** — boot the demo mesh and watch it live:
 
 ```bash
-bun run mailbox:tail
+bun run mesh
 ```
 
-Run a real CLI agent through the PTY runner:
+Keys: `Tab` switch agent · `1`-`9` decide a pending permission · `d` run a live
+demo (mail + a permission you approve) · `q` quit.
+
+**Headless end-to-end verification** of all 6 PoC points:
 
 ```bash
-bun run start -- --agent "claude" --agent-name ClaudePTY --role "Reviewer Agent" --task "Review the current repo and report findings through the mailbox."
+bun run e2e
 ```
 
-Run the two-step Codex continuation test:
+**Unit tests:**
 
 ```bash
-bun run demo:codex:two-step
+bun test
 ```
 
-This keeps a single interactive Codex PTY session alive, sends part 1, waits for
-a mailbox `result`, inspects the artifact on the host side, and then sends part
-2 into the same PTY session.
+## The 6 PoC verification points
 
-Run a three-step product workflow with real Codex:
+1. Control plane spawns + manages ≥2 heterogeneous ACP agents with live event streams.
+2. A hardwired mesh: a Router (gateway) + members, with an interaction graph.
+3. Inter-agent mailbox: agent A `send_mail` → B, B is woken and processes it.
+4. A member's permission request escalates to a human decision, then the op runs.
+5. Router `interrupt` → control-plane `session/cancel` on a member.
+6. The TUI renders 1–5 live.
 
-```bash
-bun run demo:codex:calculator
-```
+## Design docs
 
-This asks Codex to build a static calculator, waits for a mailbox result and
-host-side checks, then asks the same PTY session to add dark mode, and finally
-asks it to add unit conversion. Codex receives only one stage at a time; the
-host-side orchestrator withholds the next prompt until the previous stage has
-sent a mailbox `result` and passed verification.
-
-The runner injects instructions that tell the agent to send stage/result events
-with:
-
-```bash
-bun run src/mailbox-send.ts --from "ClaudePTY" --type stage --phase planning <<'AGENT_ROOM_BODY'
-message body
-AGENT_ROOM_BODY
-```
+- Spec: `docs/superpowers/specs/2026-06-06-agent-mesh-poc-design.md`
+- Plan: `docs/superpowers/plans/2026-06-06-agent-mesh-poc.md`
