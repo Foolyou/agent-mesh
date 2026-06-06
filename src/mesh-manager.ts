@@ -87,6 +87,9 @@ export class MeshManager {
           entry.status = "dead";
           this.emit(name, { kind: "log", text: `mesh "${name}" host exited`, ts: now() });
         }
+        // Reap the dead client's listening server + socket file (no leaked listeners).
+        void client.stop().catch(() => {});
+        if (entry.client === client) entry.client = undefined;
       },
     });
     entry.client = client;

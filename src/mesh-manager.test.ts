@@ -54,6 +54,21 @@ test("startMesh twice errors", async () => {
   await expect(mgr.startMesh("echo")).rejects.toThrow(/already running/i);
 });
 
+test("a crashed mesh host is reaped: status dead, socket file removed, restartable", async () => {
+  const CRASH = join(import.meta.dir, "fixtures", "crash-host.ts");
+  const crashMgr = new MeshManager({ meshesDir: join(dir, "meshes2"), runDir: join(dir, "run2"), hostScript: CRASH });
+  await crashMgr.defineMesh(cfg);
+  await crashMgr.startMesh("echo");           // resolves on ready
+  // wait for the self-exit to be observed
+  await Bun.sleep(400);
+  expect(crashMgr.listMeshes()[0]!.status).toBe("dead");
+  // socket file should be gone
+  const sock = join(dir, "run2", "echo.sock");
+  const { existsSync } = await import("node:fs");
+  expect(existsSync(sock)).toBe(false);
+  await crashMgr.stopAll();
+});
+
 test("startMesh resets status to stopped when the host fails to start", async () => {
   await mgr.defineMesh(cfg);
   // point at a nonexistent host script so the child exits before ready
