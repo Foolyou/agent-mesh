@@ -39,3 +39,17 @@ test("start resolves on ready; prompt relays an event; stop reaps the process", 
   // process is gone -> signalling it throws ESRCH
   expect(() => process.kill(pid, 0)).toThrow();
 });
+
+test(
+  "start() rejects if the host process exits before ready",
+  async () => {
+    const client = new MeshHostClient({
+      name: "bad",
+      config: cfg,
+      socketPath: join(dir, "bad.sock"),
+      hostScript: join(dir, "does-not-exist.ts"),
+    });
+    await expect(client.start()).rejects.toThrow(/before ready|exited/i);
+  },
+  5000, // timeout: fail fast, not hang
+);

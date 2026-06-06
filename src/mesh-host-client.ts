@@ -2,8 +2,8 @@
 // Parent-side handle for one mesh subprocess: owns the listening Unix socket,
 // spawns the mesh-host, parses its event stream, and exposes typed commands.
 import net from "node:net";
-import { resolve } from "node:path";
-import { rm } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
+import { mkdir, rm } from "node:fs/promises";
 import { killTree } from "./acp/client";
 import { LineBuffer, encodeFrame, type ChildMsg, type ParentMsg } from "./protocol";
 import type { MeshConfig, MeshEvent } from "./acp/types";
@@ -23,8 +23,10 @@ export class MeshHostClient {
   private conn?: net.Socket;
   private child?: ReturnType<typeof Bun.spawn>;
   private readyResolve?: () => void;
+  private readyReject?: (err: Error) => void;
   private stoppedResolve?: () => void;
   private exited = false;
+  private stopping = false;
 
   constructor(private opts: MeshHostClientOptions) {}
 
@@ -32,9 +34,14 @@ export class MeshHostClient {
 
   async start(): Promise<void> {
     await rm(this.opts.socketPath, { force: true });
-    const ready = new Promise<void>((res) => { this.readyResolve = res; });
+    const ready = new Promise<void>((res, rej) => {
+      this.readyResolve = res;
+      this.readyReject = rej;
+    });
 
+    await mkdir(dirname(this.opts.socketPath), { recursive: true });
     this.server = net.createServer((sock) => this.attach(sock));
+    this.server.on("error", (err) => this.readyReject?.(err instanceof Error ? err : new Error(String(err))));
     await new Promise<void>((res) => this.server!.listen(this.opts.socketPath, res));
 
     const script = this.opts.hostScript ?? resolve(import.meta.dir, "mesh-host.ts");
@@ -54,7 +61,10 @@ export class MeshHostClient {
       this.opts.onExit?.(code);
     });
 
-    await ready;
+    const exitedFirst = this.child.exited.then((code) => {
+      throw new Error(`mesh-host "${this.opts.name}" exited (code ${code}) before ready`);
+    });
+    await Promise.race([ready, exitedFirst]);
   }
 
   private attach(sock: net.Socket): void {
@@ -81,6 +91,8 @@ export class MeshHostClient {
   setMode(target: string, modeId: string): void { this.send({ t: "setMode", target, modeId }); }
 
   async stop(timeoutMs = 5000): Promise<void> {
+    if (this.stopping || this.exited) return;
+    this.stopping = true;
     if (!this.exited && this.conn) {
       const stopped = new Promise<void>((res) => { this.stoppedResolve = res; });
       this.send({ t: "stop" });
