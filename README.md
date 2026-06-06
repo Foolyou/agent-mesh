@@ -17,7 +17,7 @@ agent and individual mesh Routers.
                │                                                  │
         MeshManager  ←→  optional MasterAgent (claude ACP)       │
            │   │              └─ mesh-control MCP server         │
-           │   │                   (create/start/stop/list_mesh) │
+           │   │                 (create/start/stop/list_meshes) │
            │   │                                                  │
            │  [Unix socket .mesh/run/<name>.sock — NDJSON]       │
            │                                                      │
@@ -35,7 +35,7 @@ agent and individual mesh Routers.
 
 **Parent process** owns `MeshManager` (deterministic lifecycle: validate, persist,
 spawn, supervise, aggregate events), an optional `MasterAgent` (a claude ACP agent
-with `create_mesh` / `start_mesh` / `stop_mesh` / `list_mesh` MCP tools), and the
+with `create_mesh` / `start_mesh` / `stop_mesh` / `list_meshes` MCP tools), and the
 interactive TUI.
 
 **Each running mesh** lives in its own `mesh-host` subprocess (`src/mesh-host.ts`)
@@ -74,7 +74,7 @@ bun run mesh
 ```
 
 **Top context** (default): type an instruction and press Enter to send it to the
-master agent (it has `create_mesh` / `start_mesh` / `stop_mesh` / `list_mesh`
+master agent (it has `create_mesh` / `start_mesh` / `stop_mesh` / `list_meshes`
 tools). `Tab` cycles through the mesh list; type `/enter` and press Enter to open
 the selected mesh's Router chat.
 
