@@ -1,6 +1,6 @@
 {
   "compilerOptions": {
-    "lib": ["ESNext"],
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
     "module": "ESNext",
     "target": "ESNext",
     "moduleResolution": "bundler",
@@ -9,11 +9,13 @@
     "verbatimModuleSyntax": true,
     "noEmit": true,
 
+    "jsx": "react-jsx",
+
     "strict": true,
     "skipLibCheck": true,
     "noFallthroughCasesInSwitch": true,
 
     "types": ["bun"]
   },
-  "include": ["src/**/*.ts"]
+  "include": ["src/**/*.ts", "src/**/*.tsx"]
 }

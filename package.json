@@ -5,6 +5,7 @@
   "private": true,
   "scripts": {
     "mesh": "bun run src/main.ts",
+    "web": "bun run src/main.ts",
     "e2e": "bun run src/e2e.ts",
     "test": "bun test",
     "start": "bun run src/pty-room.ts",
@@ -17,10 +18,15 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "@zed-industries/agent-client-protocol": "^0.4.5"
+    "@zed-industries/agent-client-protocol": "^0.4.5",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7"
   },
   "devDependencies": {
     "@types/bun": "^1.3.14",
-    "@types/node": "^20.14.10"
+    "@types/node": "^20.14.10",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "playwright": "^1.60.0"
   }
 }
