@@ -64,6 +64,7 @@ export class MeshHostClient {
     const exitedFirst = this.child.exited.then((code) => {
       throw new Error(`mesh-host "${this.opts.name}" exited (code ${code}) before ready`);
     });
+    void exitedFirst.catch(() => {});
     await Promise.race([ready, exitedFirst]);
   }
 
@@ -91,7 +92,7 @@ export class MeshHostClient {
   setMode(target: string, modeId: string): void { this.send({ t: "setMode", target, modeId }); }
 
   async stop(timeoutMs = 5000): Promise<void> {
-    if (this.stopping || this.exited) return;
+    if (this.stopping) return;
     this.stopping = true;
     if (!this.exited && this.conn) {
       const stopped = new Promise<void>((res) => { this.stoppedResolve = res; });
