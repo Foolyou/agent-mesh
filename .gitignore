@@ -1,0 +1,6 @@
+node_modules/
+.mesh/
+test_mesh_0/
+.claude/
+.codex/
+openspec/

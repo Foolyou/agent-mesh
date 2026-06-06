@@ -1,0 +1,21 @@
+{
+  "name": "agent-mesh",
+  "version": "0.0.1",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "bun run src/pty-room.ts",
+    "demo": "bun run src/pty-room.ts --agent-name MockAgent --role \"Prototype Agent\" --task \"Inspect the Agent Room PTY prototype idea and report staged progress through the mailbox.\" --auto-exit",
+    "demo:codex:two-step": "bun run src/codex-two-step-test.ts",
+    "demo:codex:calculator": "bun run src/codex-calculator-workflow-test.ts",
+    "mock:agent": "bun run src/mock-agent.ts",
+    "mailbox:tail": "bun run src/mailbox-tail.ts --follow",
+    "mailbox:send": "bun run src/mailbox-send.ts"
+  },
+  "dependencies": {
+    "@zed-industries/agent-client-protocol": "^0.4.5"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.10"
+  }
+}
