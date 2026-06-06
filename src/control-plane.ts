@@ -64,6 +64,11 @@ export class ControlPlane {
     return this.agent(id).prompt(text);
   }
 
+  /** Switch an agent's permission/approval mode (delegates to its connection). */
+  setMode(id: AgentId, modeId: string): Promise<void> {
+    return this.agent(id).setMode(modeId);
+  }
+
   get mcpServer(): MeshServicesServer {
     if (!this.mcp) throw new Error("control plane not started");
     return this.mcp;
