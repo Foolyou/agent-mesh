@@ -100,7 +100,7 @@ export async function createMeshControlServer(opts: {
 
   return {
     get url() { return `http://${host}:${httpServer.port}/mcp`; },
-    get port() { return httpServer.port; },
+    get port() { return httpServer.port!; },
     close: () => httpServer.stop(true),
   };
 }

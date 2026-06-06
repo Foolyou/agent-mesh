@@ -109,7 +109,7 @@ export function createMeshServicesServer(opts: {
     register,
     urlFor: (agentId) => `http://${host}:${httpServer.port}/${encodeURIComponent(agentId)}/mcp`,
     get port() {
-      return httpServer.port;
+      return httpServer.port!;
     },
     close: () => httpServer.stop(true),
   };
