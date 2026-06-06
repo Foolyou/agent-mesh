@@ -10,11 +10,18 @@ import type { MeshManager } from "./mesh-manager";
 export class MasterAgent {
   private conn?: AcpAgentConnection;
   private mcp?: MeshControlServer;
+  private listeners = new Set<(u: any) => void>();
 
   constructor(
     private manager: MeshManager,
     private opts: { project?: string; onUpdate?: (u: any) => void; debug?: boolean } = {},
   ) {}
+
+  /** Subscribe to the master agent's streamed session updates. */
+  on(listener: (u: any) => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
 
   async start(): Promise<void> {
     this.mcp = await createMeshControlServer({ handlers: createMeshControlHandlers(this.manager) });
@@ -27,7 +34,10 @@ export class MasterAgent {
         args: spec.args,
         cwd,
         debug: this.opts.debug ?? false,
-        onUpdate: (u) => this.opts.onUpdate?.(u),
+        onUpdate: (u) => {
+          this.opts.onUpdate?.(u);
+          for (const l of this.listeners) l(u);
+        },
       });
       await this.conn.start();
       await this.conn.initialize();

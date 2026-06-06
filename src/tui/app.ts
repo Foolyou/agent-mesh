@@ -28,7 +28,9 @@ export class Tui {
   private dirty = true;
   private renderTimer?: ReturnType<typeof setInterval>;
   private unsubscribe?: () => void;
+  private masterUnsub?: () => void;
   private origConsole?: { log: any; error: any; warn: any };
+  private keyHandler = (d: string) => this.onKey(d);
 
   constructor(private manager: MeshManager, private master?: MasterAgent) {}
 
@@ -37,13 +39,14 @@ export class Tui {
     console.log = () => {}; console.error = () => {}; console.warn = () => {};
 
     this.unsubscribe = this.manager.on((name, e) => this.ingest(name, e));
+    if (this.master) this.masterUnsub = this.master.on((u) => this.ingestMaster(u));
 
     process.stdout.write("\x1b[?1049h\x1b[?25l");
     if (process.stdin.isTTY) {
       process.stdin.setRawMode(true);
       process.stdin.resume();
       process.stdin.setEncoding("utf8");
-      process.stdin.on("data", (d: string) => this.onKey(d));
+      process.stdin.on("data", this.keyHandler);
     }
     this.renderTimer = setInterval(() => { if (this.dirty) { this.dirty = false; this.render(); } }, 100);
     this.render();
@@ -52,7 +55,11 @@ export class Tui {
   stop(): void {
     this.renderTimer && clearInterval(this.renderTimer);
     this.unsubscribe?.();
-    if (process.stdin.isTTY) process.stdin.setRawMode(false);
+    this.masterUnsub?.();
+    if (process.stdin.isTTY) {
+      process.stdin.off("data", this.keyHandler);
+      process.stdin.setRawMode(false);
+    }
     process.stdout.write("\x1b[?25h\x1b[?1049l");
     if (this.origConsole) { console.log = this.origConsole.log; console.error = this.origConsole.error; console.warn = this.origConsole.warn; }
   }
@@ -90,6 +97,15 @@ export class Tui {
       this.activity.push(`[${name}] ${e.text}`);
     }
     if (this.activity.length > 200) this.activity.shift();
+  }
+
+  private ingestMaster(update: any): void {
+    const k = update?.sessionUpdate;
+    if (k === "agent_message_chunk" || k === "agent_thought_chunk" || k === "tool_call" || k === "tool_call_update") {
+      this.masterLog.push(`${C.dim}master:${C.reset} ${this.summarize(update)}`);
+      if (this.masterLog.length > 200) this.masterLog.shift();
+      this.dirty = true;
+    }
   }
 
   private onKey(d: string): void {
@@ -146,6 +162,7 @@ export class Tui {
   private sendToMaster(text: string): void {
     if (!this.master) { this.masterLog.push(`${C.yellow}(no master agent configured)${C.reset}`); return; }
     this.masterLog.push(`${C.bold}you:${C.reset} ${text}`);
+    if (this.masterLog.length > 200) this.masterLog.shift();
     this.master.prompt(text).catch((e) => this.masterLog.push(`${C.red}master error: ${String(e)}${C.reset}`));
   }
 
@@ -218,7 +235,11 @@ export class Tui {
 
     out.push("");
     out.push(`${C.bold}> ${C.reset}${this.editor.value}${C.dim}▌${C.reset}`);
-    out.push(`${C.dim}keys: digits decide permission · Ctrl-C quit${C.reset}`);
+    if (this.context === "top") {
+      out.push(`${C.dim}keys: Tab select mesh · Ctrl-R reload · /enter open mesh · digits decide perm · Ctrl-C quit${C.reset}`);
+    } else {
+      out.push(`${C.dim}keys: Esc back · Ctrl-F fullscreen · digits decide perm · Ctrl-C quit${C.reset}`);
+    }
 
     process.stdout.write(out.join("\n"));
   }
