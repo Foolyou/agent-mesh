@@ -56,6 +56,11 @@ export async function handleApi(
         return ok();
       }
       const name = p[1] ?? "";
+      // DELETE /api/meshes/:name
+      if (method === "DELETE" && p.length === 2) {
+        await gw.deleteMesh(name);
+        return ok();
+      }
       // GET /api/meshes/:name/config
       if (method === "GET" && p.length === 3 && p[2] === "config") return ok(gw.configOf(name));
       // POST /api/meshes/:name/(start|stop|prompt)

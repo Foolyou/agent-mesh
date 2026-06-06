@@ -47,7 +47,11 @@ try {
   await waitReady();
   const page: Page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   const errors: string[] = [];
-  page.on("console", (m) => m.type() === "error" && errors.push(m.text()));
+  // ignore HTTP-status resource logs (e.g. the deliberate 400 in the toast test —
+  // the app surfaces those as toasts); keep genuine JS/React errors.
+  page.on("console", (m) => {
+    if (m.type() === "error" && !/Failed to load resource/.test(m.text())) errors.push(m.text());
+  });
   page.on("pageerror", (e) => errors.push(String(e)));
 
   await page.goto(BASE, { waitUntil: "domcontentloaded" });
@@ -90,6 +94,15 @@ try {
     if (count > 3) throw new Error(`too many message bubbles (${count}) — chunks not coalesced`);
   });
 
+  await step("router shows a plan checklist", async () => {
+    await page.waitForSelector('.panel:has(.head:has-text("router chat")) .plan .plan-row', { timeout: 9000 });
+  });
+
+  await step("messages show timestamps", async () => {
+    const t = await page.locator(".msg .who .t").first().textContent();
+    if (!/\d\d:\d\d:\d\d/.test(t ?? "")) throw new Error(`no timestamp (got "${t}")`);
+  });
+
   await step("thought block present and expandable", async () => {
     const label = page.locator(".thought .label").first();
     await label.waitFor({ timeout: 8000 });
@@ -104,9 +117,16 @@ try {
     // exactly one tool card for the single tool call (merged, not one-per-update)
     const cards = await page.locator(".tool").count();
     if (cards < 1) throw new Error("no tool card");
-    // expand output
+    // expand output → shows tool input + output detail
     await page.locator(".tool .thead").first().click();
     await page.waitForSelector(".tool .tout", { timeout: 4000 });
+    await page.waitForSelector('.tool .tdetail .tlabel:has-text("input")', { timeout: 4000 });
+  });
+
+  await step("failed command surfaces an error toast", async () => {
+    // starting an already-running mesh fails → toast (drives the store directly)
+    await page.evaluate(() => (window as any).__meshStore.startMesh("demo").catch(() => {}));
+    await page.waitForSelector(".toast.error", { timeout: 4000 });
   });
 
   await step("mailbox shows inter-agent mail", async () => {
@@ -166,6 +186,13 @@ try {
     // and it auto-opens its console (regression: post-snapshot mesh had no perMesh)
     await page.waitForSelector('.detail-head:has-text("squad-x")', { timeout: 4000 });
     await page.waitForSelector('.panel:has(.head:has-text("topology")) .node', { timeout: 4000 });
+  });
+
+  await step("delete a stopped mesh (two-click confirm) removes it", async () => {
+    // squad-x is selected + stopped → its header shows a delete button
+    await page.locator('.detail-head .btn:has-text("delete")').click();
+    await page.locator('.detail-head .btn:has-text("delete?")').click();
+    await page.waitForSelector('.mrow:has-text("squad-x")', { state: "detached", timeout: 5000 });
   });
 
   await page.screenshot({ path: `${SHOTS}/04-final.png`, fullPage: true });

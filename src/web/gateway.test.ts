@@ -14,6 +14,7 @@ const CFG: MeshConfig = {
 function fakeManager() {
   let listener: ((n: string, e: MeshEvent) => void) | null = null;
   const calls: any[] = [];
+  let alive = true;
   return {
     calls,
     emit(n: string, e: MeshEvent) {
@@ -26,7 +27,7 @@ function fakeManager() {
       };
     },
     listMeshes() {
-      return [{ name: "demo", defined: true, status: "running" as const }];
+      return alive ? [{ name: "demo", defined: true, status: "running" as const }] : [];
     },
     configOf() {
       return CFG;
@@ -54,6 +55,10 @@ function fakeManager() {
     },
     async defineMesh(c: MeshConfig) {
       calls.push(["define", c.name]);
+    },
+    async deleteMesh(n: string) {
+      calls.push(["delete", n]);
+      alive = false;
     },
     async loadDefinitions() {
       calls.push(["reload"]);
@@ -161,4 +166,14 @@ test("promptMaster throws when no master is configured", () => {
   const gw = new WebGateway(m as any);
   expect(gw.snapshot().master.status).toBe("absent");
   expect(gw.promptMaster("hi")).rejects.toThrow();
+});
+
+test("deleteMesh delegates and prunes perMesh state", async () => {
+  const m = fakeManager();
+  const gw = new WebGateway(m as any);
+  m.emit("demo", { kind: "log", text: "hi", ts: "T" }); // seed perMesh
+  expect(gw.snapshot().perMesh.demo).toBeDefined();
+  await gw.deleteMesh("demo");
+  expect(m.calls).toContainEqual(["delete", "demo"]);
+  expect(gw.snapshot().perMesh.demo).toBeUndefined();
 });

@@ -33,6 +33,26 @@ function outputOf(content: any, rawOutput: any): string {
   return s;
 }
 
+/** Pretty-print a tool's raw input parameters. */
+function inputOf(rawInput: any): string | undefined {
+  if (rawInput == null) return undefined;
+  try {
+    const s = typeof rawInput === "string" ? rawInput : JSON.stringify(rawInput, null, 2);
+    return s || undefined;
+  } catch {
+    return String(rawInput);
+  }
+}
+
+/** Affected file locations as "path" / "path:line" strings. */
+function locationsOf(locations: any): string[] | undefined {
+  if (!Array.isArray(locations) || !locations.length) return undefined;
+  const out = locations
+    .map((l: any) => (l?.path ? `${l.path}${l.line != null ? `:${l.line}` : ""}` : ""))
+    .filter(Boolean);
+  return out.length ? out : undefined;
+}
+
 export function reduceTranscript(
   items: TranscriptItem[],
   update: any,
@@ -88,7 +108,9 @@ export function reduceTranscript(
       title: update.title ?? "tool",
       toolKind: update.kind,
       status: update.status ?? "pending",
+      input: inputOf(update.rawInput),
       output: outputOf(update.content, update.rawOutput) || undefined,
+      locations: locationsOf(update.locations),
       ts: now,
       updatedTs: now,
     };
@@ -104,6 +126,10 @@ export function reduceTranscript(
     if (update.status != null) patch.status = update.status;
     if (update.title != null) patch.title = update.title;
     if (update.kind != null) patch.toolKind = update.kind;
+    const inp = inputOf(update.rawInput);
+    if (inp) patch.input = inp;
+    const locs = locationsOf(update.locations);
+    if (locs) patch.locations = locs;
     const out = outputOf(update.content, update.rawOutput);
     if (out) {
       const prev = idx >= 0 ? ((next[idx] as any).output as string | undefined) : undefined;
@@ -127,6 +153,28 @@ export function reduceTranscript(
         ts: now,
         updatedTs: now,
       };
+      next = [...next, item];
+      ops.push({ op: "upsert", item });
+    }
+    return { items: next, ops };
+  }
+
+  // Plan updates replace the whole plan each time. Keep a single, in-place plan card
+  // (stable id) so it updates rather than stacking.
+  if (k === "plan") {
+    const entries = (Array.isArray(update.entries) ? update.entries : []).map((e: any) => ({
+      content: String(e?.content ?? ""),
+      status: String(e?.status ?? "pending"),
+      priority: e?.priority,
+    }));
+    const idx = next.findIndex((it) => it.kind === "plan");
+    if (idx >= 0) {
+      const merged = { ...(next[idx] as any), entries, updatedTs: now } as TranscriptItem;
+      const id = next[idx].id;
+      next = [...next.slice(0, idx), merged, ...next.slice(idx + 1)];
+      ops.push({ op: "patch", id, patch: { entries, updatedTs: now } as Partial<TranscriptItem> });
+    } else {
+      const item: TranscriptItem = { id: "plan", kind: "plan", entries, ts: now, updatedTs: now };
       next = [...next, item];
       ops.push({ op: "upsert", item });
     }

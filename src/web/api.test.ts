@@ -49,6 +49,9 @@ function fakeManager() {
     async defineMesh(c: MeshConfig) {
       calls.push(["define", c.name]);
     },
+    async deleteMesh(n: string) {
+      calls.push(["delete", n]);
+    },
     async loadDefinitions() {
       calls.push(["reload"]);
     },
@@ -130,6 +133,14 @@ test("POST /api/meshes with an invalid config returns 400", async () => {
   expect(r.status).toBe(400);
   expect(r.body.error.message).toBeTruthy();
   expect(m.calls.some((c) => c[0] === "define")).toBe(false);
+});
+
+test("DELETE /api/meshes/demo delegates to deleteMesh", async () => {
+  const m = fakeManager();
+  const gw = new WebGateway(m as any);
+  const r = await handleApi(gw, "DELETE", "/api/meshes/demo", undefined);
+  expect(r.status).toBe(200);
+  expect(m.calls).toContainEqual(["delete", "demo"]);
 });
 
 test("unknown route returns 404", async () => {

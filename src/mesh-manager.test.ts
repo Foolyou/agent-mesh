@@ -30,6 +30,19 @@ test("defineMesh rejects an invalid topology", async () => {
   await expect(mgr.defineMesh({ ...cfg, agents: [] })).rejects.toThrow(/at least one/i);
 });
 
+test("deleteMesh forgets a stopped mesh", async () => {
+  await mgr.defineMesh(cfg);
+  await mgr.deleteMesh("echo");
+  expect(mgr.listMeshes()).toEqual([]);
+});
+
+test("deleteMesh refuses while running", async () => {
+  await mgr.defineMesh(cfg);
+  await mgr.startMesh("echo");
+  await expect(mgr.deleteMesh("echo")).rejects.toThrow(/running/i);
+  expect(mgr.listMeshes()[0]!.status).toBe("running");
+});
+
 test("start -> running -> promptRouter relays events -> stop -> stopped, no orphan", async () => {
   await mgr.defineMesh(cfg);
   const events: { name: string; e: MeshEvent }[] = [];

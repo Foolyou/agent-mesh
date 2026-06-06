@@ -78,6 +78,40 @@ test("__turn_end__ closes open message and emits a patch", () => {
   expect(ended.ops.some((o) => o.op === "patch")).toBe(true);
 });
 
+test("tool_call captures rawInput and locations", () => {
+  const items = fold([
+    {
+      sessionUpdate: "tool_call",
+      toolCallId: "tc1",
+      title: "Edit file",
+      kind: "edit",
+      status: "pending",
+      rawInput: { path: "a.ts", content: "x" },
+      locations: [{ path: "a.ts", line: 3 }],
+    },
+  ]);
+  const it = items[0] as any;
+  expect(it.input).toContain("a.ts");
+  expect(it.locations).toEqual(["a.ts:3"]);
+});
+
+test("plan update creates one plan item and replaces it in place", () => {
+  let items = fold([
+    { sessionUpdate: "plan", entries: [{ content: "impl", status: "pending" }] },
+  ]);
+  expect(items).toHaveLength(1);
+  expect(items[0]).toMatchObject({ kind: "plan" });
+  expect((items[0] as any).entries).toHaveLength(1);
+  // a second plan update replaces (not appends)
+  items = fold([
+    { sessionUpdate: "plan", entries: [{ content: "impl", status: "pending" }] },
+    { sessionUpdate: "plan", entries: [{ content: "impl", status: "completed" }, { content: "review", status: "pending" }] },
+  ]);
+  expect(items.filter((i) => i.kind === "plan")).toHaveLength(1);
+  expect((items[0] as any).entries).toHaveLength(2);
+  expect((items[0] as any).entries[0].status).toBe("completed");
+});
+
 test("unknown update kinds are ignored (no items, no ops)", () => {
   const r = reduceTranscript([], { sessionUpdate: "available_commands_update", availableCommands: [] }, T);
   expect(r.items).toHaveLength(0);

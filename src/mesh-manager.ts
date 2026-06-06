@@ -63,6 +63,16 @@ export class MeshManager {
     this.entries.set(config.name, { config, status: "stopped" });
   }
 
+  /** Delete a mesh definition (and forget it). Refuses while running/starting. */
+  async deleteMesh(name: string): Promise<void> {
+    const e = this.entries.get(name);
+    if (e && (e.status === "running" || e.status === "starting")) {
+      throw new Error(`mesh "${name}" is running; stop it before deleting`);
+    }
+    await this.store.delete(name);
+    this.entries.delete(name);
+  }
+
   private require(name: string): Entry {
     const e = this.entries.get(name);
     if (!e) throw new Error(`no such mesh "${name}"`);

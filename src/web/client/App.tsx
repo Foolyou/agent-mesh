@@ -1,33 +1,70 @@
 // Top-level composition: owns UI state (selected mesh/agent, fullscreen, modal),
 // wires the store + keyboard shortcuts, and lays out the TTY-style console shell.
 import { useEffect, useRef, useState } from "react";
-import { createStore, useStore, useConnected, type Store } from "./store";
+import { createStore, useStore, useConnected, useToasts, type Store } from "./store";
 import { Sidebar } from "./Sidebar";
 import { MeshDetail } from "./MeshDetail";
 import { MeshBuilder } from "./MeshBuilder";
 import { useKeyboard } from "./useKeyboard";
 import { Dot, Btn } from "./ui";
 
+const SEL_KEY = "mesh.selected";
+
+function Toaster({ store }: { store: Store }) {
+  const toasts = useToasts(store);
+  if (!toasts.length) return null;
+  return (
+    <div className="toaster">
+      {toasts.map((t) => (
+        <div key={t.id} className={`toast ${t.kind}`} onClick={() => store.dismissToast(t.id)}>
+          {t.text}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function App() {
   const storeRef = useRef<Store | null>(null);
-  if (!storeRef.current) storeRef.current = createStore();
+  if (!storeRef.current) {
+    storeRef.current = createStore();
+    // expose for debugging + browser e2e
+    if (typeof window !== "undefined") (window as any).__meshStore = storeRef.current;
+  }
   const store = storeRef.current;
 
   const state = useStore(store);
   const connected = useConnected(store);
 
-  const [selectedMesh, setSelectedMesh] = useState<string | null>(null);
+  const [selectedMesh, setSelectedMeshRaw] = useState<string | null>(null);
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
   const [fullscreen, setFullscreen] = useState(false);
   const [newMeshOpen, setNewMeshOpen] = useState(false);
 
-  // auto-select the first mesh once, on first load (Esc can still deselect after)
+  // persist the selected mesh across reloads
+  const setSelectedMesh = (n: string | null) => {
+    setSelectedMeshRaw(n);
+    try {
+      if (n) localStorage.setItem(SEL_KEY, n);
+      else localStorage.removeItem(SEL_KEY);
+    } catch {
+      /* storage unavailable */
+    }
+  };
+
+  // restore the persisted selection (or the first mesh) once meshes arrive
   const autoSel = useRef(false);
   useEffect(() => {
-    if (!autoSel.current && !selectedMesh && state.meshes.length) {
-      autoSel.current = true;
-      setSelectedMesh(state.meshes[0].name);
+    if (autoSel.current || selectedMesh || !state.meshes.length) return;
+    autoSel.current = true;
+    let stored: string | null = null;
+    try {
+      stored = localStorage.getItem(SEL_KEY);
+    } catch {
+      /* storage unavailable */
     }
+    const pick = stored && state.meshes.some((m) => m.name === stored) ? stored : state.meshes[0].name;
+    setSelectedMeshRaw(pick);
   }, [state.meshes, selectedMesh]);
 
   // reset agent selection + fullscreen when switching mesh
@@ -114,6 +151,7 @@ export function App() {
               onSelectAgent={setSelectedAgent}
               fullscreen={fullscreen}
               onToggleFull={() => setFullscreen((f) => !f)}
+              onDeleted={() => setSelectedMesh(null)}
             />
           ) : (
             <div className="empty" style={{ margin: "auto", maxWidth: 460 }}>
@@ -133,6 +171,8 @@ export function App() {
           }}
         />
       ) : null}
+
+      <Toaster store={store} />
     </div>
   );
 }
