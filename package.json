@@ -13,6 +13,7 @@
     "mailbox:send": "bun run src/mailbox-send.ts"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@zed-industries/agent-client-protocol": "^0.4.5"
   },
   "devDependencies": {
