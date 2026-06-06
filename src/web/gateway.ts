@@ -285,6 +285,9 @@ export class WebGateway {
     this.foldConv({ scope: "agent", mesh: name, agent: agentId }, { sessionUpdate: "user_message_chunk", content: { text } }, now());
     this.manager.promptAgent(name, agentId, text);
   }
+  configOf(name: string): MeshConfig {
+    return this.manager.configOf(name);
+  }
   resolvePermission(name: string, requestId: string, optionId: string): void {
     this.manager.resolvePermission(name, requestId, optionId);
   }
