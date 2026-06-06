@@ -56,6 +56,40 @@ export async function sendMailboxEvent(input: {
   return event;
 }
 
+/** Send an addressed inter-agent message (mesh mailbox). */
+export async function sendMail(input: {
+  mailboxPath?: string;
+  mesh: string;
+  from: string;
+  to: string;
+  body: string;
+}): Promise<MailboxEvent> {
+  return sendMailboxEvent({
+    mailboxPath: input.mailboxPath,
+    from: input.from,
+    type: "handoff",
+    body: input.body,
+    meta: { to: input.to, mesh: input.mesh },
+  });
+}
+
+/**
+ * Read mail addressed to `agent`. If `sinceId` is given, returns only mail
+ * after that event id (callers track a per-recipient cursor).
+ */
+export async function readMailFor(
+  agent: string,
+  options: { mailboxPath?: string; sinceId?: string } = {},
+): Promise<MailboxEvent[]> {
+  const all = await readMailboxEvents(options.mailboxPath);
+  let mail = all.filter((event) => (event.meta as { to?: string } | undefined)?.to === agent);
+  if (options.sinceId) {
+    const index = mail.findIndex((event) => event.id === options.sinceId);
+    if (index >= 0) mail = mail.slice(index + 1);
+  }
+  return mail;
+}
+
 export async function readMailboxEvents(
   mailboxPath = defaultMailboxPath(),
 ): Promise<MailboxEvent[]> {
