@@ -89,6 +89,7 @@ export interface Store {
   stopMesh(name: string): Promise<any>;
   reload(): Promise<any>;
   defineMesh(config: MeshConfig): Promise<any>;
+  deleteMesh(name: string): Promise<any>;
   promptRouter(name: string, text: string): Promise<any>;
   promptAgent(name: string, agentId: string, text: string): Promise<any>;
   promptMaster(text: string): Promise<any>;
@@ -141,9 +142,9 @@ export function createStore(): Store {
   }
   if (typeof window !== "undefined") connect();
 
-  async function post(path: string, body?: unknown): Promise<any> {
+  async function send(method: string, path: string, body?: unknown): Promise<any> {
     const res = await fetch(path, {
-      method: "POST",
+      method,
       headers: body !== undefined ? { "content-type": "application/json" } : {},
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
@@ -151,6 +152,7 @@ export function createStore(): Store {
     if (!res.ok) throw new Error(json?.error?.message ?? `HTTP ${res.status}`);
     return json;
   }
+  const post = (path: string, body?: unknown) => send("POST", path, body);
 
   return {
     getState: () => state,
@@ -165,6 +167,7 @@ export function createStore(): Store {
     stopMesh: (n) => post(`/api/meshes/${enc(n)}/stop`),
     reload: () => post(`/api/meshes/reload`),
     defineMesh: (c) => post(`/api/meshes`, c),
+    deleteMesh: (n) => send("DELETE", `/api/meshes/${enc(n)}`),
     promptRouter: (n, t) => post(`/api/meshes/${enc(n)}/prompt`, { text: t }),
     promptAgent: (n, a, t) => post(`/api/meshes/${enc(n)}/agents/${enc(a)}/prompt`, { text: t }),
     promptMaster: (t) => post(`/api/master/prompt`, { text: t }),

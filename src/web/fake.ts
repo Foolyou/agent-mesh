@@ -64,6 +64,11 @@ export class FakeManager {
   async defineMesh(config: MeshConfig): Promise<void> {
     this.meshes.set(config.name, { config, status: "stopped" });
   }
+  async deleteMesh(name: string): Promise<void> {
+    const e = this.meshes.get(name);
+    if (e && (e.status === "running" || e.status === "starting")) throw new Error(`mesh "${name}" is running`);
+    this.meshes.delete(name);
+  }
   async loadDefinitions(): Promise<void> {}
 
   async startMesh(name: string): Promise<void> {

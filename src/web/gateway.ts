@@ -34,6 +34,7 @@ export interface ManagerLike {
   resolvePermission(name: string, requestId: string, optionId: string): void;
   setMode(name: string, agentId: string, modeId: string): void;
   defineMesh(config: MeshConfig): Promise<void>;
+  deleteMesh(name: string): Promise<void>;
   loadDefinitions(): Promise<void>;
   stopAll(): Promise<void>;
 }
@@ -270,6 +271,12 @@ export class WebGateway {
   }
   async defineMesh(config: MeshConfig): Promise<void> {
     await this.manager.defineMesh(config);
+    this.refreshMeshes();
+  }
+  async deleteMesh(name: string): Promise<void> {
+    await this.manager.deleteMesh(name);
+    delete this.state.perMesh[name];
+    this.agStatus.delete(name);
     this.refreshMeshes();
   }
   private routerId(name: string): string {

@@ -32,6 +32,7 @@ function fakeManager() {
     resolvePermission() {},
     setMode() {},
     async defineMesh() {},
+    async deleteMesh() {},
     async loadDefinitions() {},
     async stopAll() {},
   };

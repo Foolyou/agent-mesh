@@ -1,7 +1,7 @@
 // src/mesh-store.ts
 // Persists mesh definitions as .mesh/meshes/<name>.json. Only definitions are
 // persisted; running state never survives a parent-process restart.
-import { mkdir, readFile, writeFile, readdir } from "node:fs/promises";
+import { mkdir, readFile, writeFile, readdir, unlink } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { validateMeshConfig } from "./mesh-validate";
 import type { MeshConfig } from "./acp/types";
@@ -13,6 +13,14 @@ export class MeshStore {
     validateMeshConfig(config);
     await mkdir(this.dir, { recursive: true });
     await writeFile(join(this.dir, `${config.name}.json`), JSON.stringify(config, null, 2), "utf8");
+  }
+
+  async delete(name: string): Promise<void> {
+    try {
+      await unlink(join(this.dir, `${name}.json`));
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+    }
   }
 
   async load(): Promise<MeshConfig[]> {

@@ -33,3 +33,11 @@ test("load on an empty/missing dir returns []", async () => {
   const store = new MeshStore(join(dir, "nope"));
   expect(await store.load()).toEqual([]);
 });
+
+test("delete removes the definition; deleting a missing one is a no-op", async () => {
+  const store = new MeshStore(dir);
+  await store.define(cfg);
+  await store.delete("alpha");
+  expect(await store.load()).toEqual([]);
+  await store.delete("alpha"); // idempotent — does not throw
+});
