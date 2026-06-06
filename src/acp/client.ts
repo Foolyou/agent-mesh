@@ -18,7 +18,7 @@ export type PermissionDecision = { optionId: string } | "cancel";
 // grandchild, so we kill the whole descendant tree. We also install one set of
 // process handlers so abrupt-but-catchable exits (SIGINT/SIGTERM/uncaught)
 // still reap every agent. (SIGKILL cannot be caught; nothing can help there.)
-function killTree(pid: number, signal: NodeJS.Signals = "SIGKILL"): void {
+export function killTree(pid: number, signal: NodeJS.Signals = "SIGKILL"): void {
   const descendants: number[] = [];
   const collect = (p: number) => {
     let out = "";
