@@ -3,8 +3,10 @@
 A PoC **Agent Mesh Controller**: a parent control plane manages multiple meshes of
 heterogeneous coding agents that connect over the **Agent Client Protocol (ACP)**.
 An optional LLM **master agent** accepts natural-language instructions to create,
-start, and stop meshes; an interactive **TUI** lets you chat with both the master
-agent and individual mesh Routers.
+start, and stop meshes; a **React + Bun web console** lets you drive the whole
+control plane — chat with the master agent and individual mesh Routers, build/
+start/stop meshes, watch a live topology, resolve permission escalations, and
+follow inter-agent mail and activity in real time.
 
 > The earlier PTY-based prototype (`src/pty-*.ts`, `src/codex-*-test.ts`,
 > `src/mock-agent.ts`, `src/work-packet.ts`) is retained as history but is no
@@ -13,19 +15,22 @@ agent and individual mesh Routers.
 ## Architecture
 
 ```
-   Human ⇄ TUI ─────────────────────────────────────────────────┐
-               │                                                  │
-        MeshManager  ←→  optional MasterAgent (claude ACP)       │
-           │   │              └─ mesh-control MCP server         │
-           │   │                 (create/start/stop/list_meshes) │
-           │   │                                                  │
-           │  [Unix socket .mesh/run/<name>.sock — NDJSON]       │
-           │                                                      │
-    mesh-host subprocess (one per running mesh)                   │
-    └─ ControlPlane for that mesh                                 │
-       ├─ ACP Client (one connection per agent)                   │
-       ├─ Mesh Services MCP — send_mail / check_mail / interrupt  │
-       └─ Mailbox (NDJSON) + event bus ───────────────────────────┘
+   Browser (React SPA)  ⇄  REST + one WebSocket (snapshot + deltas)
+        │
+   Bun web server (src/web/server.ts)  ── WebGateway (authoritative state,
+        │                                   aggregated transcripts, fan-out)
+        │                                        │
+        │                                 MeshManager  ←→  optional MasterAgent (claude ACP)
+        │                                    │   │            └─ mesh-control MCP server
+        │                                    │   │               (create/start/stop/list_meshes)
+        │                                    │   │
+        │             [Unix socket .mesh/run/<name>.sock — NDJSON]
+        │                                    │
+    mesh-host subprocess (one per running mesh)
+    └─ ControlPlane for that mesh
+       ├─ ACP Client (one connection per agent)
+       ├─ Mesh Services MCP — send_mail / check_mail / interrupt
+       └─ Mailbox (NDJSON) + event bus
             │ ACP over stdio
       Mesh "demo"
       ├─ router      (claude)    — gateway: talks to user/other meshes
@@ -33,10 +38,17 @@ agent and individual mesh Routers.
       └─ opencode-1  (opencode)  — member
 ```
 
+The web server runs **in the parent process** (it's the new face of the same
+parent that owns `MeshManager`); the subprocess-per-mesh model is unchanged.
+
 **Parent process** owns `MeshManager` (deterministic lifecycle: validate, persist,
 spawn, supervise, aggregate events), an optional `MasterAgent` (a claude ACP agent
 with `create_mesh` / `start_mesh` / `stop_mesh` / `list_meshes` MCP tools), and the
-interactive TUI.
+**web server** (`src/web/`). A testable `WebGateway` folds the manager + master
+event streams into authoritative state — including **aggregated transcripts** (raw
+ACP `SessionUpdate` chunks are coalesced into message bubbles and tool-call cards,
+not one line per event) — and fans a snapshot + deltas out to the browser over one
+WebSocket; commands go over REST.
 
 **Each running mesh** lives in its own `mesh-host` subprocess (`src/mesh-host.ts`)
 that wraps the existing `ControlPlane` for that one mesh. The parent supervises it
@@ -67,39 +79,42 @@ bun install
 Agents run in `test_mesh_0/` and use your existing local logins (codex via
 ChatGPT, opencode via its provider, claude via the Claude Agent SDK).
 
-**Interactive control** — master agent + multi-mesh manager + chat TUI:
+**Web console** — master agent + multi-mesh manager + live control:
 
 ```bash
-bun run mesh
+bun run mesh          # → opens http://localhost:7317
+# bun run mesh --port 8080      # custom port (or MESH_WEB_PORT=8080)
+# bun run mesh --no-master      # skip the master agent
+# bun run mesh --fake           # self-contained scripted demo (no real agents)
 ```
 
-**Top context** (default): type an instruction and press Enter to send it to the
-master agent (it has `create_mesh` / `start_mesh` / `stop_mesh` / `list_meshes`
-tools). `Tab` cycles through the mesh list; type `/enter` and press Enter to open
-the selected mesh's Router chat.
+Open the printed URL. The console is a master/detail layout:
 
-**Mesh context**: chat directly with the running mesh's Router. `Ctrl-F` toggles
-fullscreen; `Esc` returns to the top context.
+- **Left** — the mesh list (status dot, `start`/`stop`, `+ new mesh` form) and the
+  **master-agent chat** (create/start/stop meshes in natural language).
+- **Right** (selected mesh) — a live **topology** graph, the **router chat**,
+  per-member **agent panels** (direct chat + permission-mode control), **permission
+  cards** (click an option, or press `1`–`9`), and **activity / mailbox / permission-
+  history** timelines.
+- **Keys**: `↑`/`↓` select mesh · `f` fullscreen router chat · `n` new mesh ·
+  `r` reload definitions · `1`–`9` resolve a pending permission · `esc` back. (Web
+  equivalents of the old TUI keys — `Ctrl-R`/`Ctrl-F`/`Tab` are left to the browser.)
 
-**Anywhere**: digit keys (`1`–`9`) resolve a pending permission prompt; `Ctrl-C`
-quits and reaps all mesh subprocesses. `Ctrl-R` reloads mesh definitions from disk.
+Closing the server (`Ctrl-C` in the terminal) reaps every mesh subprocess (no orphans).
 
-**Headless end-to-end verification** (all 6 PoC points, driven through MeshManager):
+`--fake` mode streams a full scripted scenario (messages, a thought, a tool call,
+inter-agent mail, a permission, an interrupt) so you can explore every widget with
+no agents or logins.
 
-```bash
-bun run e2e
-```
-
-**Lifecycle smoke** (real agents — define → start → prompt router → stop):
-
-```bash
-bun run src/flows/mesh-lifecycle.smoke.ts
-```
-
-**Unit tests:**
+**Tests & verification:**
 
 ```bash
-bun test
+bun test                              # unit/integration (transcript reducer, gateway, api, store…)
+bun run src/web/server.smoke.ts       # http + ws + bundler smoke
+bun run src/web/browser.e2e.ts        # headless-browser e2e over --fake (every widget)
+bun run src/web/real.e2e.ts           # real claude+codex+opencode mesh on a fictional project
+bun run e2e                           # headless 6-PoC-point verification through MeshManager
+bun run src/flows/mesh-lifecycle.smoke.ts   # real-agent lifecycle smoke
 ```
 
 ## The 6 PoC verification points
@@ -109,7 +124,8 @@ bun test
 3. Inter-agent mailbox: agent A `send_mail` → B, B is woken and processes it.
 4. A member's permission request escalates to a human decision, then the op runs.
 5. Router `interrupt` → control-plane `session/cancel` on a member.
-6. The TUI renders 1–5 live.
+6. The web console renders 1–5 live (topology, aggregated transcripts, permission
+   cards, mailbox/activity timelines), driven by one WebSocket.
 
 ## Design docs
 
@@ -117,3 +133,5 @@ bun test
 - Plan (original PoC): `docs/superpowers/plans/2026-06-06-agent-mesh-poc.md`
 - Spec (multi-mesh): `docs/superpowers/specs/2026-06-06-control-agent-multi-mesh-design.md`
 - Plan (multi-mesh): `docs/superpowers/plans/2026-06-06-control-agent-multi-mesh.md`
+- Spec (web console): `docs/superpowers/specs/2026-06-07-mesh-webui-design.md`
+- Plan (web console): `docs/superpowers/plans/2026-06-07-mesh-webui.md`
