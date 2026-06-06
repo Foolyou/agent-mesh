@@ -16,7 +16,11 @@ export interface BridgeControlPlane {
   stop(): Promise<void>;
 }
 
-export function bridgeControlPlaneToSocket(cp: BridgeControlPlane, socket: net.Socket): void {
+export function bridgeControlPlaneToSocket(
+  cp: BridgeControlPlane,
+  socket: net.Socket,
+  opts: { signalReady?: boolean } = {},
+): void {
   const send = (m: Parameters<typeof encodeFrame>[0]) => socket.write(encodeFrame(m));
   const unsubscribe = cp.on((event) => send({ t: "event", event }));
 
@@ -50,7 +54,7 @@ export function bridgeControlPlaneToSocket(cp: BridgeControlPlane, socket: net.S
   });
   socket.on("close", () => unsubscribe());
 
-  send({ t: "ready" });
+  if (opts.signalReady !== false) send({ t: "ready" });
 }
 
 // --- entrypoint (only when executed as a subprocess) ----------------------
@@ -63,8 +67,12 @@ if (import.meta.main) {
   }
   const config = JSON.parse(configJson) as MeshConfig;
   const cp = new ControlPlane(config, { debug: process.env.MESH_DEBUG === "1" });
-  await cp.start();
   const socket = net.connect(sockPath);
-  socket.on("connect", () => bridgeControlPlaneToSocket(cp, socket));
   socket.on("close", () => cp.stop().finally(() => process.exit(0)));
+  await new Promise<void>((res) => socket.once("connect", res));
+  // Subscribe + handle commands BEFORE start so startup events are forwarded,
+  // but defer the ready signal until agents are actually up.
+  bridgeControlPlaneToSocket(cp, socket, { signalReady: false });
+  await cp.start();
+  socket.write(encodeFrame({ t: "ready" }));
 }

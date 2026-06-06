@@ -65,3 +65,39 @@ test("bridge sends ready, relays events, applies commands, and stops", async () 
 
   client.destroy();
 });
+
+test("signalReady:false defers ready frame but still forwards events", async () => {
+  const sock = join(dir, "t2.sock");
+  const { cp } = fakeCp();
+  let cpListener: ((e: MeshEvent) => void) | undefined;
+  // wrap cp.on so the test can drive event emission directly
+  const wrapped: BridgeControlPlane = {
+    ...cp,
+    on(l) { cpListener = l; return () => { cpListener = undefined; }; },
+  };
+
+  const got: any[] = [];
+  const lb = new LineBuffer();
+  const connected = new Promise<net.Socket>((res) => {
+    server = net.createServer((s) => { bridgeControlPlaneToSocket(wrapped, s, { signalReady: false }); res(s); });
+  });
+  await new Promise<void>((r) => server.listen(sock, r));
+
+  const client = net.connect(sock);
+  client.setEncoding("utf8");
+  client.on("data", (d: string) => { for (const line of lb.push(d)) got.push(JSON.parse(line)); });
+  await connected;
+
+  // no ready frame on attach
+  await Bun.sleep(50);
+  expect(got.some((m) => m.t === "ready")).toBe(false);
+
+  // events are still forwarded over the socket
+  cpListener?.({ kind: "log", text: "startup event", ts: "t" });
+  await Bun.sleep(50);
+  expect(got.some((m) => m.t === "event" && m.event.kind === "log")).toBe(true);
+  // still no ready frame after forwarding an event
+  expect(got.some((m) => m.t === "ready")).toBe(false);
+
+  client.destroy();
+});
