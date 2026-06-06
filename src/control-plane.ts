@@ -173,7 +173,21 @@ export class ControlPlane {
   }
 
   // ---- permission escalation ----
+  private static readonly MESH_TOOLS = ["send_mail", "check_mail", "interrupt", "mesh_status"];
+
   private handlePermission(agentId: AgentId, req: any): Promise<PermissionDecision> {
+    // Internal mesh-coordination tools are pre-authorized by mesh membership;
+    // only external/dangerous operations escalate to a human.
+    const toolName = String(req.toolCall?.title ?? req.toolCall?.toolName ?? req.toolCall?.rawInput?.name ?? "");
+    const isMeshTool =
+      /mesh__|mesh_services/.test(toolName) ||
+      ControlPlane.MESH_TOOLS.some((n) => toolName.includes(n));
+    if (isMeshTool) {
+      const allow = (req.options ?? []).find((o: any) => o.kind === "allow_once") ?? (req.options ?? [])[0];
+      this.log(`auto-approved mesh tool: ${toolName || "(unknown)"} for ${agentId}`);
+      return Promise.resolve(allow ? { optionId: allow.optionId } : "cancel");
+    }
+
     const requestId = randomUUID();
     const options = (req.options ?? []).map((o: any) => ({
       id: o.optionId,
