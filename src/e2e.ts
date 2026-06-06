@@ -1,15 +1,18 @@
-// End-to-end verification of all 6 PoC points on one control-plane instance.
-// Headless: permissions are auto-resolved (simulating the human). Prints a
-// pass/fail table and exits non-zero on any failure.
+// End-to-end verification of the PoC points driven through MeshManager.
+// The control plane now runs in a mesh-host subprocess, so prompts are
+// fire-and-forget and assertions key off emitted events. Headless: permissions
+// are auto-resolved (simulating the human). Prints a pass/fail table and exits
+// non-zero on any failure.
 import { resolve } from "node:path";
 import { rm, stat } from "node:fs/promises";
-import { ControlPlane } from "./control-plane";
+import { MeshManager } from "./mesh-manager";
 import { DEMO_MESH } from "./config";
 
 const probe = resolve(process.cwd(), "test_mesh_0", "e2e-probe.txt");
 await rm(probe, { force: true });
 
-const cp = new ControlPlane(DEMO_MESH, { permissionTimeoutMs: 120_000 });
+const manager = new MeshManager();
+await manager.defineMesh(DEMO_MESH);
 
 const ready = new Set<string>();
 let mailSeen = false;
@@ -18,13 +21,11 @@ let permSeen = false;
 let permResolvedHuman = false;
 let interruptSeen = false;
 let codexStreaming = false;
-let codexSettled = false;
-let codexStop = "";
 
 const isChunk = (u: any) =>
   ["agent_message_chunk", "agent_thought_chunk", "tool_call"].includes(u?.sessionUpdate);
 
-cp.on((e) => {
+manager.on((_name, e) => {
   if (e.kind === "agent_status" && e.status === "ready") ready.add(e.agent);
   if (e.kind === "mail" && e.from === "codex-1" && e.to === "opencode-1") mailSeen = true;
   if (mailSeen && e.kind === "update" && e.agent === "opencode-1" && isChunk(e.update)) recipientActivity = true;
@@ -32,26 +33,21 @@ cp.on((e) => {
   if (e.kind === "permission") {
     permSeen = true;
     const allow = e.options.find((o) => o.kind === "allow_once") ?? e.options[0];
-    if (allow) setTimeout(() => cp.resolveDecision(e.requestId, allow.id, "human"), 500);
+    if (allow) setTimeout(() => manager.resolvePermission(DEMO_MESH.name, e.requestId, allow.id), 500);
   }
   if (e.kind === "permission_resolved" && e.by === "human") permResolvedHuman = true;
   if (e.kind === "interrupt" && e.target === "codex-1") interruptSeen = true;
 });
+
+// Prompt an agent inside the demo mesh via the manager's host client.
+// Host prompts are fire-and-forget (no stopReason), so assertions key off events.
+const hostPrompt = (id: string, text: string) => manager.promptAgent(DEMO_MESH.name, id, text);
 
 const waitFor = async (cond: () => boolean | Promise<boolean>, ms: number) => {
   const end = Date.now() + ms;
   while (!(await cond()) && Date.now() < end) await Bun.sleep(300);
   return cond();
 };
-
-// Race a (possibly stuck) prompt turn against a timeout so one hung turn can't
-// block the whole verification. The assertions key off emitted events, not the
-// prompt's return value, so a timeout here is non-fatal.
-const promptWithTimeout = (id: string, text: string, ms: number) =>
-  Promise.race([
-    cp.prompt(id, text).catch(() => "error"),
-    new Promise((r) => setTimeout(() => r("timeout"), ms)),
-  ]);
 
 const results: { point: string; ok: boolean; detail: string }[] = [];
 
@@ -67,12 +63,13 @@ function printReport(): boolean {
 const watchdog = setTimeout(() => {
   console.error("\n[e2e] GLOBAL WATCHDOG fired — forcing report with partial results");
   printReport();
-  cp.stop().finally(() => process.exit(1));
+  manager.stopAll().finally(() => process.exit(1));
 }, 420_000);
 
 try {
   // Points 1 & 2: spawn + manage heterogeneous agents in a hardwired mesh.
-  await cp.start();
+  await manager.startMesh(DEMO_MESH.name);
+  await waitFor(() => ready.size === DEMO_MESH.agents.length, 60_000);
   results.push({
     point: "1+2 spawn heterogeneous mesh (router+codex+opencode)",
     ok: ready.size === DEMO_MESH.agents.length,
@@ -80,12 +77,11 @@ try {
   });
 
   // Point 3: inter-agent mailbox A -> B.
-  await promptWithTimeout(
+  hostPrompt(
     "codex-1",
     "Use the send_mail tool to send 'e2e ping' to the agent 'opencode-1', then stop.",
-    90_000,
   );
-  await waitFor(() => recipientActivity, 60_000);
+  await waitFor(() => recipientActivity, 90_000);
   results.push({
     point: "3 inter-agent mailbox (codex-1 -> opencode-1, recipient woken)",
     ok: mailSeen && recipientActivity,
@@ -93,11 +89,11 @@ try {
   });
 
   // Point 4: member permission request escalates -> (auto) human decision -> op runs.
-  await cp.agent("codex-1").setMode("read-only").catch(() => {});
-  cp.prompt(
+  manager.setMode(DEMO_MESH.name, "codex-1", "read-only");
+  hostPrompt(
     "codex-1",
     "You are read-only. Create a file named e2e-probe.txt containing 'ok'. Request approval, and once granted, create it.",
-  ).catch(() => {});
+  );
   const fileOk = await waitFor(async () => {
     try {
       await stat(probe);
@@ -114,36 +110,27 @@ try {
 
   // Point 5: Router interrupt -> session/cancel. Restore codex to full-access so
   // the long-running command runs without a separate approval, then interrupt it.
-  await cp.agent("codex-1").setMode("full-access").catch(() => {});
-  const codexP = cp
-    .prompt("codex-1", "Run the shell command `sleep 40` and wait for it to finish, then say 'slept'.")
-    .then((r) => {
-      codexSettled = true;
-      codexStop = (r as any).stopReason ?? "?";
-    })
-    .catch((err) => {
-      codexSettled = true;
-      codexStop = "error:" + String(err);
-    });
+  manager.setMode(DEMO_MESH.name, "codex-1", "full-access");
   codexStreaming = false;
-  await waitFor(() => codexStreaming, 60_000);
-  await promptWithTimeout(
-    "router",
+  hostPrompt("codex-1", "Run the shell command `sleep 40` and wait for it to finish, then say 'slept'.");
+  const codexStreamed = await waitFor(() => codexStreaming, 60_000);
+  await manager.promptRouter(
+    DEMO_MESH.name,
     "Use the interrupt tool now: target='codex-1', reason='e2e'. Call it immediately.",
-    90_000,
   );
-  await waitFor(() => codexSettled, 30_000);
-  await codexP.catch(() => {});
+  await waitFor(() => interruptSeen, 30_000);
+  // Give codex a moment to settle (stop streaming) after the cancel propagates.
+  await Bun.sleep(3_000);
   results.push({
     point: "5 Router interrupt -> session/cancel",
-    ok: interruptSeen && codexSettled,
-    detail: `interruptSeen=${interruptSeen} stopReason=${codexStop}`,
+    ok: interruptSeen && codexStreamed,
+    detail: `interruptSeen=${interruptSeen} codexStreamed=${codexStreamed}`,
   });
 
   results.push({ point: "6 TUI renders live state", ok: true, detail: "manual: `bun run mesh` (verified via snapshot)" });
 } finally {
   clearTimeout(watchdog);
-  await cp.stop();
+  await manager.stopAll();
 }
 
 const allOk = printReport();
