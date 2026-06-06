@@ -26,7 +26,11 @@ function Toaster({ store }: { store: Store }) {
 
 export function App() {
   const storeRef = useRef<Store | null>(null);
-  if (!storeRef.current) storeRef.current = createStore();
+  if (!storeRef.current) {
+    storeRef.current = createStore();
+    // expose for debugging + browser e2e
+    if (typeof window !== "undefined") (window as any).__meshStore = storeRef.current;
+  }
   const store = storeRef.current;
 
   const state = useStore(store);

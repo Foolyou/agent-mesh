@@ -73,6 +73,7 @@ export class FakeManager {
 
   async startMesh(name: string): Promise<void> {
     const e = this.require(name);
+    if (e.status === "running" || e.status === "starting") throw new Error(`mesh "${name}" is already running`);
     e.status = "starting";
     for (const a of e.config.agents) this.emit(name, { kind: "agent_status", agent: a.id, status: "spawning", ts: now() });
     await sleep(400);
@@ -123,9 +124,26 @@ export class FakeManager {
     this.update(name, "router", { sessionUpdate: "agent_thought_chunk", content: { text: "Break the task into impl + review and fan out to members." } });
     await this.reply(name, "router", "Plan: codex-1 implements the calculator core, opencode-1 reviews.");
 
+    // a plan checklist (replaced wholesale on each update)
+    this.update(name, "router", {
+      sessionUpdate: "plan",
+      entries: [
+        { content: "codex-1: implement calculator core", status: "in_progress", priority: "high" },
+        { content: "opencode-1: review the implementation", status: "pending", priority: "medium" },
+      ],
+    });
+
     // a tool call on codex-1 that transitions pending → in_progress → completed
     await sleep(300);
-    this.update(name, "codex-1", { sessionUpdate: "tool_call", toolCallId: "tc-build", title: "execute: bun test", kind: "execute", status: "pending" });
+    this.update(name, "codex-1", {
+      sessionUpdate: "tool_call",
+      toolCallId: "tc-build",
+      title: "execute: bun test",
+      kind: "execute",
+      status: "pending",
+      rawInput: { command: "bun test", cwd: "test_mesh_0" },
+      locations: [{ path: "src/calc.ts", line: 1 }],
+    });
     await sleep(400);
     this.update(name, "codex-1", { sessionUpdate: "tool_call_update", toolCallId: "tc-build", status: "in_progress" });
     await sleep(700);
