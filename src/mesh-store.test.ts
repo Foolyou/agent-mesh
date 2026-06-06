@@ -41,3 +41,10 @@ test("delete removes the definition; deleting a missing one is a no-op", async (
   expect(await store.load()).toEqual([]);
   await store.delete("alpha"); // idempotent — does not throw
 });
+
+test("delete rejects path-traversal names (filesystem boundary)", async () => {
+  const store = new MeshStore(dir);
+  await expect(store.delete("../../etc/passwd")).rejects.toThrow(/invalid mesh name/i);
+  await expect(store.delete("..")).rejects.toThrow(/invalid mesh name/i);
+  await expect(store.delete("a/b")).rejects.toThrow(/invalid mesh name/i);
+});

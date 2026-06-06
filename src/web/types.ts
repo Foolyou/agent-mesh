@@ -10,6 +10,12 @@ import type { MeshConfig, AgentId, AgentStatus, AgentRole, HarnessId } from "../
 
 export type ToolCallStatus = "pending" | "in_progress" | "completed" | "failed";
 
+export interface PlanEntry {
+  content: string;
+  status: string; // "pending" | "in_progress" | "completed"
+  priority?: string;
+}
+
 export type TranscriptItem =
   | { id: string; kind: "message"; role: "user" | "agent"; text: string; ts: string; complete: boolean }
   | { id: string; kind: "thought"; text: string; ts: string; complete: boolean }
@@ -20,10 +26,13 @@ export type TranscriptItem =
       title: string;
       toolKind?: string;
       status: ToolCallStatus;
+      input?: string;
       output?: string;
+      locations?: string[];
       ts: string;
       updatedTs: string;
-    };
+    }
+  | { id: string; kind: "plan"; entries: PlanEntry[]; ts: string; updatedTs: string };
 
 export type TranscriptOp =
   | { op: "upsert"; item: TranscriptItem }

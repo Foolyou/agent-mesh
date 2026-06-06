@@ -9,15 +9,27 @@ import type { MeshConfig } from "./acp/types";
 export class MeshStore {
   constructor(private dir = resolve(process.cwd(), ".mesh", "meshes")) {}
 
+  /** Map a mesh name to its file path, rejecting anything that could escape the
+   *  store directory (path traversal). The filesystem boundary, independent of
+   *  any caller-side validation. */
+  private fileFor(name: string): string {
+    if (!/^[A-Za-z0-9_.-]+$/.test(name) || name.includes("..")) {
+      throw new Error(`invalid mesh name: ${JSON.stringify(name)}`);
+    }
+    return join(this.dir, `${name}.json`);
+  }
+
   async define(config: MeshConfig): Promise<void> {
     validateMeshConfig(config);
+    const path = this.fileFor(config.name);
     await mkdir(this.dir, { recursive: true });
-    await writeFile(join(this.dir, `${config.name}.json`), JSON.stringify(config, null, 2), "utf8");
+    await writeFile(path, JSON.stringify(config, null, 2), "utf8");
   }
 
   async delete(name: string): Promise<void> {
+    const path = this.fileFor(name);
     try {
-      await unlink(join(this.dir, `${name}.json`));
+      await unlink(path);
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
     }
