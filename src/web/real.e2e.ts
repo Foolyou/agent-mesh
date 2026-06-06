@@ -12,8 +12,8 @@ import { mkdirSync } from "node:fs";
 const PORT = Number(process.env.E2E_PORT) || 7414;
 const BASE = `http://localhost:${PORT}`;
 const SHOTS = "/tmp/mesh-shots";
-const READY_TIMEOUT = 150_000;
-const OBSERVE_MS = 150_000;
+const READY_TIMEOUT = Number(process.env.READY_TIMEOUT) || 150_000;
+const OBSERVE_MS = Number(process.env.OBSERVE_MS) || 150_000;
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 mkdirSync(SHOTS, { recursive: true });
 

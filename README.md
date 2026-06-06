@@ -92,10 +92,14 @@ Open the printed URL. The console is a master/detail layout:
 
 - **Left** — the mesh list (status dot, `start`/`stop`, `+ new mesh` form) and the
   **master-agent chat** (create/start/stop meshes in natural language).
-- **Right** (selected mesh) — a live **topology** graph, the **router chat**,
-  per-member **agent panels** (direct chat + permission-mode control), **permission
-  cards** (click an option, or press `1`–`9`), and **activity / mailbox / permission-
-  history** timelines.
+- **Right** (selected mesh) — `start` / `stop` / `edit` / `delete`; a live
+  **topology** graph; the **router chat**; per-member **agent panels** (direct chat,
+  permission-mode control, and an **interrupt** button to cancel a runaway turn);
+  **permission cards** (click an option, or press `1`–`9`); and **activity / mailbox /
+  permission-history** timelines.
+- **Aggregated transcripts** — streamed chunks coalesce into message bubbles; tool
+  calls render as one card (input / affected files / output, status updated in place);
+  agent **plans** show as a live checklist. Command failures surface as toasts.
 - **Keys**: `↑`/`↓` select mesh · `f` fullscreen router chat · `n` new mesh ·
   `r` reload definitions · `1`–`9` resolve a pending permission · `esc` back. (Web
   equivalents of the old TUI keys — `Ctrl-R`/`Ctrl-F`/`Tab` are left to the browser.)
