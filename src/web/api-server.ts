@@ -20,9 +20,11 @@ interface WsData {
 }
 
 export function startApiServer(gw: WebGateway, opts: ApiServerOptions = {}): ServerHandle {
+  // Default to loopback so the REST API + WS fan-out are never exposed on all interfaces.
+  const hostname = opts.hostname ?? "127.0.0.1";
   const server = Bun.serve<WsData>({
     port: opts.port ?? 7300,
-    hostname: opts.hostname,
+    hostname,
     async fetch(req, srv) {
       const url = new URL(req.url);
       if (url.pathname === "/ws") {
@@ -57,7 +59,7 @@ export function startApiServer(gw: WebGateway, opts: ApiServerOptions = {}): Ser
     },
   });
   const port = server.port ?? opts.port ?? 7300;
-  return { port, url: `http://localhost:${port}`, stop: () => server.stop(true) };
+  return { port, url: `http://${hostname}:${port}`, stop: () => server.stop(true) };
 }
 
 async function requestBody(req: Request): Promise<any> {

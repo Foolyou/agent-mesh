@@ -41,6 +41,8 @@ const noMaster = has("--no-master");
 const root = resolveRoot();
 // the base dir we'd pass back as --root so a re-spawned backend resolves to the same root
 const base = argVal("--root") ? expandHome(argVal("--root")!) : homedir();
+// Bind interface: loopback by default (server fns default to 127.0.0.1); --host opts into exposure.
+const hostname = argVal("--host");
 
 async function buildGateway() {
   const manager: any = fake ? new FakeManager() : new MeshManager({ root });
@@ -126,7 +128,7 @@ if (cmd === "up" || cmd === "start") {
 } else if (cmd === "backend") {
   const port = Number(process.env.MESH_API_PORT) || Number(argVal("--port")) || 7300;
   const { manager, master, gateway } = await buildGateway();
-  const server = startApiServer(gateway, { port });
+  const server = startApiServer(gateway, { port, hostname });
   console.log(`\n  mesh backend (REST + WS) → ${server.url}${fake ? "  (fake)" : `  · root: ${root}`}\n`);
   reapOnExit(async () => {
     server.stop();
@@ -137,14 +139,14 @@ if (cmd === "up" || cmd === "start") {
 } else if (cmd === "web") {
   const port = Number(process.env.MESH_WEB_PORT) || Number(argVal("--port")) || 7317;
   const backendUrl = argVal("--backend") || process.env.MESH_BACKEND_URL || "http://localhost:7300";
-  const server = startWebServer({ port, backendUrl });
+  const server = startWebServer({ port, backendUrl, hostname });
   console.log(`\n  mesh web (SPA) → ${server.url}  → proxying to backend ${backendUrl}\n`);
   reapOnExit(() => server.stop());
 } else {
   // default: combined single process
   const port = Number(process.env.MESH_WEB_PORT) || Number(argVal("--port")) || 7317;
   const { manager, master, gateway } = await buildGateway();
-  const server = startWebServer({ port, gateway });
+  const server = startWebServer({ port, gateway, hostname });
   console.log(`\n  agent-mesh web console → ${server.url}${fake ? "  (fake mode)" : `  · root: ${root}`}\n`);
   reapOnExit(async () => {
     server.stop();

@@ -11,6 +11,9 @@ import type { WebGateway } from "./gateway";
 
 export interface WebServerOptions {
   port?: number;
+  /** Interface to bind. Defaults to loopback (127.0.0.1) so the console is never exposed on
+   *  all interfaces / the LAN / a tailnet IP. Pass "0.0.0.0" explicitly to opt into exposure. */
+  hostname?: string;
   dev?: boolean;
   gateway?: WebGateway;
   backendUrl?: string;
@@ -34,9 +37,11 @@ export function startWebServer(opts: WebServerOptions = {}): WebServerHandle {
   if (!gw && !backendUrl) throw new Error("startWebServer needs either a gateway or a backendUrl");
   const wsBackend = backendUrl ? backendUrl.replace(/^http/, "ws") + "/ws" : undefined;
   const dev = opts.dev ?? process.env.NODE_ENV !== "production";
+  const hostname = opts.hostname ?? "127.0.0.1";
 
   const server = Bun.serve<WsData>({
     port: opts.port ?? 7317,
+    hostname,
     development: dev ? { hmr: true, console: false } : false,
     routes: { "/": index },
     async fetch(req, srv) {
@@ -129,7 +134,7 @@ export function startWebServer(opts: WebServerOptions = {}): WebServerHandle {
   const port = server.port ?? opts.port ?? 7317;
   return {
     port,
-    url: `http://localhost:${port}`,
+    url: `http://${hostname}:${port}`,
     mode: gw ? "gateway" : "proxy",
     backendUrl,
     stop: () => server.stop(true),
