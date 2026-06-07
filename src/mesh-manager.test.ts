@@ -26,6 +26,16 @@ test("defineMesh persists and listMeshes shows it stopped", async () => {
   expect(mgr.listMeshes()).toEqual([{ name: "echo", defined: true, status: "stopped" }]);
 });
 
+test("root option derives meshesDir (<root>/meshes)", async () => {
+  const { existsSync } = await import("node:fs");
+  const r = await mkdtemp(join(tmpdir(), "root-"));
+  const m = new MeshManager({ root: r, hostScript: FIXTURE });
+  await m.defineMesh(cfg);
+  expect(existsSync(join(r, "meshes", "echo.json"))).toBe(true);
+  await m.stopAll();
+  await rm(r, { recursive: true, force: true });
+});
+
 test("defineMesh rejects an invalid topology", async () => {
   await expect(mgr.defineMesh({ ...cfg, agents: [] })).rejects.toThrow(/at least one/i);
 });

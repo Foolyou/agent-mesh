@@ -13,6 +13,7 @@ export interface MeshHostClientOptions {
   config: MeshConfig;
   socketPath: string;
   hostScript?: string; // defaults to the real mesh-host
+  root?: string; // data root → passed to the host for the mailbox location
   debug?: boolean;
   onEvent?: (event: MeshEvent) => void;
   onExit?: (code: number) => void;
@@ -51,6 +52,7 @@ export class MeshHostClient {
         MESH_SOCK: this.opts.socketPath,
         MESH_CONFIG: JSON.stringify(this.opts.config),
         MESH_DEBUG: this.opts.debug ? "1" : "0",
+        ...(this.opts.root ? { MESH_ROOT: this.opts.root } : {}),
       },
       stdin: "ignore",
       stdout: this.opts.debug ? "inherit" : "ignore",
