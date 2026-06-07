@@ -197,6 +197,19 @@ start_backend() {
   return 1
 }
 
+# Run the actual restart in a DETACHED, init-owned process before doing anything
+# destructive. A --cold restart invoked from INSIDE a mesh reaps that mesh, and the reap
+# (the daemon's SIGTERM handler → ControlPlane.stop() → killTree of its agents) kills the
+# agent and the shell running this very script — so it would die mid-run, after stopping
+# the backend but before restarting it (the "10010 never comes back" bug). Double-fork via
+# `( setsid … & )` so the worker reparents to init, leaving the agent's process tree, and
+# survives the reap to finish the restart.
+if [[ "${_MESH_RESTART_WORKER:-}" != "1" ]]; then
+  ( _MESH_RESTART_WORKER=1 setsid bash "$0" "$@" >>"$LOG" 2>&1 </dev/null & )
+  echo "restart dispatched (detached worker) — progress in $LOG"
+  exit 0
+fi
+
 old_pid=""
 set +e
 old_pid="$(find_backend_pid)"
