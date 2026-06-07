@@ -5,7 +5,6 @@ test_mesh_web/*
 !test_mesh_web/BRIEF.md
 .claude/
 .codex/
-openspec/
 dist/
 
 # secrets / credentials (defensive)
