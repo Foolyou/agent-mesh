@@ -105,6 +105,13 @@ export interface UpOpts {
 
 /** Background-start the backend (idempotent). `--cold` reaps stale daemons first. */
 export async function up(base: string, root: string, port: number, opts: UpOpts = {}): Promise<void> {
+  // One backend per ROOT: if a recorded backend for this root is alive, don't start another
+  // (even on a different port — they'd share the same registry/meshes and corrupt state).
+  const existing = await readRec(root);
+  if (existing && pidAlive(existing.pid)) {
+    console.log(`already running → pid ${existing.pid}, port ${existing.port}  (root ${root})`);
+    return;
+  }
   if (await healthy(port)) {
     console.log(`already running → http://localhost:${port}  (root ${root})`);
     return;
