@@ -46,6 +46,11 @@ export function App() {
     saveLang(l);
   };
   const t = useCallback((k: string, v?: Record<string, string | number>) => translate(k, lang, v), [lang]);
+  // keep <html lang> in sync so the CJK CSS (:root[lang="zh"]) applies on first paint too,
+  // not only after a manual toggle.
+  useEffect(() => {
+    document.documentElement.lang = lang;
+  }, [lang]);
 
   const [selectedMesh, setSelectedMeshRaw] = useState<string | null>(null);
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);

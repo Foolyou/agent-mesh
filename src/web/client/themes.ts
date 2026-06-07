@@ -29,7 +29,10 @@ export interface Theme {
   palette: Palette;
 }
 
-// Each preset is a full, contrast-checked palette (fg-faint ≳ 4.5:1 on bg).
+// Each preset is a full palette whose role pairings meet WCAG: all text roles
+// (fg / fg-dim / fg-faint) ≥ 4.5:1 (AA) on every surface, status indicators and
+// control borders ≥ 3:1 (non-text). Enforced by contrast.test.ts + a11y-audit.ts —
+// edit a color and run `bun run src/web/a11y-audit.ts` to re-check.
 export const BUILTIN_THEMES: Theme[] = [
   {
     name: "phosphor",
@@ -39,7 +42,7 @@ export const BUILTIN_THEMES: Theme[] = [
       "bg-raise": "#101216",
       "bg-inset": "#07080a",
       line: "#1c1f24",
-      "line-bright": "#2b2f36",
+      "line-bright": "#5f656e",
       fg: "#e8eae5",
       "fg-dim": "#c2c8cf",
       "fg-faint": "#99a0a8",
@@ -60,7 +63,7 @@ export const BUILTIN_THEMES: Theme[] = [
       "bg-raise": "#1a1209",
       "bg-inset": "#0a0602",
       line: "#2e2110",
-      "line-bright": "#43301a",
+      "line-bright": "#7a5d33",
       fg: "#f6cf94",
       "fg-dim": "#e2bf82",
       "fg-faint": "#b8945c",
@@ -81,7 +84,7 @@ export const BUILTIN_THEMES: Theme[] = [
       "bg-raise": "#0e131b",
       "bg-inset": "#05080c",
       line: "#182230",
-      "line-bright": "#293a4c",
+      "line-bright": "#506a80",
       fg: "#e2ebf3",
       "fg-dim": "#bccddd",
       "fg-faint": "#90a3b8",
@@ -102,14 +105,14 @@ export const BUILTIN_THEMES: Theme[] = [
       "bg-raise": "#ffffff",
       "bg-inset": "#ece9e1",
       line: "#d9d6cc",
-      "line-bright": "#bfbcae",
+      "line-bright": "#8a8780",
       fg: "#16150f",
       "fg-dim": "#403e38",
       "fg-faint": "#5e5c55",
       ok: "#1f9d57",
       warn: "#b07d18",
       bad: "#c0392b",
-      off: "#9a988f",
+      off: "#84817a",
       info: "#2b7fb0",
       "sel-bg": "#1c1b18",
       "sel-fg": "#f4f2ec",
@@ -123,14 +126,14 @@ export const BUILTIN_THEMES: Theme[] = [
       "bg-raise": "#141414",
       "bg-inset": "#070707",
       line: "#232323",
-      "line-bright": "#363636",
+      "line-bright": "#646464",
       fg: "#ededed",
       "fg-dim": "#c8c8c8",
       "fg-faint": "#9a9a9a",
       ok: "#dcdcdc",
       warn: "#9a9a9a",
       bad: "#e26d6d",
-      off: "#5a5a5a",
+      off: "#6a6a6a",
       info: "#c4c4c4",
       "sel-bg": "#e9e9e9",
       "sel-fg": "#0b0b0b",
