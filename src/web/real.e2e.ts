@@ -154,7 +154,7 @@ try {
   await main();
 } finally {
   server.kill("SIGINT");
-  await sleep(2500);
+  await sleep(6000);
   try {
     server.kill("SIGKILL");
   } catch {}
