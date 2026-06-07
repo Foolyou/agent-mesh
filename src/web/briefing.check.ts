@@ -32,7 +32,22 @@ async function main() {
     } catch {}
     await sleep(250);
   }
-  await post("/api/meshes/demo/start", {});
+  // define a mesh WITH a team charter, then verify a member can state the team goal
+  await post("/api/meshes", {
+    name: "brief-demo",
+    agents: [
+      { id: "router", harness: "claude", project: "test_mesh_0", role: "router" },
+      { id: "codex-1", harness: "codex", project: "test_mesh_0", role: "member" },
+    ],
+    edges: [
+      ["router", "codex-1"],
+      ["codex-1", "router"],
+    ],
+    charter:
+      "Goal: collaboratively maintain a tiny wordcount CLI. " +
+      "Norms: keep every change minimal, always write a test, and hand results back to the router via send_mail when done.",
+  });
+  await post("/api/meshes/brief-demo/start", {});
   const ws = new WebSocket(`ws://localhost:${PORT}/ws`);
   ws.onmessage = (ev) => {
     try {
@@ -43,33 +58,33 @@ async function main() {
   // wait for codex-1 ready
   for (let i = 0; i < 40; i++) {
     const st = await (await fetch(BASE + "/api/state")).json();
-    const m = st.meshes.find((x: any) => x.name === "demo");
+    const m = st.meshes.find((x: any) => x.name === "brief-demo");
     if (m?.agents.find((a: any) => a.id === "codex-1")?.status === "ready") break;
     await sleep(1000);
   }
 
-  console.log(">>> directly prompting member codex-1 to introduce itself…\n");
-  await post("/api/meshes/demo/agents/codex-1/prompt", {
+  console.log(">>> directly prompting member codex-1 to introduce itself + state the team charter…\n");
+  await post("/api/meshes/brief-demo/agents/codex-1/prompt", {
     text:
-      "请你做一下自我介绍：你叫什么？你在一个什么样的环境/团队里工作？你有哪些队友、谁是 router？" +
-      "你有哪些可以用来协作的工具？(简洁回答)",
+      "请简短回答：你叫什么、你的角色、你在哪个 mesh 团队、谁是 router？" +
+      "另外，这个团队的【目标和规范】是什么？(用一两句话概括 charter)",
   });
 
   for (let i = 0; i < 12; i++) {
     await sleep(10_000);
-    const items = state.perMesh.demo?.transcripts?.["codex-1"] ?? [];
+    const items = state.perMesh["brief-demo"]?.transcripts?.["codex-1"] ?? [];
     const lastMsg = items.filter((it: any) => it.kind === "message" && it.role === "agent").slice(-1)[0] as any;
     if (lastMsg?.complete) break;
     console.log(`  …waiting (${items.length} items so far)`);
   }
 
-  const items = state.perMesh.demo?.transcripts?.["codex-1"] ?? [];
+  const items = state.perMesh["brief-demo"]?.transcripts?.["codex-1"] ?? [];
   console.log("\n=== codex-1 transcript (agent messages) ===\n");
   for (const it of items as any[]) {
     if (it.kind === "message" && it.role === "agent") console.log(it.text + "\n");
     if (it.kind === "tool_call") console.log(`[tool] ${it.title} (${it.status})`);
   }
-  await post("/api/meshes/demo/stop", {});
+  await post("/api/meshes/brief-demo/stop", {});
   await sleep(1500);
   try {
     ws.close();

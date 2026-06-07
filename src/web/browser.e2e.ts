@@ -186,6 +186,7 @@ try {
 
   await step("mesh builder: valid config creates a mesh", async () => {
     await page.locator('.modal .field:has(label:has-text("mesh name")) input').fill("squad-x");
+    await page.locator(".modal textarea").fill("Goal: build a tiny CLI. Norms: be concise, write a test.");
     await page.screenshot({ path: `${SHOTS}/03-builder.png`, fullPage: true });
     await page.locator('.modal .btn:has-text("define mesh")').click();
     await page.waitForSelector('.mrow:has-text("squad-x")', { timeout: 6000 });
@@ -199,6 +200,8 @@ try {
     await page.waitForSelector('.modal .mhead:has-text("edit mesh")', { timeout: 4000 });
     const val = await page.locator('.modal .field:has(label:has-text("mesh name")) input').inputValue();
     if (val !== "squad-x") throw new Error(`edit prefill wrong name: "${val}"`);
+    const charterVal = await page.locator(".modal textarea").inputValue();
+    if (!charterVal.includes("build a tiny CLI")) throw new Error(`charter not prefilled: "${charterVal}"`);
     await page.locator('.modal .btn:has-text("save mesh")').click();
     await page.waitForSelector(".modal", { state: "detached", timeout: 4000 });
     await page.waitForSelector('.mrow:has-text("squad-x")', { timeout: 4000 });

@@ -50,6 +50,10 @@ const meshSpecShape = {
   edges: z
     .array(z.tuple([z.string(), z.string()]))
     .describe("directed [from, to] mail edges — both IDs must appear in agents[].id"),
+  charter: z
+    .string()
+    .optional()
+    .describe("optional team charter: shared goal + working norms, injected into every agent's briefing"),
 };
 const meshSpecSchema = z.object(meshSpecShape);
 

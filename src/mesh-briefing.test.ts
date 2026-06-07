@@ -52,6 +52,14 @@ test("an agent with no outgoing edges is told so", () => {
   expect(b).toContain("no outgoing edges");
 });
 
+test("team charter is injected when present and omitted when absent", () => {
+  const withCharter = new Mesh({ ...cfg, charter: "Ship a tiny CLI. Be concise. Always write a test." });
+  const b = buildMeshBriefing(withCharter, "codex-1");
+  expect(b).toContain("Team charter");
+  expect(b).toContain("Ship a tiny CLI");
+  expect(buildMeshBriefing(new Mesh(cfg), "codex-1")).not.toContain("Team charter");
+});
+
 test("unknown agent yields an empty briefing", () => {
   expect(buildMeshBriefing(new Mesh(cfg), "ghost")).toBe("");
 });
