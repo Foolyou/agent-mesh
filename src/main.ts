@@ -45,6 +45,13 @@ async function buildGateway() {
   if (!fake) await manager.loadDefinitions();
   const master: any = fake ? new FakeMaster() : noMaster ? undefined : new MasterAgent(manager);
   const gateway = new WebGateway(manager, master);
+  if (!fake) {
+    // Reconnect to any mesh daemons that outlived a previous backend (the whole point of
+    // the daemon model): their agents kept running; we re-attach and the daemon replays
+    // what we missed. Done AFTER the gateway subscribes so the replay rebuilds its view.
+    const back = await manager.reattachRunning();
+    if (back.length) console.log(`  reattached to running mesh(es): ${back.join(", ")}`);
+  }
   if (fake) {
     gateway.setMasterStatus("ready");
   } else if (master) {
@@ -68,7 +75,26 @@ function reapOnExit(stop: () => Promise<void> | void) {
   process.on("SIGTERM", shutdown);
 }
 
-if (cmd === "backend") {
+if (cmd === "ps") {
+  // list running mesh daemons (survivors of any prior backend) from the registry
+  const mgr = new MeshManager({ root });
+  const running = await mgr.listRunning();
+  if (!running.length) console.log("no running meshes");
+  else for (const r of running) console.log(`${r.name}\tpid ${r.pid}\t${r.socketPath}`);
+} else if (cmd === "kill") {
+  const target = process.argv[3];
+  const mgr = new MeshManager({ root });
+  if (target === "--all" || target === "-a") {
+    const running = await mgr.listRunning();
+    for (const r of running) await mgr.kill(r.name);
+    console.log(`killed ${running.length} mesh(es)`);
+  } else if (target) {
+    console.log((await mgr.kill(target)) ? `killed ${target}` : `no running mesh "${target}"`);
+  } else {
+    console.error("usage: mesh kill <name> | --all");
+    process.exitCode = 2;
+  }
+} else if (cmd === "backend") {
   const port = Number(process.env.MESH_API_PORT) || Number(argVal("--port")) || 7300;
   const { manager, master, gateway } = await buildGateway();
   const server = startApiServer(gateway, { port });
@@ -76,7 +102,8 @@ if (cmd === "backend") {
   reapOnExit(async () => {
     server.stop();
     gateway.dispose();
-    await Promise.allSettled([manager.stopAll(), master?.stop?.()]);
+    manager.disconnectAll?.(); // leave mesh daemons running for the next backend to reattach
+    await master?.stop?.();
   });
 } else if (cmd === "web") {
   const port = Number(process.env.MESH_WEB_PORT) || Number(argVal("--port")) || 7317;
@@ -93,7 +120,8 @@ if (cmd === "backend") {
   reapOnExit(async () => {
     server.stop();
     gateway.dispose();
-    await Promise.allSettled([manager.stopAll(), master?.stop?.()]);
+    manager.disconnectAll?.(); // leave mesh daemons running for the next backend to reattach
+    await master?.stop?.();
   });
   }
 }
