@@ -88,6 +88,22 @@ bun run mesh          # → opens http://localhost:7317
 # bun run mesh --fake           # self-contained scripted demo (no real agents)
 ```
 
+**Split deployment** (one binary, two processes — controlled by separate commands).
+`mesh` (above) is the combined single process; to run the web tier and the backend
+engine separately:
+
+```bash
+bun run backend                          # control plane: REST + WS on :7300 (no frontend)
+#   = bun run mesh backend [--port 7300] [--fake] [--no-master]
+bun run web                              # SPA + reverse-proxy /api + /ws → backend, on :7317
+#   = bun run mesh web [--port 7317] [--backend http://localhost:7300]
+```
+
+The **backend** owns `MeshManager` + the mesh-host subprocesses and exposes only the
+API/WS; the **web** tier serves the React SPA and proxies to the backend (same browser
+origin). The backend can run headless (scripting, restarting the UI without disturbing
+running meshes); the web tier carries zero backend code and vice-versa.
+
 Open the printed URL. The console is a master/detail layout:
 
 - **Left** — the mesh list (status dot, `start`/`stop`, `+ new mesh` form) and the
@@ -114,8 +130,11 @@ no agents or logins.
 
 ```bash
 bun test                              # unit/integration (transcript reducer, gateway, api, store…)
-bun run src/web/server.smoke.ts       # http + ws + bundler smoke
+bun run src/web/server.smoke.ts       # combined http + ws + bundler smoke
+bun run src/web/split.smoke.ts        # split: backend + web reverse-proxy (rest/post/ws)
 bun run src/web/browser.e2e.ts        # headless-browser e2e over --fake (every widget)
+bun run src/web/mobile.e2e.ts         # mobile (390x844) e2e: stack nav + segments
+bun run src/web/split-cli.e2e.ts      # two real processes (mesh backend + mesh web), browser via proxy
 bun run src/web/real.e2e.ts           # real claude+codex+opencode mesh on a fictional project
 bun run e2e                           # headless 6-PoC-point verification through MeshManager
 bun run src/flows/mesh-lifecycle.smoke.ts   # real-agent lifecycle smoke

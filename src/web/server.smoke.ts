@@ -44,7 +44,7 @@ function assert(cond: unknown, msg: string) {
 }
 
 const gw = new WebGateway(fakeManager() as any);
-const handle = startWebServer(gw, { port: 0 });
+const handle = startWebServer({ gateway: gw, port: 0 });
 try {
   // REST snapshot
   const stateRes = await fetch(`${handle.url}/api/state`);

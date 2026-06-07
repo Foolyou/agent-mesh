@@ -200,4 +200,5 @@ export class FakeMaster {
     this.emit({ sessionUpdate: "__turn_end__" });
     return { stopReason: "end_turn" };
   }
+  async stop(): Promise<void> {}
 }
