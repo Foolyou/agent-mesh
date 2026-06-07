@@ -88,6 +88,7 @@ export class FakeManager {
     await sleep(400);
     for (const a of e.config.agents) {
       this.emit(name, { kind: "agent_status", agent: a.id, status: "ready", ts: now() });
+      this.emit(name, { kind: "agent_capabilities", agent: a.id, image: a.id !== "opencode-1", ts: now() });
       // members advertise session modes (the router has none, like real harnesses vary)
       if (a.role !== "router") {
         const cur = this.modeOf.get(`${name}:${a.id}`) ?? "default";
@@ -113,10 +114,10 @@ export class FakeManager {
     void this.stopAll();
   }
 
-  async promptRouter(name: string, text: string): Promise<void> {
+  async promptRouter(name: string, text: string, _images = []): Promise<void> {
     void this.reply(name, "router", `Understood — "${text}". Coordinating the members now.`);
   }
-  promptAgent(name: string, agentId: string, text: string): void {
+  promptAgent(name: string, agentId: string, text: string, _images = []): void {
     void this.reply(name, agentId, `[${agentId}] working on: ${text}`);
   }
   resolvePermission(name: string, requestId: string, optionId: string): void {

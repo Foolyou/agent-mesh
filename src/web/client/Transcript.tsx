@@ -9,6 +9,7 @@ import { Markdown } from "./Markdown";
 
 function Msg({ item }: { item: Extract<TranscriptItem, { kind: "message" }> }) {
   const { t } = useI18n();
+  const [lightbox, setLightbox] = useState<{ url: string; name: string } | null>(null);
   return (
     <div className={`msg ${item.role}`}>
       <div className="who">
@@ -16,7 +17,24 @@ function Msg({ item }: { item: Extract<TranscriptItem, { kind: "message" }> }) {
       </div>
       <div className="bubble">
         {item.role === "agent" ? <Markdown text={item.text} /> : item.text}
+        {item.images?.length ? (
+          <div className="sent-images">
+            {item.images.map((img) => (
+              <button className="sent-image" key={img.url ?? img.id} type="button" title={img.name} onClick={() => setLightbox({ url: img.url ?? "", name: img.name })}>
+                <img src={img.url} alt={img.name} loading="lazy" />
+              </button>
+            ))}
+          </div>
+        ) : null}
       </div>
+      {lightbox ? (
+        <div className="lightbox" onClick={() => setLightbox(null)}>
+          <button className="lightbox-close" type="button" title="close" onClick={() => setLightbox(null)}>
+            ×
+          </button>
+          <img src={lightbox.url} alt={lightbox.name} />
+        </div>
+      ) : null}
     </div>
   );
 }

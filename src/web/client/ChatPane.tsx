@@ -3,7 +3,7 @@
 // interactive elements (buttons, tool/thought toggles) are preserved.
 import { useRef } from "react";
 import type { MouseEvent } from "react";
-import type { TranscriptItem } from "../types";
+import type { PromptImageRef, TranscriptItem } from "../types";
 import { Composer } from "./ui";
 import { Transcript } from "./Transcript";
 
@@ -12,13 +12,19 @@ const INTERACTIVE = "button, a, input, textarea, select, .thought .label, .tool 
 export function ChatPane({
   items,
   onSend,
+  onUploadImages,
   placeholder,
   disabled,
+  imageEnabled,
+  imageDisabledReason,
 }: {
   items: TranscriptItem[];
-  onSend: (text: string) => void;
+  onSend: (text: string, images?: PromptImageRef[]) => void | Promise<void>;
+  onUploadImages?: (files: File[]) => Promise<PromptImageRef[]>;
   placeholder?: string;
   disabled?: boolean;
+  imageEnabled?: boolean;
+  imageDisabledReason?: string;
 }) {
   const taRef = useRef<HTMLTextAreaElement>(null);
 
@@ -34,7 +40,15 @@ export function ChatPane({
   return (
     <div className="chat" onClick={focusOnClick}>
       <Transcript items={items} />
-      <Composer ref={taRef} onSend={onSend} placeholder={placeholder} disabled={disabled} />
+      <Composer
+        ref={taRef}
+        onSend={onSend}
+        onUploadImages={onUploadImages}
+        placeholder={placeholder}
+        disabled={disabled}
+        imageEnabled={imageEnabled}
+        imageDisabledReason={imageDisabledReason}
+      />
     </div>
   );
 }

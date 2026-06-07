@@ -729,13 +729,17 @@ body::after {
   border-top: 1px solid var(--line);
   padding: 7px 10px;
 }
+.compose-main {
+  flex: 1;
+  min-width: 0;
+}
 .composer .prompt {
   color: var(--ok);
   font-weight: 600;
   line-height: 1.6;
 }
 .composer textarea {
-  flex: 1;
+  width: 100%;
   background: transparent;
   border: none;
   outline: none;
@@ -748,6 +752,93 @@ body::after {
   line-height: 1.5;
   padding: 0;
   display: block;
+}
+.attach-btn {
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: var(--bg-inset);
+  color: var(--fg-dim);
+  cursor: pointer;
+}
+.attach-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.attach-strip,
+.sent-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 5px;
+}
+.pending-img,
+.sent-image {
+  position: relative;
+  width: 54px;
+  height: 42px;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--bg-inset);
+  padding: 0;
+  overflow: hidden;
+}
+.pending-img img,
+.sent-image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.pending-img button {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  width: 16px;
+  height: 16px;
+  border: 1px solid var(--line);
+  background: var(--bg-raise);
+  color: var(--fg);
+  border-radius: 2px;
+  cursor: pointer;
+  line-height: 1;
+}
+.sent-image {
+  cursor: zoom-in;
+}
+.compose-error {
+  color: var(--bad);
+  font-size: 11px;
+  margin-top: 4px;
+}
+.lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.76);
+  padding: 24px;
+}
+.lightbox img {
+  max-width: 92vw;
+  max-height: 88vh;
+  object-fit: contain;
+  border: 1px solid var(--line-bright);
+  background: var(--bg);
+}
+.lightbox-close {
+  position: fixed;
+  top: 14px;
+  right: 14px;
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--line-bright);
+  background: var(--bg-raise);
+  color: var(--fg);
+  cursor: pointer;
 }
 .composer textarea::placeholder {
   color: var(--fg-faint);

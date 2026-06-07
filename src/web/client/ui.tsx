@@ -7,8 +7,10 @@ import {
   forwardRef,
   type ReactNode,
   type KeyboardEvent,
+  type ClipboardEvent,
+  type DragEvent,
 } from "react";
-import type { AgentStatus, MeshStatus } from "../types";
+import type { AgentStatus, MeshStatus, PromptImageRef } from "../types";
 
 export function Dot({ status }: { status: AgentStatus | MeshStatus | string }) {
   return <span className={`dot ${status}`} title={status} />;
@@ -69,13 +71,28 @@ export function Panel({
 /** Auto-growing, wrapping multi-line input. Enter sends, Shift+Enter inserts a
  *  newline. Exposes its <textarea> via ref so a parent can focus-on-click. */
 export const Composer = forwardRef<HTMLTextAreaElement, {
-  onSend: (text: string) => void;
+  onSend: (text: string, images?: PromptImageRef[]) => void | Promise<void>;
+  onUploadImages?: (files: File[]) => Promise<PromptImageRef[]>;
   placeholder?: string;
   disabled?: boolean;
-}>(function Composer({ onSend, placeholder, disabled }, ref) {
+  imageEnabled?: boolean;
+  imageDisabledReason?: string;
+}>(function Composer({ onSend, onUploadImages, placeholder, disabled, imageEnabled, imageDisabledReason }, ref) {
   const [v, setV] = useState("");
+  const [pending, setPending] = useState<{ file: File; url: string }[]>([]);
+  const [err, setErr] = useState("");
+  const [sending, setSending] = useState(false);
   const taRef = useRef<HTMLTextAreaElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
   useImperativeHandle(ref, () => taRef.current!, []);
+
+  const pendingRef = useRef(pending);
+  useEffect(() => {
+    pendingRef.current = pending;
+  }, [pending]);
+  useEffect(() => () => {
+    for (const p of pendingRef.current) URL.revokeObjectURL(p.url);
+  }, []);
 
   // grow with content (wrap at the edge), up to a cap then scroll
   useEffect(() => {
@@ -89,27 +106,124 @@ export const Composer = forwardRef<HTMLTextAreaElement, {
     e.stopPropagation(); // keep keystrokes out of the global shortcuts
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      if (v.trim()) {
-        onSend(v.trim());
-        setV("");
-      }
+      void submit();
     }
   }
+
+  function addFiles(files: File[]) {
+    if (!imageEnabled || disabled) return;
+    const next = [...pending];
+    for (const file of files) {
+      const reason = validateImageFile(file, next.length);
+      if (reason) {
+        setErr(reason);
+        continue;
+      }
+      next.push({ file, url: URL.createObjectURL(file) });
+    }
+    setPending(next);
+  }
+
+  function onPaste(e: ClipboardEvent<HTMLTextAreaElement>) {
+    const files = Array.from(e.clipboardData.files).filter((f) => f.type.startsWith("image/"));
+    if (!files.length) return;
+    e.preventDefault();
+    addFiles(files);
+  }
+
+  function onDrop(e: DragEvent<HTMLDivElement>) {
+    if (!imageEnabled || disabled) return;
+    const files = Array.from(e.dataTransfer.files);
+    if (!files.length) return;
+    e.preventDefault();
+    addFiles(files);
+  }
+
+  async function submit() {
+    if (sending || disabled) return;
+    const text = v.trim();
+    if (!text && !pending.length) return;
+    setSending(true);
+    setErr("");
+    try {
+      const images = pending.length && onUploadImages ? await onUploadImages(pending.map((p) => p.file)) : [];
+      await onSend(text, images);
+      for (const p of pending) URL.revokeObjectURL(p.url);
+      setPending([]);
+      setV("");
+    } catch (e: any) {
+      setErr(String(e?.message ?? e));
+    } finally {
+      setSending(false);
+    }
+  }
+
+  function removePending(i: number) {
+    const p = pending[i];
+    if (p) URL.revokeObjectURL(p.url);
+    setPending(pending.filter((_, idx) => idx !== i));
+  }
+
+  const canAttach = !!imageEnabled && !disabled;
   return (
-    <div className={`composer ${disabled ? "disabled" : ""}`}>
+    <div className={`composer ${disabled ? "disabled" : ""}`} onDragOver={(e) => canAttach && e.preventDefault()} onDrop={onDrop}>
       <span className="prompt">›</span>
-      <textarea
-        ref={taRef}
-        rows={1}
-        value={v}
-        disabled={disabled}
-        placeholder={placeholder ?? "type a message…  (Enter to send · Shift+Enter for newline)"}
-        onChange={(e) => setV(e.target.value)}
-        onKeyDown={onKey}
+      <div className="compose-main">
+        {pending.length ? (
+          <div className="attach-strip">
+            {pending.map((p, i) => (
+              <span className="pending-img" key={p.url}>
+                <img src={p.url} alt={p.file.name} />
+                <button type="button" title="remove image" onClick={() => removePending(i)}>
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+        ) : null}
+        <textarea
+          ref={taRef}
+          rows={1}
+          value={v}
+          disabled={disabled || sending}
+          placeholder={placeholder ?? "type a message…  (Enter to send · Shift+Enter for newline)"}
+          onChange={(e) => setV(e.target.value)}
+          onKeyDown={onKey}
+          onPaste={onPaste}
+        />
+        {err ? <div className="compose-error">{err}</div> : null}
+      </div>
+      <button
+        className="attach-btn"
+        type="button"
+        disabled={!canAttach || sending}
+        title={canAttach ? "attach image" : imageDisabledReason ?? "image upload is not available for this agent"}
+        onClick={() => fileRef.current?.click()}
+      >
+        📎
+      </button>
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/png,image/jpeg,image/gif,image/webp"
+        multiple
+        hidden
+        onChange={(e) => {
+          addFiles(Array.from(e.target.files ?? []));
+          e.currentTarget.value = "";
+        }}
       />
     </div>
   );
 });
+
+export function validateImageFile(file: File, currentCount: number): string | undefined {
+  if (currentCount >= 5) return "at most 5 images per message";
+  if (file.size > 10 * 1024 * 1024) return "image is too large (max 10 MB)";
+  if (file.type === "image/svg+xml" || file.name.toLowerCase().endsWith(".svg")) return "SVG images are not allowed";
+  if (!["image/png", "image/jpeg", "image/gif", "image/webp"].includes(file.type)) return "only PNG, JPEG, GIF, and WebP images are supported";
+  return undefined;
+}
 
 export function Empty({ children }: { children: ReactNode }) {
   return <div className="empty">{children}</div>;

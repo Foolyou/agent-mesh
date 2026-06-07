@@ -3,7 +3,7 @@
 // the client. createStore() owns the socket + REST command helpers; useStore wires it
 // into React via useSyncExternalStore.
 import { useSyncExternalStore } from "react";
-import type { GatewayState, ServerMsg, PerMeshState, TranscriptItem, ConvRef, MeshConfig } from "../types";
+import type { GatewayState, ServerMsg, PerMeshState, TranscriptItem, ConvRef, MeshConfig, PromptImageRef } from "../types";
 
 const CAP = 500;
 function cap<T>(a: T[], n: number): T[] {
@@ -11,11 +11,11 @@ function cap<T>(a: T[], n: number): T[] {
 }
 
 export function emptyState(): GatewayState {
-  return { meshes: [], master: { status: "absent", transcript: [] }, perMesh: {} };
+  return { meshes: [], master: { status: "absent", transcript: [], capabilities: { image: false } }, perMesh: {} };
 }
 
 function emptyPerMesh(name: string): PerMeshState {
-  return { config: { name, agents: [], edges: [] }, transcripts: {}, activity: [], mail: [], pending: [], history: [], modes: {} };
+  return { config: { name, agents: [], edges: [] }, transcripts: {}, activity: [], mail: [], pending: [], history: [], modes: {}, capabilities: {} };
 }
 function withPerMesh(state: GatewayState, name: string, fn: (pm: PerMeshState) => PerMeshState): GatewayState {
   const pm = state.perMesh[name] ?? emptyPerMesh(name);
@@ -60,6 +60,13 @@ export function applyMsg(state: GatewayState, msg: ServerMsg): GatewayState {
         ...pm,
         modes: { ...pm.modes, [msg.agent]: { current: msg.current, available: msg.available } },
       }));
+    case "agent.capabilities":
+      return withPerMesh(state, msg.name, (pm) => ({
+        ...pm,
+        capabilities: { ...pm.capabilities, [msg.agent]: { image: msg.image } },
+      }));
+    case "master.capabilities":
+      return { ...state, master: { ...state.master, capabilities: { image: msg.image } } };
     case "transcript.upsert":
       return withTranscript(state, msg.conv, (items) => upsertItem(items, msg.item));
     case "transcript.patch":
@@ -104,9 +111,10 @@ export interface Store {
   reload(): Promise<any>;
   defineMesh(config: MeshConfig): Promise<any>;
   deleteMesh(name: string): Promise<any>;
-  promptRouter(name: string, text: string): Promise<any>;
-  promptAgent(name: string, agentId: string, text: string): Promise<any>;
-  promptMaster(text: string): Promise<any>;
+  uploadImages(bucket: string, files: File[]): Promise<PromptImageRef[]>;
+  promptRouter(name: string, text: string, images?: PromptImageRef[]): Promise<any>;
+  promptAgent(name: string, agentId: string, text: string, images?: PromptImageRef[]): Promise<any>;
+  promptMaster(text: string, images?: PromptImageRef[]): Promise<any>;
   resolvePermission(name: string, requestId: string, optionId: string): Promise<any>;
   setMode(name: string, agentId: string, modeId: string): Promise<any>;
   interruptAgent(name: string, agentId: string): Promise<any>;
@@ -191,6 +199,14 @@ export function createStore(): Store {
     return json;
   }
   const post = (path: string, body?: unknown) => send("POST", path, body);
+  async function uploadImages(bucket: string, files: File[]): Promise<PromptImageRef[]> {
+    const fd = new FormData();
+    for (const file of files) fd.append("files", file, file.name);
+    const res = await fetch(`/api/uploads?bucket=${enc(bucket)}`, { method: "POST", body: fd });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(json?.error?.message ?? `HTTP ${res.status}`);
+    return json as PromptImageRef[];
+  }
 
   return {
     getState: () => state,
@@ -214,9 +230,10 @@ export function createStore(): Store {
     reload: () => guard(post(`/api/meshes/reload`), "reload"),
     defineMesh: (c) => post(`/api/meshes`, c),
     deleteMesh: (n) => guard(send("DELETE", `/api/meshes/${enc(n)}`), `delete ${n}`),
-    promptRouter: (n, t) => guard(post(`/api/meshes/${enc(n)}/prompt`, { text: t }), `prompt ${n}`),
-    promptAgent: (n, a, t) => guard(post(`/api/meshes/${enc(n)}/agents/${enc(a)}/prompt`, { text: t }), `prompt ${a}`),
-    promptMaster: (t) => guard(post(`/api/master/prompt`, { text: t }), "master"),
+    uploadImages: (bucket, files) => guard(uploadImages(bucket, files), "upload images"),
+    promptRouter: (n, t, images) => guard(post(`/api/meshes/${enc(n)}/prompt`, { text: t, images }), `prompt ${n}`),
+    promptAgent: (n, a, t, images) => guard(post(`/api/meshes/${enc(n)}/agents/${enc(a)}/prompt`, { text: t, images }), `prompt ${a}`),
+    promptMaster: (t, images) => guard(post(`/api/master/prompt`, { text: t, images }), "master"),
     resolvePermission: (n, r, o) => guard(post(`/api/meshes/${enc(n)}/permissions/${enc(r)}/resolve`, { optionId: o }), "resolve permission"),
     setMode: (n, a, m) => guard(post(`/api/meshes/${enc(n)}/agents/${enc(a)}/mode`, { modeId: m }), `set mode ${a}`),
     interruptAgent: (n, a) => guard(post(`/api/meshes/${enc(n)}/agents/${enc(a)}/interrupt`), `interrupt ${a}`),

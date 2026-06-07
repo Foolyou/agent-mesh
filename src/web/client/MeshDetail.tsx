@@ -152,7 +152,10 @@ function AgentPanels({
         <ChatPane
           items={pm.transcripts[cur.id] ?? []}
           placeholder={t("agent.placeholder", { id: cur.id })}
-          onSend={(msg) => void store.promptAgent(m.name, cur.id, msg)}
+          imageEnabled={!!pm.capabilities[cur.id]?.image}
+          imageDisabledReason="This agent does not advertise image input support"
+          onUploadImages={(files) => store.uploadImages(m.name, files)}
+          onSend={(msg, images) => void store.promptAgent(m.name, cur.id, msg, images)}
         />
       </div>
     </div>
@@ -281,6 +284,7 @@ export function MeshDetail({
       pending: [],
       history: [],
       modes: {},
+      capabilities: {},
     };
   // interrupt flash: highlight a node briefly when a new interrupt activity arrives
   const { t } = useI18n();
@@ -320,7 +324,14 @@ export function MeshDetail({
         </span>
       </div>
       <div className="scroll-pane">
-        <ChatPane items={routerItems} placeholder={t("router.placeholder")} onSend={(msg) => void store.promptRouter(m.name, msg)} />
+        <ChatPane
+          items={routerItems}
+          placeholder={t("router.placeholder")}
+          imageEnabled={!!pm.capabilities[m.router]?.image}
+          imageDisabledReason="This agent does not advertise image input support"
+          onUploadImages={(files) => store.uploadImages(m.name, files)}
+          onSend={(msg, images) => void store.promptRouter(m.name, msg, images)}
+        />
       </div>
     </div>
   );
