@@ -146,9 +146,18 @@ stop_pid() {
   wait_gone "$pid" 3 || true
 }
 
+# Extract a flat-JSON field without a runtime dependency. The registry records are
+# simple ({"name":..,"pid":N,"socketPath":"..",..}), and `node` is NOT always on PATH
+# (nvm shims aren't loaded in minimal/non-login shells), which used to make --cold
+# silently skip the daemon kill. grep/sed are always available.
 json_field() {
   local file="$1" field="$2"
-  node -e "const fs=require('fs'); const [file,k]=process.argv.slice(1); try { const j=JSON.parse(fs.readFileSync(file, 'utf8')); if (j && j[k] != null) console.log(String(j[k])); } catch {}" "$file" "$field"
+  case "$field" in
+    pid|proto)
+      grep -oE "\"$field\"[[:space:]]*:[[:space:]]*[0-9]+" "$file" 2>/dev/null | grep -oE '[0-9]+$' | head -1 ;;
+    *)
+      sed -nE "s/.*\"$field\"[[:space:]]*:[[:space:]]*\"([^\"]*)\".*/\1/p" "$file" 2>/dev/null | head -1 ;;
+  esac
 }
 
 reap_daemons() {
