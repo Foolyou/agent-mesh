@@ -8,7 +8,7 @@ import { chromium, type Page } from "playwright";
 const PORT = Number(process.env.E2E_PORT) || 7490;
 const BASE = `http://localhost:${PORT}`;
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
-const THEMES = ["phosphor", "amber", "ice", "paper", "mono"];
+const THEMES = ["phosphor", "amber", "ice", "paper", "mono", "frost", "sage", "linen"];
 const AA = 4.5;
 
 let pass = 0;
