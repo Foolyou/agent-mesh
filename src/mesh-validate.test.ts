@@ -52,3 +52,8 @@ test("rejects absolute project paths", () => {
   const abs = { ...ok, agents: [{ ...ok.agents[0]!, project: "/etc" }, ok.agents[1]!] };
   expect(() => validateMeshConfig(abs)).toThrow(/relative/i);
 });
+
+test("accepts an optional charter and rejects an overly long one", () => {
+  expect(() => validateMeshConfig({ ...ok, charter: "Be concise. Write tests." })).not.toThrow();
+  expect(() => validateMeshConfig({ ...ok, charter: "x".repeat(4001) })).toThrow(/too long/i);
+});

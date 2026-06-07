@@ -62,5 +62,12 @@ export function buildMeshBriefing(mesh: Mesh, agentId: AgentId): string {
   lines.push(
     "Prefer using these tools to collaborate rather than assuming you must do everything yourself.",
   );
+
+  const charter = mesh.charter;
+  if (charter) {
+    lines.push("");
+    lines.push("Team charter — the shared goal and working norms for this mesh. Follow it in all your work:");
+    lines.push(charter.replace(/^/gm, "  "));
+  }
   return lines.join("\n");
 }

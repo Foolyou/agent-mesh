@@ -49,6 +49,7 @@ export function MeshBuilder({
       : [{ id: "router", harness: "claude", role: "router", project: "test_mesh_0" }],
   );
   const [edges, setEdges] = useState<[string, string][]>(initial ? initial.edges.map((e) => [e[0], e[1]]) : []);
+  const [charter, setCharter] = useState(initial?.charter ?? "");
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -65,7 +66,7 @@ export function MeshBuilder({
   const delEdge = (i: number) => setEdges((e) => e.filter((_, j) => j !== i));
 
   async function submit() {
-    const v = validate(name, agents, edges);
+    const v = validate(name, agents, edges) ?? (charter.length > 4000 ? "charter is too long (max 4000 chars)" : null);
     if (v) {
       setErr(v);
       return;
@@ -73,7 +74,7 @@ export function MeshBuilder({
     setErr(null);
     setBusy(true);
     try {
-      await store.defineMesh({ name, agents, edges });
+      await store.defineMesh({ name, agents, edges, charter: charter.trim() || undefined });
       onClose(name);
     } catch (e: any) {
       setErr(String(e?.message ?? e));
@@ -161,6 +162,18 @@ export function MeshBuilder({
                 + edge
               </Btn>
             </div>
+          </div>
+
+          <div className="field">
+            <label>team charter — shared goal + norms, injected into every agent (optional)</label>
+            <textarea
+              className="inp"
+              rows={4}
+              value={charter}
+              placeholder={"e.g. Goal: build a tiny wordcount CLI.\nNorms: keep it one file, write a test, hand off via send_mail when done."}
+              onChange={(e) => setCharter(e.target.value)}
+              style={{ resize: "vertical", fontFamily: "var(--mono)" }}
+            />
           </div>
 
           {err ? <div className="err">{err}</div> : null}

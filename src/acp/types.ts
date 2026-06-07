@@ -21,6 +21,9 @@ export interface MeshConfig {
   agents: AgentConfig[];
   /** Directed edges: [from, to] means `from` may send mail to `to`. */
   edges: Array<[AgentId, AgentId]>;
+  /** Optional team charter — shared goal + working norms injected into every
+   *  agent's mesh briefing. Free text. */
+  charter?: string;
 }
 
 export type AgentStatus = "spawning" | "ready" | "dead";

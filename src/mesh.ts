@@ -15,6 +15,11 @@ export class Mesh {
     return this.config.name;
   }
 
+  /** Optional shared team charter (goal + norms), injected into every briefing. */
+  get charter(): string | undefined {
+    return this.config.charter?.trim() || undefined;
+  }
+
   get router(): AgentConfig {
     const r = this.config.agents.find((a) => a.role === "router");
     if (!r) throw new Error(`mesh ${this.config.name} has no router`);

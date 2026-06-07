@@ -37,4 +37,9 @@ export function validateMeshConfig(config: MeshConfig): void {
       throw new Error(`edge [${from}, ${to}] references an unknown agent`);
     }
   }
+
+  if (config.charter !== undefined) {
+    if (typeof config.charter !== "string") throw new Error("mesh charter must be a string");
+    if (config.charter.length > 4000) throw new Error("mesh charter is too long (max 4000 chars)");
+  }
 }
