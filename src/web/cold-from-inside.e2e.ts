@@ -36,7 +36,7 @@ const post = (p: string, body?: unknown) =>
   fetch(`${BASE}${p}`, { method: "POST", headers: { "content-type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
 async function regPid(name: string): Promise<number | null> {
   try {
-    const j = JSON.parse(await readFile(join(ROOT, "run", `${name}.json`), "utf8"));
+    const j = JSON.parse(await readFile(join(ROOT, ".agent-mesh", "run", `${name}.json`), "utf8"));
     return j.pid ?? null;
   } catch {
     return null;

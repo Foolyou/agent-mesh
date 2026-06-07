@@ -167,7 +167,7 @@ test("restart-work refuses cross-check mismatches without starting another backe
 test("restart-work --cold reaps registry daemons and removes their files", async () => {
   const root = await tempRoot("mesh-restart-cold-");
   const port = await randomPort();
-  const runDir = join(root, "run");
+  const runDir = join(root, ".agent-mesh", "run"); // data lives under <base>/.agent-mesh now
   await mkdir(runDir, { recursive: true });
 
   const dummy = Bun.spawn(["sleep", "60"]);

@@ -60,7 +60,7 @@ try {
     const s = await state();
     const m = s.meshes.find((x: any) => x.name === "echo");
     if (m?.status !== "running") throw new Error(`status ${m?.status} != running`);
-    const rec = JSON.parse(await readFile(join(ROOT, "run", "echo.json"), "utf8"));
+    const rec = JSON.parse(await readFile(join(ROOT, ".agent-mesh", "run", "echo.json"), "utf8"));
     daemonPid = rec.pid;
     if (!daemonPid) throw new Error("no registry pid");
   });
@@ -94,7 +94,7 @@ try {
     const s = await state();
     const m = s.meshes.find((x: any) => x.name === "echo");
     if (m?.status !== "running") throw new Error(`after restart status ${m?.status} != running (no reattach)`);
-    const rec = JSON.parse(await readFile(join(ROOT, "run", "echo.json"), "utf8"));
+    const rec = JSON.parse(await readFile(join(ROOT, ".agent-mesh", "run", "echo.json"), "utf8"));
     if (rec.pid !== daemonPid) throw new Error(`reattached to a DIFFERENT daemon (${rec.pid} != ${daemonPid})`);
   });
 
@@ -135,7 +135,7 @@ try {
   backend.kill("SIGKILL");
   // best-effort reap of any surviving daemon
   try {
-    const rec = JSON.parse(await readFile(join(ROOT, "run", "echo.json"), "utf8"));
+    const rec = JSON.parse(await readFile(join(ROOT, ".agent-mesh", "run", "echo.json"), "utf8"));
     process.kill(rec.pid, "SIGKILL");
   } catch {}
   await rm(ROOT, { recursive: true, force: true });

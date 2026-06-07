@@ -11,13 +11,13 @@ usage() {
 Usage: scripts/restart-work.sh [--cold] [--help]
 
 Environment:
-  MESH_WORK_ROOT    data root to restart (default: ~/.agent-mesh)
+  MESH_WORK_ROOT    base dir to restart (default: ~); data lives in <base>/.agent-mesh
   MESH_WORK_PORT    backend port to restart (default: 10010)
   MESH_LAUNCH_CMD   executable/command to launch (default: ./dist/mesh)
 
-Default mode sends TERM then KILL to the backend matching both PORT and ROOT,
-then starts a detached backend. --cold also kills daemon PIDs registered in
-<ROOT>/run/*.json and removes their .json/.sock files before relaunch.
+Default mode sends TERM then KILL to the backend matching both PORT and the --root
+BASE, then starts a detached backend. --cold also kills daemon PIDs registered in
+<base>/.agent-mesh/run/*.json and removes their .json/.sock files before relaunch.
 EOF
 }
 
@@ -31,7 +31,7 @@ for arg in "$@"; do
 done
 
 PORT="${MESH_WORK_PORT:-10010}"
-ROOT_RAW="${MESH_WORK_ROOT:-$HOME/.agent-mesh}"
+BASE_RAW="${MESH_WORK_ROOT:-$HOME}"   # base dir; passed as --root. Data → <base>/.agent-mesh
 LAUNCH_CMD="${MESH_LAUNCH_CMD:-./dist/mesh}"
 
 expand_root() {
@@ -44,9 +44,13 @@ expand_root() {
   esac
 }
 
-ROOT="$(expand_root "$ROOT_RAW")"
-mkdir -p "$ROOT" "$ROOT/run"
-ROOT="$(cd "$ROOT" && pwd -P)"
+# BASE is what we pass as --root (and match in the backend's cmdline); ROOT is the actual
+# storage dir <base>/.agent-mesh where the registry, sockets and log live.
+BASE="$(expand_root "$BASE_RAW")"
+mkdir -p "$BASE"
+BASE="$(cd "$BASE" && pwd -P)"
+ROOT="$BASE/.agent-mesh"
+mkdir -p "$ROOT/run"
 LOG="$ROOT/backend.log"
 
 pid_alive() {
@@ -74,7 +78,7 @@ pid_matches_backend() {
   local pid="$1"
   pid_alive "$pid" || return 1
   pid_has_arg_value "$pid" "--port" "$PORT" || return 1
-  pid_has_arg_value "$pid" "--root" "$ROOT" || return 1
+  pid_has_arg_value "$pid" "--root" "$BASE" || return 1
 }
 
 unique_lines() {
@@ -114,7 +118,7 @@ find_backend_pid() {
 
   if ((${#matches[@]} == 0)); then
     if ((${#by_port[@]} > 0 || ${#by_root[@]} > 0)); then
-      echo "refusing to stop: no process matched both port $PORT and root $ROOT" >&2
+      echo "refusing to stop: no process matched both port $PORT and root $BASE" >&2
       echo "port candidates: ${by_port[*]:-(none)}" >&2
       echo "root candidates: ${by_root[*]:-(none)}" >&2
       return 2
@@ -174,11 +178,11 @@ reap_daemons() {
 
 start_backend() {
   : >"$LOG"
-  echo "starting backend: $LAUNCH_CMD --port $PORT --root $ROOT"
+  echo "starting backend: $LAUNCH_CMD --port $PORT --root $BASE"
   # Defense-in-depth: never let the backend inherit a mesh-host's control env (MESH_SOCK/
   # MESH_CONFIG would make it re-exec as a mesh-host instead of the backend). `env -u`
   # strips them even if this script is run from a polluted environment (e.g. by an agent).
-  MESH_LAUNCH_CMD="$LAUNCH_CMD" setsid bash -c 'exec env -u MESH_SOCK -u MESH_CONFIG -u MESH_HOST_SCRIPT -u MESH_LEASE_MS ${MESH_LAUNCH_CMD:-./dist/mesh} --port "$1" --root "$2"' _ "$PORT" "$ROOT" >>"$LOG" 2>&1 &
+  MESH_LAUNCH_CMD="$LAUNCH_CMD" setsid bash -c 'exec env -u MESH_SOCK -u MESH_CONFIG -u MESH_HOST_SCRIPT -u MESH_LEASE_MS ${MESH_LAUNCH_CMD:-./dist/mesh} --port "$1" --root "$2"' _ "$PORT" "$BASE" >>"$LOG" 2>&1 &
   local pid="$!"
   disown "$pid" 2>/dev/null || true
 
@@ -217,7 +221,7 @@ find_rc=$?
 set -e
 case "$find_rc" in
   0) stop_pid "$old_pid" "backend" ;;
-  1) echo "no existing backend matched port $PORT and root $ROOT; starting a new one" ;;
+  1) echo "no existing backend matched port $PORT and root $BASE; starting a new one" ;;
   2) exit 1 ;;
   *) echo "unexpected backend lookup status: $find_rc" >&2; exit 1 ;;
 esac

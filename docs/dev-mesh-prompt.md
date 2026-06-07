@@ -29,7 +29,7 @@ Team charter (inject into every agent):
 >   context, never work. End commit messages with a `Co-Authored-By: ...` line.
 > - **Validate on DEV, never on production.** To check changes, run `bun test` + the e2e,
 >   and for manual/browser checks start a throwaway dev instance:
->   `bun run src/main.ts --port 10020 --root ~/.agent-mesh-dev` (kill it when done).
+>   `bun run src/main.ts --port 10020 --root ~/mesh-dev` (data → ~/mesh-dev/.agent-mesh; kill it when done).
 >   **NEVER** restart, kill, or write into the production instance (port 10010, root
 >   `~/.agent-mesh`) or its meshes. Do not touch `~/.agent-mesh`.
 > - **One writer at a time:** `lead` serializes edits and has the writer commit before

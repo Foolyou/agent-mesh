@@ -3,11 +3,15 @@
 Two isolated instances so iterating on the code never disturbs the agents doing the work.
 They share nothing: separate **roots**, **ports**, and **sockets**.
 
+> **Root convention:** `--root <dir>` names a **base** directory; data lives in
+> `<dir>/.agent-mesh` inside it (like a project-local `.git`). With no `--root` the base is
+> your home, so the default root is `~/.agent-mesh`. So `--root .` → `./.agent-mesh`.
+
 | | Production ("work") | Development |
 |---|---|---|
 | Launch | `scripts/work.sh` | `scripts/dev.sh` |
 | Code | **pinned binary** `dist/mesh` (frozen) | **source** `bun run src/main.ts` |
-| Root | `~/.agent-mesh` | `~/.agent-mesh-dev` |
+| Base (`--root`) | `~` → data `~/.agent-mesh` | `~/mesh-dev` → data `~/mesh-dev/.agent-mesh` |
 | Web | http://localhost:10010 | http://localhost:10020 |
 | Restart it? | rarely, and it's safe (daemons survive + reconnect) | freely — it's throwaway |
 | Hosts | your **development mesh** (agents writing the code) | nothing durable — just for testing changes |
