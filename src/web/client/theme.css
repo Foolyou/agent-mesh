@@ -426,7 +426,6 @@ body::after {
 }
 .msg.user {
   align-self: flex-end;
-  text-align: right;
 }
 .msg .who {
   font-size: 10px;

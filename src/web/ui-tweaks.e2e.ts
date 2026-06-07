@@ -64,6 +64,11 @@ try {
     await ta.press("Enter");
     await page.waitForSelector(`${routerPanel} .msg.user`, { timeout: 4000 });
     if ((await ta.inputValue()) !== "") throw new Error("textarea not cleared after send");
+    const align = await page
+      .locator(`${routerPanel} .msg.user`)
+      .last()
+      .evaluate((el) => getComputedStyle(el).textAlign);
+    if (align !== "left" && align !== "start") throw new Error(`user message text-align is ${align}`);
   });
 
   await step("topology expand → modal with zoom controls", async () => {
