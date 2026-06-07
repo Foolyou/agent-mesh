@@ -112,17 +112,19 @@ export async function up(base: string, root: string, port: number, opts: UpOpts 
   if (opts.cold) await reapDaemons(root);
   await mkdir(root, { recursive: true });
   const fd = openSync(logPath(root), "a");
-  // NOT detached (Bun double-forks for detached, so child.pid wouldn't be the real backend).
-  // Unix keeps the child alive after we exit; the backend ignores SIGHUP so a terminal close
-  // can't take it down. (no subcommand → combined SPA + API + WS, like production.)
+  // Fully daemonize: `detached` puts the backend in its OWN session (setsid), so killing
+  // the launching shell/session can't take it down with us — what you want from a service.
+  // (Bun's `detached` keeps child.pid as the real process; we just don't await its exit.)
+  // It also ignores SIGHUP. No subcommand → combined SPA + API + WS, like production.
   const child = Bun.spawn(selfCmd(...(opts.passthrough ?? []), "--port", String(port), "--root", base), {
     cwd: process.cwd(),
     env: cleanEnv(),
     stdin: "ignore",
     stdout: fd,
     stderr: fd,
+    detached: true,
   });
-  child.unref(); // don't keep THIS process alive waiting on the background backend
+  child.unref(); // don't keep THIS process alive waiting on the detached backend
   const deadline = Date.now() + 15_000;
   while (Date.now() < deadline) {
     if (await healthy(port)) {
