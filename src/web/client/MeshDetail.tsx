@@ -206,6 +206,31 @@ function History({ history }: { history: ResolvedPermission[] }) {
   );
 }
 
+// The desktop rail's reference logs as one compact segmented card.
+function RailLogs({ pm }: { pm: PerMeshState }) {
+  const [t, setT] = useState<"activity" | "mail" | "history">("activity");
+  return (
+    <div className="panel">
+      <div className="head">
+        <span className="seg-tabs">
+          <button className={`seg-tab ${t === "activity" ? "sel" : ""}`} onClick={() => setT("activity")}>
+            activity
+          </button>
+          <button className={`seg-tab ${t === "mail" ? "sel" : ""}`} onClick={() => setT("mail")}>
+            mail
+          </button>
+          <button className={`seg-tab ${t === "history" ? "sel" : ""}`} onClick={() => setT("history")}>
+            history {pm.history.length ? `· ${pm.history.length}` : ""}
+          </button>
+        </span>
+      </div>
+      <div className="body-scroll">
+        {t === "activity" ? <Timeline activity={pm.activity} /> : t === "mail" ? <Mailbox mail={pm.mail} /> : <History history={pm.history} />}
+      </div>
+    </div>
+  );
+}
+
 export function MeshDetail({
   state,
   store,
@@ -366,27 +391,37 @@ export function MeshDetail({
     );
   }
 
-  // ── Desktop ─────────────────────────────────────────────────────────────────
+  // ── Desktop: fixed-viewport grid — chat dominant (left), glance + logs (right
+  //    rail), permissions span above. The page never scrolls; regions do. ──────
+  const railTopology = (
+    <div className="panel">
+      <div className="head">
+        <span className="ttl">topology</span>
+        <span className="sub">agents · mail edges</span>
+      </div>
+      <div className="body-scroll">
+        <Topology summary={m} selectedAgent={selectedAgent} onSelect={onSelectAgent} flashId={flashId} maxHeight={230} />
+      </div>
+    </div>
+  );
   return (
-    <>
+    <div className="dgrid">
       <Header m={m} store={store} onDeleted={onDeleted} onEdit={onEdit} />
+      {pm.pending.length ? <div className="dperm">{permissionEl}</div> : null}
       {fullscreen ? (
-        <div style={{ flex: 1, minHeight: 360, display: "flex" }}>{routerChat}</div>
+        <div className="dmain full">{routerChat}</div>
       ) : (
-        <>
-          {topologyPanel}
-          {permissionEl}
-          <div className="split">
-            <div style={{ display: "flex", minHeight: 320 }}>{routerChat}</div>
-            <div style={{ display: "flex", minHeight: 320 }}>{agentPanels}</div>
+        <div className="dmain">
+          <div className="dchat">
+            {routerChat}
+            {agentPanels}
           </div>
-          <div className="split">
-            {activityPanel}
-            {mailboxPanel}
+          <div className="drail">
+            {railTopology}
+            <RailLogs pm={pm} />
           </div>
-          {historyPanel}
-        </>
+        </div>
       )}
-    </>
+    </div>
   );
 }

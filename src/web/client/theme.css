@@ -121,30 +121,29 @@ body::after {
 
 .body {
   display: grid;
-  grid-template-columns: 320px 1fr;
+  grid-template-columns: 300px 1fr;
   min-height: 0;
+  min-width: 0;
+  overflow: hidden; /* page never scrolls; regions scroll internally */
 }
 .sidebar {
   border-right: 1px solid var(--line);
   display: grid;
-  grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 0.85fr) minmax(0, 1.15fr);
   min-height: 0;
+  min-width: 0;
+  overflow: hidden;
   background: var(--bg-inset);
 }
+/* the selected-mesh detail fills the viewport; its inner grid (.dgrid) scrolls
+   per-region, so the page itself does not scroll. */
 .detail {
   min-width: 0;
   min-height: 0;
-  overflow: auto;
+  overflow: hidden;
   padding: 12px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
-}
-/* keep each section at its natural height (the column scrolls) — otherwise flex
-   shrink collapses no-min-height panels like the topology. Inline flex:1 (the
-   fullscreen container) still wins and grows. */
-.detail > * {
-  flex-shrink: 0;
 }
 
 /* ── panel ─────────────────────────────────────────────────────────────── */
@@ -155,6 +154,7 @@ body::after {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  min-width: 0;
   position: relative;
 }
 .panel > .head {
@@ -188,6 +188,7 @@ body::after {
   overflow: auto;
   padding: 8px 10px;
   min-height: 0;
+  min-width: 0;
   flex: 1;
 }
 /* corner ticks */
@@ -215,9 +216,11 @@ body::after {
 
 .scroll-pane {
   min-height: 0;
+  min-width: 0;
   flex: 1;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 /* ── status dot ────────────────────────────────────────────────────────── */
@@ -350,6 +353,7 @@ body::after {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  min-width: 0;
   flex: 1;
 }
 .stream {
@@ -360,10 +364,12 @@ body::after {
   gap: 9px;
   flex: 1;
   min-height: 0;
+  min-width: 0;
 }
 .msg {
   animation: fadeUp 0.18s ease;
   max-width: 92%;
+  min-width: 0;
 }
 .msg.user {
   align-self: flex-end;
@@ -925,6 +931,84 @@ select.inp {
   color: var(--fg-faint);
   font-size: 11px;
   padding: 2px 4px;
+}
+
+/* ── desktop mesh detail: fixed-viewport grid (chat-dominant + rail) ──────── */
+.dgrid {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.dgrid > .detail-head {
+  flex: none;
+}
+.dperm {
+  flex: none;
+  max-height: 30vh;
+  overflow: auto;
+}
+.dmain {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: 12px;
+}
+.dmain.full {
+  grid-template-columns: 1fr;
+}
+.dchat {
+  min-height: 0;
+  min-width: 0;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+}
+.drail {
+  min-height: 0;
+  min-width: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 12px;
+}
+.dchat > .panel,
+.drail > .panel {
+  min-height: 0;
+  min-width: 0;
+}
+/* segmented header (rail logs: activity / mail / history) */
+.seg-tabs {
+  display: flex;
+  gap: 2px;
+}
+.seg-tab {
+  font: inherit;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--fg-faint);
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+.seg-tab:hover {
+  color: var(--fg-dim);
+}
+.seg-tab.sel {
+  color: var(--fg);
+  border-bottom-color: var(--ok);
+}
+/* medium desktop widths: a slimmer rail */
+@media (max-width: 1000px) and (min-width: 761px) {
+  .dmain {
+    grid-template-columns: minmax(0, 1fr) 300px;
+  }
 }
 
 /* ── mobile (≤760px): stack nav + segmented detail ───────────────────────── */

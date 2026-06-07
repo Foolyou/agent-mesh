@@ -129,28 +129,31 @@ try {
     await page.waitForSelector(".toast.error", { timeout: 4000 });
   });
 
-  await step("mailbox shows inter-agent mail", async () => {
-    await page.waitForSelector('.panel:has(.head:has-text("mailbox")) .k.mail', { timeout: 10000 });
+  await step("rail logs: mailbox tab shows inter-agent mail", async () => {
+    await page.locator('.drail .seg-tab:has-text("mail")').click();
+    await page.waitForSelector(".drail .panel .k.mail", { timeout: 10000 });
   });
 
-  await step("activity timeline shows mail + interrupt + log", async () => {
-    await page.waitForSelector('.panel:has(.head:has-text("activity")) .k.interrupt', { timeout: 10000 });
+  await step("rail logs: activity tab shows mail + interrupt + log", async () => {
+    await page.locator('.drail .seg-tab:has-text("activity")').click();
+    await page.waitForSelector(".drail .panel .k.interrupt", { timeout: 10000 });
   });
 
-  await step("permission card appears and resolves into history", async () => {
-    const card = page.locator(".perm");
+  await step("permission card (pinned) appears and resolves into history", async () => {
+    const card = page.locator(".dperm .perm");
     await card.first().waitFor({ timeout: 12000 });
     await page.screenshot({ path: `${SHOTS}/02-running.png`, fullPage: true });
-    await page.locator('.perm .btn:has-text("Allow once")').click();
-    await page.waitForSelector('.panel:has(.head:has-text("permission history")) .k.permission_resolved', { timeout: 6000 });
-    // card gone
-    if ((await page.locator(".perm").count()) !== 0) throw new Error("permission card did not clear");
+    await page.locator('.dperm .perm .btn:has-text("Allow once")').click();
+    await page.locator('.drail .seg-tab:has-text("history")').click();
+    await page.waitForSelector(".drail .panel .k.permission_resolved", { timeout: 6000 });
+    if ((await page.locator(".dperm .perm").count()) !== 0) throw new Error("permission card did not clear");
   });
 
   await step("operator interrupt cancels an agent's turn (activity from 'operator')", async () => {
     // codex-1 panel is active from the tool-call step; click its interrupt button
-    await page.locator(".panel:has(.tabs) .btn", { hasText: "interrupt" }).first().click();
-    await page.waitForSelector('.panel:has(.head:has-text("activity")) .tx:has-text("operator")', { timeout: 6000 });
+    await page.locator(".dchat .panel:has(.tabs) .btn", { hasText: "interrupt" }).first().click();
+    await page.locator('.drail .seg-tab:has-text("activity")').click();
+    await page.waitForSelector('.drail .panel .tx:has-text("operator")', { timeout: 6000 });
   });
 
   await step("master chat: send instruction → user bubble + streamed reply", async () => {
@@ -169,11 +172,11 @@ try {
   });
 
   await step("keyboard: 'f' fullscreens router chat, Esc exits", async () => {
-    await page.locator(".detail").click(); // focus body, not an input
+    await page.locator(".detail-head .mtitle").click(); // focus a non-input element
     await page.keyboard.press("f");
-    await page.waitForSelector('.panel:has(.head:has-text("router chat")) .btn:has-text("exit")', { timeout: 4000 });
+    await page.waitForSelector(".dmain.full", { timeout: 4000 });
     await page.keyboard.press("Escape");
-    await page.waitForSelector('.panel:has(.head:has-text("topology"))', { timeout: 4000 });
+    await page.waitForSelector(".drail", { timeout: 4000 }); // rail (topology + logs) returns
   });
 
   await step("mesh builder: invalid config shows inline error", async () => {
