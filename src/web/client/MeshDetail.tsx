@@ -3,7 +3,7 @@
 // permission-history timelines for the selected mesh.
 import { useEffect, useState } from "react";
 import type { Store } from "./store";
-import type { GatewayState, MeshSummary, PerMeshState, ActivityEntry, MailEntry, ResolvedPermission, PermissionReq } from "../types";
+import type { GatewayState, MeshSummary, PerMeshState, ActivityEntry, MailEntry, ResolvedPermission, PermissionReq, AgentModes } from "../types";
 import { Dot, Btn, Empty, ConfirmButton, InfoIcon, fmtTime } from "./ui";
 import { ChatPane } from "./ChatPane";
 import { Topology, TopologyModal } from "./Topology";
@@ -77,28 +77,31 @@ function PermissionCards({ pending, mesh, store }: { pending: PermissionReq[]; m
   );
 }
 
-function ModeControl({ mesh, agent, store }: { mesh: string; agent: string; store: Store }) {
+// Picker for the agent's ACP session mode (e.g. read-only / full-access / plan). The
+// options are exactly the modes the agent advertised; switching calls setSessionMode.
+// Renders nothing when the agent exposes no modes — most have none.
+function ModeControl({ mesh, agent, store, modes }: { mesh: string; agent: string; store: Store; modes?: AgentModes }) {
   const { t } = useI18n();
-  const [v, setV] = useState("");
+  if (!modes || modes.available.length === 0) return null;
+  const desc = modes.available.find((m) => m.id === modes.current)?.description;
   return (
     <span className="row" style={{ gap: 5 }}>
       <span className="sub" style={{ fontSize: 10 }}>
         {t("mode")}
       </span>
-      <input
-        className="inp"
-        style={{ width: 110, padding: "1px 6px", fontSize: 11 }}
-        value={v}
-        placeholder="mode id"
-        onChange={(e) => setV(e.target.value)}
-        onKeyDown={(e) => {
-          e.stopPropagation();
-          if (e.key === "Enter" && v.trim()) {
-            void store.setMode(mesh, agent, v.trim());
-            setV("");
-          }
-        }}
-      />
+      <select
+        className="mode-sel"
+        value={modes.current}
+        title={desc ?? t("mode.hint")}
+        onKeyDown={(e) => e.stopPropagation()}
+        onChange={(e) => void store.setMode(mesh, agent, e.target.value)}
+      >
+        {modes.available.map((m) => (
+          <option key={m.id} value={m.id} title={m.description}>
+            {m.name}
+          </option>
+        ))}
+      </select>
     </span>
   );
 }
@@ -142,7 +145,9 @@ function AgentPanels({
               {t("interrupt")}
             </Btn>
           ) : null}
-          <ModeControl mesh={m.name} agent={cur.id} store={store} />
+          {m.status === "running" || m.status === "starting" ? (
+            <ModeControl mesh={m.name} agent={cur.id} store={store} modes={pm.modes?.[cur.id]} />
+          ) : null}
         </div>
         <ChatPane
           items={pm.transcripts[cur.id] ?? []}
@@ -275,6 +280,7 @@ export function MeshDetail({
       mail: [],
       pending: [],
       history: [],
+      modes: {},
     };
   // interrupt flash: highlight a node briefly when a new interrupt activity arrives
   const { t } = useI18n();

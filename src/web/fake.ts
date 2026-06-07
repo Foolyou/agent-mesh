@@ -28,9 +28,18 @@ interface Entry {
   status: MeshStatus;
 }
 
+// a realistic ACP session-mode set so the demo exercises the mode picker
+const FAKE_MODES = [
+  { id: "read-only", name: "read-only", description: "can read files; cannot edit or run commands" },
+  { id: "default", name: "default", description: "asks before risky actions" },
+  { id: "full-access", name: "full-access", description: "may edit files and run commands freely" },
+];
+
 export class FakeManager {
   private listeners = new Set<(name: string, e: MeshEvent) => void>();
   private meshes = new Map<string, Entry>();
+  /** current mode per `${mesh}:${agent}` so setMode reflects back into the picker */
+  private modeOf = new Map<string, string>();
 
   constructor() {
     this.meshes.set("demo", { config: DEMO, status: "stopped" });
@@ -77,7 +86,15 @@ export class FakeManager {
     e.status = "starting";
     for (const a of e.config.agents) this.emit(name, { kind: "agent_status", agent: a.id, status: "spawning", ts: now() });
     await sleep(400);
-    for (const a of e.config.agents) this.emit(name, { kind: "agent_status", agent: a.id, status: "ready", ts: now() });
+    for (const a of e.config.agents) {
+      this.emit(name, { kind: "agent_status", agent: a.id, status: "ready", ts: now() });
+      // members advertise session modes (the router has none, like real harnesses vary)
+      if (a.role !== "router") {
+        const cur = this.modeOf.get(`${name}:${a.id}`) ?? "default";
+        this.modeOf.set(`${name}:${a.id}`, cur);
+        this.emit(name, { kind: "agent_modes", agent: a.id, current: cur, available: FAKE_MODES, ts: now() });
+      }
+    }
     e.status = "running";
     this.emit(name, { kind: "log", text: `mesh "${name}" started (fake)`, ts: now() });
     void this.scenario(name);
@@ -103,7 +120,10 @@ export class FakeManager {
     void this.reply(name, "codex-1", optionId.includes("allow") ? "Permission granted — running the command." : "Permission denied — skipping that step.");
   }
   setMode(name: string, agentId: string, modeId: string): void {
+    this.modeOf.set(`${name}:${agentId}`, modeId);
     this.emit(name, { kind: "log", text: `${agentId} mode → ${modeId}`, ts: now() });
+    // echo the new current back so the picker reflects it (mirrors a real current_mode_update)
+    this.emit(name, { kind: "agent_modes", agent: agentId, current: modeId, available: FAKE_MODES, ts: now() });
   }
   interruptAgent(name: string, agentId: string): void {
     this.emit(name, { kind: "interrupt", from: "operator", target: agentId, reason: "operator interrupt", ts: now() });

@@ -74,6 +74,7 @@ const DICT: Record<string, Entry> = {
   "router.placeholder": ["talk to the router…", "与 router 对话…"],
   "agent.placeholder": ["message {id}…", "发消息给 {id}…"],
   mode: ["mode", "模式"],
+  "mode.hint": ["agent operating mode", "agent 工作模式"],
   activity: ["activity", "活动"],
   "activity.sub": ["mail · interrupt · permission · log", "邮件 · 中断 · 权限 · 日志"],
   mailbox: ["mailbox", "邮箱"],

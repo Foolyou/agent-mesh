@@ -154,7 +154,7 @@ export class WebGateway {
       } catch {
         config = { name, agents: [], edges: [] };
       }
-      pm = { config, transcripts: {}, activity: [], mail: [], pending: [], history: [] };
+      pm = { config, transcripts: {}, activity: [], mail: [], pending: [], history: [], modes: {} };
       this.state.perMesh[name] = pm;
     }
     return pm;
@@ -180,9 +180,25 @@ export class WebGateway {
   private ingest(name: string, e: MeshEvent): void {
     const pm = this.ensureMesh(name);
     switch (e.kind) {
-      case "update":
+      case "update": {
+        // A mode change the agent reports mid-session (operator- or self-initiated) rides
+        // the normal session-update stream; keep the picker's selection in sync with it.
+        const u = e.update as any;
+        if (u && u.sessionUpdate === "current_mode_update" && u.currentModeId) {
+          const am = pm.modes[e.agent];
+          if (am && am.current !== u.currentModeId) {
+            am.current = u.currentModeId;
+            this.broadcast({ t: "agent.modes", name, agent: e.agent, current: am.current, available: am.available });
+          }
+        }
         this.foldConv({ scope: "agent", mesh: name, agent: e.agent }, e.update, e.ts || now());
         break;
+      }
+      case "agent_modes": {
+        pm.modes[e.agent] = { current: e.current, available: e.available };
+        this.broadcast({ t: "agent.modes", name, agent: e.agent, current: e.current, available: e.available });
+        break;
+      }
       case "permission": {
         const req: PermissionReq = {
           requestId: e.requestId,

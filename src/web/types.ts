@@ -1,7 +1,14 @@
 // Shared types for the WebUI: aggregated transcript items, gateway state, and the
 // WebSocket wire protocol. These are the contract between WebGateway (server) and
 // the client store.
-import type { MeshConfig, AgentId, AgentStatus, AgentRole, HarnessId } from "../acp/types";
+import type { MeshConfig, AgentId, AgentStatus, AgentRole, HarnessId, SessionMode } from "../acp/types";
+export type { SessionMode };
+
+/** The session modes an agent advertises plus which one is active. */
+export interface AgentModes {
+  current: string;
+  available: SessionMode[];
+}
 
 // ── Aggregated transcript ────────────────────────────────────────────────────
 // A transcript folds the raw ACP SessionUpdate stream into ordered, identity-keyed
@@ -93,6 +100,8 @@ export interface PerMeshState {
   mail: MailEntry[];
   pending: PermissionReq[];
   history: ResolvedPermission[];
+  /** Per-agent session modes (advertised + active), populated while the mesh runs. */
+  modes: Record<AgentId, AgentModes>;
 }
 
 export type MasterStatus = "absent" | "starting" | "ready" | "stopped";
@@ -108,6 +117,7 @@ export type ServerMsg =
   | { t: "mesh.list"; meshes: MeshSummary[] }
   | { t: "mesh.status"; name: string; status: MeshStatus }
   | { t: "agent.status"; name: string; agent: AgentId; status: AgentStatus; detail?: string }
+  | { t: "agent.modes"; name: string; agent: AgentId; current: string; available: SessionMode[] }
   | { t: "transcript.upsert"; conv: ConvRef; item: TranscriptItem }
   | { t: "transcript.patch"; conv: ConvRef; id: string; patch: Partial<TranscriptItem> }
   | { t: "activity"; name: string; entry: ActivityEntry }

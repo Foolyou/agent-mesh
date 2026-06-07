@@ -28,9 +28,18 @@ export interface MeshConfig {
 
 export type AgentStatus = "spawning" | "ready" | "dead";
 
+/** An ACP session operating mode the agent advertises (e.g. codex read-only / full-access,
+ *  claude default / plan / acceptEdits). The operator can switch between the advertised modes. */
+export interface SessionMode {
+  id: string;
+  name: string;
+  description?: string;
+}
+
 export type MeshEvent =
   | { kind: "agent_status"; agent: AgentId; status: AgentStatus; detail?: string; ts: string }
   | { kind: "update"; agent: AgentId; update: unknown; ts: string }
+  | { kind: "agent_modes"; agent: AgentId; current: string; available: SessionMode[]; ts: string }
   | { kind: "mail"; from: AgentId; to: AgentId; body: string; ts: string }
   | {
       kind: "permission";
