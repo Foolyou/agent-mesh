@@ -12,6 +12,8 @@ export class MasterAgent {
   private conn?: AcpAgentConnection;
   private mcp?: MeshControlServer;
   private listeners = new Set<(u: any) => void>();
+  /** Whether the master agent advertised image input (promptCapabilities.image). */
+  private imageCap = false;
 
   constructor(
     private manager: MeshManager,
@@ -43,7 +45,8 @@ export class MasterAgent {
       await this.conn.start();
       await this.conn.initialize();
       const session = await this.conn.newSession([{ type: "http", name: "mesh-control", url: this.mcp.url, headers: [] }]);
-      this.opts.onCapabilities?.({ image: !!(session as any)?.promptCapabilities?.image });
+      this.imageCap = !!(session as any)?.promptCapabilities?.image;
+      this.opts.onCapabilities?.({ image: this.imageCap });
     } catch (err) {
       this.conn?.kill();
       this.conn = undefined;
@@ -53,10 +56,12 @@ export class MasterAgent {
     }
   }
 
-  /** Feed a natural-language instruction to the master agent. */
+  /** Feed a natural-language instruction to the master agent. Image blocks are dropped if the
+   *  master agent did not advertise image input (otherwise the turn would be rejected). */
   prompt(text: string, images: PromptImageRef[] = []): Promise<unknown> {
     if (!this.conn) throw new Error("master agent not started");
-    return this.conn.prompt(text, images.map((i) => ({ ...i, path: i.path ?? (this.opts.uploadRoot && i.bucket ? `${this.opts.uploadRoot}/${i.bucket}/${i.id}` : undefined) })));
+    const imgs = this.imageCap ? images : [];
+    return this.conn.prompt(text, imgs.map((i) => ({ ...i, path: i.path ?? (this.opts.uploadRoot && i.bucket ? `${this.opts.uploadRoot}/${i.bucket}/${i.id}` : undefined) })));
   }
 
   async stop(): Promise<void> {

@@ -163,7 +163,34 @@ test("promptRouter threads images to manager and user transcript", async () => {
   expect(m.calls[m.calls.length - 1][0]).toBe("promptRouter");
   expect(m.calls[m.calls.length - 1][3][0]).toMatchObject({ id: "abc.png", bucket: "demo", url: "/api/uploads/demo/abc.png" });
   const tr = gw.snapshot().perMesh.demo.transcripts.router;
-  expect((tr[tr.length - 1] as any).images[0]).toMatchObject({ name: "abc.png", url: "/api/uploads/demo/abc.png" });
+  const broadcastImg = (tr[tr.length - 1] as any).images[0];
+  expect(broadcastImg).toMatchObject({ name: "abc.png", url: "/api/uploads/demo/abc.png" });
+  // the broadcast/persisted transcript must NOT leak the absolute server path or internal bucket
+  expect(broadcastImg.path).toBeUndefined();
+  expect(broadcastImg.bucket).toBeUndefined();
+});
+
+test("promptRouter ignores a client-supplied image path/bucket/url (no arbitrary file read)", async () => {
+  const m = fakeManager();
+  const gw = new WebGateway(m as any, undefined, { root: "/tmp/root" });
+  // a malicious client tries to smuggle an absolute path + foreign bucket + url
+  await gw.promptRouter("demo", "see", [
+    { id: "abc.png", mimeType: "image/png", name: "x", path: "/etc/passwd", bucket: "../../etc", url: "http://evil/x" } as any,
+  ]);
+  const ref = m.calls[m.calls.length - 1][3][0];
+  // path is reconstructed server-side from the configured root + server-chosen bucket + validated id
+  expect(ref.path).toBe("/tmp/root/uploads/demo/abc.png");
+  expect(ref.bucket).toBe("demo");
+  expect(ref.url).toBe("/api/uploads/demo/abc.png");
+});
+
+test("promptRouter drops an image with a malformed id (no path → skipped, not read off disk)", async () => {
+  const m = fakeManager();
+  const gw = new WebGateway(m as any, undefined, { root: "/tmp/root" });
+  await gw.promptRouter("demo", "see", [{ id: "../../../etc/passwd", mimeType: "image/png", name: "x" } as any]);
+  const ref = m.calls[m.calls.length - 1][3][0];
+  expect(ref.path).toBeUndefined();
+  expect(ref.url).toBeUndefined();
 });
 
 test("agent_capabilities updates gateway state and broadcasts", () => {

@@ -14,6 +14,7 @@ import { startApiServer } from "./web/api-server";
 import { FakeManager, FakeMaster } from "./web/fake";
 import { runMeshHost } from "./mesh-host";
 import { resolveRoot, expandHome } from "./root";
+import { uploadRoot } from "./web/uploads";
 import { homedir } from "node:os";
 import * as service from "./service";
 
@@ -52,7 +53,7 @@ async function buildGateway() {
     ? new FakeMaster()
     : noMaster
       ? undefined
-      : new MasterAgent(manager, { uploadRoot: root, onCapabilities: (caps) => gateway?.setMasterCapabilities(caps) });
+      : new MasterAgent(manager, { uploadRoot: uploadRoot(root), onCapabilities: (caps) => gateway?.setMasterCapabilities(caps) });
   gateway = new WebGateway(manager, master, { root });
   if (!fake) {
     // Reconnect to any mesh daemons that outlived a previous backend (the whole point of

@@ -5,7 +5,7 @@
 import { reduceTranscript } from "./transcript";
 import { now } from "../acp/types";
 import type { MeshConfig, MeshEvent, AgentId, AgentStatus, PromptImageRef } from "../acp/types";
-import { readUpload, storeUploads, type UploadFileLike } from "./uploads";
+import { readUpload, storeUploads, uploadPath, type UploadFileLike } from "./uploads";
 import type {
   GatewayState,
   ServerMsg,
@@ -30,7 +30,7 @@ export interface ManagerLike {
   routerOf(name: string): string;
   startMesh(name: string): Promise<void>;
   stopMesh(name: string): Promise<void>;
-  promptRouter(name: string, text: string): Promise<void>;
+  promptRouter(name: string, text: string, images?: PromptImageRef[]): Promise<void>;
   promptAgent(name: string, agentId: string, text: string, images?: PromptImageRef[]): void;
   resolvePermission(name: string, requestId: string, optionId: string): void;
   setMode(name: string, agentId: string, modeId: string): void;
@@ -44,7 +44,7 @@ export interface ManagerLike {
 /** The MasterAgent surface the gateway depends on. */
 export interface MasterLike {
   on(l: (u: any) => void): () => void;
-  prompt(text: string): Promise<unknown>;
+  prompt(text: string, images?: PromptImageRef[]): Promise<unknown>;
 }
 
 const CAP = 500; // ring-buffer cap for activity / mail / history
@@ -52,6 +52,13 @@ const TR_CAP = 1000; // per-conversation transcript cap
 
 function cap<T>(arr: T[], n: number): T[] {
   return arr.length > n ? arr.slice(arr.length - n) : arr;
+}
+
+/** Project an image ref to the fields safe to broadcast/persist in a transcript: the absolute
+ *  on-disk `path` and internal `bucket` stay server-side (used only at the ACP boundary to read
+ *  the bytes) and must never reach WS clients. Clients render the thumbnail from `url`. */
+function publicImageRef(i: PromptImageRef): PromptImageRef {
+  return { id: i.id, mimeType: i.mimeType, name: i.name, url: i.url };
 }
 
 export class WebGateway {
@@ -312,12 +319,12 @@ export class WebGateway {
   }
   async promptRouter(name: string, text: string, images: PromptImageRef[] = []): Promise<void> {
     const refs = images.map((i) => this.withBucket(name, i));
-    this.foldConv({ scope: "agent", mesh: name, agent: this.routerId(name) }, { sessionUpdate: "user_message_chunk", content: { text }, images: refs }, now());
+    this.foldConv({ scope: "agent", mesh: name, agent: this.routerId(name) }, { sessionUpdate: "user_message_chunk", content: { text }, images: refs.map(publicImageRef) }, now());
     await this.manager.promptRouter(name, text, refs);
   }
   promptAgent(name: string, agentId: string, text: string, images: PromptImageRef[] = []): void {
     const refs = images.map((i) => this.withBucket(name, i));
-    this.foldConv({ scope: "agent", mesh: name, agent: agentId }, { sessionUpdate: "user_message_chunk", content: { text }, images: refs }, now());
+    this.foldConv({ scope: "agent", mesh: name, agent: agentId }, { sessionUpdate: "user_message_chunk", content: { text }, images: refs.map(publicImageRef) }, now());
     this.manager.promptAgent(name, agentId, text, refs);
   }
   configOf(name: string): MeshConfig {
@@ -335,7 +342,7 @@ export class WebGateway {
   async promptMaster(text: string, images: PromptImageRef[] = []): Promise<void> {
     if (!this.master) throw new Error("master agent is not configured");
     const refs = images.map((i) => this.withBucket("master", i));
-    this.foldConv({ scope: "master" }, { sessionUpdate: "user_message_chunk", content: { text }, images: refs }, now());
+    this.foldConv({ scope: "master" }, { sessionUpdate: "user_message_chunk", content: { text }, images: refs.map(publicImageRef) }, now());
     await this.master.prompt(text, refs);
   }
 
@@ -349,8 +356,20 @@ export class WebGateway {
   async serveUpload(bucket: string, id: string): Promise<Response> {
     this.validateBucket(bucket);
     if (!this.opts.root) throw new Error("upload storage root is not configured");
-    const file = await readUpload(this.opts.root, bucket, id);
-    return new Response(file.bytes, {
+    let file: Awaited<ReturnType<typeof readUpload>>;
+    try {
+      file = await readUpload(this.opts.root, bucket, id);
+    } catch {
+      // Missing / malformed id: return a generic 404 rather than letting the Node ENOENT error
+      // (which embeds the absolute server path) propagate to the client as a 400 body.
+      return new Response("upload not found", { status: 404, headers: { "content-type": "text/plain; charset=utf-8" } });
+    }
+    // readUpload's declared return type is the generic Uint8Array<ArrayBufferLike>, which the
+    // DOM BodyInit type rejects (it wants an ArrayBuffer-backed view). Copy into a fresh
+    // ArrayBuffer-backed array so the bytes are a valid Response body without an unsafe cast.
+    const body = new Uint8Array(file.bytes.byteLength);
+    body.set(file.bytes);
+    return new Response(body, {
       headers: {
         "content-type": file.mimeType,
         "x-content-type-options": "nosniff",
@@ -364,13 +383,23 @@ export class WebGateway {
     if (!this.manager.listMeshes().some((m) => m.name === bucket)) throw new Error("unknown upload bucket");
   }
 
+  // The server is the SOLE source of truth for an image's on-disk location. Derive path+url
+  // from the (server-chosen) bucket and a *validated* id via uploadPath() — which enforces the
+  // id shape and a traversal guard — and ignore any client-supplied path/url/bucket. An invalid
+  // id yields no path, so the image is skipped downstream rather than read off arbitrary disk.
   private withBucket(bucket: string, image: PromptImageRef): PromptImageRef {
-    return {
-      ...image,
-      bucket,
-      url: image.url ?? `/api/uploads/${encodeURIComponent(bucket)}/${encodeURIComponent(image.id)}`,
-      path: image.path ?? (this.opts.root ? `${this.opts.root}/uploads/${bucket}/${image.id}` : undefined),
-    };
+    let path: string | undefined;
+    let url: string | undefined;
+    if (this.opts.root) {
+      try {
+        path = uploadPath(this.opts.root, bucket, image.id);
+        url = `/api/uploads/${encodeURIComponent(bucket)}/${encodeURIComponent(image.id)}`;
+      } catch {
+        path = undefined;
+        url = undefined;
+      }
+    }
+    return { id: image.id, mimeType: image.mimeType, name: image.name, bucket, url, path };
   }
 
   // ── Master lifecycle status (set by main.ts around master.start/stop) ──────────

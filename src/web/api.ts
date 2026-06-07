@@ -125,5 +125,8 @@ function imagesOf(body: any): PromptImageRef[] {
     ? body.images
         .filter((i: any) => i && typeof i.id === "string" && typeof i.mimeType === "string" && typeof i.name === "string")
         .slice(0, 5)
+        // Keep ONLY client-meaningful fields; never carry a client-supplied path/url/bucket into
+        // the system — the server reconstructs those from the validated id (see gateway.withBucket).
+        .map((i: any) => ({ id: i.id, mimeType: i.mimeType, name: i.name }) as PromptImageRef)
     : [];
 }

@@ -114,6 +114,13 @@ try {
     if ((await img.getAttribute("loading")) !== "lazy") throw new Error("image loading not lazy");
     const badImages = await bubble.locator('img[src^="javascript:"]').count();
     if (badImages) throw new Error("javascript image src rendered");
+    // data:image/png is a spec-allowed scheme and must survive sanitize + harden …
+    const dataImg = bubble.locator('img[src^="data:image/png"]');
+    if ((await dataImg.count()) < 1) throw new Error("data:image/png did not render (sanitize stripped it)");
+    // … but data:image/svg+xml (can carry script) must be blocked …
+    if ((await bubble.locator('img[src^="data:image/svg"]').count()) > 0) throw new Error("data:image/svg+xml rendered");
+    // … and raw HTML must not pass through as a live element (no rehype-raw)
+    if ((await bubble.locator("u").count()) > 0) throw new Error("raw HTML <u> rendered as a live element");
   });
 
   await step("router shows a plan checklist", async () => {

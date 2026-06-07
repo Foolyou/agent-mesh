@@ -1,5 +1,7 @@
 import type { ComponentProps } from "react";
-import { Streamdown, defaultRehypePlugins, type UrlTransform } from "streamdown";
+import { Streamdown, defaultRehypePlugins, type UrlTransform, type Components } from "streamdown";
+import rehypeSanitize from "rehype-sanitize";
+import { defaultSchema } from "hast-util-sanitize";
 
 function isHttpUrl(value: string): boolean {
   try {
@@ -21,10 +23,30 @@ const urlTransform: UrlTransform = (url, key) => {
   return null;
 };
 
+// Sanitize with the GitHub default schema, but additionally permit `data:` on <img src> so the
+// base64 image scheme the spec allows survives sanitize (the default schema only allows http/https,
+// which silently stripped every data: image before harden could act). harden + urlTransform + the
+// <Image> component below still constrain data: URIs to safe raster types (png/jpeg/gif/webp; no
+// svg/html). `tel:` href and code `metastring` are preserved to match streamdown's own schema.
+const sanitizeSchema = {
+  ...defaultSchema,
+  protocols: {
+    ...defaultSchema.protocols,
+    src: [...(defaultSchema.protocols?.src ?? []), "data"],
+    href: [...(defaultSchema.protocols?.href ?? []), "tel"],
+  },
+  attributes: {
+    ...defaultSchema.attributes,
+    code: [...(defaultSchema.attributes?.code ?? []), "metastring"],
+  },
+};
+
 const harden = defaultRehypePlugins.harden as unknown as [unknown, Record<string, unknown>];
+// Deliberately NO rehype-raw: per the design's "no raw HTML passthrough" decision, agent-authored
+// raw HTML must not be parsed into live elements. Omitting raw lets streamdown's default html->text
+// fallback (and the skipHtml prop) strip it; sanitize + harden remain as defense-in-depth.
 const rehypePlugins = [
-  defaultRehypePlugins.raw,
-  defaultRehypePlugins.sanitize,
+  [rehypeSanitize, sanitizeSchema],
   [
     harden[0],
     {
@@ -36,7 +58,7 @@ const rehypePlugins = [
       linkBlockPolicy: "text-only",
     },
   ],
-] as typeof defaultRehypePlugins[];
+] as unknown as typeof defaultRehypePlugins[];
 
 function Anchor(props: ComponentProps<"a">) {
   const href = typeof props.href === "string" && isHttpUrl(props.href) ? props.href : undefined;
@@ -66,7 +88,7 @@ export function Markdown({ text }: { text: string }) {
       controls={false}
       rehypePlugins={rehypePlugins as any}
       urlTransform={urlTransform}
-      components={{ a: Anchor, img: Image, strong: Strong }}
+      components={{ a: Anchor, img: Image, strong: Strong } as Components}
     >
       {text}
     </Streamdown>

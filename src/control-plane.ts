@@ -36,6 +36,8 @@ export class ControlPlane {
   private permissionTimeoutMs: number;
   private debug: boolean;
   private uploadRoot?: string;
+  /** Per-agent advertised image-input capability (promptCapabilities.image). */
+  private imageCaps = new Map<AgentId, boolean>();
   /** Agents that have already received the one-time mesh briefing. */
   private briefed = new Set<AgentId>();
 
@@ -75,9 +77,12 @@ export class ControlPlane {
     return `${briefing}\n\n---\n\nYour first task / message follows:\n\n${text}`;
   }
 
-  /** Public: send a prompt turn to an agent (the control plane is the sole driver). */
+  /** Public: send a prompt turn to an agent (the control plane is the sole driver). Image
+   *  blocks are dropped for agents that did not advertise image input, so a non-image agent
+   *  still gets the text turn instead of rejecting the whole prompt. */
   prompt(id: AgentId, text: string, images: PromptImageRef[] = []) {
-    return this.agent(id).prompt(this.compose(id, text), images.map((i) => this.resolveImagePath(i)));
+    const imgs = this.imageCaps.get(id) ? images : [];
+    return this.agent(id).prompt(this.compose(id, text), imgs.map((i) => this.resolveImagePath(i)));
   }
 
   /** Switch an agent's permission/approval mode (delegates to its connection). */
@@ -143,7 +148,9 @@ export class ControlPlane {
       if (available.length) {
         this.emit({ kind: "agent_modes", agent: a.id, current: modes?.currentModeId ?? available[0].id, available, ts: now() });
       }
-      this.emit({ kind: "agent_capabilities", agent: a.id, image: !!(session as any)?.promptCapabilities?.image, ts: now() });
+      const imageCap = !!(session as any)?.promptCapabilities?.image;
+      this.imageCaps.set(a.id, imageCap);
+      this.emit({ kind: "agent_capabilities", agent: a.id, image: imageCap, ts: now() });
       this.mesh.setStatus(a.id, "ready");
       this.emit({ kind: "agent_status", agent: a.id, status: "ready", ts: now() });
     }

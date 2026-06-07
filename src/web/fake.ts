@@ -165,6 +165,9 @@ export class FakeManager {
         "```",
         "[safe link](https://example.com) [bad link](javascript:alert(1))",
         "![sample](https://example.com/sample.png) ![bad](javascript:alert(1))",
+        // data: image (spec-allowed, must render) next to a data:svg (script-capable, must be blocked)
+        "![inline](data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==) ![svg](data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=)",
+        "<u>rawhtml</u> must not become a live element",
       ].join("\n"),
     );
 
