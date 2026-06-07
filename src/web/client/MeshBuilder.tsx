@@ -4,6 +4,7 @@ import { useState } from "react";
 import type { Store } from "./store";
 import type { HarnessId, AgentRole, MeshConfig } from "../types";
 import { Btn } from "./ui";
+import { useI18n } from "./i18n";
 
 interface AgentDraft {
   id: string;
@@ -41,6 +42,7 @@ export function MeshBuilder({
   onClose: (created?: string) => void;
   initial?: MeshConfig;
 }) {
+  const { t } = useI18n();
   const editing = !!initial;
   const [name, setName] = useState(initial?.name ?? "");
   const [agents, setAgents] = useState<AgentDraft[]>(
@@ -86,14 +88,14 @@ export function MeshBuilder({
     <div className="scrim" onClick={() => onClose()}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <div className="mhead">
-          <span style={{ flex: 1 }}>{editing ? `edit mesh "${initial!.name}"` : "define mesh"}</span>
+          <span style={{ flex: 1 }}>{editing ? t("build.edit", { name: initial!.name }) : t("build.define")}</span>
           <Btn small kind="ghost" onClick={() => onClose()}>
             ✕ esc
           </Btn>
         </div>
         <div className="mbody">
           <div className="field">
-            <label>mesh name{editing ? " (locked)" : ""}</label>
+            <label>{editing ? t("build.name.locked") : t("build.name")}</label>
             <input
               className="inp"
               value={name}
@@ -105,7 +107,7 @@ export function MeshBuilder({
           </div>
 
           <div className="field">
-            <label>agents — exactly one router</label>
+            <label>{t("build.agents")}</label>
             {agents.map((a, i) => (
               <div className="agrow" key={i}>
                 <input className="inp" value={a.id} placeholder="id" onChange={(e) => setAgent(i, { id: e.target.value })} />
@@ -128,13 +130,13 @@ export function MeshBuilder({
             ))}
             <div>
               <Btn small onClick={addAgent}>
-                + agent
+                {t("build.addAgent")}
               </Btn>
             </div>
           </div>
 
           <div className="field">
-            <label>mail edges — from → to (directed)</label>
+            <label>{t("build.edges")}</label>
             {edges.map((pair, i) => (
               <div className="row" key={i}>
                 <select className="inp" value={pair[0]} onChange={(e) => setEdge(i, 0, e.target.value)}>
@@ -159,13 +161,13 @@ export function MeshBuilder({
             ))}
             <div>
               <Btn small onClick={addEdge} disabled={agents.length < 2}>
-                + edge
+                {t("build.addEdge")}
               </Btn>
             </div>
           </div>
 
           <div className="field">
-            <label>team charter — shared goal + norms, injected into every agent (optional)</label>
+            <label>{t("build.charter")}</label>
             <textarea
               className="inp"
               rows={4}
@@ -180,10 +182,10 @@ export function MeshBuilder({
 
           <div className="row" style={{ justifyContent: "flex-end" }}>
             <Btn kind="ghost" onClick={() => onClose()}>
-              cancel
+              {t("cancel")}
             </Btn>
             <Btn kind="go" onClick={submit} disabled={busy}>
-              {busy ? "saving…" : editing ? "save mesh" : "define mesh"}
+              {busy ? t("build.saving") : editing ? t("build.save") : t("build.define")}
             </Btn>
           </div>
         </div>

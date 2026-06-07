@@ -157,11 +157,11 @@ try {
   });
 
   await step("master chat: send instruction → user bubble + streamed reply", async () => {
-    const input = page.locator('.panel:has(.head:has-text("master")) .composer textarea');
+    const input = page.locator('.panel:has(.head:has-text("Mesh Assistant")) .composer textarea');
     await input.fill("create a build squad mesh");
     await input.press("Enter");
-    await page.waitForSelector('.panel:has(.head:has-text("master")) .msg.user', { timeout: 6000 });
-    await page.waitForSelector('.panel:has(.head:has-text("master")) .msg.agent', { timeout: 8000 });
+    await page.waitForSelector('.panel:has(.head:has-text("Mesh Assistant")) .msg.user', { timeout: 6000 });
+    await page.waitForSelector('.panel:has(.head:has-text("Mesh Assistant")) .msg.agent', { timeout: 8000 });
   });
 
   await step("router chat: send prompt → user bubble", async () => {

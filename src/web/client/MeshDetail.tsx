@@ -4,43 +4,45 @@
 import { useEffect, useState } from "react";
 import type { Store } from "./store";
 import type { GatewayState, MeshSummary, PerMeshState, ActivityEntry, MailEntry, ResolvedPermission, PermissionReq } from "../types";
-import { Dot, Btn, Empty, ConfirmButton, fmtTime } from "./ui";
+import { Dot, Btn, Empty, ConfirmButton, InfoIcon, fmtTime } from "./ui";
 import { ChatPane } from "./ChatPane";
 import { Topology, TopologyModal } from "./Topology";
+import { useI18n, tStatus } from "./i18n";
 
 function Header({ m, store, onDeleted, onEdit }: { m: MeshSummary; store: Store; onDeleted: () => void; onEdit: () => void }) {
+  const { t } = useI18n();
   const live = m.status === "running" || m.status === "starting";
   return (
     <div className="detail-head">
       <span className="mtitle">{m.name}</span>
       <span className="row">
         <Dot status={m.status} />
-        <span className="meta">{m.status}</span>
+        <span className="meta">{tStatus(t, m.status)}</span>
       </span>
-      <span className="meta">router = {m.router}</span>
-      <span className="meta">{m.agents.length} agents</span>
+      <span className="meta">{t("router")} = {m.router}</span>
+      <span className="meta">{t("agents", { n: m.agents.length })}</span>
       <span style={{ flex: 1 }} />
       {live ? (
         <Btn kind="stop" onClick={() => void store.stopMesh(m.name)}>
-          stop mesh
+          {t("stop mesh")}
         </Btn>
       ) : (
         <>
           <Btn kind="go" onClick={() => void store.startMesh(m.name)}>
-            start mesh
+            {t("start mesh")}
           </Btn>
-          <Btn kind="ghost" title="edit this mesh definition" onClick={onEdit}>
-            edit
+          <Btn kind="ghost" title={t("edit")} onClick={onEdit}>
+            {t("edit")}
           </Btn>
           <ConfirmButton
             kind="stop"
-            confirmLabel="delete?"
-            title="delete this mesh definition"
+            confirmLabel={t("del.confirm")}
+            title={t("del")}
             onConfirm={() => {
               void store.deleteMesh(m.name).then(onDeleted, () => {});
             }}
           >
-            delete
+            {t("del")}
           </ConfirmButton>
         </>
       )}
@@ -49,13 +51,14 @@ function Header({ m, store, onDeleted, onEdit }: { m: MeshSummary; store: Store;
 }
 
 function PermissionCards({ pending, mesh, store }: { pending: PermissionReq[]; mesh: string; store: Store }) {
+  const { t } = useI18n();
   if (!pending.length) return null;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
       {pending.map((p) => (
         <div className="perm" key={p.requestId}>
           <div className="ph">
-            <span className="warn">⚠ permission</span>
+            <span className="warn">⚠ {t("permission")}</span>
             <span className="meta">{p.agent}</span>
             <span className="q">{p.question}</span>
           </div>
@@ -75,11 +78,12 @@ function PermissionCards({ pending, mesh, store }: { pending: PermissionReq[]; m
 }
 
 function ModeControl({ mesh, agent, store }: { mesh: string; agent: string; store: Store }) {
+  const { t } = useI18n();
   const [v, setV] = useState("");
   return (
     <span className="row" style={{ gap: 5 }}>
       <span className="sub" style={{ fontSize: 10 }}>
-        mode
+        {t("mode")}
       </span>
       <input
         className="inp"
@@ -112,8 +116,9 @@ function AgentPanels({
   active: string | null;
   onActivate: (id: string) => void;
 }) {
+  const { t } = useI18n();
   const members = m.agents.filter((a) => a.id !== m.router);
-  if (!members.length) return <Empty>no member agents</Empty>;
+  if (!members.length) return <Empty>{t("empty.members")}</Empty>;
   const cur = members.find((a) => a.id === active) ?? members[0];
   const setTab = onActivate;
   return (
@@ -133,16 +138,16 @@ function AgentPanels({
           <span className="sub">{cur.harness}</span>
           <span style={{ flex: 1 }} />
           {m.status === "running" || m.status === "starting" ? (
-            <Btn small kind="stop" title="cancel this agent's current turn" onClick={() => void store.interruptAgent(m.name, cur.id)}>
-              interrupt
+            <Btn small kind="stop" title={t("interrupt")} onClick={() => void store.interruptAgent(m.name, cur.id)}>
+              {t("interrupt")}
             </Btn>
           ) : null}
           <ModeControl mesh={m.name} agent={cur.id} store={store} />
         </div>
         <ChatPane
           items={pm.transcripts[cur.id] ?? []}
-          placeholder={`message ${cur.id}…`}
-          onSend={(t) => void store.promptAgent(m.name, cur.id, t)}
+          placeholder={t("agent.placeholder", { id: cur.id })}
+          onSend={(msg) => void store.promptAgent(m.name, cur.id, msg)}
         />
       </div>
     </div>
@@ -150,7 +155,8 @@ function AgentPanels({
 }
 
 function Timeline({ activity }: { activity: ActivityEntry[] }) {
-  if (!activity.length) return <Empty>no activity yet</Empty>;
+  const { t } = useI18n();
+  if (!activity.length) return <Empty>{t("empty.activity")}</Empty>;
   return (
     <div className="tl">
       {activity
@@ -168,7 +174,8 @@ function Timeline({ activity }: { activity: ActivityEntry[] }) {
 }
 
 function Mailbox({ mail }: { mail: MailEntry[] }) {
-  if (!mail.length) return <Empty>no mail yet</Empty>;
+  const { t } = useI18n();
+  if (!mail.length) return <Empty>{t("empty.mail")}</Empty>;
   return (
     <div className="tl">
       {mail
@@ -188,7 +195,8 @@ function Mailbox({ mail }: { mail: MailEntry[] }) {
 }
 
 function History({ history }: { history: ResolvedPermission[] }) {
-  if (!history.length) return <Empty>no resolved permissions</Empty>;
+  const { t } = useI18n();
+  if (!history.length) return <Empty>{t("empty.history")}</Empty>;
   return (
     <div className="tl">
       {history
@@ -209,24 +217,25 @@ function History({ history }: { history: ResolvedPermission[] }) {
 
 // The desktop rail's reference logs as one compact segmented card.
 function RailLogs({ pm }: { pm: PerMeshState }) {
-  const [t, setT] = useState<"activity" | "mail" | "history">("activity");
+  const { t } = useI18n();
+  const [tab, setTab] = useState<"activity" | "mail" | "history">("activity");
   return (
     <div className="panel">
       <div className="head">
         <span className="seg-tabs">
-          <button className={`seg-tab ${t === "activity" ? "sel" : ""}`} onClick={() => setT("activity")}>
-            activity
+          <button className={`seg-tab ${tab === "activity" ? "sel" : ""}`} onClick={() => setTab("activity")}>
+            {t("tab.activity")}
           </button>
-          <button className={`seg-tab ${t === "mail" ? "sel" : ""}`} onClick={() => setT("mail")}>
-            mail
+          <button className={`seg-tab ${tab === "mail" ? "sel" : ""}`} onClick={() => setTab("mail")}>
+            {t("tab.mail")}
           </button>
-          <button className={`seg-tab ${t === "history" ? "sel" : ""}`} onClick={() => setT("history")}>
-            history {pm.history.length ? `· ${pm.history.length}` : ""}
+          <button className={`seg-tab ${tab === "history" ? "sel" : ""}`} onClick={() => setTab("history")}>
+            {t("tab.history")} {pm.history.length ? `· ${pm.history.length}` : ""}
           </button>
         </span>
       </div>
       <div className="body-scroll">
-        {t === "activity" ? <Timeline activity={pm.activity} /> : t === "mail" ? <Mailbox mail={pm.mail} /> : <History history={pm.history} />}
+        {tab === "activity" ? <Timeline activity={pm.activity} /> : tab === "mail" ? <Mailbox mail={pm.mail} /> : <History history={pm.history} />}
       </div>
     </div>
   );
@@ -268,6 +277,7 @@ export function MeshDetail({
       history: [],
     };
   // interrupt flash: highlight a node briefly when a new interrupt activity arrives
+  const { t } = useI18n();
   const [flashId, setFlashId] = useState<string | null>(null);
   const [seg, setSeg] = useState<"chat" | "agents" | "map" | "log">("chat");
   const [topoOpen, setTopoOpen] = useState(false);
@@ -277,34 +287,34 @@ export function MeshDetail({
     const target = lastInterrupt.text.split("→")[1]?.trim().split(":")[0]?.trim();
     if (!target) return;
     setFlashId(target);
-    const t = setTimeout(() => setFlashId(null), 1000);
-    return () => clearTimeout(t);
+    const timer = setTimeout(() => setFlashId(null), 1000);
+    return () => clearTimeout(timer);
   }, [lastInterrupt?.id]);
 
-  if (!m) return <Empty>select a mesh from the list</Empty>;
+  if (!m) return <Empty>{t("empty.select")}</Empty>;
 
   const live = m.status === "running" || m.status === "starting";
   const routerItems = pm.transcripts[m.router] ?? [];
   const routerChat = (
     <div className="panel">
       <div className="head">
-        <span className="ttl">router chat</span>
+        <span className="ttl">{t("router chat")}</span>
         <span className="sub">{m.router}</span>
         <span className="right">
           {live ? (
-            <Btn small kind="stop" title="cancel the router's current turn" onClick={() => void store.interruptAgent(m.name, m.router)}>
-              interrupt
+            <Btn small kind="stop" title={t("interrupt")} onClick={() => void store.interruptAgent(m.name, m.router)}>
+              {t("interrupt")}
             </Btn>
           ) : null}
           {!mobile ? (
-            <Btn small kind="ghost" onClick={onToggleFull} title="fullscreen (Ctrl-F)">
-              {fullscreen ? "⊟ exit" : "⊞ full"}
+            <Btn small kind="ghost" onClick={onToggleFull} title={t("full")}>
+              {fullscreen ? `⊟ ${t("exit")}` : `⊞ ${t("full")}`}
             </Btn>
           ) : null}
         </span>
       </div>
       <div className="scroll-pane">
-        <ChatPane items={routerItems} placeholder="talk to the router…" onSend={(t) => void store.promptRouter(m.name, t)} />
+        <ChatPane items={routerItems} placeholder={t("router.placeholder")} onSend={(msg) => void store.promptRouter(m.name, msg)} />
       </div>
     </div>
   );
@@ -312,10 +322,10 @@ export function MeshDetail({
   const topologyPanel = (
     <div className="panel">
       <div className="head">
-        <span className="ttl">topology</span>
-        <span className="sub">agents · mail edges</span>
+        <span className="ttl">{t("topology")}</span>
         <span className="right">
-          <Btn small kind="ghost" title="expand topology" onClick={() => setTopoOpen(true)}>
+          <InfoIcon text={t("topology.sub")} />
+          <Btn small kind="ghost" title={t("topology")} onClick={() => setTopoOpen(true)}>
             ⤢
           </Btn>
         </span>
@@ -331,8 +341,10 @@ export function MeshDetail({
   const activityPanel = (
     <div className="panel">
       <div className="head">
-        <span className="ttl">activity</span>
-        <span className="sub">mail · interrupt · permission · log</span>
+        <span className="ttl">{t("activity")}</span>
+        <span className="right">
+          <InfoIcon text={t("activity.sub")} />
+        </span>
       </div>
       <div className="body-scroll" style={{ maxHeight: mobile ? undefined : 240 }}>
         <Timeline activity={pm.activity} />
@@ -342,8 +354,10 @@ export function MeshDetail({
   const mailboxPanel = (
     <div className="panel">
       <div className="head">
-        <span className="ttl">mailbox</span>
-        <span className="sub">inter-agent mail</span>
+        <span className="ttl">{t("mailbox")}</span>
+        <span className="right">
+          <InfoIcon text={t("mailbox.sub")} />
+        </span>
       </div>
       <div className="body-scroll" style={{ maxHeight: mobile ? undefined : 240 }}>
         <Mailbox mail={pm.mail} />
@@ -353,7 +367,7 @@ export function MeshDetail({
   const historyPanel = (
     <div className="panel">
       <div className="head">
-        <span className="ttl">permission history</span>
+        <span className="ttl">{t("permission history")}</span>
         <span className="sub">{pm.history.length}</span>
       </div>
       <div className="body-scroll" style={{ maxHeight: mobile ? undefined : 200 }}>
@@ -390,10 +404,10 @@ export function MeshDetail({
           ) : null}
         </div>
         <div className="mtabs">
-          {tab("chat", "Chat")}
-          {tab("agents", "Agents")}
-          {tab("map", "Map")}
-          {tab("log", "Log")}
+          {tab("chat", t("seg.chat"))}
+          {tab("agents", t("seg.agents"))}
+          {tab("map", t("seg.map"))}
+          {tab("log", t("seg.log"))}
         </div>
       </div>
     );

@@ -1261,3 +1261,20 @@ select.inp {
   min-height: 0;
   flex: 1;
 }
+
+/* ── info icon (hover for description; declutters headers) ────────────────── */
+.info-icon {
+  color: var(--fg-faint);
+  cursor: help;
+  font-size: 12px;
+  user-select: none;
+  margin-left: auto;
+}
+.info-icon:hover {
+  color: var(--fg-dim);
+}
+/* when the icon sits inside a .right group it shouldn't grab the auto margin */
+.head .right .info-icon,
+.topbar .info-icon {
+  margin-left: 0;
+}

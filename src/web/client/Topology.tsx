@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { MeshSummary, AgentStatus } from "../types";
 import { Btn } from "./ui";
+import { useI18n } from "./i18n";
 
 const STATUS_COLOR: Record<string, string> = {
   ready: "var(--ok)",
@@ -126,12 +127,13 @@ export function TopologyModal({
   onSelect: (id: string) => void;
   onClose: () => void;
 }) {
+  const { t } = useI18n();
   const [zoom, setZoom] = useState(1);
   return (
     <div className="scrim" onClick={onClose}>
       <div className="modal topo-modal" onClick={(e) => e.stopPropagation()}>
         <div className="mhead">
-          <span style={{ flex: 1 }}>topology — {summary.name}</span>
+          <span style={{ flex: 1 }}>{t("topology")} — {summary.name}</span>
           <Btn small kind="ghost" onClick={() => setZoom((z) => Math.max(0.5, +(z - 0.25).toFixed(2)))}>
             −
           </Btn>
@@ -142,10 +144,10 @@ export function TopologyModal({
             +
           </Btn>
           <Btn small kind="ghost" onClick={() => setZoom(1)}>
-            reset
+            {t("reset")}
           </Btn>
           <Btn small kind="ghost" onClick={onClose}>
-            ✕ esc
+            ✕ {t("esc")}
           </Btn>
         </div>
         <div className="topo-zoomwrap">

@@ -2,8 +2,9 @@
 import { useEffect, useState } from "react";
 import type { Store } from "./store";
 import type { GatewayState, MeshSummary } from "../types";
-import { Dot, Btn, Empty } from "./ui";
+import { Dot, Btn, Empty, InfoIcon } from "./ui";
 import { ChatPane } from "./ChatPane";
+import { useI18n, tStatus } from "./i18n";
 
 const PER_PAGE = 4;
 
@@ -19,12 +20,13 @@ function MeshRow({
   store: Store;
 }) {
   const live = m.status === "running" || m.status === "starting";
+  const { t } = useI18n();
   return (
     <div className={`mrow ${selected ? "sel" : ""}`} onClick={onSelect}>
       <span className="caret">{selected ? "▸" : ""}</span>
       <Dot status={m.status} />
       <span className="mname">{m.name}</span>
-      <span className="mstatus">{m.status}</span>
+      <span className="mstatus">{tStatus(t, m.status)}</span>
       {live ? (
         <Btn
           small
@@ -33,7 +35,7 @@ function MeshRow({
             void store.stopMesh(m.name);
           }}
         >
-          stop
+          {t("stop")}
         </Btn>
       ) : (
         <Btn
@@ -43,7 +45,7 @@ function MeshRow({
             void store.startMesh(m.name);
           }}
         >
-          start
+          {t("start")}
         </Btn>
       )}
     </div>
@@ -63,6 +65,7 @@ function MeshList({
   onSelect: (n: string) => void;
   onNewMesh: () => void;
 }) {
+  const { t } = useI18n();
   const all = state.meshes;
   const pages = Math.max(1, Math.ceil(all.length / PER_PAGE));
   const [page, setPage] = useState(0);
@@ -81,20 +84,20 @@ function MeshList({
   return (
     <div className="panel">
       <div className="head">
-        <span className="ttl">meshes</span>
+        <span className="ttl">{t("meshes")}</span>
         <span className="sub">{all.length}</span>
         <span className="right">
-          <Btn small onClick={onNewMesh} title="define a new mesh">
-            + new
+          <Btn small onClick={onNewMesh} title={t("build.define")}>
+            + {t("new")}
           </Btn>
-          <Btn small kind="ghost" onClick={() => void store.reload()} title="reload definitions from disk">
+          <Btn small kind="ghost" onClick={() => void store.reload()} title={t("reload")}>
             ↻
           </Btn>
         </span>
       </div>
       <div className="mlist">
         {all.length === 0 ? (
-          <Empty>no meshes — define one with + new, or ask the master agent</Empty>
+          <Empty>{t("meshes.empty")}</Empty>
         ) : (
           shown.map((m) => (
             <MeshRow key={m.name} m={m} selected={m.name === selected} onSelect={() => onSelect(m.name)} store={store} />
@@ -119,27 +122,30 @@ function MeshList({
 }
 
 function MasterChat({ state, store }: { state: GatewayState; store: Store }) {
+  const { t } = useI18n();
   const st = state.master.status;
   const absent = st === "absent";
   return (
     <div className="panel">
       <div className="head">
-        <span className="ttl">master</span>
+        <span className="ttl">{t("conductor")}</span>
         <span className="row" style={{ gap: 6 }}>
           <Dot status={st === "ready" ? "ready" : st === "starting" ? "spawning" : st === "absent" ? "dead" : "stopped"} />
-          <span className="sub">{st}</span>
+          <span className="sub">{tStatus(t, st)}</span>
         </span>
-        <span className="right sub">create / start / stop via natural language</span>
+        <span className="right">
+          <InfoIcon text={t("conductor.sub")} />
+        </span>
       </div>
       <div className="scroll-pane">
         {absent ? (
-          <Empty>master agent not configured — use the mesh list to control meshes directly</Empty>
+          <Empty>{t("conductor.absent")}</Empty>
         ) : (
           <ChatPane
             items={state.master.transcript}
-            placeholder={st === "ready" ? "instruct the master agent…" : "master is starting…"}
+            placeholder={st === "ready" ? t("conductor.placeholder") : t("conductor.starting")}
             disabled={st !== "ready"}
-            onSend={(t) => void store.promptMaster(t)}
+            onSend={(msg) => void store.promptMaster(msg)}
           />
         )}
       </div>

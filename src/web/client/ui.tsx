@@ -115,6 +115,15 @@ export function Empty({ children }: { children: ReactNode }) {
   return <div className="empty">{children}</div>;
 }
 
+/** A compact "ⓘ" that reveals a description on hover — declutters panel headers. */
+export function InfoIcon({ text }: { text: string }) {
+  return (
+    <span className="info-icon" title={text} aria-label={text}>
+      ⓘ
+    </span>
+  );
+}
+
 /** Two-click confirm button (no native dialog) — first click arms, second confirms. */
 export function ConfirmButton({
   children,
