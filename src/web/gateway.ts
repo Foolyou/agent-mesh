@@ -252,6 +252,9 @@ export class WebGateway {
         pm.activity = cap(pm.activity, CAP);
         this.broadcast({ t: "mail", name, entry: mailEntry });
         this.broadcast({ t: "activity", name, entry });
+        // Also surface the mail inline in the RECIPIENT's conversation, labeled with the sender,
+        // so it's visible where the operator reads that agent (not only in the side mailbox rail).
+        this.foldConv({ scope: "agent", mesh: name, agent: e.to }, { sessionUpdate: "__mail__", from: e.from, to: e.to, body: e.body }, e.ts || now());
         break;
       }
       case "interrupt": {

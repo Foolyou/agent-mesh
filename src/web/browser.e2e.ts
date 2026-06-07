@@ -154,21 +154,23 @@ try {
     await page.waitForSelector(".thought .txt strong", { timeout: 4000 });
   });
 
-  await step("tool-call card merges updates → completed with output", async () => {
+  await step("tool-call card shows detail by default; toggle collapses", async () => {
     // switch to codex-1 agent panel via topology node click
     await page.locator('.topo .node:has-text("codex-1")').click();
     await page.waitForSelector('.tool .badge.completed', { timeout: 12000 });
-    // exactly one tool card for the single tool call (merged, not one-per-update)
     const cards = await page.locator(".tool").count();
     if (cards < 1) throw new Error("no tool card");
-    // expand output → shows tool input + output detail
-    await page.locator(".tool .thead").first().click();
+    // detail is visible WITHOUT a click — detail-bearing cards default to open
     await page.waitForSelector(".tool .tout", { timeout: 4000 });
     await page.waitForSelector('.tool .tdetail .tlabel:has-text("input")', { timeout: 4000 });
     const strongInTool = await page.locator(".tool .tout strong").count();
     if (strongInTool) throw new Error("tool detail rendered markdown");
     const raw = await page.locator(".tool .tout", { hasText: "**raw output**" }).count();
     if (!raw) throw new Error("tool output did not preserve raw markdown text");
+    // the manual toggle still collapses a detail-bearing card
+    const detailed = page.locator(".tool", { has: page.locator(".tdetail") }).first();
+    await detailed.locator(".thead").click();
+    await detailed.locator(".tdetail").waitFor({ state: "detached", timeout: 4000 });
   });
 
   await step("failed command surfaces an error toast", async () => {
@@ -180,6 +182,15 @@ try {
   await step("rail logs: mailbox tab shows inter-agent mail", async () => {
     await page.locator('.drail .seg-tab:has-text("mail")').click();
     await page.waitForSelector(".drail .panel .k.mail", { timeout: 10000 });
+  });
+
+  await step("received mail appears inline in the recipient's conversation, sender-labeled", async () => {
+    // the fake mails codex-1 → opencode-1; open opencode-1 and verify the inline mail bubble
+    await page.locator('.topo .node:has-text("opencode-1")').click();
+    const mail = page.locator(".msg.mail", { hasText: "core implemented" }).first();
+    await mail.waitFor({ timeout: 10000 });
+    const who = (await mail.locator(".who").innerText()).toLowerCase();
+    if (!who.includes("codex-1")) throw new Error(`mail bubble missing sender label: ${who}`);
   });
 
   await step("rail logs: activity tab shows mail + interrupt + log", async () => {

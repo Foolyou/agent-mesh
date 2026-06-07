@@ -1,5 +1,5 @@
 // Registry mapping a harness id to the command that launches it as an ACP agent.
-import type { HarnessId } from "./acp/types";
+import type { AgentConfig, HarnessId, ThinkingEffort } from "./acp/types";
 
 export interface HarnessSpec {
   command: string;
@@ -16,4 +16,29 @@ export function resolveHarness(id: HarnessId): HarnessSpec {
   const spec = HARNESSES[id];
   if (!spec) throw new Error(`unknown harness: ${id}`);
   return spec;
+}
+
+// claude reads MAX_THINKING_TOKENS at session start; map the effort levels to token budgets.
+const CLAUDE_THINK_TOKENS: Record<ThinkingEffort, number> = {
+  minimal: 1024,
+  low: 4096,
+  medium: 12000,
+  high: 24000,
+};
+
+/** Resolve the spawn command/args/env for an agent, applying its thinking effort per harness:
+ *  - codex: `-c model_reasoning_effort=<effort>` (defaults to "low" for responsiveness)
+ *  - claude: `MAX_THINKING_TOKENS` env (only when an effort is set; else the harness default)
+ *  - opencode: no effort mechanism — ignored.
+ *  Effort is a launch-time setting; changing it requires (re)starting the agent. */
+export function spawnConfigFor(a: AgentConfig): { command: string; args: string[]; env: Record<string, string> } {
+  const spec = resolveHarness(a.harness);
+  if (a.harness === "codex") {
+    const effort = a.effort ?? "low";
+    return { command: spec.command, args: [...spec.args, "-c", `model_reasoning_effort=${effort}`], env: {} };
+  }
+  if (a.harness === "claude" && a.effort) {
+    return { command: spec.command, args: spec.args, env: { MAX_THINKING_TOKENS: String(CLAUDE_THINK_TOKENS[a.effort]) } };
+  }
+  return { command: spec.command, args: spec.args, env: {} };
 }

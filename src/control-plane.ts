@@ -5,7 +5,7 @@ import { join, resolve } from "node:path";
 import { mkdir } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { AcpAgentConnection, type PermissionDecision } from "./acp/client";
-import { resolveHarness } from "./harness";
+import { spawnConfigFor } from "./harness";
 import { Mesh } from "./mesh";
 import { buildMeshBriefing } from "./mesh-briefing";
 import { createMeshServicesServer, type MeshServicesServer, type MeshToolContext } from "./mcp/mesh-services";
@@ -116,17 +116,18 @@ export class ControlPlane {
     });
 
     for (const a of this.mesh.agents) {
-      const spec = resolveHarness(a.harness);
-      // codex defaults to slow xhigh reasoning; use low for responsiveness.
-      const args = a.harness === "codex" ? [...spec.args, "-c", "model_reasoning_effort=low"] : spec.args;
+      // Per-agent spawn config applies the chosen thinking effort (codex flag / claude env);
+      // codex defaults to "low" for responsiveness when no effort is set.
+      const { command, args, env } = spawnConfigFor(a);
       const cwd = resolve(process.cwd(), a.project);
 
       await this.mcp.register(a.id, a.role);
       const conn = new AcpAgentConnection({
         id: a.id,
-        command: spec.command,
+        command,
         args,
         cwd,
+        extraEnv: env,
         debug: this.debug,
         onUpdate: (u) => this.emit({ kind: "update", agent: a.id, update: u, ts: now() }),
         onPermission: (req) => this.handlePermission(a.id, req),

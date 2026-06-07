@@ -30,6 +30,9 @@ export function validateMeshConfig(config: MeshConfig): void {
     if (!a.project || isAbsolute(a.project)) {
       throw new Error(`agent "${a.id}" project must be a relative path (got "${a.project}")`);
     }
+    if (a.effort !== undefined && !["minimal", "low", "medium", "high"].includes(a.effort)) {
+      throw new Error(`agent "${a.id}" has invalid effort "${a.effort}" (use minimal|low|medium|high)`);
+    }
   }
 
   for (const [from, to] of edges ?? []) {

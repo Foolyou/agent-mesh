@@ -20,6 +20,11 @@ test("rejects unsafe names", () => {
   expect(() => validateMeshConfig({ ...ok, name: "../escape" })).toThrow(/name/i);
 });
 
+test("accepts a valid per-agent effort and rejects an invalid one", () => {
+  expect(() => validateMeshConfig({ ...ok, agents: ok.agents.map((a) => ({ ...a, effort: "high" as const })) })).not.toThrow();
+  expect(() => validateMeshConfig({ ...ok, agents: [{ ...ok.agents[0], effort: "turbo" as any }, ok.agents[1]] })).toThrow(/effort/i);
+});
+
 test("rejects names containing '..' (path traversal)", () => {
   expect(() => validateMeshConfig({ ...ok, name: "a..b" })).toThrow(/name/i);
   expect(() => validateMeshConfig({ ...ok, name: ".." })).toThrow(/name/i);

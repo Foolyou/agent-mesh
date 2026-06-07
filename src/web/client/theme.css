@@ -450,6 +450,10 @@ body::after {
 .msg.agent .bubble {
   background: rgba(255, 255, 255, 0.02);
 }
+/* inter-agent mail folded into the recipient's conversation — accent edge, sender-labeled */
+.msg.mail .bubble {
+  border-left: 3px solid var(--info);
+}
 .msg.agent .bubble,
 .thought .txt {
   white-space: normal;
@@ -630,6 +634,14 @@ body::after {
   text-overflow: ellipsis;
   color: var(--fg);
 }
+.tool .tloc {
+  font-size: 10px;
+  color: var(--fg-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 45%;
+}
 .tool .badge {
   font-size: 10px;
   text-transform: uppercase;
@@ -809,6 +821,11 @@ body::after {
 }
 .compose-error {
   color: var(--bad);
+  font-size: 11px;
+  margin-top: 4px;
+}
+.compose-warn {
+  color: var(--warn);
   font-size: 11px;
   margin-top: 4px;
 }
@@ -1437,7 +1454,8 @@ select.inp {
   color: var(--fg);
 }
 /* agent session-mode picker (in the per-agent panel toolbar) */
-.mode-sel {
+.mode-sel,
+.effort-sel {
   font: inherit;
   font-size: 11px;
   color: var(--fg-dim);
@@ -1449,7 +1467,8 @@ select.inp {
   outline: none;
   max-width: 130px;
 }
-.mode-sel:hover {
+.mode-sel:hover,
+.effort-sel:hover {
   color: var(--fg);
   border-color: var(--fg-faint);
 }

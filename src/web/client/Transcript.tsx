@@ -72,13 +72,18 @@ const TOOL_ICONS: Record<string, string> = {
 
 function ToolCard({ item }: { item: Extract<TranscriptItem, { kind: "tool_call" }> }) {
   const { t } = useI18n();
-  const [open, setOpen] = useState(false);
   const hasDetail = !!(item.output || item.input || item.locations?.length);
+  // Default to OPEN whenever the card carries detail, so a turn's tool calls show what they did
+  // without a click each. `override` (null until the user clicks) lets manual collapse/expand win
+  // and survives later prop updates that flip hasDetail.
+  const [override, setOverride] = useState<boolean | null>(null);
+  const open = override ?? hasDetail;
   return (
     <div className="tool">
-      <div className="thead" onClick={() => hasDetail && setOpen((o) => !o)} style={{ cursor: hasDetail ? "pointer" : "default" }}>
+      <div className="thead" onClick={() => hasDetail && setOverride(!open)} style={{ cursor: hasDetail ? "pointer" : "default" }}>
         <span className="ico">{TOOL_ICONS[item.toolKind ?? "other"] ?? "▪"}</span>
         <span className="ttitle">{item.title}</span>
+        {item.locations?.length ? <span className="tloc">{item.locations[0]}</span> : null}
         {hasDetail ? <span className="kbd">{open ? "−" : "+"}</span> : null}
         <span className={`badge ${item.status}`}>{item.status.replace("_", " ")}</span>
       </div>
@@ -128,6 +133,20 @@ function PlanCard({ item }: { item: Extract<TranscriptItem, { kind: "plan" }> })
   );
 }
 
+function MailBubble({ item }: { item: Extract<TranscriptItem, { kind: "mail" }> }) {
+  const { t } = useI18n();
+  return (
+    <div className="msg mail">
+      <div className="who">
+        ✉ {t("mail.from", { from: item.from })} <span className="t">{fmtTime(item.ts)}</span>
+      </div>
+      <div className="bubble">
+        <Markdown text={item.body} />
+      </div>
+    </div>
+  );
+}
+
 export function Transcript({ items }: { items: TranscriptItem[] }) {
   const { t } = useI18n();
   const endRef = useRef<HTMLDivElement>(null);
@@ -166,6 +185,8 @@ export function Transcript({ items }: { items: TranscriptItem[] }) {
           <Thought key={it.id} item={it} />
         ) : it.kind === "tool_call" ? (
           <ToolCard key={it.id} item={it} />
+        ) : it.kind === "mail" ? (
+          <MailBubble key={it.id} item={it} />
         ) : (
           <PlanCard key={it.id} item={it} />
         ),

@@ -188,6 +188,24 @@ export function reduceTranscript(
     return { items: next, ops };
   }
 
+  // Inter-agent mail (not an ACP update): the gateway folds each received mail into the
+  // recipient's conversation as a distinct, sender-labeled item via this synthetic update.
+  if (k === "__mail__") {
+    closeOpen(); // seal any open streaming message/thought before the mail card
+    const id = nid(now);
+    const item: TranscriptItem = {
+      id,
+      kind: "mail",
+      from: String(update.from),
+      to: String(update.to),
+      body: textOf(update.body) || String(update.body ?? ""),
+      ts: now,
+    };
+    next = [...next, item];
+    ops.push({ op: "upsert", item });
+    return { items: next, ops };
+  }
+
   // plan / available_commands_update / current_mode_update and anything unknown:
   // not part of the conversation transcript.
   return { items: next, ops: [] };

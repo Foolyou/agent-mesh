@@ -2,7 +2,7 @@
 // src/mesh-validate.ts; the server re-validates and any error is shown inline.
 import { useState } from "react";
 import type { Store } from "./store";
-import type { HarnessId, AgentRole, MeshConfig } from "../types";
+import type { HarnessId, AgentRole, MeshConfig, ThinkingEffort } from "../types";
 import { Btn } from "./ui";
 import { useI18n } from "./i18n";
 
@@ -11,6 +11,7 @@ interface AgentDraft {
   harness: HarnessId;
   role: AgentRole;
   project: string;
+  effort?: ThinkingEffort;
 }
 
 const HARNESSES: HarnessId[] = ["claude", "codex", "opencode"];
@@ -47,7 +48,7 @@ export function MeshBuilder({
   const [name, setName] = useState(initial?.name ?? "");
   const [agents, setAgents] = useState<AgentDraft[]>(
     initial?.agents?.length
-      ? initial.agents.map((a) => ({ id: a.id, harness: a.harness, role: a.role, project: a.project }))
+      ? initial.agents.map((a) => ({ id: a.id, harness: a.harness, role: a.role, project: a.project, effort: a.effort }))
       : [{ id: "router", harness: "claude", role: "router", project: "test_mesh_0" }],
   );
   const [edges, setEdges] = useState<[string, string][]>(initial ? initial.edges.map((e) => [e[0], e[1]]) : []);
@@ -123,6 +124,18 @@ export function MeshBuilder({
                   <option value="member">member</option>
                 </select>
                 <input className="inp" value={a.project} placeholder="project dir" onChange={(e) => setAgent(i, { project: e.target.value })} />
+                <select
+                  className="inp"
+                  value={a.effort ?? ""}
+                  title={t("effort.hint")}
+                  onChange={(e) => setAgent(i, { effort: (e.target.value || undefined) as ThinkingEffort | undefined })}
+                >
+                  <option value="">{t("effort.default")}</option>
+                  <option value="minimal">{t("effort.minimal")}</option>
+                  <option value="low">{t("effort.low")}</option>
+                  <option value="medium">{t("effort.medium")}</option>
+                  <option value="high">{t("effort.high")}</option>
+                </select>
                 <Btn small kind="ghost" onClick={() => delAgent(i)} disabled={agents.length === 1}>
                   ✕
                 </Btn>

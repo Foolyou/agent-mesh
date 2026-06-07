@@ -75,6 +75,13 @@ const DICT: Record<string, Entry> = {
   "agent.placeholder": ["message {id}…", "发消息给 {id}…"],
   mode: ["mode", "模式"],
   "mode.hint": ["agent operating mode", "agent 工作模式"],
+  effort: ["effort", "思考强度"],
+  "effort.hint": ["reasoning / thinking effort — applied when the agent (re)starts", "思考/推理强度 —— 在 agent(重)启动时生效"],
+  "effort.default": ["default", "默认"],
+  "effort.minimal": ["minimal", "最小"],
+  "effort.low": ["low", "低"],
+  "effort.medium": ["medium", "中"],
+  "effort.high": ["high", "高"],
   activity: ["activity", "活动"],
   "activity.sub": ["mail · interrupt · permission · log", "邮件 · 中断 · 权限 · 日志"],
   mailbox: ["mailbox", "邮箱"],
@@ -103,6 +110,7 @@ const DICT: Record<string, Entry> = {
   "tool.files": ["files", "文件"],
   "tool.output": ["output", "输出"],
   plan: ["plan", "计划"],
+  "mail.from": ["from {from}", "来自 {from}"],
 
   // ── mobile segments ──
   "seg.chat": ["Chat", "对话"],

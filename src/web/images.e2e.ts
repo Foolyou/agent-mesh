@@ -106,15 +106,21 @@ try {
     await page.locator(".lightbox-close").click();
   });
 
-  await step("non-image-capable agent gates attach affordance", async () => {
+  await step("non-image agent: attach is allowed but warns it won't send", async () => {
     await page.locator('.topo .node:has-text("opencode-1")').click();
     const panel = page.locator('.dchat .panel:has(.tabs)');
     await panel.locator('.tab:has-text("opencode-1")').click();
     const btn = panel.locator(".attach-btn");
     await btn.waitFor({ timeout: 4000 });
-    if (!(await btn.isDisabled())) throw new Error("attach button was enabled for non-image agent");
+    // the button is now ENABLED (attach always works); capability only governs a warning + drop
+    if (await btn.isDisabled()) throw new Error("attach button should be enabled even for a non-image agent");
     const title = await btn.getAttribute("title");
     if (!title?.includes("does not advertise")) throw new Error(`missing tooltip: ${title}`);
+    // attaching adds a thumbnail and surfaces a warning that the image won't be delivered
+    await panel.locator('.composer input[type="file"]').setInputFiles(pngA);
+    await panel.locator(".pending-img img").waitFor({ timeout: 4000 });
+    await panel.locator(".compose-warn").waitFor({ timeout: 4000 });
+    await panel.locator('.pending-img button[title="remove image"]').click();
   });
 
   await step("client rejects SVG, oversize, and sixth image", async () => {

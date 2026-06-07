@@ -43,6 +43,24 @@ test("tool_call then tool_call_update merge into one card updated in place", () 
   expect((items[0] as any).output).toContain("ok");
 });
 
+test("distinct tool calls stay distinct items (no merge)", () => {
+  const items = fold([
+    { sessionUpdate: "tool_call", toolCallId: "a", title: "A", status: "completed" },
+    { sessionUpdate: "tool_call", toolCallId: "b", title: "B", status: "completed" },
+    { sessionUpdate: "tool_call", toolCallId: "c", title: "C", status: "completed" },
+  ]);
+  expect(items).toHaveLength(3);
+  expect(new Set(items.map((i) => i.id)).size).toBe(3);
+  expect(items.map((i) => (i as any).toolCallId)).toEqual(["a", "b", "c"]);
+});
+
+test("__mail__ folds into a sender-labeled mail item", () => {
+  const out = reduceTranscript([], { sessionUpdate: "__mail__", from: "router", to: "codex-1", body: "ping" }, T);
+  expect(out.ops).toHaveLength(1);
+  expect(out.ops[0].op).toBe("upsert");
+  expect(out.items[0]).toMatchObject({ kind: "mail", from: "router", to: "codex-1", body: "ping" });
+});
+
 test("a tool_call closes an open message; later text opens a new message", () => {
   const items = fold([
     { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "thinking" } },

@@ -111,7 +111,9 @@ export const Composer = forwardRef<HTMLTextAreaElement, {
   }
 
   function addFiles(files: File[]) {
-    if (!imageEnabled || disabled) return;
+    // Attaching is always allowed while the composer is enabled; capability only governs whether
+    // the images are actually sent (the server drops them for agents without image support).
+    if (disabled) return;
     const next = [...pending];
     for (const file of files) {
       const reason = validateImageFile(file, next.length);
@@ -132,7 +134,7 @@ export const Composer = forwardRef<HTMLTextAreaElement, {
   }
 
   function onDrop(e: DragEvent<HTMLDivElement>) {
-    if (!imageEnabled || disabled) return;
+    if (disabled) return;
     const files = Array.from(e.dataTransfer.files);
     if (!files.length) return;
     e.preventDefault();
@@ -146,7 +148,9 @@ export const Composer = forwardRef<HTMLTextAreaElement, {
     setSending(true);
     setErr("");
     try {
-      const images = pending.length && onUploadImages ? await onUploadImages(pending.map((p) => p.file)) : [];
+      // Only upload + attach images when the target agent advertises image support. Otherwise the
+      // server would drop them anyway, so we skip the upload and the user keeps the warning below.
+      const images = imageEnabled && pending.length && onUploadImages ? await onUploadImages(pending.map((p) => p.file)) : [];
       await onSend(text, images);
       for (const p of pending) URL.revokeObjectURL(p.url);
       setPending([]);
@@ -164,7 +168,9 @@ export const Composer = forwardRef<HTMLTextAreaElement, {
     setPending(pending.filter((_, idx) => idx !== i));
   }
 
-  const canAttach = !!imageEnabled && !disabled;
+  const canAttach = !disabled;
+  // images were attached to an agent that can't receive them — they'll be dropped on send
+  const imagesWontSend = pending.length > 0 && imageEnabled === false;
   return (
     <div className={`composer ${disabled ? "disabled" : ""}`} onDragOver={(e) => canAttach && e.preventDefault()} onDrop={onDrop}>
       <span className="prompt">›</span>
@@ -191,13 +197,14 @@ export const Composer = forwardRef<HTMLTextAreaElement, {
           onKeyDown={onKey}
           onPaste={onPaste}
         />
+        {imagesWontSend ? <div className="compose-warn">⚠ {imageDisabledReason ?? "this agent can’t receive images — they won’t be sent"}</div> : null}
         {err ? <div className="compose-error">{err}</div> : null}
       </div>
       <button
         className="attach-btn"
         type="button"
         disabled={!canAttach || sending}
-        title={canAttach ? "attach image" : imageDisabledReason ?? "image upload is not available for this agent"}
+        title={imageEnabled ? "attach image" : imageDisabledReason ?? "this agent may not accept images"}
         onClick={() => fileRef.current?.click()}
       >
         📎

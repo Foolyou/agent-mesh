@@ -8,12 +8,18 @@ export type AgentRole = "router" | "member";
 /** Unique within a mesh, e.g. "codex-1". */
 export type AgentId = string;
 
+/** Reasoning / thinking effort for an agent. Applied at spawn (codex: model_reasoning_effort;
+ *  claude: MAX_THINKING_TOKENS). `undefined` = the harness's own default. */
+export type ThinkingEffort = "minimal" | "low" | "medium" | "high";
+
 export interface AgentConfig {
   id: AgentId;
   harness: HarnessId;
   /** Working directory (the "Project" layer), relative to repo root. */
   project: string;
   role: AgentRole;
+  /** Optional reasoning/thinking effort; applied when the agent process (re)starts. */
+  effort?: ThinkingEffort;
 }
 
 export interface MeshConfig {

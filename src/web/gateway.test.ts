@@ -135,6 +135,9 @@ test("mail event emits both activity and mail entries", () => {
   expect(s.perMesh.demo.activity.some((a) => a.kind === "mail")).toBe(true);
   expect(got.some((x) => x.t === "mail")).toBe(true);
   expect(got.some((x) => x.t === "activity")).toBe(true);
+  // mail is ALSO folded inline into the recipient's conversation, labeled with the sender
+  expect(got.some((x) => x.t === "transcript.upsert" && x.conv.scope === "agent" && x.conv.agent === "codex-1" && x.item.kind === "mail" && x.item.from === "router")).toBe(true);
+  expect((s.perMesh.demo.transcripts["codex-1"] ?? []).some((i: any) => i.kind === "mail" && i.from === "router")).toBe(true);
 });
 
 test("command methods delegate to the manager", async () => {

@@ -3,7 +3,7 @@
 // permission-history timelines for the selected mesh.
 import { useEffect, useState } from "react";
 import type { Store } from "./store";
-import type { GatewayState, MeshSummary, PerMeshState, ActivityEntry, MailEntry, ResolvedPermission, PermissionReq, AgentModes } from "../types";
+import type { GatewayState, MeshSummary, PerMeshState, ActivityEntry, MailEntry, ResolvedPermission, PermissionReq, AgentModes, ThinkingEffort } from "../types";
 import { Dot, Btn, Empty, ConfirmButton, InfoIcon, fmtTime } from "./ui";
 import { ChatPane } from "./ChatPane";
 import { Topology, TopologyModal } from "./Topology";
@@ -106,6 +106,52 @@ function ModeControl({ mesh, agent, store, modes }: { mesh: string; agent: strin
   );
 }
 
+const EFFORTS: ThinkingEffort[] = ["minimal", "low", "medium", "high"];
+
+// Per-agent thinking-effort picker. Effort is a launch-time setting (codex flag / claude env),
+// so changing it while the mesh runs restarts the mesh to apply; while stopped it just updates
+// the persisted config. opencode has no effort mechanism, so the control is hidden for it.
+function EffortControl({ m, pm, agent, store }: { m: MeshSummary; pm: PerMeshState; agent: string; store: Store }) {
+  const { t } = useI18n();
+  const cfg = pm.config;
+  const a = cfg.agents.find((x) => x.id === agent);
+  if (!a || a.harness === "opencode") return null;
+  const live = m.status === "running" || m.status === "starting";
+  async function change(value: string) {
+    const effort = (value || undefined) as ThinkingEffort | undefined;
+    const patched = { ...cfg, agents: cfg.agents.map((x) => (x.id === agent ? { ...x, effort } : x)) };
+    if (live) {
+      // effort only takes hold at process start — restart the mesh so the new value applies
+      await store.stopMesh(m.name);
+      await store.defineMesh(patched);
+      await store.startMesh(m.name);
+    } else {
+      await store.defineMesh(patched);
+    }
+  }
+  return (
+    <span className="row" style={{ gap: 5 }}>
+      <span className="sub" style={{ fontSize: 10 }}>
+        {t("effort")}
+      </span>
+      <select
+        className="effort-sel"
+        value={a.effort ?? ""}
+        title={t("effort.hint")}
+        onKeyDown={(e) => e.stopPropagation()}
+        onChange={(e) => void change(e.target.value)}
+      >
+        <option value="">{t("effort.default")}</option>
+        {EFFORTS.map((eff) => (
+          <option key={eff} value={eff}>
+            {t(`effort.${eff}`)}
+          </option>
+        ))}
+      </select>
+    </span>
+  );
+}
+
 function AgentPanels({
   m,
   pm,
@@ -140,6 +186,7 @@ function AgentPanels({
         <div className="row" style={{ padding: "5px 10px", borderBottom: "1px solid var(--line)" }}>
           <span className="sub">{cur.harness}</span>
           <span style={{ flex: 1 }} />
+          <EffortControl m={m} pm={pm} agent={cur.id} store={store} />
           {m.status === "running" || m.status === "starting" ? (
             <Btn small kind="stop" title={t("interrupt")} onClick={() => void store.interruptAgent(m.name, cur.id)}>
               {t("interrupt")}
@@ -311,6 +358,8 @@ export function MeshDetail({
         <span className="ttl">{t("router chat")}</span>
         <span className="sub">{m.router}</span>
         <span className="right">
+          <EffortControl m={m} pm={pm} agent={m.router} store={store} />
+          {live ? <ModeControl mesh={m.name} agent={m.router} store={store} modes={pm.modes?.[m.router]} /> : null}
           {live ? (
             <Btn small kind="stop" title={t("interrupt")} onClick={() => void store.interruptAgent(m.name, m.router)}>
               {t("interrupt")}

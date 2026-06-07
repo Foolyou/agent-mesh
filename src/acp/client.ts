@@ -87,6 +87,8 @@ export interface AcpConnectionOptions {
   onExit?: (code: number) => void;
   /** inherit agent stderr to this process (debugging) */
   debug?: boolean;
+  /** extra env layered on top of the stripped host env (e.g. MAX_THINKING_TOKENS for claude) */
+  extraEnv?: Record<string, string>;
 }
 
 export class AcpAgentConnection {
@@ -111,7 +113,9 @@ export class AcpAgentConnection {
       // re-exec as a mesh-host instead of the CLI/backend — which is exactly how an agent
       // running the restart script spawned a duplicate host and took the backend down.
       // Agents reach the mesh via the injected MCP URL + prompt, never via env.
-      env: agentEnv(),
+      // extraEnv is layered AFTER agentEnv() so per-agent vars (e.g. MAX_THINKING_TOKENS) apply
+      // without re-introducing any stripped MESH_* control vars.
+      env: { ...agentEnv(), ...(this.opts.extraEnv ?? {}) },
     });
     this.child = child;
     this.alive = true;
