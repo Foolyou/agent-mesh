@@ -1,3 +1,12 @@
+// Mailbox primitives serve two paths:
+//
+// - Live ACP mesh: agents communicate through the control plane's injected MCP
+//   tools (`send_mail`, `check_mail`, etc.). The control plane passes explicit
+//   mailbox paths when it needs this module; live agents should not discover mesh
+//   access through env vars or by reading/writing mailbox files directly.
+// - Legacy PTY CLI prototype: `mailbox-send.ts`, `mailbox-tail.ts`, and related
+//   scripts still use AGENT_ROOM_* defaults for local NDJSON files. Keep that
+//   compatibility here until the PTY prototype is retired.
 import { mkdir, readFile, appendFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { randomUUID } from "node:crypto";

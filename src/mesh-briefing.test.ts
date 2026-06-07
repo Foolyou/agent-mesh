@@ -39,6 +39,16 @@ test("member briefing tells it to report back to the router and lists reachable 
   expect(b).not.toContain("mesh_status"); // router-only tools are not advertised to members
 });
 
+test("briefing points agents to injected MCP tools, not env vars or mailbox files", () => {
+  const b = buildMeshBriefing(new Mesh(cfg), "codex-1");
+  expect(b).toContain("injected MCP tools");
+  expect(b).toContain("Do not look for AGENT_ROOM_* environment variables");
+  expect(b).toContain("do not read or write any mailbox file directly");
+  expect(b).not.toContain("shared mailbox");
+  expect(b).not.toContain("AGENT_ROOM_MAILBOX");
+  expect(b).not.toContain(".mesh/mailbox");
+});
+
 test("an agent with no outgoing edges is told so", () => {
   const isolated: MeshConfig = {
     name: "solo",

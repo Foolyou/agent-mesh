@@ -29,7 +29,7 @@ export function buildMeshBriefing(mesh: Mesh, agentId: AgentId): string {
   lines.push(`You are "${agentId}", a ${me.role} agent in a multi-agent mesh named "${mesh.name}".`);
   lines.push(
     "You are NOT working alone: this mesh is a team of heterogeneous coding agents, each running in " +
-      "its own workspace and collaborating through a shared mailbox. Treat the other agents as real " +
+      "its own workspace and collaborating through injected mesh tools. Treat the other agents as real " +
       "teammates you can delegate to and hand work off to.",
   );
   lines.push("");
@@ -50,6 +50,10 @@ export function buildMeshBriefing(mesh: Mesh, agentId: AgentId): string {
   }
   lines.push("");
   lines.push("Your mesh tools (already connected to this session):");
+  lines.push(
+    "Mesh communication and mesh state access happen through these injected MCP tools. Do not look " +
+      "for AGENT_ROOM_* environment variables, and do not read or write any mailbox file directly.",
+  );
   lines.push(
     `  - send_mail(to, body): delegate work, ask a question, or report a result to another agent. ` +
       `You may mail: ${myReach.join(", ") || "(no one — you have no outgoing edges)"}.`,
