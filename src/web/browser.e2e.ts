@@ -94,6 +94,28 @@ try {
     if (count > 3) throw new Error(`too many message bubbles (${count}) — chunks not coalesced`);
   });
 
+  await step("agent prose renders markdown live", async () => {
+    const panel = page.locator('.panel:has(.head:has-text("router chat"))');
+    const bubble = panel.locator(".msg.agent .bubble", { hasText: "implements the calculator core" }).first();
+    await bubble.locator("strong", { hasText: "codex-1" }).waitFor({ timeout: 4000 });
+    await bubble.locator("ul li", { hasText: "implement core" }).waitFor({ timeout: 4000 });
+    await bubble.locator("pre code", { hasText: "export const add" }).waitFor({ timeout: 4000 });
+    const link = bubble.locator('a[href="https://example.com/"]').first();
+    await link.waitFor({ timeout: 4000 });
+    const target = await link.getAttribute("target");
+    const rel = await link.getAttribute("rel");
+    if (target !== "_blank") throw new Error(`safe link target was ${target}`);
+    if (rel !== "noopener noreferrer") throw new Error(`safe link rel was ${rel}`);
+    const badLinks = await bubble.locator('a[href^="javascript:"]').count();
+    if (badLinks) throw new Error("javascript link retained an anchor href");
+    const img = bubble.locator("img").first();
+    await img.waitFor({ timeout: 4000 });
+    if ((await img.getAttribute("referrerpolicy")) !== "no-referrer") throw new Error("image referrerpolicy not hardened");
+    if ((await img.getAttribute("loading")) !== "lazy") throw new Error("image loading not lazy");
+    const badImages = await bubble.locator('img[src^="javascript:"]').count();
+    if (badImages) throw new Error("javascript image src rendered");
+  });
+
   await step("router shows a plan checklist", async () => {
     await page.waitForSelector('.panel:has(.head:has-text("router chat")) .plan .plan-row', { timeout: 9000 });
   });
@@ -122,6 +144,7 @@ try {
     await label.waitFor({ timeout: 8000 });
     await label.click();
     await page.waitForSelector(".thought .txt", { timeout: 4000 });
+    await page.waitForSelector(".thought .txt strong", { timeout: 4000 });
   });
 
   await step("tool-call card merges updates → completed with output", async () => {
@@ -135,6 +158,10 @@ try {
     await page.locator(".tool .thead").first().click();
     await page.waitForSelector(".tool .tout", { timeout: 4000 });
     await page.waitForSelector('.tool .tdetail .tlabel:has-text("input")', { timeout: 4000 });
+    const strongInTool = await page.locator(".tool .tout strong").count();
+    if (strongInTool) throw new Error("tool detail rendered markdown");
+    const raw = await page.locator(".tool .tout", { hasText: "**raw output**" }).count();
+    if (!raw) throw new Error("tool output did not preserve raw markdown text");
   });
 
   await step("failed command surfaces an error toast", async () => {
@@ -180,9 +207,69 @@ try {
 
   await step("router chat: send prompt → user bubble", async () => {
     const input = page.locator('.panel:has(.head:has-text("router chat")) .composer textarea');
-    await input.fill("status please");
+    await input.fill("status **please**");
     await input.press("Enter");
     await page.waitForSelector('.panel:has(.head:has-text("router chat")) .msg.user', { timeout: 6000 });
+    const user = page.locator('.panel:has(.head:has-text("router chat")) .msg.user .bubble', { hasText: "**please**" }).last();
+    await user.waitFor({ timeout: 4000 });
+    if ((await user.locator("strong").count()) !== 0) throw new Error("user message rendered markdown");
+  });
+
+  await step("unclosed fence streams without breaking and resolves when closed", async () => {
+    await page.evaluate(() => {
+      const store = (window as any).__meshStore;
+      const now = new Date().toISOString();
+      store.apply({
+        t: "transcript.upsert",
+        conv: { scope: "agent", mesh: "demo", agent: "router" },
+        item: { id: "md-stream", kind: "message", role: "agent", text: "Before\n```ts\nconst x = 1", ts: now, complete: false },
+      });
+    });
+    const panel = page.locator('.panel:has(.head:has-text("router chat"))');
+    await panel.locator("#md-stream").waitFor({ timeout: 4000 }).catch(() => {});
+    await panel.locator(".msg.agent .bubble", { hasText: "Before" }).last().waitFor({ timeout: 4000 });
+    await panel.locator(".msg.agent .bubble pre, .msg.agent .bubble code", { hasText: "const x = 1" }).last().waitFor({ timeout: 4000 });
+    await page.evaluate(() => {
+      const store = (window as any).__meshStore;
+      store.apply({
+        t: "transcript.patch",
+        conv: { scope: "agent", mesh: "demo", agent: "router" },
+        id: "md-stream",
+        patch: { text: "Before\n```ts\nconst x = 1\n```\nAfter", complete: true },
+      });
+    });
+    await panel.locator(".msg.agent .bubble pre code", { hasText: "const x = 1" }).last().waitFor({ timeout: 4000 });
+    await panel.locator(".msg.agent .bubble", { hasText: "After" }).last().waitFor({ timeout: 4000 });
+  });
+
+  await step("markdown height changes keep transcript pinned to bottom", async () => {
+    const stream = page.locator('.panel:has(.head:has-text("router chat")) .stream').first();
+    await stream.evaluate((el) => {
+      el.scrollTop = el.scrollHeight;
+      el.dispatchEvent(new Event("scroll", { bubbles: true }));
+    });
+    await page.evaluate(() => {
+      const store = (window as any).__meshStore;
+      const now = new Date().toISOString();
+      store.apply({
+        t: "transcript.upsert",
+        conv: { scope: "agent", mesh: "demo", agent: "router" },
+        item: { id: "md-tall", kind: "message", role: "agent", text: "short", ts: now, complete: false },
+      });
+    });
+    await sleep(80);
+    await page.evaluate(() => {
+      const store = (window as any).__meshStore;
+      store.apply({
+        t: "transcript.patch",
+        conv: { scope: "agent", mesh: "demo", agent: "router" },
+        id: "md-tall",
+        patch: { text: Array.from({ length: 24 }, (_, i) => `- row ${i}`).join("\n") },
+      });
+    });
+    await sleep(200);
+    const gap = await stream.evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight);
+    if (gap >= 40) throw new Error(`stream not pinned after markdown height change, gap=${gap}`);
   });
 
   await step("keyboard: 'f' fullscreens router chat, Esc exits", async () => {

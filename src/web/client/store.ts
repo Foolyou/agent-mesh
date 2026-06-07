@@ -97,6 +97,7 @@ export interface Store {
   subscribe(cb: () => void): () => void;
   wsConnected(): boolean;
   getToasts(): Toast[];
+  apply(msg: ServerMsg): void;
   dismissToast(id: number): void;
   startMesh(name: string): Promise<any>;
   stopMesh(name: string): Promise<any>;
@@ -201,6 +202,7 @@ export function createStore(): Store {
     },
     wsConnected: () => connected,
     getToasts: () => toasts,
+    apply: (msg) => set(applyMsg(state, msg)),
     dismissToast: (id) => {
       toasts = toasts.filter((t) => t.id !== id);
       emit();

@@ -148,8 +148,24 @@ export class FakeManager {
     if (this.meshes.get(name)?.status !== "running") return;
     await sleep(500);
     // router thinks, then streams a plan
-    this.update(name, "router", { sessionUpdate: "agent_thought_chunk", content: { text: "Break the task into impl + review and fan out to members." } });
-    await this.reply(name, "router", "Plan: codex-1 implements the calculator core, opencode-1 reviews.");
+    this.update(name, "router", {
+      sessionUpdate: "agent_thought_chunk",
+      content: { text: "Break the task into **impl** + review and fan out to members." },
+    });
+    await this.reply(
+      name,
+      "router",
+      [
+        "Plan: **codex-1** implements the calculator core, opencode-1 reviews.",
+        "- implement core",
+        "- review diff",
+        "```ts",
+        "export const add = (a: number, b: number) => a + b;",
+        "```",
+        "[safe link](https://example.com) [bad link](javascript:alert(1))",
+        "![sample](https://example.com/sample.png) ![bad](javascript:alert(1))",
+      ].join("\n"),
+    );
 
     // a plan checklist (replaced wholesale on each update)
     this.update(name, "router", {
@@ -168,7 +184,7 @@ export class FakeManager {
       title: "execute: bun test",
       kind: "execute",
       status: "pending",
-      rawInput: { command: "bun test", cwd: "test_mesh_0" },
+      rawInput: { command: "bun test", cwd: "test_mesh_0", literal: "**raw input**" },
       locations: [{ path: "src/calc.ts", line: 1 }],
     });
     await sleep(400);
@@ -178,7 +194,7 @@ export class FakeManager {
       sessionUpdate: "tool_call_update",
       toolCallId: "tc-build",
       status: "completed",
-      content: [{ type: "content", content: { type: "text", text: "12 pass, 0 fail" } }],
+      content: [{ type: "content", content: { type: "text", text: "12 pass, 0 fail\n**raw output**" } }],
     });
 
     // inter-agent mail

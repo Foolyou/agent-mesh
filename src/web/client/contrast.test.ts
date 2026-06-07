@@ -38,6 +38,13 @@ for (const theme of BUILTIN_THEMES) {
     }
   });
 
+  test(`${theme.name}: markdown link info role meets AA on transcript surfaces`, () => {
+    for (const surf of ["bg-inset", "bg-raise"] as const) {
+      const r = contrastRatio(p.info, p[surf]);
+      expect(r, `info on ${surf} = ${r.toFixed(2)}:1`).toBeGreaterThanOrEqual(AA_TEXT);
+    }
+  });
+
   test(`${theme.name}: the subtle hover wash keeps fg-dim readable`, () => {
     // .mrow:hover paints rgba(255,255,255,0.03) over bg; secondary text must survive it.
     const washed = blend({ r: 255, g: 255, b: 255 }, 0.03, hexToRgb(p["bg"]));

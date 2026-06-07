@@ -82,6 +82,8 @@ const SELECTORS = [
   ".panel > .head", // panel headers (fg-dim, was the low-contrast complaint)
   ".brand", // topbar brand
   ".topbar .stat", // topbar status text
+  ".msg.agent .bubble .md a", // markdown links use the info role on transcript surfaces
+  ".msg.agent .bubble .md code", // inline/fenced code remains readable on inset surfaces
 ];
 
 const server = Bun.spawn(["bun", "run", "src/main.ts", "--fake", "--port", String(PORT)], { stdout: "pipe", stderr: "pipe" });
@@ -98,6 +100,8 @@ try {
   page.on("pageerror", (e) => errors.push(String(e)));
   await page.goto(BASE, { waitUntil: "domcontentloaded" });
   await page.waitForSelector(".mrow.sel", { timeout: 8000 });
+  await page.locator('.detail-head .btn:has-text("start mesh")').click();
+  await page.waitForSelector('.panel:has(.head:has-text("router chat")) .msg.agent .bubble .md a', { timeout: 12000 });
 
   for (const theme of THEMES) {
     await step(`theme "${theme}": all rendered text ≥ ${AA}:1 (WCAG AA)`, async () => {

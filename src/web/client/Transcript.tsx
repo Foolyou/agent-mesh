@@ -1,10 +1,11 @@
 // Renders an aggregated TranscriptItem[] as message bubbles, collapsible thought
 // blocks, and tool-call cards that update in place. The aggregation already happened
 // upstream (transcript reducer); this is pure presentation.
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { TranscriptItem } from "../types";
 import { Empty, fmtTime } from "./ui";
 import { useI18n } from "./i18n";
+import { Markdown } from "./Markdown";
 
 function Msg({ item }: { item: Extract<TranscriptItem, { kind: "message" }> }) {
   const { t } = useI18n();
@@ -14,7 +15,7 @@ function Msg({ item }: { item: Extract<TranscriptItem, { kind: "message" }> }) {
         {item.role === "user" ? t("you") : t("agent")} <span className="t">{fmtTime(item.ts)}</span>
       </div>
       <div className="bubble">
-        {item.text}
+        {item.role === "agent" ? <Markdown text={item.text} /> : item.text}
       </div>
     </div>
   );
@@ -29,7 +30,11 @@ function Thought({ item }: { item: Extract<TranscriptItem, { kind: "thought" }> 
         {open ? "▾" : "▸"} {t("thinking")}
         {!item.complete ? "…" : ""}
       </span>
-      {open ? <div className="txt">{item.text}</div> : null}
+      {open ? (
+        <div className="txt">
+          <Markdown text={item.text} />
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -110,15 +115,26 @@ export function Transcript({ items }: { items: TranscriptItem[] }) {
   const endRef = useRef<HTMLDivElement>(null);
   // autoscroll to bottom when content changes, unless the user scrolled up
   const wrapRef = useRef<HTMLDivElement>(null);
+  const stickRef = useRef(true);
   const [stick, setStick] = useState(true);
+  useLayoutEffect(() => {
+    if (stickRef.current) endRef.current?.scrollIntoView({ block: "end" });
+  }, [items, stick]);
   useEffect(() => {
-    if (stick) endRef.current?.scrollIntoView({ block: "end" });
+    const el = wrapRef.current;
+    if (!el || !stick || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => {
+      if (stickRef.current) endRef.current?.scrollIntoView({ block: "end" });
+    });
+    for (const child of Array.from(el.children)) ro.observe(child);
+    return () => ro.disconnect();
   }, [items, stick]);
 
   function onScroll() {
     const el = wrapRef.current;
     if (!el) return;
     const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+    stickRef.current = atBottom;
     setStick(atBottom);
   }
 
