@@ -20,7 +20,11 @@
   --info: #5ac8e0; /* mail / interactive hint */
   --sel-bg: #e4e6e1;
   --sel-fg: #0a0b0d;
-  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+  /* Latin first (the terminal look), then quality CJK faces — per-glyph fallback gives
+     Latin chars IBM Plex Mono and CJK chars a real Chinese font instead of the system's
+     poor monospace fallback. Covers macOS / Windows / Linux. */
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", "Cascadia Code", Menlo, "PingFang SC",
+    "Microsoft YaHei", "Noto Sans CJK SC", "Source Han Sans SC", "WenQuanYi Micro Hei", monospace;
   --r: 3px;
   --pad: 10px;
 }
@@ -44,6 +48,39 @@ body {
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
   overflow: hidden;
+}
+/* ── CJK legibility ──────────────────────────────────────────────────────────
+   Chinese needs a touch more size/line-height than Latin mono, and the terminal's
+   wide letter-spacing + uppercase (a no-op for CJK that only smears the strokes)
+   hurt it. Scoped to lang=zh so the Latin terminal aesthetic is untouched in English. */
+:root[lang="zh"] body {
+  font-size: 13.5px;
+  line-height: 1.65;
+}
+:root[lang="zh"] .panel > .head,
+:root[lang="zh"] .stat,
+:root[lang="zh"] .mrow .mstatus {
+  font-size: 12px;
+}
+:root[lang="zh"] .brand,
+:root[lang="zh"] .stat,
+:root[lang="zh"] .panel > .head,
+:root[lang="zh"] .mrow .mstatus,
+:root[lang="zh"] .btn,
+:root[lang="zh"] .msg .who,
+:root[lang="zh"] .thought .label,
+:root[lang="zh"] .tool .badge,
+:root[lang="zh"] .tool .tlabel,
+:root[lang="zh"] .plan-head,
+:root[lang="zh"] .tl .k,
+:root[lang="zh"] .topo .node .role,
+:root[lang="zh"] .modal .mhead,
+:root[lang="zh"] .field > label,
+:root[lang="zh"] .seg-tab,
+:root[lang="zh"] .mtab,
+:root[lang="zh"] .theme-sel {
+  letter-spacing: 0.2px;
+  text-transform: none;
 }
 /* atmosphere: faint top vignette + scanline veil */
 body::before {
@@ -285,6 +322,22 @@ body::after {
 }
 .mrow.sel .mname {
   color: var(--sel-fg);
+}
+/* The selected row inverts to a light (sel-bg) surface, so EVERY descendant must
+   switch to sel-fg — otherwise controls keep their dark-surface color (--fg-dim,
+   --ok) and become near-invisible on the light fill (the start-button bug). */
+.mrow.sel .caret,
+.mrow.sel .mstatus,
+.mrow.sel .btn {
+  color: var(--sel-fg);
+}
+.mrow.sel .btn {
+  border-color: transparent;
+}
+.mrow.sel .btn:hover {
+  background: var(--sel-fg);
+  color: var(--sel-bg);
+  border-color: var(--sel-fg);
 }
 .mrow .caret {
   width: 8px;
