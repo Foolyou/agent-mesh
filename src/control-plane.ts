@@ -132,7 +132,14 @@ export class ControlPlane {
       this.emit({ kind: "agent_status", agent: a.id, status: "spawning", ts: now() });
       await conn.start();
       await conn.initialize();
-      await conn.newSession([{ type: "http", name: "mesh", url: this.mcp.urlFor(a.id), headers: [] }]);
+      const session = await conn.newSession([{ type: "http", name: "mesh", url: this.mcp.urlFor(a.id), headers: [] }]);
+      // Surface the agent's advertised session modes so the operator gets a real picker
+      // (read-only / full-access / plan / …) instead of having to know mode-id strings.
+      const modes = (session as any)?.modes;
+      const available = (modes?.availableModes ?? []).map((mo: any) => ({ id: mo.id, name: mo.name ?? mo.id, description: mo.description ?? undefined }));
+      if (available.length) {
+        this.emit({ kind: "agent_modes", agent: a.id, current: modes?.currentModeId ?? available[0].id, available, ts: now() });
+      }
       this.mesh.setStatus(a.id, "ready");
       this.emit({ kind: "agent_status", agent: a.id, status: "ready", ts: now() });
     }

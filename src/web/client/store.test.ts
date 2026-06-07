@@ -19,7 +19,7 @@ function seed(): GatewayState {
     ],
     master: { status: "ready", transcript: [] },
     perMesh: {
-      demo: { config: { name: "demo", agents: [], edges: [] }, transcripts: {}, activity: [], mail: [], pending: [], history: [] },
+      demo: { config: { name: "demo", agents: [], edges: [] }, transcripts: {}, activity: [], mail: [], pending: [], history: [], modes: {} },
     },
   };
 }
@@ -42,6 +42,20 @@ test("mesh.list replaces meshes", () => {
 test("agent.status updates the agent row", () => {
   const s = applyMsg(seed(), { t: "agent.status", name: "demo", agent: "codex-1", status: "ready" });
   expect(s.meshes[0].agents.find((a) => a.id === "codex-1")!.status).toBe("ready");
+});
+
+test("agent.modes stores the agent's session modes; a later one updates current", () => {
+  let s = applyMsg(seed(), {
+    t: "agent.modes",
+    name: "demo",
+    agent: "codex-1",
+    current: "default",
+    available: [{ id: "read-only", name: "read-only" }, { id: "default", name: "default" }],
+  });
+  expect(s.perMesh.demo.modes["codex-1"].current).toBe("default");
+  expect(s.perMesh.demo.modes["codex-1"].available).toHaveLength(2);
+  s = applyMsg(s, { t: "agent.modes", name: "demo", agent: "codex-1", current: "read-only", available: [{ id: "read-only", name: "read-only" }, { id: "default", name: "default" }] });
+  expect(s.perMesh.demo.modes["codex-1"].current).toBe("read-only");
 });
 
 test("transcript.upsert then patch on an agent conv", () => {

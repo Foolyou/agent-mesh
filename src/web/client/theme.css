@@ -1247,6 +1247,23 @@ select.inp {
 .theme-sel:hover {
   color: var(--fg);
 }
+/* agent session-mode picker (in the per-agent panel toolbar) */
+.mode-sel {
+  font: inherit;
+  font-size: 11px;
+  color: var(--fg-dim);
+  background: var(--bg-inset);
+  border: 1px solid var(--line-bright);
+  border-radius: var(--r);
+  padding: 1px 6px;
+  cursor: pointer;
+  outline: none;
+  max-width: 130px;
+}
+.mode-sel:hover {
+  color: var(--fg);
+  border-color: var(--fg-faint);
+}
 .theme-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
