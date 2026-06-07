@@ -98,15 +98,15 @@ try {
     await page.waitForSelector('.panel:has(.head:has-text("router chat")) .plan .plan-row', { timeout: 9000 });
   });
 
-  await step("streaming caret does NOT persist on a finished agent reply", async () => {
-    // the router reply has fully streamed + the turn ended → its bubble must carry no caret
+  await step("agent replies never render a streaming caret", async () => {
+    // The UI intentionally renders no caret, including while replies are still streaming.
     await page.waitForFunction(
       () => {
         const panel = [...document.querySelectorAll(".panel")].find((p) =>
           p.querySelector(".head")?.textContent?.includes("router chat"),
         );
         const agentMsgs = panel?.querySelectorAll(".msg.agent") ?? [];
-        return agentMsgs.length > 0 && ![...agentMsgs].some((m) => m.querySelector(".cursor"));
+        return agentMsgs.length > 0 && document.querySelectorAll(".cursor").length === 0;
       },
       { timeout: 10000 },
     );

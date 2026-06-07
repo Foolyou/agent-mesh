@@ -1,7 +1,7 @@
 /* agent-mesh control console — "mission-control TTY".
    Monochrome operator aesthetic: near-black canvas, phosphor-white text, terminal
    selection-inversion, ANSI accents reserved strictly for status. One distinctive
-   monospace, hairline panels with corner ticks, a blinking block cursor signature. */
+   monospace, hairline panels with corner ticks. */
 @import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600&display=swap");
 
 :root {
@@ -636,25 +636,6 @@ body::after {
 }
 .composer.disabled {
   opacity: 0.5;
-}
-
-.cursor {
-  display: inline-block;
-  width: 7px;
-  height: 1.05em;
-  background: var(--fg);
-  vertical-align: text-bottom;
-  margin-left: 1px;
-  animation: blink 1.05s step-end infinite;
-}
-@keyframes blink {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0;
-  }
 }
 
 /* ── timelines ─────────────────────────────────────────────────────────── */

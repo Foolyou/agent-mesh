@@ -15,9 +15,6 @@ function Msg({ item }: { item: Extract<TranscriptItem, { kind: "message" }> }) {
       </div>
       <div className="bubble">
         {item.text}
-        {/* transient streaming caret — only while an agent reply is still generating,
-            never persists on a finished reply (the reducer flips complete at turn end) */}
-        {item.role === "agent" && !item.complete ? <span className="cursor" /> : null}
       </div>
     </div>
   );
