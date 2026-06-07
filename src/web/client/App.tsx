@@ -7,6 +7,7 @@ import { MeshDetail } from "./MeshDetail";
 import { MeshBuilder } from "./MeshBuilder";
 import { useKeyboard } from "./useKeyboard";
 import { useIsMobile } from "./useMedia";
+import { ThemeControls } from "./Theme";
 import { Dot, Btn } from "./ui";
 
 const SEL_KEY = "mesh.selected";
@@ -179,6 +180,7 @@ export function App() {
             <span className="kbd">r</span> reload <span className="kbd">1-9</span> permit <span className="kbd">esc</span> back
           </span>
         ) : null}
+        {!mobile ? <ThemeControls /> : null}
         <Btn onClick={openNew} title="define a new mesh">
           {mobile ? "+" : "+ new mesh"}
         </Btn>
