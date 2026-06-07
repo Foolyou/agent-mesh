@@ -34,3 +34,39 @@ test("createMesh returns the validation error as text (no throw)", async () => {
   const h = createMeshControlHandlers(mgr);
   expect(await h.createMesh({ ...cfg, agents: [] })).toMatch(/error.*at least one/i);
 });
+
+test("getMesh returns config JSON; updateMesh modifies it; deleteMesh removes it", async () => {
+  const h = createMeshControlHandlers(mgr);
+  await h.createMesh(cfg);
+
+  const got = h.getMesh("echo");
+  expect(JSON.parse(got).agents[0].project).toBe("test_mesh_0");
+
+  const modified: MeshConfig = {
+    ...cfg,
+    agents: [{ ...cfg.agents[0]!, project: "test_mesh_web" }],
+    charter: "be concise",
+  };
+  expect(await h.updateMesh(modified)).toMatch(/updated mesh "echo"/i);
+  expect(JSON.parse(h.getMesh("echo")).agents[0].project).toBe("test_mesh_web");
+  expect(JSON.parse(h.getMesh("echo")).charter).toBe("be concise");
+
+  expect(await h.deleteMesh("echo")).toMatch(/deleted mesh "echo"/i);
+  expect(h.listMeshes()).toMatch(/no meshes/i);
+});
+
+test("updateMesh / deleteMesh refuse while running (errors returned as text)", async () => {
+  const h = createMeshControlHandlers(mgr);
+  await h.createMesh(cfg);
+  await h.startMesh("echo");
+  expect(await h.updateMesh(cfg)).toMatch(/error.*running/i);
+  expect(await h.deleteMesh("echo")).toMatch(/error.*running/i);
+  await h.stopMesh("echo");
+});
+
+test("updateMesh validates; getMesh on unknown mesh returns an error", async () => {
+  const h = createMeshControlHandlers(mgr);
+  await h.createMesh(cfg);
+  expect(await h.updateMesh({ ...cfg, agents: [] })).toMatch(/error.*at least one/i);
+  expect(h.getMesh("ghost")).toMatch(/error/i);
+});

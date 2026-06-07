@@ -10,6 +10,9 @@ import type { MeshConfig } from "../acp/types";
 
 export interface MeshControlHandlers {
   createMesh(spec: MeshConfig): Promise<string>;
+  updateMesh(spec: MeshConfig): Promise<string>;
+  deleteMesh(name: string): Promise<string>;
+  getMesh(name: string): string;
   startMesh(name: string): Promise<string>;
   stopMesh(name: string): Promise<string>;
   listMeshes(): string;
@@ -20,6 +23,18 @@ export function createMeshControlHandlers(manager: MeshManager): MeshControlHand
   return {
     async createMesh(spec) {
       try { await manager.defineMesh(spec); return `created mesh "${spec.name}"`; }
+      catch (e) { return err(e); }
+    },
+    async updateMesh(spec) {
+      try { await manager.defineMesh(spec); return `updated mesh "${spec.name}"`; }
+      catch (e) { return err(e); }
+    },
+    async deleteMesh(name) {
+      try { await manager.deleteMesh(name); return `deleted mesh "${name}"`; }
+      catch (e) { return err(e); }
+    },
+    getMesh(name) {
+      try { return JSON.stringify(manager.configOf(name), null, 2); }
       catch (e) { return err(e); }
     },
     async startMesh(name) {
@@ -73,8 +88,17 @@ export async function createMeshControlServer(opts: {
 
   const server = new McpServer({ name: "mesh-control", version: "0.1.0" });
   server.registerTool("create_mesh",
-    { description: "Define a new mesh (validated + persisted; does not start it).", inputSchema: meshSpecShape },
+    { description: "Define a NEW mesh (validated + persisted; does not start it).", inputSchema: meshSpecShape },
     async (spec) => text(await opts.handlers.createMesh(meshSpecSchema.parse(spec))));
+  server.registerTool("get_mesh",
+    { description: "Get a mesh's full definition (agents, edges, project, charter) as JSON. Use this before update_mesh to see what to change.", inputSchema: { name: z.string() } },
+    async ({ name }) => text(opts.handlers.getMesh(name)));
+  server.registerTool("update_mesh",
+    { description: "Replace the definition of an existing STOPPED mesh — same shape as create_mesh (validated + persisted). Read it first with get_mesh, change the fields you want, and pass the full updated spec.", inputSchema: meshSpecShape },
+    async (spec) => text(await opts.handlers.updateMesh(meshSpecSchema.parse(spec))));
+  server.registerTool("delete_mesh",
+    { description: "Delete a mesh definition permanently. The mesh must be stopped first.", inputSchema: { name: z.string() } },
+    async ({ name }) => text(await opts.handlers.deleteMesh(name)));
   server.registerTool("start_mesh",
     { description: "Start a defined mesh (spawns its agents).", inputSchema: { name: z.string() } },
     async ({ name }) => text(await opts.handlers.startMesh(name)));

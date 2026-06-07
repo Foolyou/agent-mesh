@@ -22,7 +22,7 @@ follow inter-agent mail and activity in real time.
         │                                        │
         │                                 MeshManager  ←→  optional MasterAgent (claude ACP)
         │                                    │   │            └─ mesh-control MCP server
-        │                                    │   │               (create/start/stop/list_meshes)
+        │                                    │   │               (create/get/update/delete/start/stop/list_meshes)
         │                                    │   │
         │             [Unix socket .mesh/run/<name>.sock — NDJSON]
         │                                    │
@@ -43,7 +43,8 @@ parent that owns `MeshManager`); the subprocess-per-mesh model is unchanged.
 
 **Parent process** owns `MeshManager` (deterministic lifecycle: validate, persist,
 spawn, supervise, aggregate events), an optional `MasterAgent` (a claude ACP agent
-with `create_mesh` / `start_mesh` / `stop_mesh` / `list_meshes` MCP tools), and the
+with `create_mesh` / `get_mesh` / `update_mesh` / `delete_mesh` / `start_mesh` /
+`stop_mesh` / `list_meshes` MCP tools — full lifecycle in natural language), and the
 **web server** (`src/web/`). A testable `WebGateway` folds the manager + master
 event streams into authoritative state — including **aggregated transcripts** (raw
 ACP `SessionUpdate` chunks are coalesced into message bubbles and tool-call cards,
@@ -107,7 +108,7 @@ running meshes); the web tier carries zero backend code and vice-versa.
 Open the printed URL. The console is a master/detail layout:
 
 - **Left** — the mesh list (status dot, `start`/`stop`, `+ new mesh` form) and the
-  **master-agent chat** (create/start/stop meshes in natural language).
+  **master-agent chat** (full mesh lifecycle — create/edit/delete/start/stop — in natural language).
 - **Right** (selected mesh) — `start` / `stop` / `edit` / `delete`; a live
   **topology** graph; the **router chat**; per-member **agent panels** (direct chat,
   permission-mode control, and an **interrupt** button to cancel a runaway turn);
