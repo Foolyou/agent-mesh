@@ -197,16 +197,16 @@ start_backend() {
   return 1
 }
 
-# Run the actual restart in a DETACHED, init-owned process before doing anything
-# destructive. A --cold restart invoked from INSIDE a mesh reaps that mesh, and the reap
-# (the daemon's SIGTERM handler → ControlPlane.stop() → killTree of its agents) kills the
-# agent and the shell running this very script — so it would die mid-run, after stopping
-# the backend but before restarting it (the "10010 never comes back" bug). Double-fork via
-# `( setsid … & )` so the worker reparents to init, leaving the agent's process tree, and
-# survives the reap to finish the restart.
-if [[ "${_MESH_RESTART_WORKER:-}" != "1" ]]; then
+# Only a COLD restart reaps the daemon, and reaping a mesh from INSIDE it (an agent running
+# this script) kills the agent + this very shell (the daemon's SIGTERM handler →
+# ControlPlane.stop() → killTree of its agents) — so the script would die after stopping the
+# backend but before restarting it ("10010 never comes back"). For --cold only, run the work
+# in a DETACHED, init-owned worker (double-fork via `( setsid … & )`) so it leaves the
+# agent's process tree and survives the reap. A HOT restart never reaps the daemon, so the
+# caller survives and we stay synchronous (callers see the full output + safety checks).
+if ((COLD)) && [[ "${_MESH_RESTART_WORKER:-}" != "1" ]]; then
   ( _MESH_RESTART_WORKER=1 setsid bash "$0" "$@" >>"$LOG" 2>&1 </dev/null & )
-  echo "restart dispatched (detached worker) — progress in $LOG"
+  echo "cold restart dispatched (detached worker) — progress in $LOG"
   exit 0
 fi
 
