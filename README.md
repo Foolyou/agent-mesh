@@ -87,7 +87,16 @@ bun run mesh          # → opens http://localhost:7317
 # bun run mesh --port 8080      # custom port (or MESH_WEB_PORT=8080)
 # bun run mesh --no-master      # skip the master agent
 # bun run mesh --fake           # self-contained scripted demo (no real agents)
+# bun run mesh --root ~/work/mesh   # data root (default ~/.agent-mesh; or MESH_ROOT)
 ```
+
+**Data root** — mesh definitions, the per-mesh mailbox, and run-time sockets live
+under a single root, default **`~/.agent-mesh`**, overridable with `--root <path>`
+or `MESH_ROOT`.
+
+**Themes** — pick a built-in theme (Phosphor / Amber CRT / Ice / Paper / Mono) from
+the top bar, or open the editor (`✎`) to craft a custom palette (live preview, JSON
+export/import). The choice persists in the browser.
 
 **Split deployment** (one binary, two processes — controlled by separate commands).
 `mesh` (above) is the combined single process; to run the web tier and the backend
@@ -135,6 +144,7 @@ bun run src/web/server.smoke.ts       # combined http + ws + bundler smoke
 bun run src/web/split.smoke.ts        # split: backend + web reverse-proxy (rest/post/ws)
 bun run src/web/browser.e2e.ts        # headless-browser e2e over --fake (every widget)
 bun run src/web/mobile.e2e.ts         # mobile (390x844) e2e: stack nav + segments
+bun run src/web/theme.e2e.ts          # theme switching / persistence / custom editor
 bun run src/web/split-cli.e2e.ts      # two real processes (mesh backend + mesh web), browser via proxy
 bun run src/web/real.e2e.ts           # real claude+codex+opencode mesh on a fictional project
 bun run e2e                           # headless 6-PoC-point verification through MeshManager
