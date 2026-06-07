@@ -14,7 +14,6 @@ import { startApiServer } from "./web/api-server";
 import { FakeManager, FakeMaster } from "./web/fake";
 import { runMeshHost } from "./mesh-host";
 import { resolveRoot } from "./root";
-import { DEMO_MESH } from "./config";
 
 // Single-binary support: when this binary is re-execed as a mesh-host subprocess
 // (MeshHostClient sets MESH_SOCK/MESH_CONFIG), run the host body instead of the CLI.
@@ -40,12 +39,10 @@ const root = resolveRoot();
 
 async function buildGateway() {
   const manager: any = fake ? new FakeManager() : new MeshManager({ root });
-  if (!fake) {
-    await manager.loadDefinitions();
-    if (!manager.listMeshes().some((m: { name: string }) => m.name === DEMO_MESH.name)) {
-      await manager.defineMesh(DEMO_MESH);
-    }
-  }
+  // Real backend: load whatever the user has defined in their root and nothing more.
+  // (We deliberately do NOT seed a sample mesh — the user's storage root stays clean;
+  // the UI's empty state guides first-run mesh creation. `--fake` provides the demo.)
+  if (!fake) await manager.loadDefinitions();
   const master: any = fake ? new FakeMaster() : noMaster ? undefined : new MasterAgent(manager);
   const gateway = new WebGateway(manager, master);
   if (fake) {
