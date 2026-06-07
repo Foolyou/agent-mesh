@@ -5,7 +5,8 @@
   "private": true,
   "scripts": {
     "mesh": "bun run src/main.ts",
-    "web": "bun run src/main.ts",
+    "backend": "bun run src/main.ts backend",
+    "web": "bun run src/main.ts web",
     "e2e": "bun run src/e2e.ts",
     "test": "bun test",
     "start": "bun run src/pty-room.ts",
