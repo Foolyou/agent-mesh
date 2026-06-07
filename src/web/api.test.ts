@@ -1,4 +1,7 @@
 import { test, expect } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { handleApi } from "./api";
 import { WebGateway } from "./gateway";
 import type { MeshEvent, MeshConfig } from "../acp/types";
@@ -11,6 +14,7 @@ const CFG: MeshConfig = {
   ],
   edges: [["router", "codex-1"]],
 };
+const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]);
 
 function fakeManager() {
   const calls: any[] = [];
@@ -34,11 +38,11 @@ function fakeManager() {
     async stopMesh(n: string) {
       calls.push(["stop", n]);
     },
-    async promptRouter(n: string, t: string) {
-      calls.push(["promptRouter", n, t]);
+    async promptRouter(n: string, t: string, images?: any[]) {
+      calls.push(["promptRouter", n, t, images]);
     },
-    promptAgent(n: string, a: string, t: string) {
-      calls.push(["promptAgent", n, a, t]);
+    promptAgent(n: string, a: string, t: string, images?: any[]) {
+      calls.push(["promptAgent", n, a, t, images]);
     },
     resolvePermission(n: string, r: string, o: string) {
       calls.push(["resolve", n, r, o]);
@@ -82,7 +86,7 @@ test("POST /api/meshes/demo/prompt delegates to promptRouter", async () => {
   const gw = new WebGateway(m as any);
   const r = await handleApi(gw, "POST", "/api/meshes/demo/prompt", { text: "go" });
   expect(r.status).toBe(200);
-  expect(m.calls).toContainEqual(["promptRouter", "demo", "go"]);
+  expect(m.calls).toContainEqual(["promptRouter", "demo", "go", []]);
 });
 
 test("POST /api/meshes/demo/agents/codex-1/prompt delegates to promptAgent", async () => {
@@ -90,7 +94,7 @@ test("POST /api/meshes/demo/agents/codex-1/prompt delegates to promptAgent", asy
   const gw = new WebGateway(m as any);
   const r = await handleApi(gw, "POST", "/api/meshes/demo/agents/codex-1/prompt", { text: "hey" });
   expect(r.status).toBe(200);
-  expect(m.calls).toContainEqual(["promptAgent", "demo", "codex-1", "hey"]);
+  expect(m.calls).toContainEqual(["promptAgent", "demo", "codex-1", "hey", []]);
 });
 
 test("POST /api/meshes/demo/agents/codex-1/mode delegates to setMode", async () => {
@@ -164,4 +168,43 @@ test("POST /api/master/prompt returns 409 when master absent", async () => {
   const gw = new WebGateway(fakeManager() as any);
   const r = await handleApi(gw, "POST", "/api/master/prompt", { text: "hi" });
   expect(r.status).toBe(409);
+});
+
+test("POST and GET /api/uploads store and serve safe image files", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mesh-api-upload-"));
+  try {
+    const gw = new WebGateway(fakeManager() as any, undefined, { root });
+    const post = await handleApi(
+      gw,
+      "POST",
+      "/api/uploads",
+      { files: [new File([PNG], "shot.png", { type: "image/png" })] },
+      new URLSearchParams("bucket=demo"),
+    );
+    expect(post.status).toBe(200);
+    expect(post.body[0]).toMatchObject({ mimeType: "image/png", name: "shot.png" });
+    expect(post.body[0].path).toBeUndefined();
+    expect(post.body[0].bucket).toBeUndefined();
+    const get = await handleApi(gw, "GET", `/api/uploads/demo/${post.body[0].id}`, undefined);
+    expect(get.body).toBeInstanceOf(Response);
+    const resp = get.body as Response;
+    expect(resp.headers.get("content-type")).toBe("image/png");
+    expect(resp.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(resp.headers.get("content-disposition")).toContain("inline");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("POST /api/uploads rejects unknown buckets and bad content", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mesh-api-upload-"));
+  try {
+    const gw = new WebGateway(fakeManager() as any, undefined, { root });
+    const unknown = await handleApi(gw, "POST", "/api/uploads", { files: [new File([PNG], "shot.png", { type: "image/png" })] }, new URLSearchParams("bucket=../bad"));
+    expect(unknown.status).toBe(400);
+    const bad = await handleApi(gw, "POST", "/api/uploads", { files: [new File(["<svg></svg>"], "bad.png", { type: "image/png" })] }, new URLSearchParams("bucket=demo"));
+    expect(bad.status).toBe(400);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });

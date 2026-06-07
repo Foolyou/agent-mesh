@@ -47,8 +47,13 @@ async function buildGateway() {
   // (We deliberately do NOT seed a sample mesh — the user's storage root stays clean;
   // the UI's empty state guides first-run mesh creation. `--fake` provides the demo.)
   if (!fake) await manager.loadDefinitions();
-  const master: any = fake ? new FakeMaster() : noMaster ? undefined : new MasterAgent(manager);
-  const gateway = new WebGateway(manager, master);
+  let gateway: WebGateway;
+  const master: any = fake
+    ? new FakeMaster()
+    : noMaster
+      ? undefined
+      : new MasterAgent(manager, { uploadRoot: root, onCapabilities: (caps) => gateway?.setMasterCapabilities(caps) });
+  gateway = new WebGateway(manager, master, { root });
   if (!fake) {
     // Reconnect to any mesh daemons that outlived a previous backend (the whole point of
     // the daemon model): their agents kept running; we re-attach and the daemon replays
@@ -58,6 +63,7 @@ async function buildGateway() {
   }
   if (fake) {
     gateway.setMasterStatus("ready");
+    gateway.setMasterCapabilities({ image: true });
   } else if (master) {
     master
       .start()

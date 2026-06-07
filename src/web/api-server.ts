@@ -31,8 +31,9 @@ export function startApiServer(gw: WebGateway, opts: ApiServerOptions = {}): Ser
       }
       if (url.pathname.startsWith("/api/")) {
         const hasBody = req.method !== "GET" && req.method !== "HEAD";
-        const body = hasBody ? await req.json().catch(() => ({})) : undefined;
-        const r = await handleApi(gw, req.method, url.pathname, body);
+        const body = hasBody ? await requestBody(req) : undefined;
+        const r = await handleApi(gw, req.method, url.pathname, body, url.searchParams);
+        if (r.body instanceof Response) return r.body;
         return Response.json(r.body, { status: r.status });
       }
       return new Response("mesh backend — REST at /api/*, WebSocket at /ws", { status: 404 });
@@ -57,4 +58,13 @@ export function startApiServer(gw: WebGateway, opts: ApiServerOptions = {}): Ser
   });
   const port = server.port ?? opts.port ?? 7300;
   return { port, url: `http://localhost:${port}`, stop: () => server.stop(true) };
+}
+
+async function requestBody(req: Request): Promise<any> {
+  const type = req.headers.get("content-type") ?? "";
+  if (type.includes("multipart/form-data")) {
+    const fd = await req.formData();
+    return { files: fd.getAll("files").filter((f): f is File => f instanceof File) };
+  }
+  return req.json().catch(() => ({}));
 }

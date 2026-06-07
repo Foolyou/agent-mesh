@@ -1,7 +1,7 @@
 // ControlPlane: the single global control plane. Sole ACP client (holds one
 // AcpAgentConnection per agent), runs the Mesh Services MCP server, owns the
 // mailbox + event bus, and arbitrates permission escalations.
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { mkdir } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { AcpAgentConnection, type PermissionDecision } from "./acp/client";
@@ -10,7 +10,7 @@ import { Mesh } from "./mesh";
 import { buildMeshBriefing } from "./mesh-briefing";
 import { createMeshServicesServer, type MeshServicesServer, type MeshToolContext } from "./mcp/mesh-services";
 import { sendMail, readMailFor } from "./mailbox";
-import { now, type AgentId, type MeshConfig, type MeshEvent } from "./acp/types";
+import { now, type AgentId, type MeshConfig, type MeshEvent, type PromptImageRef } from "./acp/types";
 
 interface PendingDecision {
   resolve: (decision: PermissionDecision) => void;
@@ -22,6 +22,7 @@ export interface ControlPlaneOptions {
   /** auto-deny a permission request after this many ms with no human decision */
   permissionTimeoutMs?: number;
   debug?: boolean;
+  uploadRoot?: string;
 }
 
 export class ControlPlane {
@@ -34,6 +35,7 @@ export class ControlPlane {
   private pending = new Map<string, PendingDecision>();
   private permissionTimeoutMs: number;
   private debug: boolean;
+  private uploadRoot?: string;
   /** Agents that have already received the one-time mesh briefing. */
   private briefed = new Set<AgentId>();
 
@@ -42,6 +44,7 @@ export class ControlPlane {
     this.mailboxPath = opts.mailboxPath ?? resolve(process.cwd(), ".mesh", `${config.name}-mailbox.ndjson`);
     this.permissionTimeoutMs = opts.permissionTimeoutMs ?? 60_000;
     this.debug = opts.debug ?? false;
+    this.uploadRoot = opts.uploadRoot;
   }
 
   // ---- event bus ----
@@ -73,8 +76,8 @@ export class ControlPlane {
   }
 
   /** Public: send a prompt turn to an agent (the control plane is the sole driver). */
-  prompt(id: AgentId, text: string) {
-    return this.agent(id).prompt(this.compose(id, text));
+  prompt(id: AgentId, text: string, images: PromptImageRef[] = []) {
+    return this.agent(id).prompt(this.compose(id, text), images.map((i) => this.resolveImagePath(i)));
   }
 
   /** Switch an agent's permission/approval mode (delegates to its connection). */
@@ -140,6 +143,7 @@ export class ControlPlane {
       if (available.length) {
         this.emit({ kind: "agent_modes", agent: a.id, current: modes?.currentModeId ?? available[0].id, available, ts: now() });
       }
+      this.emit({ kind: "agent_capabilities", agent: a.id, image: !!(session as any)?.promptCapabilities?.image, ts: now() });
       this.mesh.setStatus(a.id, "ready");
       this.emit({ kind: "agent_status", agent: a.id, status: "ready", ts: now() });
     }
@@ -184,6 +188,11 @@ export class ControlPlane {
       `This arrived in your mesh mailbox. Read it and respond appropriately; ` +
       `you may reply with the send_mail tool (to: "${from}").`;
     conn.prompt(this.compose(to, mail)).catch((err) => this.log(`wake(${to}) failed: ${String(err)}`));
+  }
+
+  private resolveImagePath(image: PromptImageRef): PromptImageRef {
+    if (image.path || !this.uploadRoot || !image.bucket) return image;
+    return { ...image, path: join(this.uploadRoot, image.bucket, image.id) };
   }
 
   private async handleCheckMail(ctx: MeshToolContext): Promise<string> {

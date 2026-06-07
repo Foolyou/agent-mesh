@@ -1,13 +1,18 @@
 // Shared types for the WebUI: aggregated transcript items, gateway state, and the
 // WebSocket wire protocol. These are the contract between WebGateway (server) and
 // the client store.
-import type { MeshConfig, AgentId, AgentStatus, AgentRole, HarnessId, SessionMode } from "../acp/types";
+import type { MeshConfig, AgentId, AgentStatus, AgentRole, HarnessId, SessionMode, PromptImageRef } from "../acp/types";
 export type { SessionMode };
+export type { PromptImageRef };
 
 /** The session modes an agent advertises plus which one is active. */
 export interface AgentModes {
   current: string;
   available: SessionMode[];
+}
+
+export interface AgentCapabilities {
+  image: boolean;
 }
 
 // ── Aggregated transcript ────────────────────────────────────────────────────
@@ -24,7 +29,7 @@ export interface PlanEntry {
 }
 
 export type TranscriptItem =
-  | { id: string; kind: "message"; role: "user" | "agent"; text: string; ts: string; complete: boolean }
+  | { id: string; kind: "message"; role: "user" | "agent"; text: string; ts: string; complete: boolean; images?: PromptImageRef[] }
   | { id: string; kind: "thought"; text: string; ts: string; complete: boolean }
   | {
       id: string;
@@ -102,13 +107,15 @@ export interface PerMeshState {
   history: ResolvedPermission[];
   /** Per-agent session modes (advertised + active), populated while the mesh runs. */
   modes: Record<AgentId, AgentModes>;
+  /** Per-agent prompt capabilities, populated while the mesh runs. */
+  capabilities: Record<AgentId, AgentCapabilities>;
 }
 
 export type MasterStatus = "absent" | "starting" | "ready" | "stopped";
 
 export interface GatewayState {
   meshes: MeshSummary[];
-  master: { status: MasterStatus; transcript: TranscriptItem[] };
+  master: { status: MasterStatus; transcript: TranscriptItem[]; capabilities?: AgentCapabilities };
   perMesh: Record<string, PerMeshState>;
 }
 
@@ -118,6 +125,8 @@ export type ServerMsg =
   | { t: "mesh.status"; name: string; status: MeshStatus }
   | { t: "agent.status"; name: string; agent: AgentId; status: AgentStatus; detail?: string }
   | { t: "agent.modes"; name: string; agent: AgentId; current: string; available: SessionMode[] }
+  | { t: "agent.capabilities"; name: string; agent: AgentId; image: boolean }
+  | { t: "master.capabilities"; image: boolean }
   | { t: "transcript.upsert"; conv: ConvRef; item: TranscriptItem }
   | { t: "transcript.patch"; conv: ConvRef; id: string; patch: Partial<TranscriptItem> }
   | { t: "activity"; name: string; entry: ActivityEntry }

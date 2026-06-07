@@ -1,6 +1,6 @@
 // src/mesh-manager.test.ts
 import { test, expect, beforeEach, afterEach } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MeshManager } from "./mesh-manager";
@@ -44,6 +44,25 @@ test("deleteMesh forgets a stopped mesh", async () => {
   await mgr.defineMesh(cfg);
   await mgr.deleteMesh("echo");
   expect(mgr.listMeshes()).toEqual([]);
+});
+
+test("deleteMesh removes mesh upload bucket but keeps master uploads", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mgr-root-"));
+  const m = new MeshManager({ root, hostScript: FIXTURE });
+  const { existsSync } = await import("node:fs");
+  try {
+    await m.defineMesh(cfg);
+    await mkdir(join(root, "uploads", "echo"), { recursive: true });
+    await mkdir(join(root, "uploads", "master"), { recursive: true });
+    await writeFile(join(root, "uploads", "echo", "x.png"), "x");
+    await writeFile(join(root, "uploads", "master", "x.png"), "x");
+    await m.deleteMesh("echo");
+    expect(existsSync(join(root, "uploads", "echo"))).toBe(false);
+    expect(existsSync(join(root, "uploads", "master", "x.png"))).toBe(true);
+  } finally {
+    await m.stopAll();
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("deleteMesh refuses while running", async () => {

@@ -11,6 +11,7 @@ import { existsSync } from "node:fs";
 import { killTree } from "./acp/client";
 import { LineBuffer, encodeFrame, PROTO_VERSION, type ChildMsg, type ParentMsg } from "./protocol";
 import type { MeshConfig, MeshEvent } from "./acp/types";
+import type { PromptImageRef } from "./acp/types";
 
 export interface MeshHostClientOptions {
   name: string;
@@ -200,7 +201,7 @@ export class MeshHostClient {
     this.conn?.write(encodeFrame(msg));
   }
 
-  prompt(target: string, text: string): void { this.send({ t: "prompt", target, text }); }
+  prompt(target: string, text: string, images?: PromptImageRef[]): void { this.send({ t: "prompt", target, text, images }); }
   resolve(requestId: string, optionId: string): void { this.send({ t: "resolve", requestId, optionId }); }
   setMode(target: string, modeId: string): void { this.send({ t: "setMode", target, modeId }); }
   interrupt(target: string): void { this.send({ t: "interrupt", target }); }

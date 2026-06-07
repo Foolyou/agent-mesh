@@ -3,7 +3,8 @@
 // to this; tests drive it directly without a socket.
 import { validateMeshConfig } from "../mesh-validate";
 import type { WebGateway } from "./gateway";
-import type { MeshConfig } from "../acp/types";
+import type { MeshConfig, PromptImageRef } from "../acp/types";
+import type { UploadFileLike } from "./uploads";
 
 export interface ApiResult {
   status: number;
@@ -18,6 +19,7 @@ export async function handleApi(
   method: string,
   path: string,
   body: any,
+  query: URLSearchParams = new URLSearchParams(),
 ): Promise<ApiResult> {
   const seg = path
     .replace(/^\/+|\/+$/g, "")
@@ -31,9 +33,20 @@ export async function handleApi(
   try {
     if (method === "GET" && p.length === 1 && p[0] === "state") return ok(gw.snapshot());
 
+    if (p[0] === "uploads") {
+      if (method === "POST" && p.length === 1) {
+        const bucket = str(query.get("bucket"));
+        const files = Array.isArray(body?.files) ? (body.files as UploadFileLike[]) : [];
+        return ok(await gw.upload(bucket, files));
+      }
+      if (method === "GET" && p.length === 3) {
+        return { status: 200, body: await gw.serveUpload(str(p[1]), str(p[2])) };
+      }
+    }
+
     if (p[0] === "master" && method === "POST" && p[1] === "prompt") {
       try {
-        await gw.promptMaster(str(body?.text));
+        await gw.promptMaster(str(body?.text), imagesOf(body));
         return ok();
       } catch (e: any) {
         const msg = str(e?.message ?? e);
@@ -74,7 +87,7 @@ export async function handleApi(
           return ok();
         }
         if (p[2] === "prompt") {
-          await gw.promptRouter(name, str(body?.text));
+          await gw.promptRouter(name, str(body?.text), imagesOf(body));
           return ok();
         }
       }
@@ -87,7 +100,7 @@ export async function handleApi(
       if (method === "POST" && p.length === 5 && p[2] === "agents") {
         const agentId = str(p[3]);
         if (p[4] === "prompt") {
-          gw.promptAgent(name, agentId, str(body?.text));
+          gw.promptAgent(name, agentId, str(body?.text), imagesOf(body));
           return ok();
         }
         if (p[4] === "mode") {
@@ -105,4 +118,12 @@ export async function handleApi(
   } catch (e: any) {
     return fail(400, str(e?.message ?? e));
   }
+}
+
+function imagesOf(body: any): PromptImageRef[] {
+  return Array.isArray(body?.images)
+    ? body.images
+        .filter((i: any) => i && typeof i.id === "string" && typeof i.mimeType === "string" && typeof i.name === "string")
+        .slice(0, 5)
+    : [];
 }

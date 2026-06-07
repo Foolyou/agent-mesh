@@ -36,10 +36,20 @@ export interface SessionMode {
   description?: string;
 }
 
+export interface PromptImageRef {
+  id: string;
+  mimeType: string;
+  name: string;
+  url?: string;
+  bucket?: string;
+  path?: string;
+}
+
 export type MeshEvent =
   | { kind: "agent_status"; agent: AgentId; status: AgentStatus; detail?: string; ts: string }
   | { kind: "update"; agent: AgentId; update: unknown; ts: string }
   | { kind: "agent_modes"; agent: AgentId; current: string; available: SessionMode[]; ts: string }
+  | { kind: "agent_capabilities"; agent: AgentId; image: boolean; ts: string }
   | { kind: "mail"; from: AgentId; to: AgentId; body: string; ts: string }
   | {
       kind: "permission";

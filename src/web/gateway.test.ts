@@ -41,11 +41,11 @@ function fakeManager() {
     async stopMesh(n: string) {
       calls.push(["stop", n]);
     },
-    async promptRouter(n: string, t: string) {
-      calls.push(["promptRouter", n, t]);
+    async promptRouter(n: string, t: string, images?: any[]) {
+      calls.push(["promptRouter", n, t, images]);
     },
-    promptAgent(n: string, a: string, t: string) {
-      calls.push(["promptAgent", n, a, t]);
+    promptAgent(n: string, a: string, t: string, images?: any[]) {
+      calls.push(["promptAgent", n, a, t, images]);
     },
     resolvePermission(n: string, r: string, o: string) {
       calls.push(["resolve", n, r, o]);
@@ -144,7 +144,7 @@ test("command methods delegate to the manager", async () => {
   await gw.promptRouter("demo", "go");
   gw.resolvePermission("demo", "r1", "allow");
   expect(m.calls).toContainEqual(["start", "demo"]);
-  expect(m.calls).toContainEqual(["promptRouter", "demo", "go"]);
+  expect(m.calls).toContainEqual(["promptRouter", "demo", "go", []]);
   expect(m.calls).toContainEqual(["resolve", "demo", "r1", "allow"]);
 });
 
@@ -154,6 +154,26 @@ test("promptRouter echoes a user message into the router transcript", async () =
   await gw.promptRouter("demo", "hello");
   const tr = gw.snapshot().perMesh.demo.transcripts.router;
   expect(tr[tr.length - 1]).toMatchObject({ kind: "message", role: "user", text: "hello" });
+});
+
+test("promptRouter threads images to manager and user transcript", async () => {
+  const m = fakeManager();
+  const gw = new WebGateway(m as any, undefined, { root: "/tmp/root" });
+  await gw.promptRouter("demo", "see", [{ id: "abc.png", mimeType: "image/png", name: "abc.png" }]);
+  expect(m.calls[m.calls.length - 1][0]).toBe("promptRouter");
+  expect(m.calls[m.calls.length - 1][3][0]).toMatchObject({ id: "abc.png", bucket: "demo", url: "/api/uploads/demo/abc.png" });
+  const tr = gw.snapshot().perMesh.demo.transcripts.router;
+  expect((tr[tr.length - 1] as any).images[0]).toMatchObject({ name: "abc.png", url: "/api/uploads/demo/abc.png" });
+});
+
+test("agent_capabilities updates gateway state and broadcasts", () => {
+  const m = fakeManager();
+  const gw = new WebGateway(m as any);
+  const got: any[] = [];
+  gw.subscribe((msg) => got.push(msg));
+  m.emit("demo", { kind: "agent_capabilities", agent: "router", image: true, ts: "T" });
+  expect(gw.snapshot().perMesh.demo.capabilities.router.image).toBe(true);
+  expect(got).toContainEqual({ t: "agent.capabilities", name: "demo", agent: "router", image: true });
 });
 
 test("agent_status updates the mesh summary agent row", () => {

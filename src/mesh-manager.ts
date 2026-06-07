@@ -10,6 +10,8 @@ import { listLiveRecords, readRecord, removeRecord, pidAlive, type MeshHostRecor
 import { Mesh } from "./mesh";
 import { now } from "./acp/types";
 import type { MeshConfig, MeshEvent } from "./acp/types";
+import type { PromptImageRef } from "./acp/types";
+import { deleteUploadBucket } from "./web/uploads";
 
 export type MeshStatus = "stopped" | "starting" | "running" | "dead";
 
@@ -84,6 +86,7 @@ export class MeshManager {
     }
     await this.store.delete(name);
     this.entries.delete(name);
+    await deleteUploadBucket(this.root, name);
   }
 
   private require(name: string): Entry {
@@ -212,18 +215,18 @@ export class MeshManager {
     return false;
   }
 
-  promptRouter(name: string, text: string): Promise<void> {
+  promptRouter(name: string, text: string, images?: PromptImageRef[]): Promise<void> {
     const entry = this.require(name);
     if (entry.status !== "running" || !entry.client) throw new Error(`mesh "${name}" is not running`);
     const routerId = new Mesh(entry.config).router.id;
-    entry.client.prompt(routerId, text);
+    entry.client.prompt(routerId, text, images);
     return Promise.resolve();
   }
 
-  promptAgent(name: string, agentId: string, text: string): void {
+  promptAgent(name: string, agentId: string, text: string, images?: PromptImageRef[]): void {
     const entry = this.require(name);
     if (entry.status !== "running" || !entry.client) throw new Error(`mesh "${name}" is not running`);
-    entry.client.prompt(agentId, text);
+    entry.client.prompt(agentId, text, images);
   }
 
   resolvePermission(name: string, requestId: string, optionId: string): void {

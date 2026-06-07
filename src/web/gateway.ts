@@ -4,7 +4,8 @@
 // It has no HTTP/WS dependency: server.ts adapts it to Bun.serve, tests drive it directly.
 import { reduceTranscript } from "./transcript";
 import { now } from "../acp/types";
-import type { MeshConfig, MeshEvent, AgentId, AgentStatus } from "../acp/types";
+import type { MeshConfig, MeshEvent, AgentId, AgentStatus, PromptImageRef } from "../acp/types";
+import { readUpload, storeUploads, type UploadFileLike } from "./uploads";
 import type {
   GatewayState,
   ServerMsg,
@@ -30,7 +31,7 @@ export interface ManagerLike {
   startMesh(name: string): Promise<void>;
   stopMesh(name: string): Promise<void>;
   promptRouter(name: string, text: string): Promise<void>;
-  promptAgent(name: string, agentId: string, text: string): void;
+  promptAgent(name: string, agentId: string, text: string, images?: PromptImageRef[]): void;
   resolvePermission(name: string, requestId: string, optionId: string): void;
   setMode(name: string, agentId: string, modeId: string): void;
   interruptAgent(name: string, agentId: string): void;
@@ -64,10 +65,11 @@ export class WebGateway {
   constructor(
     private manager: ManagerLike,
     private master?: MasterLike,
+    private opts: { root?: string } = {},
   ) {
     this.state = {
       meshes: [],
-      master: { status: master ? "starting" : "absent", transcript: [] },
+      master: { status: master ? "starting" : "absent", transcript: [], capabilities: { image: false } },
       perMesh: {},
     };
     this.refreshMeshes();
@@ -154,7 +156,7 @@ export class WebGateway {
       } catch {
         config = { name, agents: [], edges: [] };
       }
-      pm = { config, transcripts: {}, activity: [], mail: [], pending: [], history: [], modes: {} };
+      pm = { config, transcripts: {}, activity: [], mail: [], pending: [], history: [], modes: {}, capabilities: {} };
       this.state.perMesh[name] = pm;
     }
     return pm;
@@ -197,6 +199,11 @@ export class WebGateway {
       case "agent_modes": {
         pm.modes[e.agent] = { current: e.current, available: e.available };
         this.broadcast({ t: "agent.modes", name, agent: e.agent, current: e.current, available: e.available });
+        break;
+      }
+      case "agent_capabilities": {
+        pm.capabilities[e.agent] = { image: e.image };
+        this.broadcast({ t: "agent.capabilities", name, agent: e.agent, image: e.image });
         break;
       }
       case "permission": {
@@ -303,13 +310,15 @@ export class WebGateway {
       return this.manager.configOf(name).agents.find((a) => a.role === "router")?.id ?? "";
     }
   }
-  async promptRouter(name: string, text: string): Promise<void> {
-    this.foldConv({ scope: "agent", mesh: name, agent: this.routerId(name) }, { sessionUpdate: "user_message_chunk", content: { text } }, now());
-    await this.manager.promptRouter(name, text);
+  async promptRouter(name: string, text: string, images: PromptImageRef[] = []): Promise<void> {
+    const refs = images.map((i) => this.withBucket(name, i));
+    this.foldConv({ scope: "agent", mesh: name, agent: this.routerId(name) }, { sessionUpdate: "user_message_chunk", content: { text }, images: refs }, now());
+    await this.manager.promptRouter(name, text, refs);
   }
-  promptAgent(name: string, agentId: string, text: string): void {
-    this.foldConv({ scope: "agent", mesh: name, agent: agentId }, { sessionUpdate: "user_message_chunk", content: { text } }, now());
-    this.manager.promptAgent(name, agentId, text);
+  promptAgent(name: string, agentId: string, text: string, images: PromptImageRef[] = []): void {
+    const refs = images.map((i) => this.withBucket(name, i));
+    this.foldConv({ scope: "agent", mesh: name, agent: agentId }, { sessionUpdate: "user_message_chunk", content: { text }, images: refs }, now());
+    this.manager.promptAgent(name, agentId, text, refs);
   }
   configOf(name: string): MeshConfig {
     return this.manager.configOf(name);
@@ -323,15 +332,55 @@ export class WebGateway {
   interruptAgent(name: string, agentId: string): void {
     this.manager.interruptAgent(name, agentId);
   }
-  async promptMaster(text: string): Promise<void> {
+  async promptMaster(text: string, images: PromptImageRef[] = []): Promise<void> {
     if (!this.master) throw new Error("master agent is not configured");
-    this.foldConv({ scope: "master" }, { sessionUpdate: "user_message_chunk", content: { text } }, now());
-    await this.master.prompt(text);
+    const refs = images.map((i) => this.withBucket("master", i));
+    this.foldConv({ scope: "master" }, { sessionUpdate: "user_message_chunk", content: { text }, images: refs }, now());
+    await this.master.prompt(text, refs);
+  }
+
+  async upload(bucket: string, files: UploadFileLike[]): Promise<PromptImageRef[]> {
+    this.validateBucket(bucket);
+    if (!this.opts.root) throw new Error("upload storage root is not configured");
+    const stored = await storeUploads(this.opts.root, bucket, files);
+    return stored.map(({ id, url, mimeType, name }) => ({ id, url, mimeType, name }));
+  }
+
+  async serveUpload(bucket: string, id: string): Promise<Response> {
+    this.validateBucket(bucket);
+    if (!this.opts.root) throw new Error("upload storage root is not configured");
+    const file = await readUpload(this.opts.root, bucket, id);
+    return new Response(file.bytes, {
+      headers: {
+        "content-type": file.mimeType,
+        "x-content-type-options": "nosniff",
+        "content-disposition": `inline; filename="${file.name.replace(/"/g, "")}"`,
+      },
+    });
+  }
+
+  private validateBucket(bucket: string): void {
+    if (bucket === "master") return;
+    if (!this.manager.listMeshes().some((m) => m.name === bucket)) throw new Error("unknown upload bucket");
+  }
+
+  private withBucket(bucket: string, image: PromptImageRef): PromptImageRef {
+    return {
+      ...image,
+      bucket,
+      url: image.url ?? `/api/uploads/${encodeURIComponent(bucket)}/${encodeURIComponent(image.id)}`,
+      path: image.path ?? (this.opts.root ? `${this.opts.root}/uploads/${bucket}/${image.id}` : undefined),
+    };
   }
 
   // ── Master lifecycle status (set by main.ts around master.start/stop) ──────────
   setMasterStatus(status: MasterStatus): void {
     this.state.master.status = status;
     this.broadcast({ t: "master.status", status });
+  }
+
+  setMasterCapabilities(caps: { image: boolean }): void {
+    this.state.master.capabilities = caps;
+    this.broadcast({ t: "master.capabilities", image: caps.image });
   }
 }

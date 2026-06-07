@@ -3,6 +3,7 @@
 // mesh-control lifecycle tools. The system runs fully without it.
 import { resolve } from "node:path";
 import { AcpAgentConnection } from "./acp/client";
+import type { PromptImageRef } from "./acp/types";
 import { resolveHarness } from "./harness";
 import { createMeshControlHandlers, createMeshControlServer, type MeshControlServer } from "./mcp/mesh-control";
 import type { MeshManager } from "./mesh-manager";
@@ -14,7 +15,7 @@ export class MasterAgent {
 
   constructor(
     private manager: MeshManager,
-    private opts: { project?: string; onUpdate?: (u: any) => void; debug?: boolean } = {},
+    private opts: { project?: string; onUpdate?: (u: any) => void; debug?: boolean; uploadRoot?: string; onCapabilities?: (caps: { image: boolean }) => void } = {},
   ) {}
 
   /** Subscribe to the master agent's streamed session updates. */
@@ -41,7 +42,8 @@ export class MasterAgent {
       });
       await this.conn.start();
       await this.conn.initialize();
-      await this.conn.newSession([{ type: "http", name: "mesh-control", url: this.mcp.url, headers: [] }]);
+      const session = await this.conn.newSession([{ type: "http", name: "mesh-control", url: this.mcp.url, headers: [] }]);
+      this.opts.onCapabilities?.({ image: !!(session as any)?.promptCapabilities?.image });
     } catch (err) {
       this.conn?.kill();
       this.conn = undefined;
@@ -52,9 +54,9 @@ export class MasterAgent {
   }
 
   /** Feed a natural-language instruction to the master agent. */
-  prompt(text: string): Promise<unknown> {
+  prompt(text: string, images: PromptImageRef[] = []): Promise<unknown> {
     if (!this.conn) throw new Error("master agent not started");
-    return this.conn.prompt(text);
+    return this.conn.prompt(text, images.map((i) => ({ ...i, path: i.path ?? (this.opts.uploadRoot && i.bucket ? `${this.opts.uploadRoot}/${i.bucket}/${i.id}` : undefined) })));
   }
 
   async stop(): Promise<void> {

@@ -50,21 +50,22 @@ export function startWebServer(opts: WebServerOptions = {}): WebServerHandle {
       if (url.pathname.startsWith("/api/")) {
         const hasBody = req.method !== "GET" && req.method !== "HEAD";
         if (gw) {
-          const body = hasBody ? await req.json().catch(() => ({})) : undefined;
-          const r = await handleApi(gw, req.method, url.pathname, body);
+          const body = hasBody ? await requestBody(req) : undefined;
+          const r = await handleApi(gw, req.method, url.pathname, body, url.searchParams);
+          if (r.body instanceof Response) return r.body;
           return Response.json(r.body, { status: r.status });
         }
         // proxy mode: forward to the backend verbatim
-        const body = hasBody ? await req.text() : undefined;
+        const body = hasBody ? await req.arrayBuffer() : undefined;
         const resp = await fetch(backendUrl + url.pathname + url.search, {
           method: req.method,
-          headers: { "content-type": req.headers.get("content-type") ?? "application/json" },
+          headers: req.headers,
           body,
         }).catch(() => null);
         if (!resp) return Response.json({ error: { message: "backend unreachable" } }, { status: 502 });
         return new Response(resp.body, {
           status: resp.status,
-          headers: { "content-type": resp.headers.get("content-type") ?? "application/json" },
+          headers: resp.headers,
         });
       }
 
@@ -133,4 +134,13 @@ export function startWebServer(opts: WebServerOptions = {}): WebServerHandle {
     backendUrl,
     stop: () => server.stop(true),
   };
+}
+
+async function requestBody(req: Request): Promise<any> {
+  const type = req.headers.get("content-type") ?? "";
+  if (type.includes("multipart/form-data")) {
+    const fd = await req.formData();
+    return { files: fd.getAll("files").filter((f): f is File => f instanceof File) };
+  }
+  return req.json().catch(() => ({}));
 }

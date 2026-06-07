@@ -9,6 +9,7 @@ import {
   PROTOCOL_VERSION,
   type Client,
 } from "@zed-industries/agent-client-protocol";
+import type { PromptImageRef } from "./types";
 
 export type PermissionDecision = { optionId: string } | "cancel";
 
@@ -190,7 +191,7 @@ export class AcpAgentConnection {
   }
 
   private busy = false;
-  private queue: { text: string; resolve: (r: any) => void; reject: (e: any) => void }[] = [];
+  private queue: { text: string; images: PromptImageRef[]; resolve: (r: any) => void; reject: (e: any) => void }[] = [];
 
   /**
    * Send a prompt turn. Resolves with the PromptResponse (stopReason) when the
@@ -198,10 +199,10 @@ export class AcpAgentConnection {
    * (e.g. the agent was woken by mail while still working), the new prompt is
    * queued rather than sent concurrently (ACP allows one prompt turn at a time).
    */
-  prompt(text: string): Promise<any> {
+  prompt(text: string, images: PromptImageRef[] = []): Promise<any> {
     if (!this.sessionId) throw new Error(`${this.id}: no session`);
     return new Promise((resolve, reject) => {
-      this.queue.push({ text, resolve, reject });
+      this.queue.push({ text, images, resolve, reject });
       void this.pump();
     });
   }
@@ -212,9 +213,22 @@ export class AcpAgentConnection {
     if (!job) return;
     this.busy = true;
     try {
+      const prompt: any[] = [{ type: "text", text: job.text }];
+      for (const image of job.images) {
+        if (!image.path) {
+          console.warn(`${this.id}: skipping image ${image.id} without path`);
+          continue;
+        }
+        try {
+          const bytes = await readFile(image.path);
+          prompt.push({ type: "image", mimeType: image.mimeType, data: bytes.toString("base64") });
+        } catch (err) {
+          console.warn(`${this.id}: skipping unreadable image ${image.id}: ${String(err)}`);
+        }
+      }
       const res = await this.conn!.prompt({
         sessionId: this.sessionId!,
-        prompt: [{ type: "text", text: job.text }],
+        prompt,
       });
       job.resolve(res);
     } catch (err) {

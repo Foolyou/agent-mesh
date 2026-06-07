@@ -91,7 +91,7 @@ export function reduceTranscript(
       const id = nid(now);
       const item: TranscriptItem = wantThought
         ? { id, kind: "thought", text, ts: now, complete: role === "user" }
-        : { id, kind: "message", role, text, ts: now, complete: role === "user" };
+        : { id, kind: "message", role, text, ts: now, complete: role === "user", images: update.images };
       next = [...next, item];
       ops.push({ op: "upsert", item });
     }

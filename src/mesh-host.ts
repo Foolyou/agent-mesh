@@ -10,12 +10,12 @@ import { rm, mkdir } from "node:fs/promises";
 import { ControlPlane } from "./control-plane";
 import { LineBuffer, encodeFrame, PROTO_VERSION, type ParentMsg, type SeqEvent } from "./protocol";
 import { writeRecord, removeRecord } from "./mesh-registry";
-import { now, type MeshConfig, type MeshEvent } from "./acp/types";
+import { now, type MeshConfig, type MeshEvent, type PromptImageRef } from "./acp/types";
 
 /** The slice of ControlPlane the daemon depends on (keeps it unit-testable). */
 export interface BridgeControlPlane {
   on(listener: (e: MeshEvent) => void): () => void;
-  prompt(target: string, text: string): Promise<unknown>;
+  prompt(target: string, text: string, images?: PromptImageRef[]): Promise<unknown>;
   resolveDecision(requestId: string, optionId: string, by?: "human" | "timeout"): boolean;
   setMode(target: string, modeId: string): Promise<void>;
   interrupt(target: string): Promise<void>;
@@ -132,7 +132,7 @@ export class MeshHostDaemon {
         break;
       }
       case "prompt":
-        this.cp.prompt(msg.target, msg.text).catch(() => {});
+        this.cp.prompt(msg.target, msg.text, msg.images).catch(() => {});
         break;
       case "resolve":
         this.cp.resolveDecision(msg.requestId, msg.optionId, "human");
@@ -194,6 +194,7 @@ export async function runMeshHost(): Promise<void> {
   const cp = new ControlPlane(config, {
     debug: process.env.MESH_DEBUG === "1",
     mailboxPath: root ? join(root, `${config.name}-mailbox.ndjson`) : undefined,
+    uploadRoot: root ? join(root, "uploads") : undefined,
   });
 
   await rm(socketPath, { force: true }); // clear a stale socket from a prior crash

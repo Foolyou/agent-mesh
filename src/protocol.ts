@@ -8,6 +8,7 @@
 // with the last seq it saw and the host replays everything newer, so the parent's
 // aggregated view is rebuilt seamlessly without losing the live agents.
 import type { MeshEvent } from "./acp/types";
+import type { PromptImageRef } from "./acp/types";
 
 /** Bumped when the wire protocol changes incompatibly; a reconnecting parent that
  *  speaks a different version refuses to attach to an old daemon. */
@@ -29,7 +30,7 @@ export type ChildMsg =
 /** parent (MeshManager) -> child (mesh-host) */
 export type ParentMsg =
   | { t: "hello"; proto: number; resumeFrom: number }
-  | { t: "prompt"; target: string; text: string }
+  | { t: "prompt"; target: string; text: string; images?: PromptImageRef[] }
   | { t: "resolve"; requestId: string; optionId: string }
   | { t: "setMode"; target: string; modeId: string }
   | { t: "interrupt"; target: string }
