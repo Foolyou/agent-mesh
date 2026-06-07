@@ -7,3 +7,12 @@ test_mesh_web/*
 .codex/
 openspec/
 dist/
+
+# secrets / credentials (defensive)
+.env
+.env.*
+*.pem
+*.key
+*_rsa
+*_dsa
+secrets/
