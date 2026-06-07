@@ -6,3 +6,4 @@ test_mesh_web/*
 .claude/
 .codex/
 openspec/
+dist/

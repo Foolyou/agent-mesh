@@ -3,6 +3,7 @@
 // spawns the mesh-host, parses its event stream, and exposes typed commands.
 import net from "node:net";
 import { dirname, resolve } from "node:path";
+import { existsSync } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
 import { killTree } from "./acp/client";
 import { LineBuffer, encodeFrame, type ChildMsg, type ParentMsg } from "./protocol";
@@ -46,7 +47,11 @@ export class MeshHostClient {
     await new Promise<void>((res) => this.server!.listen(this.opts.socketPath, res));
 
     const script = this.opts.hostScript ?? resolve(import.meta.dir, "mesh-host.ts");
-    this.child = Bun.spawn([process.execPath, script], {
+    // In a compiled single-binary the host `.ts` isn't on disk — re-exec the binary
+    // itself (it detects MESH_SOCK/MESH_CONFIG and runs the host). In dev, spawn the
+    // script directly so tests/fixtures keep working.
+    const cmd = existsSync(script) ? [process.execPath, script] : [process.execPath];
+    this.child = Bun.spawn(cmd, {
       env: {
         ...process.env,
         MESH_SOCK: this.opts.socketPath,
