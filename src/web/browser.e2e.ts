@@ -157,7 +157,7 @@ try {
   });
 
   await step("master chat: send instruction → user bubble + streamed reply", async () => {
-    const input = page.locator('.panel:has(.head:has-text("master")) .composer input');
+    const input = page.locator('.panel:has(.head:has-text("master")) .composer textarea');
     await input.fill("create a build squad mesh");
     await input.press("Enter");
     await page.waitForSelector('.panel:has(.head:has-text("master")) .msg.user', { timeout: 6000 });
@@ -165,7 +165,7 @@ try {
   });
 
   await step("router chat: send prompt → user bubble", async () => {
-    const input = page.locator('.panel:has(.head:has-text("router chat")) .composer input');
+    const input = page.locator('.panel:has(.head:has-text("router chat")) .composer textarea');
     await input.fill("status please");
     await input.press("Enter");
     await page.waitForSelector('.panel:has(.head:has-text("router chat")) .msg.user', { timeout: 6000 });
@@ -180,7 +180,7 @@ try {
   });
 
   await step("mesh builder: invalid config shows inline error", async () => {
-    await page.locator('.topbar .btn:has-text("new mesh")').click();
+    await page.locator('.panel:has(.head:has-text("meshes")) .btn:has-text("new")').click();
     await page.waitForSelector(".modal", { timeout: 4000 });
     // name empty + only one router but blank name → error
     await page.locator('.modal .btn:has-text("define mesh")').click();

@@ -1,6 +1,8 @@
 // Hand-rolled SVG topology: router centered, members on a ring, directed mail edges
 // with arrowheads, nodes colored by live agent status. Zero graph-lib dependency.
+import { useState } from "react";
 import type { MeshSummary, AgentStatus } from "../types";
+import { Btn } from "./ui";
 
 const STATUS_COLOR: Record<string, string> = {
   ready: "var(--ok)",
@@ -108,6 +110,50 @@ export function Topology({
           );
         })}
       </svg>
+    </div>
+  );
+}
+
+/** Enlarged topology with zoom controls (overlay). */
+export function TopologyModal({
+  summary,
+  selectedAgent,
+  onSelect,
+  onClose,
+}: {
+  summary: MeshSummary;
+  selectedAgent: string | null;
+  onSelect: (id: string) => void;
+  onClose: () => void;
+}) {
+  const [zoom, setZoom] = useState(1);
+  return (
+    <div className="scrim" onClick={onClose}>
+      <div className="modal topo-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="mhead">
+          <span style={{ flex: 1 }}>topology — {summary.name}</span>
+          <Btn small kind="ghost" onClick={() => setZoom((z) => Math.max(0.5, +(z - 0.25).toFixed(2)))}>
+            −
+          </Btn>
+          <span className="sub" style={{ width: 42, textAlign: "center" }}>
+            {Math.round(zoom * 100)}%
+          </span>
+          <Btn small kind="ghost" onClick={() => setZoom((z) => Math.min(3, +(z + 0.25).toFixed(2)))}>
+            +
+          </Btn>
+          <Btn small kind="ghost" onClick={() => setZoom(1)}>
+            reset
+          </Btn>
+          <Btn small kind="ghost" onClick={onClose}>
+            ✕ esc
+          </Btn>
+        </div>
+        <div className="topo-zoomwrap">
+          <div style={{ transform: `scale(${zoom})`, transformOrigin: "top center", width: "100%" }}>
+            <Topology summary={summary} selectedAgent={selectedAgent} onSelect={onSelect} maxHeight={560} />
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

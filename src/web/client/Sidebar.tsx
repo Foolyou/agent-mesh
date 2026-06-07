@@ -1,8 +1,11 @@
 // Left column = the TUI "top context": the mesh list (lifecycle) + master-agent chat.
+import { useEffect, useState } from "react";
 import type { Store } from "./store";
 import type { GatewayState, MeshSummary } from "../types";
-import { Dot, Btn, Composer, Empty } from "./ui";
-import { Transcript } from "./Transcript";
+import { Dot, Btn, Empty } from "./ui";
+import { ChatPane } from "./ChatPane";
+
+const PER_PAGE = 4;
 
 function MeshRow({
   m,
@@ -60,37 +63,57 @@ function MeshList({
   onSelect: (n: string) => void;
   onNewMesh: () => void;
 }) {
+  const all = state.meshes;
+  const pages = Math.max(1, Math.ceil(all.length / PER_PAGE));
+  const [page, setPage] = useState(0);
+  // follow the selected mesh onto its page (e.g. keyboard ↑/↓ cycling)
+  useEffect(() => {
+    if (!selected) return;
+    const i = all.findIndex((m) => m.name === selected);
+    if (i >= 0) setPage(Math.floor(i / PER_PAGE));
+  }, [selected, all]);
+  // clamp if the list shrank
+  useEffect(() => {
+    if (page > pages - 1) setPage(pages - 1);
+  }, [pages, page]);
+  const shown = all.slice(page * PER_PAGE, page * PER_PAGE + PER_PAGE);
+
   return (
     <div className="panel">
       <div className="head">
         <span className="ttl">meshes</span>
-        <span className="sub">{state.meshes.length}</span>
+        <span className="sub">{all.length}</span>
         <span className="right">
           <Btn small onClick={onNewMesh} title="define a new mesh">
             + new
           </Btn>
-          <Btn small kind="ghost" onClick={() => void store.reload()} title="reload definitions from disk (Ctrl-R)">
+          <Btn small kind="ghost" onClick={() => void store.reload()} title="reload definitions from disk">
             ↻
           </Btn>
         </span>
       </div>
-      <div className="body-scroll" style={{ padding: 0 }}>
-        <div className="mlist">
-          {state.meshes.length === 0 ? (
-            <Empty>no meshes — define one with + new, or ask the master agent</Empty>
-          ) : (
-            state.meshes.map((m) => (
-              <MeshRow
-                key={m.name}
-                m={m}
-                selected={m.name === selected}
-                onSelect={() => onSelect(m.name)}
-                store={store}
-              />
-            ))
-          )}
-        </div>
+      <div className="mlist">
+        {all.length === 0 ? (
+          <Empty>no meshes — define one with + new, or ask the master agent</Empty>
+        ) : (
+          shown.map((m) => (
+            <MeshRow key={m.name} m={m} selected={m.name === selected} onSelect={() => onSelect(m.name)} store={store} />
+          ))
+        )}
       </div>
+      {pages > 1 ? (
+        <div className="mpage">
+          <Btn small kind="ghost" disabled={page === 0} onClick={() => setPage((p) => Math.max(0, p - 1))}>
+            ‹
+          </Btn>
+          <span className="sub">
+            {page + 1} / {pages}
+          </span>
+          <Btn small kind="ghost" disabled={page >= pages - 1} onClick={() => setPage((p) => Math.min(pages - 1, p + 1))}>
+            ›
+          </Btn>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -112,14 +135,12 @@ function MasterChat({ state, store }: { state: GatewayState; store: Store }) {
         {absent ? (
           <Empty>master agent not configured — use the mesh list to control meshes directly</Empty>
         ) : (
-          <div className="chat">
-            <Transcript items={state.master.transcript} />
-            <Composer
-              placeholder={st === "ready" ? "instruct the master agent…" : "master is starting…"}
-              disabled={st !== "ready"}
-              onSend={(t) => void store.promptMaster(t)}
-            />
-          </div>
+          <ChatPane
+            items={state.master.transcript}
+            placeholder={st === "ready" ? "instruct the master agent…" : "master is starting…"}
+            disabled={st !== "ready"}
+            onSend={(t) => void store.promptMaster(t)}
+          />
         )}
       </div>
     </div>

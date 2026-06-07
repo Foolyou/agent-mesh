@@ -11,10 +11,7 @@ function Msg({ item }: { item: Extract<TranscriptItem, { kind: "message" }> }) {
       <div className="who">
         {item.role === "user" ? "you" : "agent"} <span className="t">{fmtTime(item.ts)}</span>
       </div>
-      <div className="bubble">
-        {item.text}
-        {!item.complete && item.role === "agent" ? <span className="cursor" /> : null}
-      </div>
+      <div className="bubble">{item.text}</div>
     </div>
   );
 }

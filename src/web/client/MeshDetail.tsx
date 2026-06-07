@@ -4,9 +4,9 @@
 import { useEffect, useState } from "react";
 import type { Store } from "./store";
 import type { GatewayState, MeshSummary, PerMeshState, ActivityEntry, MailEntry, ResolvedPermission, PermissionReq } from "../types";
-import { Dot, Btn, Composer, Empty, ConfirmButton, fmtTime } from "./ui";
-import { Transcript } from "./Transcript";
-import { Topology } from "./Topology";
+import { Dot, Btn, Empty, ConfirmButton, fmtTime } from "./ui";
+import { ChatPane } from "./ChatPane";
+import { Topology, TopologyModal } from "./Topology";
 
 function Header({ m, store, onDeleted, onEdit }: { m: MeshSummary; store: Store; onDeleted: () => void; onEdit: () => void }) {
   const live = m.status === "running" || m.status === "starting";
@@ -139,10 +139,11 @@ function AgentPanels({
           ) : null}
           <ModeControl mesh={m.name} agent={cur.id} store={store} />
         </div>
-        <div className="chat">
-          <Transcript items={pm.transcripts[cur.id] ?? []} />
-          <Composer placeholder={`message ${cur.id}…`} onSend={(t) => void store.promptAgent(m.name, cur.id, t)} />
-        </div>
+        <ChatPane
+          items={pm.transcripts[cur.id] ?? []}
+          placeholder={`message ${cur.id}…`}
+          onSend={(t) => void store.promptAgent(m.name, cur.id, t)}
+        />
       </div>
     </div>
   );
@@ -269,6 +270,7 @@ export function MeshDetail({
   // interrupt flash: highlight a node briefly when a new interrupt activity arrives
   const [flashId, setFlashId] = useState<string | null>(null);
   const [seg, setSeg] = useState<"chat" | "agents" | "map" | "log">("chat");
+  const [topoOpen, setTopoOpen] = useState(false);
   const lastInterrupt = pm.activity.filter((a) => a.kind === "interrupt").slice(-1)[0];
   useEffect(() => {
     if (!lastInterrupt) return;
@@ -302,10 +304,7 @@ export function MeshDetail({
         </span>
       </div>
       <div className="scroll-pane">
-        <div className="chat">
-          <Transcript items={routerItems} />
-          <Composer placeholder="talk to the router…" onSend={(t) => void store.promptRouter(m.name, t)} />
-        </div>
+        <ChatPane items={routerItems} placeholder="talk to the router…" onSend={(t) => void store.promptRouter(m.name, t)} />
       </div>
     </div>
   );
@@ -315,12 +314,20 @@ export function MeshDetail({
       <div className="head">
         <span className="ttl">topology</span>
         <span className="sub">agents · mail edges</span>
+        <span className="right">
+          <Btn small kind="ghost" title="expand topology" onClick={() => setTopoOpen(true)}>
+            ⤢
+          </Btn>
+        </span>
       </div>
       <div className="body-scroll">
         <Topology summary={m} selectedAgent={selectedAgent} onSelect={onSelectAgent} flashId={flashId} />
       </div>
     </div>
   );
+  const topoModal = topoOpen ? (
+    <TopologyModal summary={m} selectedAgent={selectedAgent} onSelect={onSelectAgent} onClose={() => setTopoOpen(false)} />
+  ) : null;
   const activityPanel = (
     <div className="panel">
       <div className="head">
@@ -368,6 +375,7 @@ export function MeshDetail({
     return (
       <div className="mdetail">
         <Header m={m} store={store} onDeleted={onDeleted} onEdit={onEdit} />
+        {topoModal}
         {pm.pending.length ? <div className="mperm">{permissionEl}</div> : null}
         <div className="mseg">
           {seg === "chat" ? routerChat : null}
@@ -398,6 +406,11 @@ export function MeshDetail({
       <div className="head">
         <span className="ttl">topology</span>
         <span className="sub">agents · mail edges</span>
+        <span className="right">
+          <Btn small kind="ghost" title="expand topology" onClick={() => setTopoOpen(true)}>
+            ⤢
+          </Btn>
+        </span>
       </div>
       <div className="body-scroll">
         <Topology summary={m} selectedAgent={selectedAgent} onSelect={onSelectAgent} flashId={flashId} maxHeight={230} />
@@ -407,6 +420,7 @@ export function MeshDetail({
   return (
     <div className="dgrid">
       <Header m={m} store={store} onDeleted={onDeleted} onEdit={onEdit} />
+      {topoModal}
       {pm.pending.length ? <div className="dperm">{permissionEl}</div> : null}
       {fullscreen ? (
         <div className="dmain full">{routerChat}</div>

@@ -181,9 +181,6 @@ export function App() {
           </span>
         ) : null}
         {!mobile ? <ThemeControls /> : null}
-        <Btn onClick={openNew} title="define a new mesh">
-          {mobile ? "+" : "+ new mesh"}
-        </Btn>
         <Btn kind="ghost" onClick={() => void store.reload()} title="reload definitions">
           {mobile ? "↻" : "↻ reload"}
         </Btn>
