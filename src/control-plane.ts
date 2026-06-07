@@ -7,6 +7,7 @@ import { randomUUID } from "node:crypto";
 import { AcpAgentConnection, type PermissionDecision } from "./acp/client";
 import { resolveHarness } from "./harness";
 import { Mesh } from "./mesh";
+import { buildMeshBriefing } from "./mesh-briefing";
 import { createMeshServicesServer, type MeshServicesServer, type MeshToolContext } from "./mcp/mesh-services";
 import { sendMail, readMailFor } from "./mailbox";
 import { now, type AgentId, type MeshConfig, type MeshEvent } from "./acp/types";
@@ -33,6 +34,8 @@ export class ControlPlane {
   private pending = new Map<string, PendingDecision>();
   private permissionTimeoutMs: number;
   private debug: boolean;
+  /** Agents that have already received the one-time mesh briefing. */
+  private briefed = new Set<AgentId>();
 
   constructor(config: MeshConfig, opts: ControlPlaneOptions = {}) {
     this.mesh = new Mesh(config);
@@ -59,9 +62,19 @@ export class ControlPlane {
     return c;
   }
 
+  /** Prepend the one-time mesh briefing to an agent's very first prompt, so it knows
+   *  it is part of a collaborating mesh before it does any work. */
+  private compose(id: AgentId, text: string): string {
+    if (this.briefed.has(id)) return text;
+    this.briefed.add(id);
+    const briefing = buildMeshBriefing(this.mesh, id);
+    if (!briefing) return text;
+    return `${briefing}\n\n---\n\nYour first task / message follows:\n\n${text}`;
+  }
+
   /** Public: send a prompt turn to an agent (the control plane is the sole driver). */
   prompt(id: AgentId, text: string) {
-    return this.agent(id).prompt(text);
+    return this.agent(id).prompt(this.compose(id, text));
   }
 
   /** Switch an agent's permission/approval mode (delegates to its connection). */
@@ -159,13 +172,11 @@ export class ControlPlane {
   private wake(to: AgentId, from: AgentId, body: string): void {
     const conn = this.conns.get(to);
     if (!conn) return;
-    conn
-      .prompt(
-        `[MAIL from ${from}]: ${body}\n\n` +
-          `This arrived in your mesh mailbox. Read it and respond appropriately; ` +
-          `you may reply with the send_mail tool (to: "${from}").`,
-      )
-      .catch((err) => this.log(`wake(${to}) failed: ${String(err)}`));
+    const mail =
+      `[MAIL from ${from}]: ${body}\n\n` +
+      `This arrived in your mesh mailbox. Read it and respond appropriately; ` +
+      `you may reply with the send_mail tool (to: "${from}").`;
+    conn.prompt(this.compose(to, mail)).catch((err) => this.log(`wake(${to}) failed: ${String(err)}`));
   }
 
   private async handleCheckMail(ctx: MeshToolContext): Promise<string> {
