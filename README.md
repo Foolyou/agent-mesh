@@ -114,6 +114,18 @@ API/WS; the **web** tier serves the React SPA and proxies to the backend (same b
 origin). The backend can run headless (scripting, restarting the UI without disturbing
 running meshes); the web tier carries zero backend code and vice-versa.
 
+**Single binary** — compile everything (runtime + bundled SPA + all commands) into one
+self-contained executable:
+
+```bash
+bun run build            # → dist/mesh  (standalone, ~96 MB; bun build --compile)
+./dist/mesh              # combined console (./dist/mesh backend | web | --fake | --root … all work)
+```
+
+The binary serves the embedded SPA and, for real meshes, **re-execs itself** as the
+per-mesh `mesh-host` (no separate script needed) — so one file is the whole product.
+For another platform, add `--target=bun-<os>-<arch>` to the build.
+
 Open the printed URL. The console is a master/detail layout:
 
 - **Left** — the mesh list (status dot, `start`/`stop`, `+ new mesh` form) and the

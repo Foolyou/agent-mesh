@@ -12,8 +12,19 @@ import { WebGateway } from "./web/gateway";
 import { startWebServer } from "./web/server";
 import { startApiServer } from "./web/api-server";
 import { FakeManager, FakeMaster } from "./web/fake";
+import { runMeshHost } from "./mesh-host";
 import { resolveRoot } from "./root";
 import { DEMO_MESH } from "./config";
+
+// Single-binary support: when this binary is re-execed as a mesh-host subprocess
+// (MeshHostClient sets MESH_SOCK/MESH_CONFIG), run the host body instead of the CLI.
+if (process.env.MESH_SOCK && process.env.MESH_CONFIG) {
+  await runMeshHost();
+} else {
+  await runCli();
+}
+
+async function runCli() {
 
 function argVal(name: string): string | undefined {
   const i = process.argv.indexOf(name);
@@ -87,4 +98,5 @@ if (cmd === "backend") {
     gateway.dispose();
     await Promise.allSettled([manager.stopAll(), master?.stop?.()]);
   });
+  }
 }

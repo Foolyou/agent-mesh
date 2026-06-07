@@ -62,8 +62,11 @@ export function bridgeControlPlaneToSocket(
   if (opts.signalReady !== false) send({ t: "ready" });
 }
 
-// --- entrypoint (only when executed as a subprocess) ----------------------
-if (import.meta.main) {
+// --- entrypoint ----------------------------------------------------------------
+// Reads MESH_SOCK / MESH_CONFIG / MESH_ROOT from the environment and runs the host.
+// Invoked either as a standalone `.ts` (dev) or via the main binary re-execing itself
+// when MESH_SOCK is present (single-binary build) — see src/main.ts.
+export async function runMeshHost(): Promise<void> {
   const sockPath = process.env.MESH_SOCK;
   const configJson = process.env.MESH_CONFIG;
   if (!sockPath || !configJson) {
@@ -85,3 +88,5 @@ if (import.meta.main) {
   await cp.start();
   socket.write(encodeFrame({ t: "ready" }));
 }
+
+if (import.meta.main) await runMeshHost();

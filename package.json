@@ -7,6 +7,7 @@
     "mesh": "bun run src/main.ts",
     "backend": "bun run src/main.ts backend",
     "web": "bun run src/main.ts web",
+    "build": "bun build --compile src/main.ts --outfile dist/mesh",
     "e2e": "bun run src/e2e.ts",
     "test": "bun test",
     "start": "bun run src/pty-room.ts",
