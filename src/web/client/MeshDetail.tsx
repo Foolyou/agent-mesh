@@ -216,6 +216,7 @@ export function MeshDetail({
   onToggleFull,
   onDeleted,
   onEdit,
+  mobile,
 }: {
   state: GatewayState;
   store: Store;
@@ -226,6 +227,7 @@ export function MeshDetail({
   onToggleFull: () => void;
   onDeleted: () => void;
   onEdit: () => void;
+  mobile?: boolean;
 }) {
   const m = state.meshes.find((x) => x.name === meshName);
   // a mesh defined after the initial snapshot may not have a perMesh entry yet;
@@ -241,6 +243,7 @@ export function MeshDetail({
     };
   // interrupt flash: highlight a node briefly when a new interrupt activity arrives
   const [flashId, setFlashId] = useState<string | null>(null);
+  const [seg, setSeg] = useState<"chat" | "agents" | "map" | "log">("chat");
   const lastInterrupt = pm.activity.filter((a) => a.kind === "interrupt").slice(-1)[0];
   useEffect(() => {
     if (!lastInterrupt) return;
@@ -253,6 +256,7 @@ export function MeshDetail({
 
   if (!m) return <Empty>select a mesh from the list</Empty>;
 
+  const live = m.status === "running" || m.status === "starting";
   const routerItems = pm.transcripts[m.router] ?? [];
   const routerChat = (
     <div className="panel">
@@ -260,14 +264,16 @@ export function MeshDetail({
         <span className="ttl">router chat</span>
         <span className="sub">{m.router}</span>
         <span className="right">
-          {m.status === "running" || m.status === "starting" ? (
+          {live ? (
             <Btn small kind="stop" title="cancel the router's current turn" onClick={() => void store.interruptAgent(m.name, m.router)}>
               interrupt
             </Btn>
           ) : null}
-          <Btn small kind="ghost" onClick={onToggleFull} title="fullscreen (Ctrl-F)">
-            {fullscreen ? "⊟ exit" : "⊞ full"}
-          </Btn>
+          {!mobile ? (
+            <Btn small kind="ghost" onClick={onToggleFull} title="fullscreen (Ctrl-F)">
+              {fullscreen ? "⊟ exit" : "⊞ full"}
+            </Btn>
+          ) : null}
         </span>
       </div>
       <div className="scroll-pane">
@@ -278,64 +284,107 @@ export function MeshDetail({
       </div>
     </div>
   );
+  const agentPanels = <AgentPanels m={m} pm={pm} store={store} active={selectedAgent} onActivate={onSelectAgent} />;
+  const topologyPanel = (
+    <div className="panel">
+      <div className="head">
+        <span className="ttl">topology</span>
+        <span className="sub">agents · mail edges</span>
+      </div>
+      <div className="body-scroll">
+        <Topology summary={m} selectedAgent={selectedAgent} onSelect={onSelectAgent} flashId={flashId} />
+      </div>
+    </div>
+  );
+  const activityPanel = (
+    <div className="panel">
+      <div className="head">
+        <span className="ttl">activity</span>
+        <span className="sub">mail · interrupt · permission · log</span>
+      </div>
+      <div className="body-scroll" style={{ maxHeight: mobile ? undefined : 240 }}>
+        <Timeline activity={pm.activity} />
+      </div>
+    </div>
+  );
+  const mailboxPanel = (
+    <div className="panel">
+      <div className="head">
+        <span className="ttl">mailbox</span>
+        <span className="sub">inter-agent mail</span>
+      </div>
+      <div className="body-scroll" style={{ maxHeight: mobile ? undefined : 240 }}>
+        <Mailbox mail={pm.mail} />
+      </div>
+    </div>
+  );
+  const historyPanel = (
+    <div className="panel">
+      <div className="head">
+        <span className="ttl">permission history</span>
+        <span className="sub">{pm.history.length}</span>
+      </div>
+      <div className="body-scroll" style={{ maxHeight: mobile ? undefined : 200 }}>
+        <History history={pm.history} />
+      </div>
+    </div>
+  );
+  const permissionEl = <PermissionCards pending={pm.pending} mesh={m.name} store={store} />;
 
+  // ── Mobile: a focused segment switcher (Chat / Agents / Map / Log) with the
+  //    permission cards pinned, since they are action-required. ────────────────
+  if (mobile) {
+    const tab = (key: typeof seg, label: string, badge?: number) => (
+      <button className={`mtab ${seg === key ? "sel" : ""}`} onClick={() => setSeg(key)}>
+        {label}
+        {badge ? <span className="mtab-badge">{badge}</span> : null}
+      </button>
+    );
+    return (
+      <div className="mdetail">
+        <Header m={m} store={store} onDeleted={onDeleted} onEdit={onEdit} />
+        {pm.pending.length ? <div className="mperm">{permissionEl}</div> : null}
+        <div className="mseg">
+          {seg === "chat" ? routerChat : null}
+          {seg === "agents" ? agentPanels : null}
+          {seg === "map" ? topologyPanel : null}
+          {seg === "log" ? (
+            <div className="mlog">
+              {activityPanel}
+              {mailboxPanel}
+              {historyPanel}
+            </div>
+          ) : null}
+        </div>
+        <div className="mtabs">
+          {tab("chat", "Chat")}
+          {tab("agents", "Agents")}
+          {tab("map", "Map")}
+          {tab("log", "Log")}
+        </div>
+      </div>
+    );
+  }
+
+  // ── Desktop ─────────────────────────────────────────────────────────────────
   return (
     <>
       <Header m={m} store={store} onDeleted={onDeleted} onEdit={onEdit} />
-
       {fullscreen ? (
         <div style={{ flex: 1, minHeight: 360, display: "flex" }}>{routerChat}</div>
       ) : (
         <>
-          <div className="panel">
-            <div className="head">
-              <span className="ttl">topology</span>
-              <span className="sub">agents · mail edges</span>
-            </div>
-            <div className="body-scroll">
-              <Topology summary={m} selectedAgent={selectedAgent} onSelect={onSelectAgent} flashId={flashId} />
-            </div>
-          </div>
-
-          <PermissionCards pending={pm.pending} mesh={m.name} store={store} />
-
+          {topologyPanel}
+          {permissionEl}
           <div className="split">
             <div style={{ display: "flex", minHeight: 320 }}>{routerChat}</div>
-            <div style={{ display: "flex", minHeight: 320 }}>
-              <AgentPanels m={m} pm={pm} store={store} active={selectedAgent} onActivate={onSelectAgent} />
-            </div>
+            <div style={{ display: "flex", minHeight: 320 }}>{agentPanels}</div>
           </div>
-
           <div className="split">
-            <div className="panel">
-              <div className="head">
-                <span className="ttl">activity</span>
-                <span className="sub">mail · interrupt · permission · log</span>
-              </div>
-              <div className="body-scroll" style={{ maxHeight: 240 }}>
-                <Timeline activity={pm.activity} />
-              </div>
-            </div>
-            <div className="panel">
-              <div className="head">
-                <span className="ttl">mailbox</span>
-                <span className="sub">inter-agent mail</span>
-              </div>
-              <div className="body-scroll" style={{ maxHeight: 240 }}>
-                <Mailbox mail={pm.mail} />
-              </div>
-            </div>
+            {activityPanel}
+            {mailboxPanel}
           </div>
-
-          <div className="panel">
-            <div className="head">
-              <span className="ttl">permission history</span>
-              <span className="sub">{pm.history.length}</span>
-            </div>
-            <div className="body-scroll" style={{ maxHeight: 200 }}>
-              <History history={pm.history} />
-            </div>
-          </div>
+          {historyPanel}
         </>
       )}
     </>
