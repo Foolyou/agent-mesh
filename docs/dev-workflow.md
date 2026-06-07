@@ -45,22 +45,24 @@ They share nothing: separate **roots**, **ports**, and **sockets**.
   response) needs that mesh restarted — pick the moment, and rely on agents committing
   often so a restart costs context, not work.
 
-## Service control — `scripts/meshd`
+## Service control — built into the binary
 
-One tool to manage the backend service for a base dir (`--root <base>` or `MESH_WORK_ROOT`,
-default `~`; `--port`, default 10010). Each base = one independent service under
-`<base>/.agent-mesh`.
+The binary manages the backend service itself (no wrapper script). Scoped by base dir
+(`--root <base>`, default `~`) + `--port` (default 10010); each base = one independent
+service under `<base>/.agent-mesh`, with state in `backend.json` + `backend.log`.
 
 ```bash
-scripts/meshd start            # background-start (idempotent; no-op if already up)
-scripts/meshd status           # backend up/down + pid/port + running meshes
-scripts/meshd logs -f          # follow <base>/.agent-mesh/backend.log
-scripts/meshd restart          # hot restart  (mesh daemons survive + reconnect)
-scripts/meshd restart --cold   # cold restart (also reap the mesh daemons)
-scripts/meshd stop  [--cold]   # stop the backend (--cold also reaps the daemons)
-# scope another instance:  scripts/meshd status --root ~/mesh-dev --port 10020
+mesh up                  # background-start the backend (idempotent; no-op if already up)
+mesh status              # backend up/down + pid/port + running meshes
+mesh logs -f             # follow <base>/.agent-mesh/backend.log
+mesh restart             # hot restart  (mesh daemons survive + reconnect)
+mesh restart --cold      # cold restart (also reap the mesh daemons; survives reaping its own mesh)
+mesh down  [--cold]      # stop the backend (--cold also reaps the daemons)
+# scope another instance:  mesh status --root ~/mesh-dev --port 10020
 ```
 
-`start`/`restart` reuse `restart-work.sh` (detached, cross-checked, cold-safe); `status`/
-`stop` use `mesh ps`/`kill`. Run it from a **persistent shell (tmux)** so the service
-isn't tied to a transient session.
+`up` spawns the combined SPA+API backend detached (ignores SIGHUP, so a terminal close
+won't take it down) and records its pid; `down`/`status` find it by record or port
+listener. A `--cold` restart dispatches a detached worker so it survives reaping its own
+mesh (the in-mesh self-restart case). Run from a **persistent shell (tmux)** so the
+service isn't tied to a transient session.

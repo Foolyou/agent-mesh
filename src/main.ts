@@ -13,7 +13,9 @@ import { startWebServer } from "./web/server";
 import { startApiServer } from "./web/api-server";
 import { FakeManager, FakeMaster } from "./web/fake";
 import { runMeshHost } from "./mesh-host";
-import { resolveRoot } from "./root";
+import { resolveRoot, expandHome } from "./root";
+import { homedir } from "node:os";
+import * as service from "./service";
 
 // Single-binary support: when this binary is re-execed as a mesh-host subprocess
 // (MeshHostClient sets MESH_SOCK/MESH_CONFIG), run the host body instead of the CLI.
@@ -36,6 +38,8 @@ const fake = has("--fake");
 const noMaster = has("--no-master");
 
 const root = resolveRoot();
+// the base dir we'd pass back as --root so a re-spawned backend resolves to the same root
+const base = argVal("--root") ? expandHome(argVal("--root")!) : homedir();
 
 async function buildGateway() {
   const manager: any = fake ? new FakeManager() : new MeshManager({ root });
@@ -73,9 +77,27 @@ function reapOnExit(stop: () => Promise<void> | void) {
   };
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
+  // Survive a terminal hangup so a backend started via `mesh up` (or in a closing shell)
+  // isn't taken down with the launcher; stop is explicit (SIGINT/SIGTERM / `mesh down`).
+  process.on("SIGHUP", () => {});
 }
 
-if (cmd === "ps") {
+// ── service management (background backend under a root) ─────────────────────────
+const svcPort = Number(process.env.MESH_PORT) || Number(argVal("--port")) || 10010;
+const svcCold = has("--cold");
+// flags forwarded to the spawned backend (so `mesh up --fake --no-master` works)
+const svcPass = [...(fake ? ["--fake"] : []), ...(noMaster ? ["--no-master"] : [])];
+if (cmd === "up" || cmd === "start") {
+  await service.up(base, root, svcPort, { cold: svcCold, passthrough: svcPass });
+} else if (cmd === "down" || cmd === "stop") {
+  await service.down(root, svcPort, { cold: svcCold });
+} else if (cmd === "status") {
+  await service.status(root, svcPort);
+} else if (cmd === "restart") {
+  await service.restart(base, root, svcPort, { cold: svcCold, passthrough: svcPass });
+} else if (cmd === "logs") {
+  await service.logs(root, { follow: has("-f") || has("--follow") });
+} else if (cmd === "ps") {
   // list running mesh daemons (survivors of any prior backend) from the registry
   const mgr = new MeshManager({ root });
   const running = await mgr.listRunning();
