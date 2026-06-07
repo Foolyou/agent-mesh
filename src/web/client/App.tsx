@@ -1,6 +1,6 @@
 // Top-level composition: owns UI state (selected mesh/agent, fullscreen, modal),
 // wires the store + keyboard shortcuts, and lays out the TTY-style console shell.
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createStore, useStore, useConnected, useToasts, type Store } from "./store";
 import { Sidebar } from "./Sidebar";
 import { MeshDetail } from "./MeshDetail";
@@ -8,7 +8,8 @@ import { MeshBuilder } from "./MeshBuilder";
 import { useKeyboard } from "./useKeyboard";
 import { useIsMobile } from "./useMedia";
 import { ThemeControls } from "./Theme";
-import { Dot, Btn } from "./ui";
+import { I18nContext, loadLang, saveLang, translate, tStatus, type Lang } from "./i18n";
+import { Dot, Btn, InfoIcon } from "./ui";
 
 const SEL_KEY = "mesh.selected";
 
@@ -38,6 +39,13 @@ export function App() {
   const state = useStore(store);
   const connected = useConnected(store);
   const mobile = useIsMobile();
+
+  const [lang, setLangState] = useState<Lang>(loadLang);
+  const setLang = (l: Lang) => {
+    setLangState(l);
+    saveLang(l);
+  };
+  const t = useCallback((k: string, v?: Record<string, string | number>) => translate(k, lang, v), [lang]);
 
   const [selectedMesh, setSelectedMeshRaw] = useState<string | null>(null);
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
@@ -155,37 +163,43 @@ export function App() {
   );
 
   return (
+    <I18nContext.Provider value={{ lang, t }}>
     <div className={`app ${mobile ? "mobile" : ""}`}>
       <div className="topbar">
         {mobile && inDetail ? (
-          <Btn kind="ghost" title="back to meshes" onClick={() => setSelectedMesh(null)}>
-            ‹ back
+          <Btn kind="ghost" title={t("back")} onClick={() => setSelectedMesh(null)}>
+            ‹ {t("back")}
           </Btn>
         ) : null}
         <span className="brand">
           <span className="glyph">▰▰</span> agent-mesh
         </span>
-        <span className="stat" title={`master ${state.master.status}`}>
+        <span className="stat" title={`${t("conductor")} ${tStatus(t, state.master.status)}`}>
           <Dot status={masterDotStatus} />
-          {!mobile ? <> master {state.master.status}</> : null}
+          {!mobile ? (
+            <>
+              {" "}
+              {t("conductor")} {tStatus(t, state.master.status)}
+            </>
+          ) : null}
         </span>
-        <span className="stat" title={connected ? "connected" : "offline"}>
+        <span className="stat" title={connected ? t("live") : t("offline")}>
           <Dot status={connected ? "ready" : "dead"} />
-          {!mobile ? <> {connected ? "live" : "offline"}</> : null}
+          {!mobile ? <> {connected ? t("live") : t("offline")}</> : null}
         </span>
         <span className="spacer" />
-        {!mobile ? (
-          <span className="stat hints" style={{ letterSpacing: 0.4, textTransform: "none" }}>
-            <span className="kbd">↑↓</span> select <span className="kbd">f</span> full <span className="kbd">n</span> new{" "}
-            <span className="kbd">r</span> reload <span className="kbd">1-9</span> permit <span className="kbd">esc</span> back
-          </span>
-        ) : null}
+        {!mobile ? <InfoIcon text={t("hints.all")} /> : null}
         {!mobile ? <ThemeControls /> : null}
-        <Btn onClick={openNew} title="define a new mesh">
-          {mobile ? "+" : "+ new mesh"}
+        <Btn
+          small
+          kind="ghost"
+          title={t("language")}
+          onClick={() => setLang(lang === "en" ? "zh" : "en")}
+        >
+          {lang === "en" ? "中" : "EN"}
         </Btn>
-        <Btn kind="ghost" onClick={() => void store.reload()} title="reload definitions">
-          {mobile ? "↻" : "↻ reload"}
+        <Btn kind="ghost" onClick={() => void store.reload()} title={t("reload")}>
+          {mobile ? "↻" : `↻ ${t("reload")}`}
         </Btn>
       </div>
 
@@ -204,8 +218,7 @@ export function App() {
             ) : (
               <div className="detail">
                 <div className="empty" style={{ margin: "auto", maxWidth: 460 }}>
-                  select a mesh from the list to open its console — topology, router chat,
-                  per-agent panels, permissions, and live mail/activity timelines.
+                  {t("overview.hint")}
                 </div>
               </div>
             )}
@@ -227,5 +240,6 @@ export function App() {
 
       <Toaster store={store} />
     </div>
+    </I18nContext.Provider>
   );
 }

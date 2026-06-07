@@ -10,9 +10,9 @@
   --bg-inset: #07080a;
   --line: #1c1f24;
   --line-bright: #2b2f36;
-  --fg: #e4e6e1;
-  --fg-dim: #aab0b8; /* secondary text — legible (~7:1) */
-  --fg-faint: #7e858e; /* tertiary text — still legible (~5:1) */
+  --fg: #e8eae5;
+  --fg-dim: #c2c8cf; /* secondary text — high contrast (~9:1) */
+  --fg-faint: #99a0a8; /* tertiary text — clearly legible (~6.5:1) */
   --ok: #4ec97a; /* running / ready */
   --warn: #e2b341; /* starting / spawning */
   --bad: #f0584b; /* dead */
@@ -129,7 +129,7 @@ body::after {
 .sidebar {
   border-right: 1px solid var(--line);
   display: grid;
-  grid-template-rows: minmax(0, 0.85fr) minmax(0, 1.15fr);
+  grid-template-rows: auto minmax(0, 1fr); /* mesh list (≤4 + pager) sizes to content; master fills */
   min-height: 0;
   min-width: 0;
   overflow: hidden;
@@ -554,7 +554,7 @@ body::after {
 /* ── composer / input ──────────────────────────────────────────────────── */
 .composer {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
   border-top: 1px solid var(--line);
   padding: 7px 10px;
@@ -562,8 +562,9 @@ body::after {
 .composer .prompt {
   color: var(--ok);
   font-weight: 600;
+  line-height: 1.6;
 }
-.composer input {
+.composer textarea {
   flex: 1;
   background: transparent;
   border: none;
@@ -571,8 +572,14 @@ body::after {
   color: var(--fg);
   font: inherit;
   caret-color: var(--ok);
+  resize: none;
+  overflow-y: auto;
+  max-height: 140px;
+  line-height: 1.5;
+  padding: 0;
+  display: block;
 }
-.composer input::placeholder {
+.composer textarea::placeholder {
   color: var(--fg-faint);
 }
 .composer.disabled {
@@ -1125,7 +1132,7 @@ select.inp {
   /* overview: mesh list sizes to content, master chat takes the rest */
   .sidebar {
     border-right: none;
-    grid-template-rows: auto minmax(180px, 1fr);
+    grid-template-rows: auto minmax(160px, 1fr);
   }
   /* bigger touch targets */
   .btn {
@@ -1146,7 +1153,7 @@ select.inp {
     padding: 9px 12px;
     padding-bottom: max(9px, env(safe-area-inset-bottom));
   }
-  .composer input {
+  .composer textarea {
     font-size: 16px; /* prevent iOS zoom-on-focus */
   }
   .inp {
@@ -1225,4 +1232,49 @@ select.inp {
   .theme-grid {
     grid-template-columns: 1fr;
   }
+}
+
+/* ── mesh list pager ─────────────────────────────────────────────────────── */
+.mpage {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 5px 8px;
+  border-top: 1px solid var(--line);
+  color: var(--fg-dim);
+}
+
+/* ── topology expand modal ───────────────────────────────────────────────── */
+.topo-modal {
+  width: min(960px, 94vw);
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+}
+.topo-modal .mhead {
+  gap: 6px;
+}
+.topo-zoomwrap {
+  overflow: auto;
+  padding: 14px;
+  min-height: 0;
+  flex: 1;
+}
+
+/* ── info icon (hover for description; declutters headers) ────────────────── */
+.info-icon {
+  color: var(--fg-faint);
+  cursor: help;
+  font-size: 12px;
+  user-select: none;
+  margin-left: auto;
+}
+.info-icon:hover {
+  color: var(--fg-dim);
+}
+/* when the icon sits inside a .right group it shouldn't grab the auto margin */
+.head .right .info-icon,
+.topbar .info-icon {
+  margin-left: 0;
 }

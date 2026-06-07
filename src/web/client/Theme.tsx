@@ -2,6 +2,7 @@
 // preview via applyPalette, persisted in localStorage).
 import { useEffect, useState } from "react";
 import { Btn } from "./ui";
+import { useI18n } from "./i18n";
 import {
   BUILTIN_THEMES,
   THEME_KEYS,
@@ -34,6 +35,7 @@ const KEY_LABEL: Record<string, string> = {
 };
 
 export function ThemeControls() {
+  const { t } = useI18n();
   const [active, setActive] = useState(() => loadActive().name);
   const [editing, setEditing] = useState(false);
 
@@ -45,15 +47,15 @@ export function ThemeControls() {
 
   return (
     <span className="theme-controls">
-      <select className="theme-sel" value={active} onChange={(e) => pick(e.target.value)} title="theme">
-        {BUILTIN_THEMES.map((t) => (
-          <option key={t.name} value={t.name}>
-            {t.label}
+      <select className="theme-sel" value={active} onChange={(e) => pick(e.target.value)} title={t("theme")}>
+        {BUILTIN_THEMES.map((th) => (
+          <option key={th.name} value={th.name}>
+            {th.label}
           </option>
         ))}
-        <option value="custom">Custom</option>
+        <option value="custom">{t("theme.custom")}</option>
       </select>
-      <Btn small kind="ghost" title="customize theme" onClick={() => setEditing(true)}>
+      <Btn small kind="ghost" title={t("theme.customize")} onClick={() => setEditing(true)}>
         ✎
       </Btn>
       {editing ? (
@@ -69,6 +71,7 @@ export function ThemeControls() {
 }
 
 function ThemeEditor({ onClose }: { onClose: (savedAsCustom: boolean) => void }) {
+  const { t } = useI18n();
   const before = loadActive().palette; // restore on cancel
   const [pal, setPal] = useState<Palette>({ ...before });
   const [json, setJson] = useState("");
@@ -95,17 +98,17 @@ function ThemeEditor({ onClose }: { onClose: (savedAsCustom: boolean) => void })
     <div className="scrim" onClick={() => { applyPalette(before); onClose(false); }}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <div className="mhead">
-          <span style={{ flex: 1 }}>customize theme</span>
+          <span style={{ flex: 1 }}>{t("theme.customize")}</span>
           <Btn small kind="ghost" onClick={() => { applyPalette(before); onClose(false); }}>
-            ✕ esc
+            ✕ {t("esc")}
           </Btn>
         </div>
         <div className="mbody">
           <div className="row" style={{ gap: 8 }}>
-            <span className="sub">start from</span>
-            {BUILTIN_THEMES.map((t) => (
-              <Btn key={t.name} small kind="ghost" onClick={() => setPal({ ...t.palette })}>
-                {t.label}
+            <span className="sub">{t("theme.startFrom")}</span>
+            {BUILTIN_THEMES.map((th) => (
+              <Btn key={th.name} small kind="ghost" onClick={() => setPal({ ...th.palette })}>
+                {th.label}
               </Btn>
             ))}
           </div>
@@ -126,22 +129,21 @@ function ThemeEditor({ onClose }: { onClose: (savedAsCustom: boolean) => void })
           </div>
 
           <div className="field">
-            <label>export / import (JSON)</label>
+            <label>{t("theme.io")}</label>
             <textarea
               className="inp"
               rows={4}
               value={json}
               spellCheck={false}
-              placeholder="paste a theme JSON and Apply, or click ‘from current’ to export"
               onChange={(e) => setJson(e.target.value)}
               style={{ resize: "vertical", fontFamily: "var(--mono)" }}
             />
             <div className="row" style={{ gap: 6 }}>
               <Btn small kind="ghost" onClick={() => { setJson(JSON.stringify(pal, null, 2)); setErr(null); }}>
-                ↧ from current
+                {t("theme.fromCurrent")}
               </Btn>
               <Btn small onClick={applyJson}>
-                ↥ apply JSON
+                {t("theme.applyJson")}
               </Btn>
             </div>
           </div>
@@ -150,10 +152,10 @@ function ThemeEditor({ onClose }: { onClose: (savedAsCustom: boolean) => void })
 
           <div className="row" style={{ justifyContent: "flex-end" }}>
             <Btn kind="ghost" onClick={() => { applyPalette(before); onClose(false); }}>
-              cancel
+              {t("cancel")}
             </Btn>
             <Btn kind="go" onClick={() => { saveCustomPalette(pal); saveActive("custom"); onClose(true); }}>
-              save as custom
+              {t("theme.save")}
             </Btn>
           </div>
         </div>

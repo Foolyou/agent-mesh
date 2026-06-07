@@ -4,27 +4,28 @@
 import { useEffect, useRef, useState } from "react";
 import type { TranscriptItem } from "../types";
 import { Empty, fmtTime } from "./ui";
+import { useI18n } from "./i18n";
 
 function Msg({ item }: { item: Extract<TranscriptItem, { kind: "message" }> }) {
+  const { t } = useI18n();
   return (
     <div className={`msg ${item.role}`}>
       <div className="who">
-        {item.role === "user" ? "you" : "agent"} <span className="t">{fmtTime(item.ts)}</span>
+        {item.role === "user" ? t("you") : t("agent")} <span className="t">{fmtTime(item.ts)}</span>
       </div>
-      <div className="bubble">
-        {item.text}
-        {!item.complete && item.role === "agent" ? <span className="cursor" /> : null}
-      </div>
+      <div className="bubble">{item.text}</div>
     </div>
   );
 }
 
 function Thought({ item }: { item: Extract<TranscriptItem, { kind: "thought" }> }) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   return (
     <div className="thought">
       <span className="label" onClick={() => setOpen((o) => !o)}>
-        {open ? "▾" : "▸"} thinking{!item.complete ? "…" : ""}
+        {open ? "▾" : "▸"} {t("thinking")}
+        {!item.complete ? "…" : ""}
       </span>
       {open ? <div className="txt">{item.text}</div> : null}
     </div>
@@ -45,6 +46,7 @@ const TOOL_ICONS: Record<string, string> = {
 };
 
 function ToolCard({ item }: { item: Extract<TranscriptItem, { kind: "tool_call" }> }) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const hasDetail = !!(item.output || item.input || item.locations?.length);
   return (
@@ -59,19 +61,19 @@ function ToolCard({ item }: { item: Extract<TranscriptItem, { kind: "tool_call" 
         <div className="tdetail">
           {item.input ? (
             <>
-              <div className="tlabel">input</div>
+              <div className="tlabel">{t("tool.input")}</div>
               <div className="tout">{item.input}</div>
             </>
           ) : null}
           {item.locations?.length ? (
             <>
-              <div className="tlabel">files</div>
+              <div className="tlabel">{t("tool.files")}</div>
               <div className="tout">{item.locations.join("\n")}</div>
             </>
           ) : null}
           {item.output ? (
             <>
-              <div className="tlabel">output</div>
+              <div className="tlabel">{t("tool.output")}</div>
               <div className="tout">{item.output}</div>
             </>
           ) : null}
@@ -84,11 +86,12 @@ function ToolCard({ item }: { item: Extract<TranscriptItem, { kind: "tool_call" 
 const PLAN_MARK: Record<string, string> = { completed: "✓", in_progress: "▸", pending: "○" };
 
 function PlanCard({ item }: { item: Extract<TranscriptItem, { kind: "plan" }> }) {
+  const { t } = useI18n();
   const done = item.entries.filter((e) => e.status === "completed").length;
   return (
     <div className="plan">
       <div className="plan-head">
-        plan <span className="sub">{done}/{item.entries.length}</span>
+        {t("plan")} <span className="sub">{done}/{item.entries.length}</span>
       </div>
       {item.entries.map((e, i) => (
         <div className={`plan-row ${e.status}`} key={i}>
@@ -101,6 +104,7 @@ function PlanCard({ item }: { item: Extract<TranscriptItem, { kind: "plan" }> })
 }
 
 export function Transcript({ items }: { items: TranscriptItem[] }) {
+  const { t } = useI18n();
   const endRef = useRef<HTMLDivElement>(null);
   // autoscroll to bottom when content changes, unless the user scrolled up
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -116,7 +120,7 @@ export function Transcript({ items }: { items: TranscriptItem[] }) {
     setStick(atBottom);
   }
 
-  if (!items.length) return <Empty>no messages yet</Empty>;
+  if (!items.length) return <Empty>{t("empty.messages")}</Empty>;
   return (
     <div className="stream" ref={wrapRef} onScroll={onScroll}>
       {items.map((it) =>

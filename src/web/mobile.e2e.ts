@@ -76,7 +76,7 @@ try {
   });
 
   await step("Chat segment shows router chat + composer", async () => {
-    await page.waitForSelector('.mseg .panel:has(.head:has-text("router chat")) .composer input', { timeout: 6000 });
+    await page.waitForSelector('.mseg .panel:has(.head:has-text("router chat")) .composer textarea', { timeout: 6000 });
   });
 
   await step("Map segment shows the topology", async () => {
