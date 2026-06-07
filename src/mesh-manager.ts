@@ -12,6 +12,8 @@ import type { MeshConfig, MeshEvent } from "./acp/types";
 export type MeshStatus = "stopped" | "starting" | "running" | "dead";
 
 export interface MeshManagerOptions {
+  /** Data root (default ~/.agent-mesh). meshesDir/runDir derive from it unless given. */
+  root?: string;
   meshesDir?: string;
   runDir?: string;
   hostScript?: string;
@@ -26,6 +28,7 @@ interface Entry {
 
 export class MeshManager {
   private store: MeshStore;
+  private root?: string;
   private runDir: string;
   private hostScript?: string;
   private debug: boolean;
@@ -33,8 +36,10 @@ export class MeshManager {
   private listeners = new Set<(name: string, e: MeshEvent) => void>();
 
   constructor(opts: MeshManagerOptions = {}) {
-    this.store = new MeshStore(opts.meshesDir);
-    this.runDir = opts.runDir ?? resolve(process.cwd(), ".mesh", "run");
+    this.root = opts.root;
+    const meshesDir = opts.meshesDir ?? (opts.root ? join(opts.root, "meshes") : undefined);
+    this.store = new MeshStore(meshesDir);
+    this.runDir = opts.runDir ?? (opts.root ? join(opts.root, "run") : resolve(process.cwd(), ".mesh", "run"));
     this.hostScript = opts.hostScript;
     this.debug = opts.debug ?? false;
   }
@@ -90,6 +95,7 @@ export class MeshManager {
       config: entry.config,
       socketPath: join(this.runDir, `${name}.sock`),
       hostScript: this.hostScript,
+      root: this.root,
       debug: this.debug,
       onEvent: (e) => this.emit(name, e),
       onExit: () => {

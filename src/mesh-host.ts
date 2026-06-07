@@ -3,6 +3,7 @@
 // event bus + command surface to a Unix socket spoken by the parent MeshManager.
 // Run directly (bun src/mesh-host.ts) with env MESH_SOCK + MESH_CONFIG.
 import net from "node:net";
+import { join } from "node:path";
 import { ControlPlane } from "./control-plane";
 import { LineBuffer, encodeFrame, type ParentMsg } from "./protocol";
 import type { MeshConfig, MeshEvent } from "./acp/types";
@@ -70,7 +71,11 @@ if (import.meta.main) {
     process.exit(2);
   }
   const config = JSON.parse(configJson) as MeshConfig;
-  const cp = new ControlPlane(config, { debug: process.env.MESH_DEBUG === "1" });
+  const root = process.env.MESH_ROOT;
+  const cp = new ControlPlane(config, {
+    debug: process.env.MESH_DEBUG === "1",
+    mailboxPath: root ? join(root, `${config.name}-mailbox.ndjson`) : undefined,
+  });
   const socket = net.connect(sockPath);
   socket.on("close", () => cp.stop().finally(() => process.exit(0)));
   await new Promise<void>((res) => socket.once("connect", res));

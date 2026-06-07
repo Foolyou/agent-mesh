@@ -12,6 +12,7 @@ import { WebGateway } from "./web/gateway";
 import { startWebServer } from "./web/server";
 import { startApiServer } from "./web/api-server";
 import { FakeManager, FakeMaster } from "./web/fake";
+import { resolveRoot } from "./root";
 import { DEMO_MESH } from "./config";
 
 function argVal(name: string): string | undefined {
@@ -24,8 +25,10 @@ const cmd = sub && !sub.startsWith("-") ? sub : "all";
 const fake = has("--fake");
 const noMaster = has("--no-master");
 
+const root = resolveRoot();
+
 async function buildGateway() {
-  const manager: any = fake ? new FakeManager() : new MeshManager();
+  const manager: any = fake ? new FakeManager() : new MeshManager({ root });
   if (!fake) {
     await manager.loadDefinitions();
     if (!manager.listMeshes().some((m: { name: string }) => m.name === DEMO_MESH.name)) {
@@ -61,7 +64,7 @@ if (cmd === "backend") {
   const port = Number(process.env.MESH_API_PORT) || Number(argVal("--port")) || 7300;
   const { manager, master, gateway } = await buildGateway();
   const server = startApiServer(gateway, { port });
-  console.log(`\n  mesh backend (REST + WS) → ${server.url}${fake ? "  (fake)" : ""}\n`);
+  console.log(`\n  mesh backend (REST + WS) → ${server.url}${fake ? "  (fake)" : `  · root: ${root}`}\n`);
   reapOnExit(async () => {
     server.stop();
     gateway.dispose();
@@ -78,7 +81,7 @@ if (cmd === "backend") {
   const port = Number(process.env.MESH_WEB_PORT) || Number(argVal("--port")) || 7317;
   const { manager, master, gateway } = await buildGateway();
   const server = startWebServer({ port, gateway });
-  console.log(`\n  agent-mesh web console → ${server.url}${fake ? "  (fake mode)" : ""}\n`);
+  console.log(`\n  agent-mesh web console → ${server.url}${fake ? "  (fake mode)" : `  · root: ${root}`}\n`);
   reapOnExit(async () => {
     server.stop();
     gateway.dispose();

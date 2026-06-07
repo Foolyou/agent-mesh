@@ -11,8 +11,8 @@
   --line: #1c1f24;
   --line-bright: #2b2f36;
   --fg: #e4e6e1;
-  --fg-dim: #8b9098;
-  --fg-faint: #565b62;
+  --fg-dim: #aab0b8; /* secondary text — legible (~7:1) */
+  --fg-faint: #7e858e; /* tertiary text — still legible (~5:1) */
   --ok: #4ec97a; /* running / ready */
   --warn: #e2b341; /* starting / spawning */
   --bad: #f0584b; /* dead */
@@ -1162,5 +1162,67 @@ select.inp {
   .agrow {
     grid-template-columns: 1fr 1fr;
     gap: 6px;
+  }
+}
+
+/* ── theme controls + editor ─────────────────────────────────────────────── */
+.theme-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.theme-sel {
+  font: inherit;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--fg-dim);
+  background: var(--bg-inset);
+  border: 1px solid var(--line-bright);
+  border-radius: var(--r);
+  padding: 3px 6px;
+  cursor: pointer;
+  outline: none;
+}
+.theme-sel:hover {
+  color: var(--fg);
+}
+.theme-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 14px;
+}
+.theme-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+.theme-row input[type="color"] {
+  width: 26px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--line-bright);
+  border-radius: var(--r);
+  background: transparent;
+  cursor: pointer;
+  flex: none;
+}
+.theme-row .hex {
+  width: 84px;
+  flex: none;
+  font-size: 12px;
+  padding: 3px 6px;
+}
+.theme-row .tk {
+  color: var(--fg-dim);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+@media (max-width: 760px) {
+  .theme-grid {
+    grid-template-columns: 1fr;
   }
 }
