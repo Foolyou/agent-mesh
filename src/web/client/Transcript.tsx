@@ -13,7 +13,12 @@ function Msg({ item }: { item: Extract<TranscriptItem, { kind: "message" }> }) {
       <div className="who">
         {item.role === "user" ? t("you") : t("agent")} <span className="t">{fmtTime(item.ts)}</span>
       </div>
-      <div className="bubble">{item.text}</div>
+      <div className="bubble">
+        {item.text}
+        {/* transient streaming caret — only while an agent reply is still generating,
+            never persists on a finished reply (the reducer flips complete at turn end) */}
+        {item.role === "agent" && !item.complete ? <span className="cursor" /> : null}
+      </div>
     </div>
   );
 }

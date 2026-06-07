@@ -98,6 +98,20 @@ try {
     await page.waitForSelector('.panel:has(.head:has-text("router chat")) .plan .plan-row', { timeout: 9000 });
   });
 
+  await step("streaming caret does NOT persist on a finished agent reply", async () => {
+    // the router reply has fully streamed + the turn ended → its bubble must carry no caret
+    await page.waitForFunction(
+      () => {
+        const panel = [...document.querySelectorAll(".panel")].find((p) =>
+          p.querySelector(".head")?.textContent?.includes("router chat"),
+        );
+        const agentMsgs = panel?.querySelectorAll(".msg.agent") ?? [];
+        return agentMsgs.length > 0 && ![...agentMsgs].some((m) => m.querySelector(".cursor"));
+      },
+      { timeout: 10000 },
+    );
+  });
+
   await step("messages show timestamps", async () => {
     const t = await page.locator(".msg .who .t").first().textContent();
     if (!/\d\d:\d\d:\d\d/.test(t ?? "")) throw new Error(`no timestamp (got "${t}")`);
