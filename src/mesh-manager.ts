@@ -3,8 +3,10 @@
 // and supervises one MeshHostClient per running mesh. Independent of the master
 // agent: callable from the TUI, tests, and e2e.
 import { resolve, join } from "node:path";
+import { rm } from "node:fs/promises";
 import { MeshStore } from "./mesh-store";
 import { MeshHostClient } from "./mesh-host-client";
+import { listLiveRecords, readRecord, removeRecord, pidAlive, type MeshHostRecord } from "./mesh-registry";
 import { Mesh } from "./mesh";
 import { now } from "./acp/types";
 import type { MeshConfig, MeshEvent } from "./acp/types";
@@ -18,6 +20,8 @@ export interface MeshManagerOptions {
   runDir?: string;
   hostScript?: string;
   debug?: boolean;
+  /** Idle lease (ms) passed to spawned daemons; 0 = survive indefinitely (default). */
+  leaseMs?: number;
 }
 
 interface Entry {
@@ -32,6 +36,7 @@ export class MeshManager {
   private runDir: string;
   private hostScript?: string;
   private debug: boolean;
+  private leaseMs: number;
   private entries = new Map<string, Entry>();
   private listeners = new Set<(name: string, e: MeshEvent) => void>();
 
@@ -40,8 +45,11 @@ export class MeshManager {
     const meshesDir = opts.meshesDir ?? (opts.root ? join(opts.root, "meshes") : undefined);
     this.store = new MeshStore(meshesDir);
     this.runDir = opts.runDir ?? (opts.root ? join(opts.root, "run") : resolve(process.cwd(), ".mesh", "run"));
-    this.hostScript = opts.hostScript;
+    // MESH_HOST_SCRIPT lets e2e tests substitute a fake daemon for the real mesh-host
+    // (so the full backend can be exercised without spawning real agents). Unset in prod.
+    this.hostScript = opts.hostScript ?? process.env.MESH_HOST_SCRIPT;
     this.debug = opts.debug ?? false;
+    this.leaseMs = opts.leaseMs ?? 0;
   }
 
   on(listener: (name: string, e: MeshEvent) => void): () => void {
@@ -84,33 +92,51 @@ export class MeshManager {
     return e;
   }
 
-  async startMesh(name: string): Promise<void> {
-    const entry = this.require(name);
-    if (entry.status === "running" || entry.status === "starting") {
-      throw new Error(`mesh "${name}" is already running`);
-    }
-    entry.status = "starting";
+  /** Build a client wired with this manager's callbacks (shared by start + reattach). */
+  private buildClient(name: string, entry: Entry): MeshHostClient {
     const client = new MeshHostClient({
       name,
       config: entry.config,
       socketPath: join(this.runDir, `${name}.sock`),
       hostScript: this.hostScript,
       root: this.root,
+      leaseMs: this.leaseMs,
       debug: this.debug,
       onEvent: (e) => this.emit(name, e),
-      onExit: () => {
-        if (entry.status === "running" || entry.status === "starting") {
-          entry.status = "dead";
-          this.emit(name, { kind: "log", text: `mesh "${name}" host exited`, ts: now() });
-        }
-        // Reap the dead client's listening server + socket file (no leaked listeners).
-        void client.stop().catch(() => {});
-        if (entry.client === client) entry.client = undefined;
-      },
+      onClose: () => this.onDaemonLost(name, entry, client),
+      onExit: () => this.onDaemonLost(name, entry, client),
     });
+    return client;
+  }
+
+  /** A daemon we were attached to died/was lost (its socket closed unexpectedly). */
+  private onDaemonLost(name: string, entry: Entry, client: MeshHostClient): void {
+    if (entry.client !== client) return; // stale callback from a replaced client
+    if (entry.status === "running" || entry.status === "starting") {
+      entry.status = "dead";
+      this.emit(name, { kind: "log", text: `mesh "${name}" host exited`, ts: now() });
+    }
+    entry.client = undefined;
+    // a crashed daemon leaves its registry record + unix-socket file behind; clear both
+    // so the mesh is immediately restartable (a fresh daemon re-listens on the path).
+    void removeRecord(this.runDir, name).catch(() => {});
+    void rm(join(this.runDir, `${name}.sock`), { force: true }).catch(() => {});
+  }
+
+  async startMesh(name: string): Promise<void> {
+    const entry = this.require(name);
+    if (entry.status === "running" || entry.status === "starting") {
+      throw new Error(`mesh "${name}" is already running`);
+    }
+    entry.status = "starting";
+    const client = this.buildClient(name, entry);
     entry.client = client;
     try {
-      await client.start();
+      // If a daemon for this mesh is already alive (e.g. it outlived a previous backend
+      // and we haven't reattached yet), connect to it instead of spawning a duplicate.
+      const existing = await readRecord(this.runDir, name);
+      if (existing && pidAlive(existing.pid)) await client.attach(existing);
+      else await client.start();
     } catch (err) {
       entry.status = "stopped";
       entry.client = undefined;
@@ -119,15 +145,71 @@ export class MeshManager {
     entry.status = "running";
   }
 
+  /** Reconnect to every daemon that outlived a previous backend. Call once on startup
+   *  (after loadDefinitions). Returns the names it reattached to. */
+  async reattachRunning(): Promise<string[]> {
+    const reattached: string[] = [];
+    for (const rec of await listLiveRecords(this.runDir)) {
+      const entry = this.entries.get(rec.name);
+      if (!entry || entry.status === "running" || entry.status === "starting") continue;
+      entry.status = "starting";
+      const client = this.buildClient(rec.name, entry);
+      entry.client = client;
+      try {
+        await client.attach(rec);
+        entry.status = "running";
+        reattached.push(rec.name);
+      } catch {
+        entry.status = "stopped";
+        entry.client = undefined;
+      }
+    }
+    return reattached;
+  }
+
   async stopMesh(name: string): Promise<void> {
     const entry = this.require(name);
     await entry.client?.stop();
     entry.client = undefined;
     entry.status = "stopped";
+    await removeRecord(this.runDir, name).catch(() => {});
+  }
+
+  /** Disconnect from all daemons WITHOUT stopping them (backend shutdown). The meshes +
+   *  their agents keep running; a future backend reattaches via reattachRunning(). */
+  disconnectAll(): void {
+    for (const e of this.entries.values()) e.client?.disconnect();
   }
 
   async stopAll(): Promise<void> {
     await Promise.all([...this.entries.keys()].map((n) => this.stopMesh(n).catch(() => {})));
+  }
+
+  /** Running daemons on disk (independent of this manager's in-memory state) — for `mesh ps`. */
+  listRunning(): Promise<MeshHostRecord[]> {
+    return listLiveRecords(this.runDir);
+  }
+
+  /** Reap a daemon by name (SIGTERM lets it stop agents + drop its record cleanly). */
+  async kill(name: string): Promise<boolean> {
+    const entry = this.entries.get(name);
+    if (entry?.client) {
+      await entry.client.stop();
+      entry.client = undefined;
+      entry.status = "stopped";
+      return true;
+    }
+    const rec = await readRecord(this.runDir, name);
+    if (rec && pidAlive(rec.pid)) {
+      try {
+        process.kill(rec.pid, "SIGTERM");
+      } catch {
+        /* already gone */
+      }
+      await removeRecord(this.runDir, name).catch(() => {});
+      return true;
+    }
+    return false;
   }
 
   promptRouter(name: string, text: string): Promise<void> {

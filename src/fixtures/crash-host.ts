@@ -1,11 +1,25 @@
 // src/fixtures/crash-host.ts
-// Test fixture: a mesh-host that connects, signals ready, then exits on its own
-// (simulating a crash) so the parent's onExit/cleanup path can be exercised.
-import net from "node:net";
-import { encodeFrame } from "../protocol";
+// Test fixture: a mesh-host daemon that listens, becomes ready, then exits on its own
+// (simulating a crash) so the parent's onExit/onClose reaping path can be exercised.
+import { MeshHostDaemon } from "../mesh-host";
+import type { MeshEvent } from "../acp/types";
 
-const socket = net.connect(process.env.MESH_SOCK!);
-socket.on("connect", () => {
-  socket.write(encodeFrame({ t: "ready" }));
-  setTimeout(() => process.exit(1), 100);
-});
+const cp = {
+  on(_l: (e: MeshEvent) => void) {
+    return () => {};
+  },
+  async prompt() {
+    return {};
+  },
+  resolveDecision() {
+    return true;
+  },
+  async setMode() {},
+  async interrupt() {},
+  async stop() {},
+};
+
+const daemon = new MeshHostDaemon(cp, { socketPath: process.env.MESH_SOCK! });
+await daemon.listen();
+daemon.markReady();
+setTimeout(() => process.exit(1), 100); // "crash" after going ready

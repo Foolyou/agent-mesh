@@ -1,22 +1,40 @@
 // src/fixtures/echo-host.ts
-// Test fixture: a fake mesh-host. Connects to MESH_SOCK, says ready, echoes
-// each prompt back as a log event, and exits cleanly on stop. No real agents.
-import net from "node:net";
-import { LineBuffer, encodeFrame, type ParentMsg } from "../protocol";
+// Test fixture: a real mesh-host DAEMON wired to a fake ControlPlane that just echoes
+// each prompt back as a log event. Exercises the actual MeshHostDaemon (listen, hello/
+// ack, replay, commands, stop) without spawning real agents.
+import { dirname } from "node:path";
+import { MeshHostDaemon } from "../mesh-host";
+import { writeRecord, removeRecord } from "../mesh-registry";
+import { PROTO_VERSION } from "../protocol";
+import type { MeshConfig, MeshEvent } from "../acp/types";
 
-const socket = net.connect(process.env.MESH_SOCK!);
-const lb = new LineBuffer();
-socket.setEncoding("utf8");
-socket.on("connect", () => socket.write(encodeFrame({ t: "ready" })));
-socket.on("data", (chunk: string) => {
-  for (const line of lb.push(chunk)) {
-    const msg = JSON.parse(line) as ParentMsg;
-    if (msg.t === "prompt") {
-      socket.write(encodeFrame({ t: "event", event: { kind: "log", text: `echo:${msg.text}`, ts: "t" } }));
-    } else if (msg.t === "stop") {
-      socket.write(encodeFrame({ t: "stopped" }));
-      socket.end();
-      setTimeout(() => process.exit(0), 10);
-    }
-  }
+let listener: ((e: MeshEvent) => void) | undefined;
+const cp = {
+  on(l: (e: MeshEvent) => void) {
+    listener = l;
+    return () => {
+      listener = undefined;
+    };
+  },
+  async prompt(_target: string, text: string) {
+    listener?.({ kind: "log", text: `echo:${text}`, ts: "t" });
+    return {};
+  },
+  resolveDecision() {
+    return true;
+  },
+  async setMode() {},
+  async interrupt() {},
+  async stop() {},
+};
+
+const socketPath = process.env.MESH_SOCK!;
+const runDir = dirname(socketPath);
+const config = JSON.parse(process.env.MESH_CONFIG ?? '{"name":"echo"}') as MeshConfig;
+const daemon = new MeshHostDaemon(cp, {
+  socketPath,
+  onStopped: () => void removeRecord(runDir, config.name).finally(() => process.exit(0)),
 });
+await daemon.listen();
+await writeRecord(runDir, { name: config.name, pid: process.pid, socketPath, proto: PROTO_VERSION, startedAt: "T" });
+daemon.markReady();

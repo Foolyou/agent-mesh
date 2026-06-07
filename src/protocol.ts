@@ -1,16 +1,34 @@
 // src/protocol.ts
 // NDJSON control protocol between the parent MeshManager and each mesh-host
 // subprocess, carried over a per-mesh Unix domain socket.
+//
+// The mesh-host is a DETACHABLE DAEMON: it owns the listening socket; the parent
+// connects as a client and may disconnect (e.g. backend restart) and reconnect
+// later. Events carry a monotonic `seq`; on (re)connect the parent sends `hello`
+// with the last seq it saw and the host replays everything newer, so the parent's
+// aggregated view is rebuilt seamlessly without losing the live agents.
 import type { MeshEvent } from "./acp/types";
+
+/** Bumped when the wire protocol changes incompatibly; a reconnecting parent that
+ *  speaks a different version refuses to attach to an old daemon. */
+export const PROTO_VERSION = 2;
+
+export interface SeqEvent {
+  seq: number;
+  event: MeshEvent;
+}
 
 /** child (mesh-host) -> parent (MeshManager) */
 export type ChildMsg =
   | { t: "ready" }
-  | { t: "event"; event: MeshEvent }
+  | { t: "ack"; proto: number; running: boolean; seq: number }
+  | { t: "event"; seq: number; event: MeshEvent }
+  | { t: "replay"; events: SeqEvent[] }
   | { t: "stopped" };
 
 /** parent (MeshManager) -> child (mesh-host) */
 export type ParentMsg =
+  | { t: "hello"; proto: number; resumeFrom: number }
   | { t: "prompt"; target: string; text: string }
   | { t: "resolve"; requestId: string; optionId: string }
   | { t: "setMode"; target: string; modeId: string }

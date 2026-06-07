@@ -4,14 +4,14 @@ import net from "node:net";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { bridgeControlPlaneToSocket, type BridgeControlPlane } from "./mesh-host";
-import { LineBuffer, encodeFrame } from "./protocol";
+import { MeshHostDaemon, type BridgeControlPlane } from "./mesh-host";
+import { LineBuffer, encodeFrame, PROTO_VERSION } from "./protocol";
 import type { MeshEvent } from "./acp/types";
 
 let dir: string;
-let server: net.Server;
+let daemon: MeshHostDaemon | undefined;
 beforeEach(async () => { dir = await mkdtemp(join(tmpdir(), "host-")); });
-afterEach(async () => { server?.close(); await rm(dir, { recursive: true, force: true }); });
+afterEach(async () => { await daemon?.stop().catch(() => {}); daemon = undefined; await rm(dir, { recursive: true, force: true }); });
 
 function fakeCp() {
   let listener: ((e: MeshEvent) => void) | undefined;
@@ -24,86 +24,95 @@ function fakeCp() {
     async interrupt(target) { calls.push(`interrupt:${target}`); },
     async stop() { calls.push("stop"); },
   };
-  return { cp, calls };
+  return { cp, calls, emit: (e: MeshEvent) => listener?.(e) };
 }
 
-test("bridge sends ready, relays events, applies commands, and stops", async () => {
-  const sock = join(dir, "t.sock");
-  const { cp, calls } = fakeCp();
-
+/** Connect a raw client to the daemon socket, collecting parsed frames. */
+async function connect(sock: string) {
   const got: any[] = [];
   const lb = new LineBuffer();
-  const connected = new Promise<net.Socket>((res) => {
-    server = net.createServer((s) => { bridgeControlPlaneToSocket(cp, s); res(s); });
-  });
-  await new Promise<void>((r) => server.listen(sock, r));
+  const c = net.connect(sock);
+  c.setEncoding("utf8");
+  c.on("data", (d: string) => { for (const line of lb.push(d)) got.push(JSON.parse(line)); });
+  await new Promise<void>((res) => c.once("connect", () => res()));
+  return { c, got, send: (m: any) => c.write(encodeFrame(m)) };
+}
 
-  const client = net.connect(sock);
-  client.setEncoding("utf8");
-  client.on("data", (d: string) => { for (const line of lb.push(d)) got.push(JSON.parse(line)); });
-  await connected;
+test("hello → ack(running, proto, seq); prompt relays a seq'd event; commands apply; stop", async () => {
+  const sock = join(dir, "t.sock");
+  const { cp, calls } = fakeCp();
+  daemon = new MeshHostDaemon(cp, { socketPath: sock });
+  await daemon.listen();
+  daemon.markReady();
 
-  // ready arrives first
+  const { got, send } = await connect(sock);
+  send({ t: "hello", proto: PROTO_VERSION, resumeFrom: 0 });
   await Bun.sleep(50);
-  expect(got[0]).toEqual({ t: "ready" });
+  const ack = got.find((m) => m.t === "ack");
+  expect(ack).toMatchObject({ t: "ack", proto: PROTO_VERSION, running: true });
 
-  // a prompt command is applied and its emitted event relayed back
-  client.write(encodeFrame({ t: "prompt", target: "router", text: "hi" }));
+  send({ t: "prompt", target: "router", text: "hi" });
   await Bun.sleep(50);
   expect(calls).toContain("prompt:router:hi");
-  expect(got.some((m) => m.t === "event" && m.event.kind === "log")).toBe(true);
+  const ev = got.find((m) => m.t === "event" && m.event.kind === "log");
+  expect(ev).toBeTruthy();
+  expect(typeof ev.seq).toBe("number");
 
-  // setMode command is relayed to the cp
-  client.write(encodeFrame({ t: "setMode", target: "codex-1", modeId: "read-only" }));
+  send({ t: "setMode", target: "codex-1", modeId: "read-only" });
+  send({ t: "interrupt", target: "codex-1" });
   await Bun.sleep(50);
   expect(calls).toContain("setMode:codex-1:read-only");
-
-  // interrupt command is relayed to the cp
-  client.write(encodeFrame({ t: "interrupt", target: "codex-1" }));
-  await Bun.sleep(50);
   expect(calls).toContain("interrupt:codex-1");
 
-  // stop -> cp.stop() called, {t:"stopped"} sent
-  client.write(encodeFrame({ t: "stop" }));
+  send({ t: "stop" });
   await Bun.sleep(50);
   expect(calls).toContain("stop");
   expect(got.some((m) => m.t === "stopped")).toBe(true);
-
-  client.destroy();
 });
 
-test("signalReady:false defers ready frame but still forwards events", async () => {
-  const sock = join(dir, "t2.sock");
-  const { cp } = fakeCp();
-  let cpListener: ((e: MeshEvent) => void) | undefined;
-  // wrap cp.on so the test can drive event emission directly
-  const wrapped: BridgeControlPlane = {
-    ...cp,
-    on(l) { cpListener = l; return () => { cpListener = undefined; }; },
-  };
+test("events emitted before connect are replayed on hello(resumeFrom)", async () => {
+  const sock = join(dir, "replay.sock");
+  const { cp, emit } = fakeCp();
+  daemon = new MeshHostDaemon(cp, { socketPath: sock });
+  await daemon.listen();
+  daemon.markReady();
 
-  const got: any[] = [];
-  const lb = new LineBuffer();
-  const connected = new Promise<net.Socket>((res) => {
-    server = net.createServer((s) => { bridgeControlPlaneToSocket(wrapped, s, { signalReady: false }); res(s); });
-  });
-  await new Promise<void>((r) => server.listen(sock, r));
+  // three events buffer into the ring before any client connects
+  emit({ kind: "log", text: "one", ts: "t" });
+  emit({ kind: "log", text: "two", ts: "t" });
+  emit({ kind: "log", text: "three", ts: "t" });
 
-  const client = net.connect(sock);
-  client.setEncoding("utf8");
-  client.on("data", (d: string) => { for (const line of lb.push(d)) got.push(JSON.parse(line)); });
-  await connected;
-
-  // no ready frame on attach
+  const { got, send } = await connect(sock);
+  send({ t: "hello", proto: PROTO_VERSION, resumeFrom: 0 });
   await Bun.sleep(50);
-  expect(got.some((m) => m.t === "ready")).toBe(false);
+  const replay = got.find((m) => m.t === "replay");
+  expect(replay).toBeTruthy();
+  expect(replay.events.map((e: any) => e.event.text)).toEqual(["one", "two", "three"]);
 
-  // events are still forwarded over the socket
-  cpListener?.({ kind: "log", text: "startup event", ts: "t" });
+  // a resume from seq 2 only replays what's newer
+  const { got: got2, send: send2 } = await connect(sock);
+  send2({ t: "hello", proto: PROTO_VERSION, resumeFrom: 2 });
   await Bun.sleep(50);
-  expect(got.some((m) => m.t === "event" && m.event.kind === "log")).toBe(true);
-  // still no ready frame after forwarding an event
-  expect(got.some((m) => m.t === "ready")).toBe(false);
+  const replay2 = got2.find((m) => m.t === "replay");
+  expect(replay2.events.map((e: any) => e.event.text)).toEqual(["three"]);
+});
 
-  client.destroy();
+test("a second client takes over; the first is dropped", async () => {
+  const sock = join(dir, "takeover.sock");
+  const { cp, emit } = fakeCp();
+  daemon = new MeshHostDaemon(cp, { socketPath: sock });
+  await daemon.listen();
+  daemon.markReady();
+
+  const a = await connect(sock);
+  a.send({ t: "hello", proto: PROTO_VERSION, resumeFrom: 0 });
+  await Bun.sleep(30);
+  const b = await connect(sock); // latest wins
+  b.send({ t: "hello", proto: PROTO_VERSION, resumeFrom: 0 });
+  await Bun.sleep(30);
+
+  emit({ kind: "log", text: "after-takeover", ts: "t" });
+  await Bun.sleep(50);
+  expect(b.got.some((m) => m.t === "event" && m.event.text === "after-takeover")).toBe(true);
+  expect(a.got.some((m) => m.t === "event" && m.event.text === "after-takeover")).toBe(false);
 });

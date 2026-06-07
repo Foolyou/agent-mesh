@@ -108,6 +108,10 @@ export class FakeManager {
   async stopAll(): Promise<void> {
     for (const n of this.meshes.keys()) await this.stopMesh(n).catch(() => {});
   }
+  /** Fake meshes are in-process, so "disconnect" (leave running) just means stop. */
+  disconnectAll(): void {
+    void this.stopAll();
+  }
 
   async promptRouter(name: string, text: string): Promise<void> {
     void this.reply(name, "router", `Understood — "${text}". Coordinating the members now.`);

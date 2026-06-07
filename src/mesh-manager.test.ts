@@ -77,6 +77,43 @@ test("startMesh twice errors", async () => {
   await expect(mgr.startMesh("echo")).rejects.toThrow(/already running/i);
 });
 
+test("a daemon outlives the backend: reattachRunning reconnects + replays + drives it", async () => {
+  await mgr.defineMesh(cfg);
+  const ev1: MeshEvent[] = [];
+  mgr.on((_n, e) => ev1.push(e));
+  await mgr.startMesh("echo");
+  await mgr.promptRouter("echo", "before"); // an event lands in the daemon's replay ring
+  await Bun.sleep(100);
+  expect(ev1.some((e) => e.kind === "log" && (e as any).text === "echo:before")).toBe(true);
+  const pid = mgr.pidOf("echo")!;
+
+  // simulate a backend restart: disconnect WITHOUT stopping — the daemon keeps running
+  mgr.disconnectAll();
+  expect(() => process.kill(pid, 0)).not.toThrow(); // daemon still alive after disconnect
+
+  // a fresh manager on the same runDir discovers + reattaches to the live daemon
+  const mgr2 = new MeshManager({ meshesDir: join(dir, "meshes"), runDir: join(dir, "run"), hostScript: FIXTURE });
+  await mgr2.loadDefinitions();
+  const ev2: MeshEvent[] = [];
+  mgr2.on((_n, e) => ev2.push(e));
+  const back = await mgr2.reattachRunning();
+  expect(back).toEqual(["echo"]);
+  expect(mgr2.listMeshes()[0]!.status).toBe("running");
+  expect(mgr2.pidOf("echo")).toBe(pid); // same daemon process, not a new one
+
+  // replay rebuilt the pre-restart event into the fresh manager's stream
+  await Bun.sleep(50);
+  expect(ev2.some((e) => e.kind === "log" && (e as any).text === "echo:before")).toBe(true);
+
+  // and the fresh manager can drive the reattached daemon
+  mgr2.promptAgent("echo", "r", "after");
+  await Bun.sleep(150);
+  expect(ev2.some((e) => e.kind === "log" && (e as any).text === "echo:after")).toBe(true);
+
+  await mgr2.stopMesh("echo");
+  expect(() => process.kill(pid, 0)).toThrow(); // now truly reaped
+});
+
 test("a crashed mesh host is reaped: status dead, socket file removed, restartable", async () => {
   const CRASH = join(import.meta.dir, "fixtures", "crash-host.ts");
   const crashMgr = new MeshManager({ meshesDir: join(dir, "meshes2"), runDir: join(dir, "run2"), hostScript: CRASH });
