@@ -44,3 +44,23 @@ They share nothing: separate **roots**, **ports**, and **sockets**.
 - Only changing **mesh-host core** code (ACP client, MCP mesh-tools, mailbox, permission
   response) needs that mesh restarted — pick the moment, and rely on agents committing
   often so a restart costs context, not work.
+
+## Service control — `scripts/meshd`
+
+One tool to manage the backend service for a base dir (`--root <base>` or `MESH_WORK_ROOT`,
+default `~`; `--port`, default 10010). Each base = one independent service under
+`<base>/.agent-mesh`.
+
+```bash
+scripts/meshd start            # background-start (idempotent; no-op if already up)
+scripts/meshd status           # backend up/down + pid/port + running meshes
+scripts/meshd logs -f          # follow <base>/.agent-mesh/backend.log
+scripts/meshd restart          # hot restart  (mesh daemons survive + reconnect)
+scripts/meshd restart --cold   # cold restart (also reap the mesh daemons)
+scripts/meshd stop  [--cold]   # stop the backend (--cold also reaps the daemons)
+# scope another instance:  scripts/meshd status --root ~/mesh-dev --port 10020
+```
+
+`start`/`restart` reuse `restart-work.sh` (detached, cross-checked, cold-safe); `status`/
+`stop` use `mesh ps`/`kill`. Run it from a **persistent shell (tmux)** so the service
+isn't tied to a transient session.
