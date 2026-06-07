@@ -60,6 +60,15 @@ async function listenerPid(port: number): Promise<number> {
   return Number(pid);
 }
 
+async function hasHealthyState(port: number): Promise<boolean> {
+  try {
+    const res = await fetch(`http://localhost:${port}/api/state`);
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 function killIfAlive(pid: number) {
   try {
     process.kill(pid, 0);
@@ -121,6 +130,38 @@ test("restart-work safely restarts only the backend for a temp root and port", a
   extraPids.push(newPid);
   expect(newPid).not.toBe(oldPid);
   expect(stdout).toContain(`url: http://localhost:${port}`);
+});
+
+test("restart-work refuses cross-check mismatches without starting another backend", async () => {
+  const root = await tempRoot("mesh-restart-refuse-");
+  const port = await randomPort();
+  const fakeListener = net.createServer((socket) => socket.end("not mesh\n"));
+  await new Promise<void>((resolve) => fakeListener.listen(port, "127.0.0.1", resolve));
+  try {
+    const listenerBefore = await listenerPid(port);
+    const restart = Bun.spawn(
+      ["env", "-u", "MESH_SOCK", "-u", "MESH_CONFIG", "-u", "MESH_ROOT", "bash", SCRIPT],
+      {
+        cwd: ROOT,
+        stdout: "pipe",
+        stderr: "pipe",
+        env: {
+          ...process.env,
+          MESH_WORK_ROOT: root,
+          MESH_WORK_PORT: String(port),
+          MESH_LAUNCH_CMD: "env -u MESH_SOCK -u MESH_CONFIG -u MESH_ROOT bun run src/main.ts --fake --no-master",
+        },
+      },
+    );
+    const [code, stdout, stderr] = await Promise.all([restart.exited, restart.stdout.text(), restart.stderr.text()]);
+    expect(code).not.toBe(0);
+    expect(stderr).toContain("refusing");
+    expect(stdout).not.toContain("starting backend:");
+    expect(await listenerPid(port)).toBe(listenerBefore);
+    expect(await hasHealthyState(port)).toBe(false);
+  } finally {
+    await new Promise<void>((resolve) => fakeListener.close(() => resolve()));
+  }
 });
 
 test("restart-work --cold reaps registry daemons and removes their files", async () => {

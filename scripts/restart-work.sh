@@ -117,13 +117,13 @@ find_backend_pid() {
       echo "refusing to stop: no process matched both port $PORT and root $ROOT" >&2
       echo "port candidates: ${by_port[*]:-(none)}" >&2
       echo "root candidates: ${by_root[*]:-(none)}" >&2
-      exit 1
+      return 2
     fi
     return 1
   fi
   if ((${#matches[@]} != 1)); then
     echo "refusing to stop: ambiguous backend matches: ${matches[*]}" >&2
-    exit 1
+    return 2
   fi
   printf '%s\n' "${matches[0]}"
 }
@@ -186,11 +186,16 @@ start_backend() {
 }
 
 old_pid=""
-if old_pid="$(find_backend_pid)"; then
-  stop_pid "$old_pid" "backend"
-else
-  echo "no existing backend matched port $PORT and root $ROOT; starting a new one"
-fi
+set +e
+old_pid="$(find_backend_pid)"
+find_rc=$?
+set -e
+case "$find_rc" in
+  0) stop_pid "$old_pid" "backend" ;;
+  1) echo "no existing backend matched port $PORT and root $ROOT; starting a new one" ;;
+  2) exit 1 ;;
+  *) echo "unexpected backend lookup status: $find_rc" >&2; exit 1 ;;
+esac
 
 if ((COLD)); then
   reap_daemons
