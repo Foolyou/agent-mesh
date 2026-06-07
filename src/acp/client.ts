@@ -12,6 +12,16 @@ import {
 
 export type PermissionDecision = { optionId: string } | "cancel";
 
+/** The host's env minus every MESH_* control var, so spawned agents (and any command
+ *  they run) can't accidentally re-exec the mesh binary as a mesh-host. */
+export function agentEnv(): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(process.env)) {
+    if (v !== undefined && !k.startsWith("MESH_")) out[k] = v;
+  }
+  return out;
+}
+
 // --- process-tree teardown -------------------------------------------------
 // Harnesses launch as a node wrapper that spawns a real binary child (e.g.
 // codex-acp -> codex-acp-linux-x64). Killing only the wrapper orphans the
@@ -95,7 +105,12 @@ export class AcpAgentConnection {
       stdin: "pipe",
       stdout: "pipe",
       stderr: this.opts.debug ? "inherit" : "ignore",
-      env: { ...process.env },
+      // Strip the mesh-host's control-plane env from agents (and any command they run).
+      // A leaked MESH_SOCK/MESH_CONFIG would make a `mesh` / `bun src/main.ts` invocation
+      // re-exec as a mesh-host instead of the CLI/backend — which is exactly how an agent
+      // running the restart script spawned a duplicate host and took the backend down.
+      // Agents reach the mesh via the injected MCP URL + prompt, never via env.
+      env: agentEnv(),
     });
     this.child = child;
     this.alive = true;

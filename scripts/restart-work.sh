@@ -166,7 +166,10 @@ reap_daemons() {
 start_backend() {
   : >"$LOG"
   echo "starting backend: $LAUNCH_CMD --port $PORT --root $ROOT"
-  MESH_LAUNCH_CMD="$LAUNCH_CMD" setsid bash -c 'exec ${MESH_LAUNCH_CMD:-./dist/mesh} --port "$1" --root "$2"' _ "$PORT" "$ROOT" >>"$LOG" 2>&1 &
+  # Defense-in-depth: never let the backend inherit a mesh-host's control env (MESH_SOCK/
+  # MESH_CONFIG would make it re-exec as a mesh-host instead of the backend). `env -u`
+  # strips them even if this script is run from a polluted environment (e.g. by an agent).
+  MESH_LAUNCH_CMD="$LAUNCH_CMD" setsid bash -c 'exec env -u MESH_SOCK -u MESH_CONFIG -u MESH_HOST_SCRIPT -u MESH_LEASE_MS ${MESH_LAUNCH_CMD:-./dist/mesh} --port "$1" --root "$2"' _ "$PORT" "$ROOT" >>"$LOG" 2>&1 &
   local pid="$!"
   disown "$pid" 2>/dev/null || true
 
