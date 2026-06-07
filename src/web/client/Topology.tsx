@@ -19,11 +19,13 @@ export function Topology({
   selectedAgent,
   onSelect,
   flashId,
+  maxHeight = 320,
 }: {
   summary: MeshSummary;
   selectedAgent: string | null;
   onSelect: (id: string) => void;
   flashId?: string | null;
+  maxHeight?: number;
 }) {
   const live = summary.status === "running" || summary.status === "starting";
   const router = summary.agents.find((a) => a.id === summary.router) ?? summary.agents[0];
@@ -55,7 +57,7 @@ export function Topology({
     return STATUS_COLOR[status] ?? STATUS_COLOR.stopped;
   }
 
-  const svgH = Math.min(320, H);
+  const svgH = Math.min(maxHeight, H);
   return (
     <div className="topo">
       <svg
