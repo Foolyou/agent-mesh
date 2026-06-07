@@ -166,7 +166,7 @@ reap_daemons() {
 start_backend() {
   : >"$LOG"
   echo "starting backend: $LAUNCH_CMD --port $PORT --root $ROOT"
-  MESH_LAUNCH_CMD="$LAUNCH_CMD" setsid bash -lc 'exec ${MESH_LAUNCH_CMD:-./dist/mesh} --port "$1" --root "$2"' _ "$PORT" "$ROOT" >>"$LOG" 2>&1 &
+  MESH_LAUNCH_CMD="$LAUNCH_CMD" setsid bash -c 'exec ${MESH_LAUNCH_CMD:-./dist/mesh} --port "$1" --root "$2"' _ "$PORT" "$ROOT" >>"$LOG" 2>&1 &
   local pid="$!"
   disown "$pid" 2>/dev/null || true
 
