@@ -20,15 +20,55 @@ function textOf(content: any): string {
 }
 
 /** Collapse tool-call output (ToolCallContent[] and/or rawOutput) into readable text. */
-function outputOf(content: any, rawOutput: any): string {
+function stringifyReadable(value: any): string {
+  if (typeof value === "string") return value;
+  try {
+    return JSON.stringify(value) ?? String(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function toolResponseOf(update: any): any {
+  return update?._meta?.claudeCode?.toolResponse;
+}
+
+function readableField(value: any): string | undefined {
+  if (value == null) return undefined;
+  if (typeof value === "string") return value || undefined;
+  const text = textOf(value);
+  return text || stringifyReadable(value);
+}
+
+function knownOutputFieldOf(value: any): string | undefined {
+  if (value == null) return undefined;
+  if (typeof value !== "object") return readableField(value);
+
+  for (const key of ["formatted_output", "aggregated_output"] as const) {
+    const out = readableField(value[key]);
+    if (out) return out;
+  }
+
+  const stdout = readableField(value.stdout);
+  const stderr = readableField(value.stderr);
+  if (stdout || stderr) return `${stdout ?? ""}${stderr ?? ""}`;
+
+  for (const key of ["output", "text", "content"] as const) {
+    const out = readableField(value[key]);
+    if (out) return out;
+  }
+
+  return undefined;
+}
+
+function outputOf(content: any, rawOutput: any, toolResponse?: any): string {
   let s = "";
   if (Array.isArray(content)) s = content.map((c: any) => textOf(c?.content ?? c)).join("");
-  if (!s && rawOutput) {
-    try {
-      s = typeof rawOutput === "string" ? rawOutput : JSON.stringify(rawOutput);
-    } catch {
-      s = String(rawOutput);
-    }
+  if (!s && rawOutput != null) {
+    s = knownOutputFieldOf(rawOutput) ?? stringifyReadable(rawOutput);
+  }
+  if (!s && toolResponse != null) {
+    s = knownOutputFieldOf(toolResponse) ?? stringifyReadable(toolResponse);
   }
   return s;
 }
@@ -36,6 +76,26 @@ function outputOf(content: any, rawOutput: any): string {
 /** Pretty-print a tool's raw input parameters. */
 function inputOf(rawInput: any): string | undefined {
   if (rawInput == null) return undefined;
+  if (
+    typeof rawInput === "object" &&
+    !Array.isArray(rawInput) &&
+    Object.keys(rawInput).length === 0
+  ) {
+    return undefined;
+  }
+  if (typeof rawInput === "object" && !Array.isArray(rawInput)) {
+    const command = rawInput.command;
+    const commandText = Array.isArray(command)
+      ? command.map(String).join(" ")
+      : typeof command === "string"
+        ? command
+        : undefined;
+    if (commandText) {
+      return typeof rawInput.cwd === "string" && rawInput.cwd
+        ? `command: ${commandText}\ncwd: ${rawInput.cwd}`
+        : `command: ${commandText}`;
+    }
+  }
   try {
     const s = typeof rawInput === "string" ? rawInput : JSON.stringify(rawInput, null, 2);
     return s || undefined;
@@ -51,6 +111,29 @@ function locationsOf(locations: any): string[] | undefined {
     .map((l: any) => (l?.path ? `${l.path}${l.line != null ? `:${l.line}` : ""}` : ""))
     .filter(Boolean);
   return out.length ? out : undefined;
+}
+
+function hasToolResult(update: any): boolean {
+  const content = update?.content;
+  return (
+    (Array.isArray(content) ? content.length > 0 : content != null) ||
+    update?.rawOutput != null ||
+    toolResponseOf(update) != null
+  );
+}
+
+function failedToolResult(update: any): boolean {
+  const toolResponse = toolResponseOf(update);
+  return (
+    !!toolResponse &&
+    typeof toolResponse === "object" &&
+    (toolResponse.is_error === true || "error" in toolResponse)
+  );
+}
+
+function inferredToolStatus(update: any): "completed" | "failed" | undefined {
+  if (!hasToolResult(update)) return undefined;
+  return failedToolResult(update) ? "failed" : "completed";
 }
 
 export function reduceTranscript(
@@ -107,9 +190,9 @@ export function reduceTranscript(
       toolCallId: String(update.toolCallId),
       title: update.title ?? "tool",
       toolKind: update.kind,
-      status: update.status ?? "pending",
+      status: update.status ?? inferredToolStatus(update) ?? "pending",
       input: inputOf(update.rawInput),
-      output: outputOf(update.content, update.rawOutput) || undefined,
+      output: outputOf(update.content, update.rawOutput, toolResponseOf(update)) || undefined,
       locations: locationsOf(update.locations),
       ts: now,
       updatedTs: now,
@@ -124,13 +207,17 @@ export function reduceTranscript(
     const idx = next.findIndex((it) => it.kind === "tool_call" && it.toolCallId === tcid);
     const patch: Partial<TranscriptItem> & Record<string, unknown> = { updatedTs: now };
     if (update.status != null) patch.status = update.status;
+    else {
+      const status = inferredToolStatus(update);
+      if (status) patch.status = status;
+    }
     if (update.title != null) patch.title = update.title;
     if (update.kind != null) patch.toolKind = update.kind;
     const inp = inputOf(update.rawInput);
     if (inp) patch.input = inp;
     const locs = locationsOf(update.locations);
     if (locs) patch.locations = locs;
-    const out = outputOf(update.content, update.rawOutput);
+    const out = outputOf(update.content, update.rawOutput, toolResponseOf(update));
     if (out) {
       const prev = idx >= 0 ? ((next[idx] as any).output as string | undefined) : undefined;
       patch.output = (prev || "") + out;
@@ -148,7 +235,7 @@ export function reduceTranscript(
         toolCallId: tcid,
         title: update.title ?? "tool",
         toolKind: update.kind,
-        status: update.status ?? "pending",
+        status: update.status ?? inferredToolStatus(update) ?? "pending",
         output: out || undefined,
         ts: now,
         updatedTs: now,

@@ -113,6 +113,149 @@ test("tool_call captures rawInput and locations", () => {
   expect(it.locations).toEqual(["a.ts:3"]);
 });
 
+test("claude tool_call_update reads output from _meta claudeCode toolResponse", () => {
+  const items = fold([
+    { sessionUpdate: "tool_call", toolCallId: "tc1", title: "Read", kind: "read", status: "pending" },
+    {
+      sessionUpdate: "tool_call_update",
+      toolCallId: "tc1",
+      _meta: { claudeCode: { toolName: "Read", toolResponse: { content: "first line\nsecond line" } } },
+    },
+  ]);
+
+  expect(items[0]).toMatchObject({ kind: "tool_call", toolCallId: "tc1", status: "completed" });
+  expect((items[0] as any).output).toBe("first line\nsecond line");
+});
+
+test("claude tool_call_update stringifies non-content toolResponse objects", () => {
+  const items = fold([
+    {
+      sessionUpdate: "tool_call_update",
+      toolCallId: "glob1",
+      _meta: {
+        claudeCode: {
+          toolName: "Glob",
+          toolResponse: { filenames: [], numFiles: 0, durationMs: 3, truncated: false },
+        },
+      },
+    },
+  ]);
+
+  expect(items[0]).toMatchObject({ kind: "tool_call", toolCallId: "glob1", status: "completed" });
+  expect((items[0] as any).output).toContain('"numFiles":0');
+});
+
+test("codex tool_call_update prefers formatted_output over raw output object", () => {
+  const items = fold([
+    {
+      sessionUpdate: "tool_call_update",
+      toolCallId: "exec1",
+      status: "completed",
+      rawOutput: {
+        call_id: "call_qpf",
+        command: ["/usr/bin/zsh", "-lc", "cat e2e-probe.txt"],
+        stdout: "less useful\n",
+        aggregated_output: "also less useful\n",
+        formatted_output: "ok\n",
+        exit_code: 0,
+      },
+    },
+  ]);
+
+  expect(items[0]).toMatchObject({ kind: "tool_call", toolCallId: "exec1", status: "completed" });
+  expect((items[0] as any).output).toBe("ok\n");
+});
+
+test("codex tool_call_update falls back to stdout and stderr", () => {
+  const items = fold([
+    {
+      sessionUpdate: "tool_call_update",
+      toolCallId: "exec1",
+      status: "completed",
+      rawOutput: {
+        call_id: "call_qpf",
+        command: ["/usr/bin/zsh", "-lc", "cat e2e-probe.txt"],
+        stdout: "ok\n",
+        stderr: "warning\n",
+        exit_code: 0,
+      },
+    },
+  ]);
+
+  expect((items[0] as any).output).toBe("ok\nwarning\n");
+});
+
+test("opencode tool_call_update reads output field from rawOutput objects", () => {
+  const items = fold([
+    {
+      sessionUpdate: "tool_call_update",
+      toolCallId: "read1",
+      status: "completed",
+      rawOutput: {
+        output: "<path>e2e-probe.txt</path><content>\n1: ok\n</content>",
+        metadata: { durationMs: 1 },
+      },
+    },
+  ]);
+
+  expect((items[0] as any).output).toBe("<path>e2e-probe.txt</path><content>\n1: ok\n</content>");
+});
+
+test("codex tool_call input shows command without bookkeeping fields", () => {
+  const items = fold([
+    {
+      sessionUpdate: "tool_call",
+      toolCallId: "exec1",
+      title: "exec",
+      status: "pending",
+      rawInput: {
+        call_id: "call_qpf",
+        process_id: "28446",
+        turn_id: "019ea4",
+        started_at_ms: 1780884513101,
+        command: ["/usr/bin/zsh", "-lc", "cat e2e-probe.txt"],
+        cwd: "/x",
+        parsed_cmd: [{ type: "read", cmd: "cat e2e-probe.txt" }],
+        source: "unified_exec_startup",
+      },
+    },
+  ]);
+
+  expect((items[0] as any).input).toContain("/usr/bin/zsh -lc cat e2e-probe.txt");
+  expect((items[0] as any).input).toContain("/x");
+  expect((items[0] as any).input).not.toContain("call_qpf");
+  expect((items[0] as any).input).not.toContain("parsed_cmd");
+});
+
+test("claude tool_call_update infers failed when toolResponse reports an error", () => {
+  const items = fold([
+    { sessionUpdate: "tool_call", toolCallId: "tc1", title: "Read", status: "pending" },
+    {
+      sessionUpdate: "tool_call_update",
+      toolCallId: "tc1",
+      _meta: { claudeCode: { toolResponse: { is_error: true, content: "permission denied" } } },
+    },
+  ]);
+
+  expect(items[0]).toMatchObject({ kind: "tool_call", toolCallId: "tc1", status: "failed" });
+  expect((items[0] as any).output).toBe("permission denied");
+});
+
+test("empty rawInput objects are ignored for tool calls", () => {
+  const items = fold([
+    { sessionUpdate: "tool_call", toolCallId: "tc1", title: "Read", status: "pending", rawInput: {} },
+    {
+      sessionUpdate: "tool_call_update",
+      toolCallId: "tc1",
+      rawInput: {},
+      _meta: { claudeCode: { toolResponse: "ok" } },
+    },
+  ]);
+
+  expect((items[0] as any).input).toBeUndefined();
+  expect((items[0] as any).output).toBe("ok");
+});
+
 test("plan update creates one plan item and replaces it in place", () => {
   let items = fold([
     { sessionUpdate: "plan", entries: [{ content: "impl", status: "pending" }] },
