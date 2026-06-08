@@ -1169,9 +1169,9 @@ body::after {
   z-index: 120;
   overflow: hidden;
   background:
-    linear-gradient(rgba(255, 255, 255, 0.028) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.028) 1px, transparent 1px),
-    radial-gradient(120% 90% at 50% -20%, rgba(90, 200, 224, 0.08), transparent 55%),
+    linear-gradient(color-mix(in srgb, var(--fg) 4%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--fg) 4%, transparent) 1px, transparent 1px),
+    radial-gradient(120% 90% at 50% -20%, color-mix(in srgb, var(--info) 12%, transparent), transparent 55%),
     var(--bg);
   background-size: 28px 28px, 28px 28px, auto, auto;
 }
@@ -1187,7 +1187,7 @@ body::after {
   gap: 10px;
   padding: 0 14px;
   border-bottom: 1px solid var(--line);
-  background: rgba(10, 11, 13, 0.92);
+  background: color-mix(in srgb, var(--bg-raise) 94%, transparent);
   backdrop-filter: blur(5px);
 }
 .canvas-top .ttl {
@@ -1209,7 +1209,7 @@ body::after {
   stroke: var(--line-bright);
   stroke-width: 1.4;
   vector-effect: non-scaling-stroke;
-  opacity: 0.68;
+  opacity: 1;
   transition: opacity 0.12s ease, stroke 0.12s ease;
 }
 .canvas-edge.active {
@@ -1217,7 +1217,7 @@ body::after {
   stroke-width: 2.2;
   stroke-dasharray: 10 9;
   opacity: 1;
-  filter: drop-shadow(0 0 7px rgba(90, 200, 224, 0.95));
+  filter: drop-shadow(0 0 7px color-mix(in srgb, var(--info) 95%, transparent));
   animation: canvasEdgeFlow 0.42s linear infinite, canvasEdgePulse 0.7s ease-in-out infinite alternate;
 }
 .canvas-edges marker path {
@@ -1230,10 +1230,10 @@ body::after {
 }
 @keyframes canvasEdgePulse {
   from {
-    filter: drop-shadow(0 0 3px rgba(90, 200, 224, 0.55));
+    filter: drop-shadow(0 0 3px color-mix(in srgb, var(--info) 55%, transparent));
   }
   to {
-    filter: drop-shadow(0 0 11px rgba(90, 200, 224, 1));
+    filter: drop-shadow(0 0 11px var(--info));
   }
 }
 .canvas-windows {
@@ -1248,10 +1248,10 @@ body::after {
   min-width: 280px;
   min-height: 220px;
   overflow: hidden;
-  background: rgba(16, 18, 22, 0.97);
+  background: var(--bg-raise);
   border: 1px solid var(--line-bright);
   border-radius: var(--r);
-  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.42);
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.24);
 }
 .canvas-window-head {
   min-height: 32px;
@@ -1260,7 +1260,7 @@ body::after {
   gap: 7px;
   padding: 6px 9px;
   border-bottom: 1px solid var(--line);
-  background: rgba(7, 8, 10, 0.94);
+  background: var(--bg-inset);
   cursor: grab;
   user-select: none;
 }
