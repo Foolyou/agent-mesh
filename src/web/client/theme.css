@@ -1048,6 +1048,10 @@ body::after {
   border: none;
   border-bottom: 2px solid transparent;
 }
+.conv-tabs .tab.sel {
+  color: var(--fg);
+  border-bottom-color: var(--ok);
+}
 .conv-router-tab {
   flex: none;
   background: var(--bg-inset) !important;
@@ -1507,6 +1511,9 @@ select.inp {
 .drail > .panel {
   min-height: 0;
   min-width: 0;
+}
+.dchat > .panel {
+  flex: 1;
 }
 /* segmented header (rail logs: activity / mail / history) */
 .seg-tabs {
