@@ -125,7 +125,7 @@ export type MasterStatus = "absent" | "starting" | "ready" | "stopped";
 
 export interface GatewayState {
   meshes: MeshSummary[];
-  master: { status: MasterStatus; transcript: TranscriptItem[]; capabilities?: AgentCapabilities };
+  master: { status: MasterStatus; working?: boolean; transcript: TranscriptItem[]; capabilities?: AgentCapabilities };
   perMesh: Record<string, PerMeshState>;
 }
 
@@ -145,6 +145,6 @@ export type ServerMsg =
   | { t: "mail"; name: string; entry: MailEntry }
   | { t: "permission.add"; name: string; req: PermissionReq }
   | { t: "permission.remove"; name: string; resolved: ResolvedPermission }
-  | { t: "master.status"; status: MasterStatus };
+  | { t: "master.status"; status: MasterStatus; working?: boolean };
 
 export type { MeshConfig, AgentId, AgentStatus, AgentActivity, AgentRole, HarnessId };

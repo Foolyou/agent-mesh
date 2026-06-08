@@ -48,6 +48,8 @@ export interface ManagerLike {
 export interface MasterLike {
   on(l: (u: any) => void): () => void;
   prompt(text: string, images?: PromptImageRef[]): Promise<unknown>;
+  cancel(): void;
+  get busy(): boolean;
 }
 
 const CAP = 500; // ring-buffer cap for activity / mail / history
@@ -80,7 +82,7 @@ export class WebGateway {
   ) {
     this.state = {
       meshes: [],
-      master: { status: master ? "starting" : "absent", transcript: [], capabilities: { image: false } },
+      master: { status: master ? "starting" : "absent", working: false, transcript: [], capabilities: { image: false } },
       perMesh: {},
     };
     this.refreshMeshes();
@@ -397,7 +399,19 @@ export class WebGateway {
     if (!this.master) throw new Error("master agent is not configured");
     const refs = images.map((i) => this.withBucket("master", i));
     this.foldConv({ scope: "master" }, { sessionUpdate: "user_message_chunk", content: { text }, images: refs.map(publicImageRef) }, now());
-    await this.master.prompt(text, refs);
+    this.state.master.working = true;
+    this.broadcast({ t: "master.status", status: this.state.master.status, working: true });
+    try {
+      await this.master.prompt(text, refs);
+    } finally {
+      this.state.master.working = false;
+      this.broadcast({ t: "master.status", status: this.state.master.status, working: false });
+    }
+  }
+
+  interruptMaster(): void {
+    if (!this.master) return;
+    this.master.cancel();
   }
 
   async upload(bucket: string, files: UploadFileLike[]): Promise<PromptImageRef[]> {

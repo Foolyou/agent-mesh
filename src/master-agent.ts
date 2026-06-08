@@ -14,6 +14,7 @@ export class MasterAgent {
   private listeners = new Set<(u: any) => void>();
   /** Whether the master agent advertised image input (promptCapabilities.image). */
   private imageCap = false;
+  private _busy = false;
 
   constructor(
     private manager: MeshManager,
@@ -26,6 +27,11 @@ export class MasterAgent {
       connectionFactory?: (opts: AcpConnectionOptions) => AcpAgentConnection;
     } = {},
   ) {}
+
+  /** Whether the master agent has an in-flight turn. */
+  get busy(): boolean {
+    return this._busy;
+  }
 
   /** Subscribe to the master agent's streamed session updates. */
   on(listener: (u: any) => void): () => void {
@@ -68,8 +74,17 @@ export class MasterAgent {
    *  master agent did not advertise image input (otherwise the turn would be rejected). */
   prompt(text: string, images: PromptImageRef[] = []): Promise<unknown> {
     if (!this.conn) throw new Error("master agent not started");
+    this._busy = true;
     const imgs = this.imageCap ? images : [];
-    return this.conn.prompt(text, imgs.map((i) => ({ ...i, path: i.path ?? (this.opts.uploadRoot && i.bucket ? `${this.opts.uploadRoot}/${i.bucket}/${i.id}` : undefined) })));
+    return this.conn.prompt(text, imgs.map((i) => ({ ...i, path: i.path ?? (this.opts.uploadRoot && i.bucket ? `${this.opts.uploadRoot}/${i.bucket}/${i.id}` : undefined) }))).finally(() => {
+      this._busy = false;
+    });
+  }
+
+  /** Cancel the master agent's current in-flight turn. No-op when idle. */
+  cancel(): void {
+    if (!this.conn || !this._busy) return;
+    this.conn.cancel().catch(() => {});
   }
 
   async stop(): Promise<void> {

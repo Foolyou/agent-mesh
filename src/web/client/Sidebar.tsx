@@ -159,10 +159,15 @@ function MasterChat({
             items={state.master.transcript}
             placeholder={st === "ready" ? t("conductor.placeholder") : t("conductor.starting")}
             disabled={st !== "ready"}
+            working={!!state.master.working}
+            steerEnabled={st === "ready"}
             imageEnabled={!!state.master.capabilities?.image}
             imageDisabledReason="The master agent does not advertise image input support"
             onUploadImages={(files) => store.uploadImages("master", files)}
-            onSend={(msg, images) => void store.promptMaster(msg, images)}
+            onInterrupt={st === "ready" ? () => store.interruptMaster() : undefined}
+            onSend={(msg, images, opts) =>
+              opts?.steer ? void store.promptMaster(msg, images) : void store.promptMaster(msg, images)
+            }
           />
         )}
       </div>

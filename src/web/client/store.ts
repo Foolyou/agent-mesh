@@ -99,7 +99,7 @@ export function applyMsg(state: GatewayState, msg: ServerMsg): GatewayState {
         history: cap([...pm.history, msg.resolved], CAP),
       }));
     case "master.status":
-      return { ...state, master: { ...state.master, status: msg.status } };
+      return { ...state, master: { ...state.master, status: msg.status, working: msg.working ?? state.master.working } };
     default:
       return state;
   }
@@ -136,6 +136,7 @@ export interface Store {
   setModel(name: string, agentId: string, modelId: string): Promise<any>;
   setEffort(name: string, agentId: string, effort?: ThinkingEffort): Promise<any>;
   interruptAgent(name: string, agentId: string): Promise<any>;
+  interruptMaster(): Promise<any>;
 }
 
 export function createStore(): Store {
@@ -253,6 +254,7 @@ export function createStore(): Store {
     promptAgent: (n, a, t, images) => guard(post(`/api/meshes/${enc(n)}/agents/${enc(a)}/prompt`, { text: t, images }), `prompt ${a}`),
     steerAgent: (n, a, t, images) => guard(post(`/api/meshes/${enc(n)}/agents/${enc(a)}/steer`, { text: t, images }), `steer ${a}`),
     promptMaster: (t, images) => guard(post(`/api/master/prompt`, { text: t, images }), "master"),
+    interruptMaster: () => guard(post(`/api/master/interrupt`), "interrupt master"),
     resolvePermission: (n, r, o) => guard(post(`/api/meshes/${enc(n)}/permissions/${enc(r)}/resolve`, { optionId: o }), "resolve permission"),
     setMode: (n, a, m) => guard(post(`/api/meshes/${enc(n)}/agents/${enc(a)}/mode`, { modeId: m }), `set mode ${a}`),
     setModel: (n, a, m) => guard(post(`/api/meshes/${enc(n)}/agents/${enc(a)}/model`, { modelId: m }), `set model ${a}`),

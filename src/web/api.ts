@@ -53,6 +53,10 @@ export async function handleApi(
         return fail(/not configured/.test(msg) ? 409 : 400, msg);
       }
     }
+    if (p[0] === "master" && method === "POST" && p[1] === "interrupt") {
+      gw.interruptMaster();
+      return ok();
+    }
 
     if (p[0] === "meshes") {
       // GET /api/meshes
