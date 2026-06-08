@@ -764,12 +764,50 @@ try {
   });
 
   await step("mobile detail has a single chat segment without separate agents segment", async () => {
-    await page.setViewportSize({ width: 390, height: 760 });
+    await page.setViewportSize({ width: 375, height: 667 });
     await page.waitForSelector(".mdetail .conv-panel", { timeout: 4000 });
     const tabs = await page.locator(".mtabs .mtab").allTextContents();
     if (tabs.some((x) => /agents/i.test(x))) throw new Error(`mobile still has agents segment: ${tabs.join(",")}`);
     if (!tabs.some((x) => /chat/i.test(x))) throw new Error(`mobile missing chat segment: ${tabs.join(",")}`);
     await page.locator(".mdetail .conv-router-tab .dot").waitFor({ timeout: 4000 });
+
+    const panel = page.locator(".mdetail .conv-panel");
+    if (await panel.locator(".conv-head").isVisible()) throw new Error("mobile conversation header should be hidden");
+
+    await page.evaluate(() => (window as any).__meshStore.apply({ t: "agent.activity", name: "demo", agent: "codex-1", activity: "working" }));
+    await panel.locator('.conv-member-tab:has-text("codex-1")').click();
+    await panel.locator(".conv-control .effort-sel[aria-label]").waitFor({ timeout: 4000 });
+    await panel.locator(".conv-control .mode-sel[aria-label]").waitFor({ timeout: 4000 });
+    await panel.locator(".conv-control .model-sel[aria-label]").waitFor({ timeout: 4000 });
+    const controlText = (await panel.locator(".conv-control").innerText()).toLowerCase();
+    if (controlText.includes("thinking") || controlText.includes("effort") || controlText.includes("mode") || controlText.includes("model")) {
+      throw new Error(`mobile control labels still visible: ${controlText}`);
+    }
+    const interrupt = panel.locator(".composer .compose-interrupt");
+    await interrupt.waitFor({ timeout: 4000 });
+    const interruptLabel = await interrupt.getAttribute("aria-label");
+    const interruptTitle = await interrupt.getAttribute("title");
+    if (!interruptLabel || !interruptTitle) throw new Error("mobile interrupt button is missing aria-label/title");
+    const interruptVisual = await interrupt.evaluate((el) => {
+      const text = el.querySelector(".compose-interrupt-text") as HTMLElement | null;
+      const icon = el.querySelector(".compose-interrupt-icon") as HTMLElement | null;
+      const textBox = text?.getBoundingClientRect();
+      const iconStyle = icon ? getComputedStyle(icon) : null;
+      return {
+        textWidth: textBox?.width ?? 0,
+        textHeight: textBox?.height ?? 0,
+        iconDisplay: iconStyle?.display ?? "",
+        iconText: icon?.textContent?.trim() ?? "",
+      };
+    });
+    if (interruptVisual.textWidth > 2 || interruptVisual.textHeight > 2 || interruptVisual.iconDisplay === "none" || interruptVisual.iconText !== "⏹") {
+      throw new Error(`mobile interrupt should be visually icon-only: ${JSON.stringify(interruptVisual)}`);
+    }
+    const interruptBox = await interrupt.boundingBox();
+    if (!interruptBox || interruptBox.width < 44 || interruptBox.height < 44) {
+      throw new Error(`mobile interrupt touch target too small: ${interruptBox?.width}x${interruptBox?.height}`);
+    }
+
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.waitForSelector(".drail", { timeout: 4000 });
   });

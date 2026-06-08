@@ -817,6 +817,9 @@ body::after {
   cursor: pointer;
   text-transform: uppercase;
 }
+.compose-interrupt-icon {
+  display: none;
+}
 .compose-interrupt:disabled {
   opacity: 0.35;
   cursor: not-allowed;
@@ -1730,6 +1733,82 @@ select.inp {
   .btn.sm {
     padding: 5px 10px;
     font-size: 11px;
+  }
+  .mdetail > .detail-head {
+    gap: 7px;
+    padding: 6px 8px;
+    min-height: 40px;
+  }
+  .detail-head .mtitle {
+    font-size: 13px;
+  }
+  .detail-head .meta {
+    font-size: 11px;
+  }
+  .detail-head .meta:nth-of-type(n + 2) {
+    display: none;
+  }
+  .detail-head .btn {
+    min-height: 34px;
+    padding: 5px 9px;
+  }
+  .mseg {
+    padding: 6px;
+  }
+  .mdetail .conv-head {
+    display: none !important;
+  }
+  .conv-tabs .tab {
+    padding: 8px 10px;
+  }
+  .conv-control {
+    min-height: 30px;
+    padding: 3px 6px;
+    gap: 5px;
+  }
+  .conv-control > .sub {
+    font-size: 10px;
+  }
+  .conv-control .row {
+    gap: 3px !important;
+    min-width: 0;
+  }
+  .conv-control .row > .sub {
+    display: none;
+  }
+  .conv-control .mode-sel,
+  .conv-control .model-sel,
+  .conv-control .effort-sel {
+    min-width: 0;
+    max-width: min(104px, 27vw);
+    padding: 2px 5px;
+  }
+  .empty {
+    padding: 8px;
+  }
+  .compose-interrupt {
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 15px;
+  }
+  .compose-interrupt-text {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+  .compose-interrupt-icon {
+    display: inline;
   }
   .mrow {
     padding: 11px 12px;
