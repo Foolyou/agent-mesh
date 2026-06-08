@@ -37,8 +37,9 @@ Status: Approved (三方收敛：Planner + Executor + Reviewer)，分步交付
 2. **触发语义 = C（手动 + 首封自动并存）**：用户可手动唤醒（API/UI 预热按钮）；Router 或任一已启动 agent 给 cold 目标发**被 canMail 放行**的邮件时，由 control-plane 自动 spawn。无边的邮件照常被 `canMail` 拒，不会误拉起。
 3. **状态机扩为 `cold → spawning → ready/dead`**，`mesh_status` 暴露 `cold`。
 4. **pending = 复用 mailbox**（Executor 边界）：首封邮件像普通邮件一样先落盘（已是现状），spawn ready 后由 control-plane 触发 drain，**不另造独立队列**。**P1 不扩 mailbox schema/状态机**（Executor 实现评审）：现 mailbox 只有 append + read cursor，无 pending/spawn-gated/failed 字段。P1 用「邮件已持久化 + cold/spawning 由 agent status 表达 + spawn 失败异步回执 + event/log」表达，pending-failed/retry 的 UI 与 mailbox schema 扩展推迟到 P1.5，避免 P1 被 mailbox 迁移拖大。
-5. **drain = ready 后单条 check_mail 提示**（Executor 实现评审）：spawn ready 后**不**逐封 `wake()` 注入（会给新 ready 的 agent 并发开多个 prompt turn，和 `AcpAgentConnection` 的 prompt queue/turn 语义冲突）；而是发**一条** prompt「You have pending mail; call check_mail」，由 `handleCheckMail` 用 cursor 一次读全部积压。契合「mailbox 即权威源」。
+5. **drain = ready 后单条 check_mail 提示，且每次 spawn 只 drain 一次**（Executor + Reviewer 竞态 A）：spawn ready 后**不**逐封 `wake()` 注入（会给新 ready 的 agent 并发开多个 prompt turn，和 `AcpAgentConnection` 的 prompt queue/turn 语义冲突）；而是发**一条** prompt「You have pending mail; call check_mail」，由 `handleCheckMail` 用 cursor 一次读全部积压。**drain 必须在 `spawnAgent` 成功路径内执行一次（于共享 spawn promise resolve 之前）**，绝不让每个并发 awaiter 各自 drain（否则 N 个并发首封 → N 次 drain → 积压邮件被重复唤醒）。promise resolve 之后到达的新邮件走普通 `wake`，不再 drain。
 6. **spawn 互斥用 `Map<agentId, Promise>`**（Reviewer）：细粒度按 agentId，不用全局锁；并发首封等待同一个 spawn promise，绝不起两个同 ID 进程。手动唤醒与首封自动**共用同一把锁**。spawn 内含 **timeout** 守卫，避免 init 挂死把 `ensureSpawned` 永久 wedge。
+6b. **spawn 失败熔断 / 冷却**（Reviewer 竞态 B，必修）：配置损坏（如 harness 路径错）会让每封来信都触发 spawn→秒失败→dead→再来信→再 spawn，spam 日志与 CPU。给 lazy agent 加失败计数：**连续失败 ≥3 次进入 dead 锁定，停止自动重试**，仅手动 `wakeAgent` 重置计数后再试；或记 `lastFailedAt`，冷却窗（默认 60s）内的自动来信直接回 `spawn_failed` 不再尝试 spawn。
 7. **mcp.register 幂等化**（Executor 实现评审）：`createMeshServicesServer.register` 每次 new transport + `entries.set`，非幂等；dead 后 retry / 重复 wakeAgent 会重复 register。`spawnAgent` 前维护 `registeredAgents` Set（或 register 显式 close/replace 旧 transport）。register 必须在 `newSession` 前完成（MCP HTTP path 依赖 entries 有该 id）。
 8. **canMail 对 cold/spawning 的语义**：cold/spawning 不改 `canMail` 的真值（边在就是在），但**触发投递时**若目标非 ready 则进入 spawn-gated 路径。`mesh_status` 行内状态如实显示 cold/spawning，避免 Planner 误判「已就绪」。
 9. **spawn 失败 = 异步回执，不阻塞发信方**（Executor 实现评审 + Reviewer 非静默要求的调和）：`send_mail` 保持 fire-and-forget 异步语义，**不**让首封工具阻塞到 agent init 完成/失败。spawn 失败时：agent 置 `dead` + emit event/log + **给原发件方发一封 `[SPAWN FAILED]` 回执 mail**（异步、非静默，发件方下次 check_mail 可见）。这样既不破坏 async delivery，又满足 Reviewer「不静默丢失」。
@@ -46,7 +47,7 @@ Status: Approved (三方收敛：Planner + Executor + Reviewer)，分步交付
 
 动态新增（P2/P3）：
 11. **增量 PATCH 而非全量 PUT**（Reviewer）：保留 `defineMesh` running-throw 只挡「全量覆盖」；**新增 `addEdge` / `addAgent` 增量接口**，允许 running 时调用。
-12. **原子双写**：落盘走 temp 写 + rename 原子替换；内存（daemon 内 running `Mesh`）与磁盘要么都成、要么回滚。沿用 setMode/setModel 的「父落盘 + client RPC 到 daemon」dual-write。
+12. **原子双写，顺序严格沿用 setMode 先例「父内存 → 落盘 → RPC」**（Reviewer 修正）：**禁止 daemon 先于磁盘**。若先 mutate daemon 再落盘，persist 失败时无法回滚 daemon（daemon 已有新边、磁盘没有），重启后从磁盘读旧 config → 幽灵边「运行中生效、重启后消失」。正确顺序：(1) 父进程 `entry.config` 增量（copy-on-write）→ (2) `store.define` 原子落盘（temp+rename）→ (3) `client.addEdge/addAgent` RPC 到 daemon；**RPC 失败不抛、仅 log**（daemon 重启后从磁盘追平），从而无需「回滚 daemon」这种不可能操作。落盘失败则父内存回滚（未触 daemon，安全）。
 13. **权限即时强一致 + 认知按需收敛**：`canMail` 读 live config 立即生效（强一致执行，绝不越权）；运行中 agent 的 roster 认知滞后通过 **send_mail 层兜底**收敛（见 14），不靠等 session 自然结束（给「最终」定上界）。
 14. **briefing 陈旧的兜底 = send_mail 层即时补提示**（Reviewer 主方案，取代主动广播）：发件方 briefing 里没有目标、但 edges 里有该边 → **以 edges 为准放行** + 给发件方补一句「你有一个未感知的新 peer X（状态：cold/spawning/ready）」系统提示。on-demand 收敛，不无差别打扰全员、更省 token。
 15. **system note 原语（可选优化 / P3 内）三约束**（Reviewer）：若实现主动 roster 刷新，则 (a)「下一轮」= agent **下次消费 mailbox/事件时**，非物理时间，跨 transport（stdio/sse）统一定义；(b) note **走 mailbox 队列**投递继承持久化/ack，连续多次变更**合并为最新一份**；(c) note **带 peer 状态快照**（新 peer 标 cold/spawning），避免老 agent 看 roster 立刻发却卡 pending 的「发了没动静」。
@@ -70,11 +71,12 @@ Status: Approved (三方收敛：Planner + Executor + Reviewer)，分步交付
 - 把 `start()` 循环体里「单 agent 的 register + spawn + init + newSession + 模式/模型/能力协商 + 置 ready」抽成私有 `spawnAgent(a: AgentConfig): Promise<void>`，可被懒触发复用。register **必须在 newSession 前**完成（MCP HTTP path 依赖 entries 有该 id）。
 - **register 幂等**（Executor 评审）：维护 `registeredAgents: Set<AgentId>`（或 register 显式 close/replace 旧 transport），避免 dead→retry / 重复 wakeAgent 时重复 `entries.set` + new transport。
 - `start()`：eager agent（`!a.lazy`）走 `spawnAgent`；lazy agent 只 `this.mesh.setStatus(a.id, "cold")` + emit `agent_status: cold`，**不建 conn、不 register、无子进程**。
-- **spawn 锁**：`private spawning = new Map<AgentId, Promise<void>>()`。`ensureSpawned(id)`：若 ready 直接返回；若 cold/缺 conn 则取/建 `spawning` promise（内部调 `spawnAgent`，带 **spawn timeout** 守卫），并发调用 await 同一个；成功后从 map 删除，失败置 `dead` 并删除（允许后续重试）。
+- **spawn 锁**：`private spawning = new Map<AgentId, Promise<void>>()`。`ensureSpawned(id)`：若 ready 直接返回；若 cold/缺 conn 则取/建 `spawning` promise（内部调 `spawnAgent`，带 **spawn timeout** 守卫），并发调用 await 同一个；成功后从 map 删除。**drain 在 `spawnAgent` 成功路径内、promise resolve 之前执行恰好一次**（见决策 5），awaiter 不各自 drain。
+- **失败熔断**（决策 6b）：失败计数器 `spawnFails: Map<AgentId, number>` + 可选 `lastFailedAt`。spawn 失败置 `dead`、计数 +1；连续 ≥3 次锁定不再自动重试（或冷却窗内自动来信直接回 `spawn_failed`）；手动 `wakeAgent` 重置计数。
 
 **首封自动触发**（`control-plane.ts` `handleSendMail` / `wake`）：
 - `handleSendMail` 通过 `canMail` 后，`sendMail()` 落盘不变，工具**立即返回**（保持 fire-and-forget async delivery，不阻塞发信方）。投递阶段：若 `this.mesh.status(to) !== "ready"` 且 agent 是 lazy/cold → 异步 `wakeLazy(to, from)`，否则现有 `wake(to)`。
-- `wakeLazy(to, from)`（异步、不阻塞 send_mail 返回）：`await ensureSpawned(to)`；**ready 后 drain = 发一条 prompt「You have pending mail; call check_mail」**，由 `handleCheckMail` 用 cursor 一次读全部积压（**不**逐封 wake 注入，避免并发多 turn 与 ACP queue 冲突）。spawn 失败 → agent 置 `dead` + emit event/log + **给 `from` 发一封 `[SPAWN FAILED]` 回执 mail**（异步非静默，发件方下次 check_mail 见）；积压邮件保留在 mailbox。
+- `wakeLazy(to, from)`（异步、不阻塞 send_mail 返回）：先查熔断（锁定/冷却中 → 回 `spawn_failed` 回执给 `from`，不再 spawn）；否则 `await ensureSpawned(to)`。**drain 不在此处做**——它在 `spawnAgent` 成功路径内统一执行一次（发一条「call check_mail」prompt，由 `handleCheckMail` cursor 一次读全部积压），避免 N 个并发 awaiter 触发 N 次 drain。spawn 失败 → agent 置 `dead` + 计数 + emit event/log + **给 `from` 发一封 `[SPAWN FAILED]` 回执 mail**；积压邮件保留在 mailbox。
 - pending 上限：P1 不做数值硬上限（pending 即磁盘 mailbox，无内存队列 OOM），见决策 10。
 
 **手动唤醒**：
@@ -85,18 +87,19 @@ Status: Approved (三方收敛：Planner + Executor + Reviewer)，分步交付
 ### P2 — 运行时加边
 
 - **接口**：`MeshManager.addEdge(name, edge: MeshEdge)`；daemon 侧 `ControlPlane.addEdge(edge)`。
-- **流程**（dual-write，沿用 setMode 先例）：校验（from/to 存在、to 非 dead、边不重复、steer→router 拒绝复用现有 `mesh-validate`）→ daemon 内 mutate running `Mesh.config.edges`（需让 `Mesh` 支持增量加边，见下）→ 父进程 `store` 原子增量写（temp+rename）。任一失败回滚内存。
+- **流程（顺序严格：父内存 → 落盘 → RPC，见决策 12）**：校验（from/to 存在、to 非 dead、边不重复、steer→router 拒绝，复用现有 `mesh-validate`）→ (1) 父进程 `entry.config` 增量（copy-on-write）→ (2) `store.define` 原子落盘（temp+rename）→ (3) `client.addEdge` RPC 到 daemon，daemon 内 `ControlPlane.addEdge` mutate running `Mesh`。**RPC 失败仅 log 不抛**（daemon 重启后从磁盘追平）；落盘失败则父内存回滚（未触 daemon）。**绝不 daemon 先于磁盘**，杜绝幽灵边。
 - **`Mesh` 可变化最小改动**：新增 `Mesh.addEdge(edge)` / `Mesh.addAgent(cfg)` 方法在内部 push 到 `config.edges` / `config.agents`（`config` 仍 readonly 引用，但内部数组可控增长；或改为持有可变副本）。`canMail` 立即读到新边 → 权限强一致生效。
-- **认知收敛**：见 P2/P3 共用的 send_mail 兜底（决策 12）。加边瞬间，`from` agent 的 briefing 可能没列 `to`；下次它 `send_mail(to)` 时 edges 已放行 + 补「新 peer」提示。
+- **认知收敛**：见 P2/P3 共用的 send_mail 兜底（决策 14）。加边瞬间，`from` agent 的 briefing 可能没列 `to`；下次它 `send_mail(to)` 时 edges 已放行 + 补「新 peer」提示。
 - emit 一条事件（如 `kind:"topology"` 或复用 log）让 UI 拓扑图刷新。
 
 ### P3 — 运行时加 Agent
 
 - **接口**：`MeshManager.addAgent(name, cfg: AgentConfig, edges?: MeshEdge[])`；daemon 侧 `ControlPlane.addAgent(cfg)` + 逐条 `addEdge`。
 - **流程**：校验（id 唯一、harness 合法、非 router 重复）→ daemon `Mesh.addAgent`，**默认置 cold**（新成员天然懒启动，不立即 spawn）→ 注册可 spawn（复用 P1 `spawnAgent` / `ensureSpawned`）→ 可选连边（P2 `addEdge`）→ 父进程原子增量落盘。
-- **新 agent 视角无陈旧**：它一旦 spawn，`newSession` 注入的是 live roster，认得全员。陈旧只在「老 agent → 新 agent」方向，由 send_mail 兜底（决策 12）收敛。
+- **流程顺序同 P2（父内存 → 落盘 → RPC，见决策 12）**：先父 `entry.config` 增量 agent(+edges) → 原子落盘 → `client.addAgent` RPC，daemon `Mesh.addAgent` 默认置 `cold`（新成员天然懒启动，不立即 spawn），注册留待 P1 `ensureSpawned` 懒触发。RPC 失败仅 log。
+- **新 agent 视角无陈旧**：它一旦 spawn，`newSession` 注入的是 live roster，认得全员。陈旧只在「老 agent → 新 agent」方向，由 send_mail 兜底（决策 14）收敛。
 - **P3a**：先「加孤立 cold agent（无边）」，再「加 agent + 连边」。
-- **send note 原语**：作为可选优化，按决策 13 三约束实现；不实现则纯靠 send_mail 兜底（功能正确，认知 on-demand 收敛）。
+- **send note 原语**：作为可选优化，按决策 15 三约束实现；不实现则纯靠 send_mail 兜底（功能正确，认知 on-demand 收敛）。
 
 ### send_mail 层兜底（P2/P3 共用，认知收敛主方案）
 
@@ -107,9 +110,10 @@ Status: Approved (三方收敛：Planner + Executor + Reviewer)，分步交付
 P1 单测（`control-plane.test.ts` / `mesh.test.ts`）：
 - `lazy` agent 启动后状态为 `cold`，无子进程；eager agent 为 `ready`。
 - 首封 canMail 放行邮件 → 触发 spawn → 状态 cold→spawning→ready → ready 后发 check_mail drain 提示，agent 经 check_mail 一次读到全部积压。
-- **并发首封只 spawn 一次**（用可控 deferred 的 connectionFactory：两封同时到 cold 目标，断言 `spawnAgent`/register 只调一次，两封都进 mailbox 且 drain 后可读）。
+- **并发首封只 spawn 一次、drain 只一次**（用可控 deferred 的 connectionFactory：两封同时到 cold 目标，断言 `spawnAgent`/register 只调一次、check_mail drain 提示只发一次，两封都进 mailbox 且 drain 后可读、不重复唤醒）。
 - 无边邮件不触发 spawn（canMail 拒）。
 - spawn 失败：agent 置 dead + emit event + 给 `from` 发 `[SPAWN FAILED]` 回执 mail（from 可 check_mail 读到）；积压邮件保留。
+- **失败熔断**：连续 ≥3 次 spawn 失败后锁定，后续自动来信直接回 `spawn_failed`、不再 spawn；手动 `wakeAgent` 重置后可再试（断言 spawn 调用次数被熔断截停）。
 - register 幂等：dead 后重新 wakeAgent 不重复 `entries.set`/不泄漏 transport。
 - spawn timeout：init 永久挂起时 `ensureSpawned` 超时置 dead，不 wedge。
 - send_mail fire-and-forget：对 cold 目标发信，工具立即返回（不阻塞到 spawn 完成）。
@@ -118,6 +122,7 @@ P1 单测（`control-plane.test.ts` / `mesh.test.ts`）：
 
 P2/P3 单测：
 - `addEdge` running 时成功、落盘、`canMail` 立即 true；to=dead 拒绝；重复边幂等/拒绝；steer→router 拒绝。
+- **写顺序**：落盘成功但 daemon RPC 失败 → 边仍在磁盘（重启追平），不静默丢失（无幽灵边）；落盘失败 → 父内存回滚、daemon 未触动。
 - 原子写：模拟写中断不留半份 config（temp+rename）。
 - `addAgent` 新成员置 cold、可被首封拉起；连边后老 agent send_mail 命中兜底提示。
 - `defineMesh` 全量仍 running-throw（安全门不破）。
@@ -134,7 +139,7 @@ e2e（`src/web/*.e2e.ts`，Playwright 自带 chromium）：
 P1：
 - `src/acp/types.ts`（`AgentConfig.lazy`、`AgentStatus` 加 `cold`、event 联合）
 - `src/mesh-validate.ts`（router 不得 lazy）
-- `src/control-plane.ts`（`spawnAgent` 抽取、cold 启动分支、`spawning` 锁、`ensureSpawned`、`wakeLazy` + drain、pending 上限、`wakeAgent`）
+- `src/control-plane.ts`（`spawnAgent` 抽取、cold 启动分支、`spawning` 锁、`ensureSpawned`、`registeredAgents` 幂等、`wakeLazy` + 单次 drain、失败熔断计数、spawn timeout、`wakeAgent`）
 - `src/mesh-manager.ts` / daemon RPC / `src/web/api.ts` / `src/web/client/store.ts`（`wakeAgent` 通路）
 - `src/web/types.ts` + 前端状态徽标 / `MeshBuilder.tsx`（lazy 勾选 + cold 徽标 + 启动按钮）+ `i18n.ts`
 - 对应 `*.test.ts` / `*.e2e.ts`
@@ -162,6 +167,7 @@ P3：
 | 任务链断裂 | Planner→被删 Executor→Reviewer 链中间节点消失，Reviewer 永久挂起。 |
 | worktree/资源泄漏 | 进程退出 ≠ worktree 清理，同名 agent 重启冲突。 |
 | 重调度 | 被删 agent 未完成工作分散在各处内存，Planner 难以精确重分配。 |
+| briefing 引用残留 | 老 agent 的 system prompt 仍列被删 peer 为可邮对象，LLM 可能反复规划向不存在节点发信（`canMail` 会拦，但认知噪音/幻觉上升）。与新增的 briefing 陈旧是同一枚硬币两面。 |
 
 一句话：新增是「扩展状态空间」，旧状态不受影响；删除是「收缩状态空间」，必须证明「所有引用已安全释放」——分布式无共识架构下该证明成本极高，冷重启是最便宜的正确性保证。
 
@@ -170,4 +176,4 @@ P3：
 - 删 Agent / 删边（走冷重启）。
 - 主动 roster 广播刷新作为强一致机制（仅作可选优化，权限始终靠 canMail）。
 - 远程/跨机懒启动的可达性探测与超时治理（本期 cold→spawn 限本地进程）。
-- pending 邮件的复杂优先级/调度（FIFO + 硬上限即可）。
+- pending 邮件的复杂优先级/调度、mailbox 状态机扩展（P1 复用现有 append+cursor；pending-failed/retry 与数值上限推迟 P1.5）。
