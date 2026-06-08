@@ -469,6 +469,7 @@ export function MeshCanvas({
           const isRouter = agent.id === m.router;
           const z = 20 + order.indexOf(agent.id);
           const status = live ? agent.status : "stopped";
+          const working = live && agent.activity === "working";
           return (
             <section
               className="canvas-window"
@@ -490,7 +491,16 @@ export function MeshCanvas({
                   imageEnabled={!!pm.capabilities?.[agent.id]?.image}
                   imageDisabledReason="This agent does not advertise image input support"
                   onUploadImages={(files) => store.uploadImages(m.name, files)}
-                  onSend={(msg, images) => (isRouter ? void store.promptRouter(m.name, msg, images) : void store.promptAgent(m.name, agent.id, msg, images))}
+                  working={working}
+                  steerEnabled={!isRouter && live}
+                  onInterrupt={!isRouter && working ? () => store.interruptAgent(m.name, agent.id) : undefined}
+                  onSend={(msg, images, opts) =>
+                    isRouter
+                      ? void store.promptRouter(m.name, msg, images)
+                      : opts?.steer
+                        ? void store.steerAgent(m.name, agent.id, msg, images)
+                        : void store.promptAgent(m.name, agent.id, msg, images)
+                  }
                 />
               </div>
               <div className="canvas-resize-grip" onPointerDown={(e) => startResize(agent.id, e)} />

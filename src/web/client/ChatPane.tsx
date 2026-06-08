@@ -12,17 +12,23 @@ const INTERACTIVE = "button, a, input, textarea, select, .thought .label, .tool 
 export function ChatPane({
   items,
   onSend,
+  onInterrupt,
   onUploadImages,
   placeholder,
   disabled,
+  working,
+  steerEnabled,
   imageEnabled,
   imageDisabledReason,
 }: {
   items: TranscriptItem[];
-  onSend: (text: string, images?: PromptImageRef[]) => void | Promise<void>;
+  onSend: (text: string, images?: PromptImageRef[], opts?: { steer?: boolean }) => void | Promise<void>;
+  onInterrupt?: () => void | Promise<void>;
   onUploadImages?: (files: File[]) => Promise<PromptImageRef[]>;
   placeholder?: string;
   disabled?: boolean;
+  working?: boolean;
+  steerEnabled?: boolean;
   imageEnabled?: boolean;
   imageDisabledReason?: string;
 }) {
@@ -43,9 +49,12 @@ export function ChatPane({
       <Composer
         ref={taRef}
         onSend={onSend}
+        onInterrupt={onInterrupt}
         onUploadImages={onUploadImages}
         placeholder={placeholder}
         disabled={disabled}
+        working={working}
+        steerEnabled={steerEnabled}
         imageEnabled={imageEnabled}
         imageDisabledReason={imageDisabledReason}
       />

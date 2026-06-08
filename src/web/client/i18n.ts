@@ -73,8 +73,8 @@ const DICT: Record<string, Entry> = {
   interrupt: ["interrupt", "中断"],
   full: ["full", "全屏"],
   exit: ["exit", "退出"],
-  "router.placeholder": ["talk to the router…", "与 router 对话…"],
-  "agent.placeholder": ["message {id}…", "发消息给 {id}…"],
+  "router.placeholder": ["talk to the router… (Enter send)", "与 router 对话…(Enter 发送)"],
+  "agent.placeholder": ["message {id}… (Enter send · Ctrl+Enter steer)", "发消息给 {id}…(Enter 发送 · Ctrl+Enter 打断引导)"],
   mode: ["mode", "模式"],
   "mode.hint": ["initial permission/operating mode (the agent can also switch at runtime)", "初始许可/工作模式(运行时也可切换)"],
   "mode.default": ["default", "默认"],
@@ -89,7 +89,7 @@ const DICT: Record<string, Entry> = {
   "effort.medium": ["medium", "中"],
   "effort.high": ["high", "高"],
   activity: ["activity", "活动"],
-  "activity.sub": ["mail · interrupt · permission · log", "邮件 · 中断 · 权限 · 日志"],
+  "activity.sub": ["mail · steer · interrupt · permission · log", "邮件 · 引导 · 中断 · 权限 · 日志"],
   mailbox: ["mailbox", "邮箱"],
   "mailbox.sub": ["inter-agent mail", "agent 间邮件"],
   "permission history": ["permission history", "权限历史"],
@@ -127,8 +127,8 @@ const DICT: Record<string, Entry> = {
 
   // ── composer ──
   "composer.placeholder": [
-    "type a message…  (Enter to send · Shift+Enter for newline)",
-    "输入消息…(Enter 发送 · Shift+Enter 换行)",
+    "type a message…  (Enter send · Ctrl+Enter steer · Shift+Enter newline)",
+    "输入消息…(Enter 发送 · Ctrl+Enter 打断引导 · Shift+Enter 换行)",
   ],
 
   // ── theme / language chrome ──
@@ -158,6 +158,11 @@ const DICT: Record<string, Entry> = {
     "仅该 agent 可见,下次启动时生效。",
   ],
   "build.edges": ["mail edges — from → to (directed)", "邮件边 —— from → to(有向)"],
+  "build.steer": ["steer", "引导"],
+  "build.steer.tooltip": [
+    "Allow this agent to cancel the recipient's current turn, including router/human-started turns, and steer ahead of queued mail.",
+    "允许该 agent 取消收件人当前回合（含 router/人类发起的回合）并插队引导。",
+  ],
   "build.addEdge": ["+ edge", "+ 边"],
   "build.charter": [
     "team charter — shared goal + norms, injected into every agent (optional)",

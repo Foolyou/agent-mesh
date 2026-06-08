@@ -386,10 +386,25 @@ try {
   });
 
   await step("operator interrupt cancels an agent's turn (activity from 'operator')", async () => {
-    // codex-1 panel is active from the tool-call step; click its interrupt button
-    await page.locator(".dchat .panel:has(.tabs) .btn", { hasText: "interrupt" }).first().click();
+    await page.evaluate(() => (window as any).__meshStore.apply({ t: "agent.activity", name: "demo", agent: "codex-1", activity: "working" }));
+    await page.locator('.topo .node:has-text("codex-1")').click();
+    const panel = page.locator(".dchat .panel:has(.tabs)").first();
+    await panel.locator(".conv-control .btn", { hasText: "interrupt" }).waitFor({ state: "detached", timeout: 1000 }).catch(() => {});
+    await panel.locator(".composer .compose-interrupt", { hasText: "interrupt" }).click();
     await page.locator('.drail .seg-tab:has-text("activity")').click();
     await page.waitForSelector('.drail .panel .tx:has-text("operator")', { timeout: 6000 });
+  });
+
+  await step("operator Ctrl+Enter steers an agent and records steer activity", async () => {
+    await page.locator('.topo .node:has-text("codex-1")').click();
+    const panel = page.locator(".dchat .panel:has(.tabs)").first();
+    const input = panel.locator(".composer textarea");
+    await input.fill("redirect via steer");
+    await input.press("Control+Enter");
+    await panel.locator(".msg.user .bubble", { hasText: "redirect via steer" }).last().waitFor({ timeout: 6000 });
+    await page.locator('.drail .seg-tab:has-text("activity")').click();
+    await page.waitForSelector('.drail .panel .k.steer', { timeout: 6000 });
+    await page.waitForSelector('.drail .panel .tx:has-text("redirect via steer")', { timeout: 6000 });
   });
 
   await step("master chat: send instruction → user bubble + streamed reply", async () => {
@@ -398,6 +413,39 @@ try {
     await input.press("Enter");
     await page.waitForSelector('.panel:has(.head:has-text("Mesh Assistant")) .msg.user', { timeout: 6000 });
     await page.waitForSelector('.panel:has(.head:has-text("Mesh Assistant")) .msg.agent', { timeout: 8000 });
+  });
+
+  await step("master chat fullscreens on desktop and Esc exits without hiding composer", async () => {
+    const panel = page.locator(".master-chat");
+    await panel.locator('button[aria-label*="Mesh Assistant"]').click();
+    await panel.evaluate((el) => {
+      const box = (el as HTMLElement).getBoundingClientRect();
+      if (box.left > 1 || box.top > 1 || Math.abs(box.width - window.innerWidth) > 2 || Math.abs(box.height - window.innerHeight) > 2) {
+        throw new Error(`master chat was not fullscreen: ${box.left},${box.top},${box.width}x${box.height}`);
+      }
+    });
+    await panel.locator(".composer textarea").waitFor({ timeout: 4000 });
+    await page.keyboard.press("Escape");
+    await page.waitForFunction(() => !document.querySelector(".master-chat")?.classList.contains("master-full"), { timeout: 4000 });
+  });
+
+  await step("master chat fullscreens on mobile and Esc exits without hiding composer", async () => {
+    await page.setViewportSize({ width: 375, height: 667 });
+    const back = page.locator('.topbar .btn:has-text("back")');
+    if (await back.count()) await back.click();
+    const panel = page.locator(".master-chat");
+    await panel.locator('button[aria-label*="Mesh Assistant"]').click();
+    await panel.evaluate((el) => {
+      const box = (el as HTMLElement).getBoundingClientRect();
+      if (box.left > 1 || box.top > 1 || Math.abs(box.width - window.innerWidth) > 2 || Math.abs(box.height - window.innerHeight) > 2) {
+        throw new Error(`mobile master chat was not fullscreen: ${box.left},${box.top},${box.width}x${box.height}`);
+      }
+    });
+    await panel.locator(".composer textarea").waitFor({ timeout: 4000 });
+    await page.keyboard.press("Escape");
+    await page.waitForFunction(() => !document.querySelector(".master-chat")?.classList.contains("master-full"), { timeout: 4000 });
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.locator('.mrow:has-text("demo")').click();
   });
 
   await step("router chat: send prompt → user bubble", async () => {
@@ -739,12 +787,20 @@ try {
     const harnessOpts = await page.locator(".modal .agrow select").nth(0).locator("option").allTextContents();
     if (!harnessOpts.includes("kimi")) throw new Error(`builder harness options missing kimi: ${harnessOpts.join(",")}`);
     await page.locator(".modal .agent-instructions").first().fill("Router should coordinate handoffs and keep tasks scoped.");
+    await page.locator('.modal .btn:has-text("+ agent")').click();
+    await page.locator(".modal .agrow").nth(1).locator("input").first().fill("worker");
+    await page.locator(".modal .agrow").nth(1).locator("select").nth(0).selectOption("opencode");
+    await page.locator(".modal .agrow").nth(1).locator("select").nth(1).selectOption("member");
+    await page.locator('.modal .btn:has-text("+ edge")').click();
+    await page.locator('.modal .field:has(label:has-text("mail edges")) .row').last().locator("select").nth(0).selectOption("router");
+    await page.locator('.modal .field:has(label:has-text("mail edges")) .row').last().locator("select").nth(1).selectOption("worker");
+    await page.locator('.modal .field:has(label:has-text("mail edges")) .row').last().locator('input[type="checkbox"]').check();
     await page
       .locator('.modal .field:has(label:has-text("team charter")) textarea')
       .fill("Goal: build a tiny CLI. Norms: be concise, write a test.");
     // set the (claude) agent's thinking effort; mode/model are runtime-only pickers now.
     const adv = page.locator(".modal .agrow-adv .adv-sel");
-    if ((await adv.count()) !== 1) throw new Error("builder should only render the effort selector");
+    if ((await adv.count()) !== 2) throw new Error("builder should render one effort selector per agent and no mode/model selectors");
     await adv.nth(0).selectOption("high"); // effort
     await page.screenshot({ path: `${SHOTS}/03-builder.png`, fullPage: true });
     await page.locator('.modal .btn:has-text("define mesh")').click();
@@ -765,11 +821,26 @@ try {
     if (!instructionsVal.includes("coordinate handoffs")) throw new Error(`instructions not prefilled: "${instructionsVal}"`);
     // effort round-trips from the saved config; mode/model are not editable in the builder.
     const adv2 = page.locator(".modal .agrow-adv .adv-sel");
-    if ((await adv2.count()) !== 1) throw new Error("edit builder should only render the effort selector");
+    if ((await adv2.count()) !== 2) throw new Error("edit builder should render one effort selector per agent and no mode/model selectors");
     if ((await adv2.nth(0).inputValue()) !== "high") throw new Error("effort not prefilled");
+    const steerChecked = await page.locator('.modal .field:has(label:has-text("mail edges")) input[type="checkbox"]').first().isChecked();
+    if (!steerChecked) throw new Error("steer checkbox not prefilled");
     await page.locator('.modal .btn:has-text("save mesh")').click();
     await page.waitForSelector(".modal", { state: "detached", timeout: 4000 });
     await page.waitForSelector('.mrow:has-text("squad-x")', { timeout: 4000 });
+  });
+
+  await step("mesh builder rejects steer edges targeting the router", async () => {
+    await page.locator('.detail-head .btn:has-text("edit")').click();
+    await page.waitForSelector('.modal .mhead:has-text("edit mesh")', { timeout: 4000 });
+    const edgeRow = page.locator('.modal .field:has(label:has-text("mail edges")) .row').first();
+    await edgeRow.locator("select").nth(0).selectOption("worker");
+    await edgeRow.locator("select").nth(1).selectOption("router");
+    await edgeRow.locator('input[type="checkbox"]').check();
+    await page.locator('.modal .btn:has-text("save mesh")').click();
+    await page.waitForSelector(".modal .err", { timeout: 4000 });
+    await page.locator(".modal .mhead .btn").click();
+    await page.waitForSelector(".modal", { state: "detached", timeout: 4000 });
   });
 
   await step("delete a stopped mesh (two-click confirm) removes it", async () => {

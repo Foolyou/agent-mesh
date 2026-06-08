@@ -93,6 +93,7 @@ function ModeControl({ mesh, agent, store, modes }: { mesh: string; agent: strin
       <select
         className="mode-sel"
         value={modes.current}
+        aria-label={t("mode")}
         title={desc ?? t("mode.hint")}
         onKeyDown={(e) => e.stopPropagation()}
         onChange={(e) => void store.setMode(mesh, agent, e.target.value)}
@@ -118,6 +119,7 @@ function ModelControl({ mesh, agent, store, models }: { mesh: string; agent: str
       <select
         className="model-sel"
         value={models.current}
+        aria-label={t("model")}
         title={t("model.hint")}
         onKeyDown={(e) => e.stopPropagation()}
         onChange={(e) => void store.setModel(mesh, agent, e.target.value)}
@@ -151,6 +153,7 @@ function EffortControl({ m, agent, store }: { m: MeshSummary; agent: string; sto
         className="effort-sel"
         value={a.effort ?? ""}
         disabled={live}
+        aria-label={t("effort")}
         title={live ? t("effort.hint.live") : t("effort.hint")}
         onKeyDown={(e) => e.stopPropagation()}
         onChange={(e) => void store.setEffort(m.name, agent, (e.target.value || undefined) as ThinkingEffort | undefined)}
@@ -219,6 +222,7 @@ function ConversationPanel({
 
   if (!cur) return <Empty>{t("empty.members")}</Empty>;
   const statusOf = (id: string) => (live ? (m.agents.find((a) => a.id === id)?.status ?? "stopped") : "stopped");
+  const working = live && cur.activity === "working";
   const activate = (id: string) => {
     onActivate(id);
     setMenuOpen(false);
@@ -272,18 +276,13 @@ function ConversationPanel({
           <span style={{ flex: 1 }} />
           <EffortControl m={m} agent={cur.id} store={store} />
           {live ? (
-            <Btn small kind="stop" title={t("interrupt")} onClick={() => void store.interruptAgent(m.name, cur.id)}>
-              {t("interrupt")}
-            </Btn>
-          ) : null}
-          {live ? (
             <ModeControl mesh={m.name} agent={cur.id} store={store} modes={pm.modes?.[cur.id]} />
           ) : null}
           {live ? (
             <ModelControl mesh={m.name} agent={cur.id} store={store} models={pm.models?.[cur.id]} />
           ) : null}
           {!mobile ? (
-            <Btn small kind="ghost" onClick={onToggleFull} title={t("full")}>
+            <Btn small kind="ghost" onClick={onToggleFull} title={fullscreen ? t("exit") : t("full")} ariaLabel={`${fullscreen ? t("exit") : t("full")} ${t("conversation")}`} >
               {fullscreen ? `⊟ ${t("exit")}` : `⊞ ${t("full")}`}
             </Btn>
           ) : null}
@@ -294,7 +293,16 @@ function ConversationPanel({
           imageEnabled={!!pm.capabilities?.[cur.id]?.image}
           imageDisabledReason="This agent does not advertise image input support"
           onUploadImages={(files) => store.uploadImages(m.name, files)}
-          onSend={(msg, images) => (isRouter ? void store.promptRouter(m.name, msg, images) : void store.promptAgent(m.name, activeId, msg, images))}
+          working={working}
+          steerEnabled={!isRouter && live}
+          onInterrupt={!isRouter && working ? () => store.interruptAgent(m.name, cur.id) : undefined}
+          onSend={(msg, images, opts) =>
+            isRouter
+              ? void store.promptRouter(m.name, msg, images)
+              : opts?.steer
+                ? void store.steerAgent(m.name, activeId, msg, images)
+                : void store.promptAgent(m.name, activeId, msg, images)
+          }
         />
       </div>
     </div>

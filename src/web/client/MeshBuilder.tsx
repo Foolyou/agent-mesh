@@ -76,6 +76,7 @@ export function MeshBuilder({
   const addEdge = () => setEdges((e) => [...e, { from: ids[0] ?? "", to: ids[1] ?? ids[0] ?? "" }]);
   const setEdge = (i: number, which: 0 | 1, v: string) =>
     setEdges((e) => e.map((edge, j) => (j === i ? (which === 0 ? { ...edge, from: v } : { ...edge, to: v }) : edge)));
+  const setEdgeSteer = (i: number, steer: boolean) => setEdges((e) => e.map((edge, j) => (j === i ? { ...edge, steer } : edge)));
   const delEdge = (i: number) => setEdges((e) => e.filter((_, j) => j !== i));
 
   async function submit() {
@@ -199,6 +200,10 @@ export function MeshBuilder({
                     </option>
                   ))}
                 </select>
+                <label className="check-inline" title={t("build.steer.tooltip")}>
+                  <input type="checkbox" checked={edge.steer === true} onChange={(e) => setEdgeSteer(i, e.target.checked)} />
+                  {t("build.steer")}
+                </label>
                 <Btn small kind="ghost" onClick={() => delEdge(i)}>
                   ✕
                 </Btn>

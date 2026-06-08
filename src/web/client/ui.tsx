@@ -22,6 +22,7 @@ export function Btn({
   kind,
   disabled,
   title,
+  ariaLabel,
   small,
 }: {
   children: ReactNode;
@@ -29,6 +30,7 @@ export function Btn({
   kind?: "go" | "stop" | "ghost";
   disabled?: boolean;
   title?: string;
+  ariaLabel?: string;
   small?: boolean;
 }) {
   return (
@@ -37,6 +39,7 @@ export function Btn({
       onClick={onClick}
       disabled={disabled}
       title={title}
+      aria-label={ariaLabel}
     >
       {children}
     </button>
@@ -71,13 +74,16 @@ export function Panel({
 /** Auto-growing, wrapping multi-line input. Enter sends, Shift+Enter inserts a
  *  newline. Exposes its <textarea> via ref so a parent can focus-on-click. */
 export const Composer = forwardRef<HTMLTextAreaElement, {
-  onSend: (text: string, images?: PromptImageRef[]) => void | Promise<void>;
+  onSend: (text: string, images?: PromptImageRef[], opts?: { steer?: boolean }) => void | Promise<void>;
+  onInterrupt?: () => void | Promise<void>;
   onUploadImages?: (files: File[]) => Promise<PromptImageRef[]>;
   placeholder?: string;
   disabled?: boolean;
+  working?: boolean;
+  steerEnabled?: boolean;
   imageEnabled?: boolean;
   imageDisabledReason?: string;
-}>(function Composer({ onSend, onUploadImages, placeholder, disabled, imageEnabled, imageDisabledReason }, ref) {
+}>(function Composer({ onSend, onInterrupt, onUploadImages, placeholder, disabled, working, steerEnabled, imageEnabled, imageDisabledReason }, ref) {
   const [v, setV] = useState("");
   const [pending, setPending] = useState<{ file: File; url: string }[]>([]);
   const [err, setErr] = useState("");
@@ -104,6 +110,11 @@ export const Composer = forwardRef<HTMLTextAreaElement, {
 
   function onKey(e: KeyboardEvent<HTMLTextAreaElement>) {
     e.stopPropagation(); // keep keystrokes out of the global shortcuts
+    if (e.key === "Enter" && e.ctrlKey && !e.shiftKey) {
+      e.preventDefault();
+      void submit(steerEnabled ? { steer: true } : undefined);
+      return;
+    }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       void submit();
@@ -141,7 +152,7 @@ export const Composer = forwardRef<HTMLTextAreaElement, {
     addFiles(files);
   }
 
-  async function submit() {
+  async function submit(opts?: { steer?: boolean }) {
     if (sending || disabled) return;
     const text = v.trim();
     if (!text && !pending.length) return;
@@ -151,7 +162,7 @@ export const Composer = forwardRef<HTMLTextAreaElement, {
       // Only upload + attach images when the target agent advertises image support. Otherwise the
       // server would drop them anyway, so we skip the upload and the user keeps the warning below.
       const images = imageEnabled && pending.length && onUploadImages ? await onUploadImages(pending.map((p) => p.file)) : [];
-      await onSend(text, images);
+      await onSend(text, images, opts);
       for (const p of pending) URL.revokeObjectURL(p.url);
       setPending([]);
       setV("");
@@ -169,6 +180,7 @@ export const Composer = forwardRef<HTMLTextAreaElement, {
   }
 
   const canAttach = !disabled;
+  const showInterrupt = !!onInterrupt && !!working;
   // images were attached to an agent that can't receive them — they'll be dropped on send
   const imagesWontSend = pending.length > 0 && imageEnabled === false;
   return (
@@ -192,7 +204,7 @@ export const Composer = forwardRef<HTMLTextAreaElement, {
           rows={1}
           value={v}
           disabled={disabled || sending}
-          placeholder={placeholder ?? "type a message…  (Enter to send · Shift+Enter for newline)"}
+          placeholder={placeholder ?? "type a message…  (Enter send · Ctrl+Enter steer · Shift+Enter newline)"}
           onChange={(e) => setV(e.target.value)}
           onKeyDown={onKey}
           onPaste={onPaste}
@@ -200,15 +212,32 @@ export const Composer = forwardRef<HTMLTextAreaElement, {
         {imagesWontSend ? <div className="compose-warn">⚠ {imageDisabledReason ?? "this agent can’t receive images — they won’t be sent"}</div> : null}
         {err ? <div className="compose-error">{err}</div> : null}
       </div>
-      <button
-        className="attach-btn"
-        type="button"
-        disabled={!canAttach || sending}
-        title={imageEnabled ? "attach image" : imageDisabledReason ?? "this agent may not accept images"}
-        onClick={() => fileRef.current?.click()}
-      >
-        📎
-      </button>
+      <div className="compose-actions">
+        {showInterrupt ? (
+          <button
+            className="compose-interrupt"
+            type="button"
+            disabled={disabled || sending}
+            title="interrupt current Agent"
+            aria-label="interrupt current Agent"
+            onClick={() => void onInterrupt?.()}
+          >
+            <span className="compose-interrupt-text">interrupt</span>
+            <span className="compose-interrupt-icon" aria-hidden="true">
+              ⏹
+            </span>
+          </button>
+        ) : null}
+        <button
+          className="attach-btn"
+          type="button"
+          disabled={!canAttach || sending}
+          title={imageEnabled ? "attach image" : imageDisabledReason ?? "this agent may not accept images"}
+          onClick={() => fileRef.current?.click()}
+        >
+          📎
+        </button>
+      </div>
       <input
         ref={fileRef}
         type="file"
