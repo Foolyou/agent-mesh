@@ -419,6 +419,13 @@ body::after {
   min-height: 0;
   min-width: 0;
 }
+/* The stream is a flex column that scrolls (overflow:auto). Its children must keep their
+   content height and never be squished to fit — without this, an overflowing transcript
+   lets flexbox shrink items, and any item with overflow:hidden (e.g. .tool cards, whose
+   auto min-size becomes 0) collapses to its borders (~2px). */
+.stream > * {
+  flex-shrink: 0;
+}
 .msg {
   animation: fadeUp 0.18s ease;
   max-width: 92%;
