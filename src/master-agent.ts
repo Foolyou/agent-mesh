@@ -2,7 +2,7 @@
 // Optional LLM control layer: a claude ACP agent whose only tools are the
 // mesh-control lifecycle tools. The system runs fully without it.
 import { resolve } from "node:path";
-import { AcpAgentConnection } from "./acp/client";
+import { AcpAgentConnection, type AcpConnectionOptions } from "./acp/client";
 import type { PromptImageRef } from "./acp/types";
 import { resolveHarness } from "./harness";
 import { createMeshControlHandlers, createMeshControlServer, type MeshControlServer } from "./mcp/mesh-control";
@@ -17,7 +17,14 @@ export class MasterAgent {
 
   constructor(
     private manager: MeshManager,
-    private opts: { project?: string; onUpdate?: (u: any) => void; debug?: boolean; uploadRoot?: string; onCapabilities?: (caps: { image: boolean }) => void } = {},
+    private opts: {
+      project?: string;
+      onUpdate?: (u: any) => void;
+      debug?: boolean;
+      uploadRoot?: string;
+      onCapabilities?: (caps: { image: boolean }) => void;
+      connectionFactory?: (opts: AcpConnectionOptions) => AcpAgentConnection;
+    } = {},
   ) {}
 
   /** Subscribe to the master agent's streamed session updates. */
@@ -31,7 +38,8 @@ export class MasterAgent {
     try {
       const spec = resolveHarness("claude");
       const cwd = resolve(process.cwd(), this.opts.project ?? ".");
-      this.conn = new AcpAgentConnection({
+      const connectionFactory = this.opts.connectionFactory ?? ((connOpts: AcpConnectionOptions) => new AcpAgentConnection(connOpts));
+      this.conn = connectionFactory({
         id: "master",
         command: spec.command,
         args: spec.args,
@@ -43,9 +51,9 @@ export class MasterAgent {
         },
       });
       await this.conn.start();
-      await this.conn.initialize();
-      const session = await this.conn.newSession([{ type: "http", name: "mesh-control", url: this.mcp.url, headers: [] }]);
-      this.imageCap = !!(session as any)?.promptCapabilities?.image;
+      const initRes = await this.conn.initialize();
+      await this.conn.newSession([{ type: "http", name: "mesh-control", url: this.mcp.url, headers: [] }]);
+      this.imageCap = !!(initRes as any)?.agentCapabilities?.promptCapabilities?.image;
       this.opts.onCapabilities?.({ image: this.imageCap });
     } catch (err) {
       this.conn?.kill();

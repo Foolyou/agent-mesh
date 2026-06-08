@@ -4,7 +4,7 @@
 import { join, resolve } from "node:path";
 import { mkdir } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
-import { AcpAgentConnection, type PermissionDecision } from "./acp/client";
+import { AcpAgentConnection, type AcpConnectionOptions, type PermissionDecision } from "./acp/client";
 import { spawnConfigFor } from "./harness";
 import { Mesh } from "./mesh";
 import { buildMeshBriefing } from "./mesh-briefing";
@@ -23,6 +23,7 @@ export interface ControlPlaneOptions {
   permissionTimeoutMs?: number;
   debug?: boolean;
   uploadRoot?: string;
+  connectionFactory?: (opts: AcpConnectionOptions) => AcpAgentConnection;
 }
 
 export class ControlPlane {
@@ -36,6 +37,7 @@ export class ControlPlane {
   private permissionTimeoutMs: number;
   private debug: boolean;
   private uploadRoot?: string;
+  private connectionFactory: (opts: AcpConnectionOptions) => AcpAgentConnection;
   /** Per-agent advertised image-input capability (promptCapabilities.image). */
   private imageCaps = new Map<AgentId, boolean>();
   /** Agents that have already received the one-time mesh briefing. */
@@ -47,6 +49,7 @@ export class ControlPlane {
     this.permissionTimeoutMs = opts.permissionTimeoutMs ?? 60_000;
     this.debug = opts.debug ?? false;
     this.uploadRoot = opts.uploadRoot;
+    this.connectionFactory = opts.connectionFactory ?? ((connOpts) => new AcpAgentConnection(connOpts));
   }
 
   // ---- event bus ----
@@ -126,7 +129,7 @@ export class ControlPlane {
       const cwd = resolve(process.cwd(), a.project);
 
       await this.mcp.register(a.id, a.role);
-      const conn = new AcpAgentConnection({
+      const conn = this.connectionFactory({
         id: a.id,
         command,
         args,
@@ -144,7 +147,7 @@ export class ControlPlane {
 
       this.emit({ kind: "agent_status", agent: a.id, status: "spawning", ts: now() });
       await conn.start();
-      await conn.initialize();
+      const initRes = await conn.initialize();
       const session = await conn.newSession([{ type: "http", name: "mesh", url: this.mcp.urlFor(a.id), headers: [] }]);
       // Surface the agent's advertised session modes so the operator gets a real picker
       // (read-only / full-access / plan / …) instead of having to know mode-id strings.
@@ -163,7 +166,7 @@ export class ControlPlane {
       if (available.length) {
         this.emit({ kind: "agent_modes", agent: a.id, current, available, ts: now() });
       }
-      const imageCap = !!(session as any)?.promptCapabilities?.image;
+      const imageCap = !!(initRes as any)?.agentCapabilities?.promptCapabilities?.image;
       this.imageCaps.set(a.id, imageCap);
       this.emit({ kind: "agent_capabilities", agent: a.id, image: imageCap, ts: now() });
       this.mesh.setStatus(a.id, "ready");
