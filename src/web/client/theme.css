@@ -1054,9 +1054,7 @@ body::after {
 }
 .conv-router-tab {
   flex: none;
-  background: var(--bg-inset) !important;
   border-right: 1px solid var(--line) !important;
-  box-shadow: inset -8px 0 12px rgba(0, 0, 0, 0.16);
 }
 .conv-router-tab .pin {
   color: var(--fg-faint);

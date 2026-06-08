@@ -101,6 +101,14 @@ try {
     const rbox = await routerTab.boundingBox();
     const stripBox = await panel.locator(".conv-member-strip").boundingBox();
     if (!rbox || !stripBox || rbox.x >= stripBox.x) throw new Error("router tab is not pinned left of member strip");
+    const routerStyle = await routerTab.evaluate((el) => {
+      const cs = getComputedStyle(el as HTMLElement);
+      return { backgroundColor: cs.backgroundColor, boxShadow: cs.boxShadow };
+    });
+    if (routerStyle.backgroundColor !== "rgba(0, 0, 0, 0)") {
+      throw new Error(`router tab should use transparent member-tab background, got ${routerStyle.backgroundColor}`);
+    }
+    if (routerStyle.boxShadow !== "none") throw new Error(`router tab should not have inset shadow, got ${routerStyle.boxShadow}`);
 
     const assertSelectedTab = async (selector: string, label: string) => {
       const style = await panel.locator(selector).first().evaluate((el) => {
