@@ -37,6 +37,8 @@ const PAIRS: Pair[] = [
   { fg: "warn", bg: "bg", kind: "ui", note: "warn status" },
   { fg: "bad", bg: "bg", kind: "ui", note: "bad status" },
   { fg: "info", bg: "bg", kind: "ui", note: "info / mail accent" },
+  { fg: "info", bg: "bg-raise", kind: "text", note: "info links / canvas active edge near raised surfaces" },
+  { fg: "info", bg: "bg-inset", kind: "text", note: "info links / canvas active edge near inset surfaces" },
   { fg: "off", bg: "bg", kind: "ui", note: "off / dead dot" },
   // control + divider borders must be perceivable
   { fg: "line-bright", bg: "bg", kind: "ui", note: "control border (buttons)" },
