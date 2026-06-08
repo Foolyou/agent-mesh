@@ -209,6 +209,7 @@ export async function runMeshHost(): Promise<void> {
     debug: process.env.MESH_DEBUG === "1",
     mailboxPath: root ? join(root, `${config.name}-mailbox.ndjson`) : undefined,
     uploadRoot: root ? join(root, "uploads") : undefined,
+    sessionRunDir: runDir,
   });
 
   await rm(socketPath, { force: true }); // clear a stale socket from a prior crash

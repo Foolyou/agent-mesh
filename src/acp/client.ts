@@ -103,6 +103,7 @@ type QueuedPrompt = {
 export class AcpAgentConnection {
   readonly id: string;
   sessionId?: string;
+  supportsLoadSession = false;
   alive = false;
   private child?: ReturnType<typeof Bun.spawn>;
   private conn?: ClientSideConnection;
@@ -189,13 +190,15 @@ export class AcpAgentConnection {
   }
 
   async initialize() {
-    return this.conn!.initialize({
+    const res = await this.conn!.initialize({
       protocolVersion: PROTOCOL_VERSION,
       clientCapabilities: {
         fs: { readTextFile: true, writeTextFile: true },
         terminal: false,
       },
     });
+    this.supportsLoadSession = !!(res as any)?.agentCapabilities?.loadSession;
+    return res;
   }
 
   async newSession(mcpServers: any[] = []) {

@@ -7,6 +7,7 @@ import type { AcpAgentConnection, AcpConnectionOptions } from "./acp/client";
 import type { MeshConfig } from "./acp/types";
 import { ControlPlane } from "./control-plane";
 import { DEMO_MESH } from "./config";
+import { readSessionState } from "./session-storage";
 
 class FakeAcpConnection {
   constructor(private opts: AcpConnectionOptions) {}
@@ -414,6 +415,40 @@ test("start derives modes and models from configOptions when availableModes are 
     await cp.setModel("router", "kimi-k2");
     expect(conn?.setModels).toEqual(["deepseek-v3", "kimi-k2"]);
     expect(events).toContainEqual(expect.objectContaining({ kind: "agent_models", agent: "router", current: "kimi-k2" }));
+  } finally {
+    await cp.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("start persists fresh session identity into the sessions store", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mesh-control-plane-sessions-"));
+  const config: MeshConfig = {
+    name: "session-capture",
+    agents: [{ id: "router", harness: "opencode", project: root, role: "router", mode: "plan", model: "deepseek-v3", effort: "high" }],
+    edges: [],
+  };
+  const cp = new ControlPlane(config, {
+    mailboxPath: join(root, "mailbox.ndjson"),
+    sessionRunDir: join(root, "run"),
+    connectionFactory: (opts) => new ConfigOptionsConnection(opts) as unknown as AcpAgentConnection,
+  });
+
+  try {
+    await cp.start();
+    expect(await readSessionState(join(root, "run"), "session-capture")).toEqual({
+      meshExpectedAlive: true,
+      agents: {
+        router: {
+          sessionId: "s-router",
+          cwd: root,
+          harness: "opencode",
+          model: "deepseek-v3",
+          mode: "plan",
+          effort: "high",
+        },
+      },
+    });
   } finally {
     await cp.stop();
     await rm(root, { recursive: true, force: true });

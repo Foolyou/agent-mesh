@@ -48,7 +48,7 @@ export async function readRecord(runDir: string, name: string): Promise<MeshHost
 export async function listLiveRecords(runDir: string): Promise<MeshHostRecord[]> {
   let files: string[];
   try {
-    files = (await readdir(runDir)).filter((f) => f.endsWith(".json"));
+    files = (await readdir(runDir)).filter((f) => f.endsWith(".json") && !f.endsWith(".sessions.json"));
   } catch {
     return [];
   }

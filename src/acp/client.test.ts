@@ -28,6 +28,29 @@ test("prompt constructs ACP text plus readable image blocks and skips missing fi
   }
 });
 
+test("initialize captures advertised loadSession support", async () => {
+  const payloads: Array<{ name: string; res: any; expected: boolean }> = [
+    { name: "codex", res: { agentCapabilities: { loadSession: true } }, expected: true },
+    { name: "claude", res: { agentCapabilities: { loadSession: true, promptCapabilities: { image: true } } }, expected: true },
+    { name: "kimi", res: { agentCapabilities: { loadSession: true } }, expected: true },
+    { name: "opencode", res: { agentCapabilities: { loadSession: true, sessionCapabilities: { resume: {} } } }, expected: true },
+    { name: "synthetic-false", res: { agentCapabilities: { loadSession: false } }, expected: false },
+    { name: "synthetic-missing", res: { agentCapabilities: {} }, expected: false },
+  ];
+
+  for (const payload of payloads) {
+    const c = Object.create(AcpAgentConnection.prototype) as AcpAgentConnection;
+    (c as any).id = payload.name;
+    (c as any).supportsLoadSession = false;
+    (c as any).conn = {
+      initialize: async () => payload.res,
+    };
+
+    expect(await c.initialize()).toEqual(payload.res);
+    expect(c.supportsLoadSession).toBe(payload.expected);
+  }
+});
+
 test("setModel writes one raw ACP session/set_model line to child stdin", async () => {
   const chunks: Uint8Array[] = [];
   let flushes = 0;

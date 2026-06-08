@@ -11,6 +11,7 @@ import { buildMeshBriefing } from "./mesh-briefing";
 import { createMeshServicesServer, type MeshServicesServer, type MeshToolContext } from "./mcp/mesh-services";
 import { sendMail, readMailFor } from "./mailbox";
 import { now, type AgentActivity, type AgentConfig, type AgentId, type MeshConfig, type MeshEvent, type PromptImageRef, type SessionMode, type SessionModel } from "./acp/types";
+import { updateAgentSession } from "./session-storage";
 
 interface PendingDecision {
   resolve: (decision: PermissionDecision) => void;
@@ -23,6 +24,8 @@ export interface ControlPlaneOptions {
   permissionTimeoutMs?: number;
   debug?: boolean;
   uploadRoot?: string;
+  /** ${root}/run directory for durable per-mesh ACP session identity. */
+  sessionRunDir?: string;
   connectionFactory?: (opts: AcpConnectionOptions) => AcpAgentConnection;
   /** lazy agent spawn must either finish or fail within this window */
   spawnTimeoutMs?: number;
@@ -39,6 +42,7 @@ export class ControlPlane {
   private permissionTimeoutMs: number;
   private debug: boolean;
   private uploadRoot?: string;
+  private sessionRunDir?: string;
   private connectionFactory: (opts: AcpConnectionOptions) => AcpAgentConnection;
   private spawnTimeoutMs: number;
   private spawning = new Map<AgentId, Promise<void>>();
@@ -62,6 +66,7 @@ export class ControlPlane {
     this.permissionTimeoutMs = opts.permissionTimeoutMs ?? 60_000;
     this.debug = opts.debug ?? false;
     this.uploadRoot = opts.uploadRoot;
+    this.sessionRunDir = opts.sessionRunDir;
     this.connectionFactory = opts.connectionFactory ?? ((connOpts) => new AcpAgentConnection(connOpts));
     this.spawnTimeoutMs = opts.spawnTimeoutMs ?? 60_000;
   }
@@ -275,8 +280,9 @@ export class ControlPlane {
         this.emit({ kind: "agent_modes", agent: a.id, current, available, ts: now() });
       }
       const configModel = deriveConfigOption(session, "model");
+      let currentModel: string | undefined = a.model;
       if (configModel?.available.length) {
-        let currentModel = configModel.current;
+        currentModel = configModel.current;
         if (a.model && configModel.available.some((mo) => mo.id === a.model)) {
           try {
             await conn.setModel(a.model);
@@ -289,6 +295,16 @@ export class ControlPlane {
         }
         this.sessionModels.set(a.id, { current: currentModel, available: configModel.available });
         this.emit({ kind: "agent_models", agent: a.id, current: currentModel, available: configModel.available, ts: now() });
+      }
+      if (this.sessionRunDir && typeof (session as any)?.sessionId === "string") {
+        await updateAgentSession(this.sessionRunDir, this.mesh.name, a.id, {
+          sessionId: (session as any).sessionId,
+          cwd,
+          harness: a.harness,
+          model: currentModel,
+          mode: current || a.mode,
+          effort: a.effort,
+        });
       }
       const imageCap = !!(initRes as any)?.agentCapabilities?.promptCapabilities?.image;
       this.imageCaps.set(a.id, imageCap);
