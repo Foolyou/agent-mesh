@@ -16,6 +16,15 @@ const cp = {
       listener = undefined;
     };
   },
+  snapshotEvents() {
+    const ts = "snapshot";
+    return config.agents.flatMap((agent) => [
+      { kind: "agent_status" as const, agent: agent.id, status: "ready" as const, ts },
+      { kind: "agent_activity" as const, agent: agent.id, activity: "idle" as const, ts },
+      { kind: "agent_capabilities" as const, agent: agent.id, image: true, ts },
+      { kind: "agent_modes" as const, agent: agent.id, current: "default", available: [{ id: "default", name: "Default" }], ts },
+    ]);
+  },
   async prompt(_target: string, text: string) {
     listener?.({ kind: "log", text: `echo:${text}`, ts: "t" });
     return {};

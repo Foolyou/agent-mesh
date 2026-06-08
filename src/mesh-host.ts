@@ -15,6 +15,7 @@ import { now, type MeshConfig, type MeshEvent, type PromptImageRef } from "./acp
 /** The slice of ControlPlane the daemon depends on (keeps it unit-testable). */
 export interface BridgeControlPlane {
   on(listener: (e: MeshEvent) => void): () => void;
+  snapshotEvents(): MeshEvent[];
   prompt(target: string, text: string, images?: PromptImageRef[]): Promise<unknown>;
   resolveDecision(requestId: string, optionId: string, by?: "human" | "timeout"): boolean;
   setMode(target: string, modeId: string): Promise<void>;
@@ -128,6 +129,7 @@ export class MeshHostDaemon {
         // replay everything the parent hasn't seen, then acknowledge with run state.
         const replay = this.ring.filter((e) => e.seq > msg.resumeFrom);
         if (replay.length) this.write(sock, { t: "replay", events: replay });
+        for (const event of this.cp.snapshotEvents()) this.onEvent(event);
         this.write(sock, { t: "ack", proto: PROTO_VERSION, running: this.ready, seq: this.seq });
         break;
       }

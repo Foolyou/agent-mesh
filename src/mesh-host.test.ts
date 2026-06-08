@@ -18,6 +18,7 @@ function fakeCp() {
   const calls: string[] = [];
   const cp: BridgeControlPlane = {
     on(l) { listener = l; return () => { listener = undefined; }; },
+    snapshotEvents() { return []; },
     async prompt(target, text) { calls.push(`prompt:${target}:${text}`); listener?.({ kind: "log", text: "got prompt", ts: "t" }); return {}; },
     resolveDecision(requestId, optionId) { calls.push(`resolve:${requestId}:${optionId}`); return true; },
     async setMode(target, modeId) { calls.push(`setMode:${target}:${modeId}`); },
@@ -95,6 +96,36 @@ test("events emitted before connect are replayed on hello(resumeFrom)", async ()
   await Bun.sleep(50);
   const replay2 = got2.find((m) => m.t === "replay");
   expect(replay2.events.map((e: any) => e.event.text)).toEqual(["three"]);
+});
+
+test("hello backfills current agent state after ring replay", async () => {
+  const sock = join(dir, "snapshot.sock");
+  const { cp, emit } = fakeCp();
+  (cp as any).snapshotEvents = () => [
+    { kind: "agent_status", agent: "router", status: "ready", ts: "snap" },
+    { kind: "agent_activity", agent: "router", activity: "idle", ts: "snap" },
+    { kind: "agent_capabilities", agent: "router", image: true, ts: "snap" },
+    { kind: "agent_modes", agent: "router", current: "default", available: [{ id: "default", name: "Default" }], ts: "snap" },
+  ];
+  daemon = new MeshHostDaemon(cp, { socketPath: sock, ringCap: 1 });
+  await daemon.listen();
+  daemon.markReady();
+
+  // Simulate a long-running daemon whose original startup events have rolled out of the ring.
+  emit({ kind: "agent_status", agent: "router", status: "spawning", ts: "old" });
+  emit({ kind: "log", text: "later event", ts: "newer" });
+
+  const { got, send } = await connect(sock);
+  send({ t: "hello", proto: PROTO_VERSION, resumeFrom: 0 });
+  await Bun.sleep(50);
+
+  const replay = got.find((m) => m.t === "replay");
+  expect(replay.events.map((e: any) => e.event.kind)).toEqual(["log"]);
+  const events = got.filter((m) => m.t === "event").map((m) => m.event);
+  expect(events).toContainEqual(expect.objectContaining({ kind: "agent_status", agent: "router", status: "ready" }));
+  expect(events).toContainEqual(expect.objectContaining({ kind: "agent_activity", agent: "router", activity: "idle" }));
+  expect(events).toContainEqual(expect.objectContaining({ kind: "agent_capabilities", agent: "router", image: true }));
+  expect(events).toContainEqual(expect.objectContaining({ kind: "agent_modes", agent: "router", current: "default" }));
 });
 
 test("a second client takes over; the first is dropped", async () => {
