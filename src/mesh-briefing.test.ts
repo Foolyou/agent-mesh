@@ -73,6 +73,60 @@ test("team charter is injected when present and omitted when absent", () => {
   expect(buildMeshBriefing(new Mesh(cfg), "codex-1")).not.toContain("Team charter");
 });
 
+test("per-agent instructions are injected for that agent with indentation", () => {
+  const mesh = new Mesh({
+    ...cfg,
+    agents: cfg.agents.map((a) =>
+      a.id === "codex-1" ? { ...a, instructions: "Focus on implementation.\nReport blockers early." } : a,
+    ),
+  });
+  const b = buildMeshBriefing(mesh, "codex-1");
+  expect(b).toContain("Your role-specific instructions");
+  expect(b).toContain("  Focus on implementation.\n  Report blockers early.");
+  expect(buildMeshBriefing(mesh, "opencode-1")).not.toContain("Your role-specific instructions");
+});
+
+test("blank or missing per-agent instructions leave the briefing unchanged", () => {
+  const base = buildMeshBriefing(new Mesh(cfg), "codex-1");
+  const blank = buildMeshBriefing(
+    new Mesh({
+      ...cfg,
+      agents: cfg.agents.map((a) => (a.id === "codex-1" ? { ...a, instructions: "   \n\t" } : a)),
+    }),
+    "codex-1",
+  );
+  expect(blank).toBe(base);
+  expect(base).not.toContain("Your role-specific instructions");
+});
+
+test("team charter appears before per-agent instructions when both are present", () => {
+  const b = buildMeshBriefing(
+    new Mesh({
+      ...cfg,
+      charter: "Shared goal first.",
+      agents: cfg.agents.map((a) => (a.id === "codex-1" ? { ...a, instructions: "Private guidance second." } : a)),
+    }),
+    "codex-1",
+  );
+  const charterIndex = b.indexOf("Team charter");
+  const instructionsIndex = b.indexOf("Your role-specific instructions");
+  expect(charterIndex).toBeGreaterThanOrEqual(0);
+  expect(instructionsIndex).toBeGreaterThan(charterIndex);
+});
+
+test("per-agent instructions can appear without a team charter", () => {
+  const b = buildMeshBriefing(
+    new Mesh({
+      ...cfg,
+      agents: cfg.agents.map((a) => (a.id === "codex-1" ? { ...a, instructions: "Solo private guidance." } : a)),
+    }),
+    "codex-1",
+  );
+  expect(b).not.toContain("Team charter");
+  expect(b).toContain("Your role-specific instructions");
+  expect(b).toContain("  Solo private guidance.");
+});
+
 test("unknown agent yields an empty briefing", () => {
   expect(buildMeshBriefing(new Mesh(cfg), "ghost")).toBe("");
 });

@@ -24,6 +24,8 @@ export interface AgentConfig {
    *  applied via setSessionMode right after the session starts. Operator can still switch at
    *  runtime. `undefined` = the agent's own default mode. */
   mode?: string;
+  /** Optional per-agent instructions injected into THIS agent's briefing only. Free text. */
+  instructions?: string;
 }
 
 export interface MeshConfig {

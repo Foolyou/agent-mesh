@@ -1358,6 +1358,17 @@ select.inp {
   padding: 3px 6px;
   font-size: 12px;
 }
+.agent-instructions-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-left: 2px;
+}
+.agent-instructions {
+  min-height: 64px;
+  resize: vertical;
+  font-family: var(--mono);
+}
 .err {
   color: var(--bad);
   font-size: 12px;

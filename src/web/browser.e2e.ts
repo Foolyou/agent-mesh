@@ -736,7 +736,10 @@ try {
 
   await step("mesh builder: valid config creates a mesh", async () => {
     await page.locator('.modal .field:has(label:has-text("mesh name")) input').fill("squad-x");
-    await page.locator(".modal textarea").fill("Goal: build a tiny CLI. Norms: be concise, write a test.");
+    await page.locator(".modal .agent-instructions").first().fill("Router should coordinate handoffs and keep tasks scoped.");
+    await page
+      .locator('.modal .field:has(label:has-text("team charter")) textarea')
+      .fill("Goal: build a tiny CLI. Norms: be concise, write a test.");
     // set the (claude) agent's thinking effort + initial permission mode in the builder
     const adv = page.locator(".modal .agrow-adv .adv-sel");
     await adv.nth(0).selectOption("high"); // effort
@@ -757,8 +760,10 @@ try {
     await page.waitForSelector('.modal .mhead:has-text("edit mesh")', { timeout: 4000 });
     const val = await page.locator('.modal .field:has(label:has-text("mesh name")) input').inputValue();
     if (val !== "squad-x") throw new Error(`edit prefill wrong name: "${val}"`);
-    const charterVal = await page.locator(".modal textarea").inputValue();
+    const charterVal = await page.locator('.modal .field:has(label:has-text("team charter")) textarea').inputValue();
     if (!charterVal.includes("build a tiny CLI")) throw new Error(`charter not prefilled: "${charterVal}"`);
+    const instructionsVal = await page.locator(".modal .agent-instructions").first().inputValue();
+    if (!instructionsVal.includes("coordinate handoffs")) throw new Error(`instructions not prefilled: "${instructionsVal}"`);
     // effort + initial mode round-trip from the saved config back into the builder
     const adv2 = page.locator(".modal .agrow-adv .adv-sel");
     if ((await adv2.nth(0).inputValue()) !== "high") throw new Error("effort not prefilled");
