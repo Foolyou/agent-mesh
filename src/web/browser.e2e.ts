@@ -73,6 +73,37 @@ try {
     if (nodes !== 3) throw new Error(`expected 3 nodes, got ${nodes}`);
     const edges = await page.locator(".topo .edge").count();
     if (edges < 1) throw new Error("no topology edges");
+    const curve = await page.locator(".topo svg").evaluate((svg) => {
+      const edge = svg.querySelector('.edge[data-from="codex-1"][data-to="opencode-1"]') as SVGPathElement | null;
+      const reverse = svg.querySelector('.edge[data-from="opencode-1"][data-to="codex-1"]') as SVGPathElement | null;
+      const router = [...svg.querySelectorAll(".node")].find((n) => n.textContent?.includes("router")) as SVGGElement | undefined;
+      if (!edge || !reverse || !router) return null;
+      const mid = edge.getPointAtLength(edge.getTotalLength() / 2);
+      const reverseMid = reverse.getPointAtLength(reverse.getTotalLength() / 2);
+      const ctm = edge.getScreenCTM();
+      if (!ctm) return null;
+      const screenMid = new DOMPoint(mid.x, mid.y).matrixTransform(ctm);
+      const screenReverseMid = new DOMPoint(reverseMid.x, reverseMid.y).matrixTransform(ctm);
+      const routerBox = router.getBoundingClientRect();
+      const outsideRouter =
+        screenMid.x < routerBox.left - 4 ||
+        screenMid.x > routerBox.right + 4 ||
+        screenMid.y < routerBox.top - 4 ||
+        screenMid.y > routerBox.bottom + 4;
+      return {
+        d: edge.getAttribute("d") ?? "",
+        reverseD: reverse.getAttribute("d") ?? "",
+        midX: screenMid.x,
+        reverseMidX: screenReverseMid.x,
+        outsideRouter,
+      };
+    });
+    if (!curve) throw new Error("missing member-to-member topology edge paths");
+    if (!curve.d.includes(" Q ") || !curve.reverseD.includes(" Q ")) throw new Error(`member edges were not curved: ${curve.d} / ${curve.reverseD}`);
+    if (!curve.outsideRouter) throw new Error(`member edge still crosses the router node at midpoint x=${curve.midX}`);
+    if (Math.abs(curve.midX - curve.reverseMidX) < 40) {
+      throw new Error(`bidirectional member edges were not visually separated: ${curve.midX} vs ${curve.reverseMidX}`);
+    }
     const box = await page.locator(".topo svg").boundingBox();
     if (!box || box.height < 120) throw new Error(`topology svg too short (${box?.height}px) — graph cropped`);
   });

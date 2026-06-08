@@ -16,6 +16,8 @@ const STATUS_COLOR: Record<string, string> = {
 
 const NODE_W = 132;
 const NODE_H = 46;
+const ROUTER_EDGE_BEND = 22;
+const MEMBER_EDGE_BEND = 150;
 
 export function topologyNodePositions(summary: MeshSummary): { width: number; height: number; positions: Map<string, { x: number; y: number }> } {
   const router = summary.agents.find((a) => a.id === summary.router) ?? summary.agents[0];
@@ -63,6 +65,24 @@ export function Topology({
     return { x: to.x - (dx / len) * inset, y: to.y - (dy / len) * inset };
   }
 
+  function edgePath(fromId: string, toId: string, start: { x: number; y: number }, end: { x: number; y: number }) {
+    const fromRouter = fromId === summary.router;
+    const toRouter = toId === summary.router;
+    const bend = fromRouter || toRouter ? ROUTER_EDGE_BEND : MEMBER_EDGE_BEND;
+    const [lo, hi] = fromId < toId ? [fromId, toId] : [toId, fromId];
+    const loPos = pos.get(lo) ?? start;
+    const hiPos = pos.get(hi) ?? end;
+    const dx = hiPos.x - loPos.x;
+    const dy = hiPos.y - loPos.y;
+    const len = Math.hypot(dx, dy) || 1;
+    const side = fromId === lo ? 1 : -1;
+    const nx = (-dy / len) * side;
+    const ny = (dx / len) * side;
+    const cx = (start.x + end.x) / 2 + nx * bend;
+    const cy = (start.y + end.y) / 2 + ny * bend;
+    return `M ${start.x.toFixed(1)} ${start.y.toFixed(1)} Q ${cx.toFixed(1)} ${cy.toFixed(1)} ${end.x.toFixed(1)} ${end.y.toFixed(1)}`;
+  }
+
   function color(status: AgentStatus): string {
     if (!live) return STATUS_COLOR.stopped;
     return STATUS_COLOR[status] ?? STATUS_COLOR.stopped;
@@ -88,7 +108,7 @@ export function Topology({
           if (!a || !b) return null;
           const start = trim(b, a, NODE_H / 2 + 6);
           const end = trim(a, b, NODE_H / 2 + 12);
-          return <line key={i} className="edge" x1={start.x} y1={start.y} x2={end.x} y2={end.y} markerEnd="url(#arrow)" />;
+          return <path key={i} className="edge" data-from={from} data-to={to} d={edgePath(from, to, start, end)} markerEnd="url(#arrow)" />;
         })}
         {summary.agents.map((a) => {
           const p = pos.get(a.id);
