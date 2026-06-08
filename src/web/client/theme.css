@@ -1204,9 +1204,32 @@ body::after {
   stroke: var(--line-bright);
   stroke-width: 1.4;
   vector-effect: non-scaling-stroke;
+  opacity: 0.68;
+  transition: opacity 0.12s ease, stroke 0.12s ease;
+}
+.canvas-edge.active {
+  stroke: var(--info);
+  stroke-width: 2.2;
+  stroke-dasharray: 10 9;
+  opacity: 1;
+  filter: drop-shadow(0 0 7px rgba(90, 200, 224, 0.95));
+  animation: canvasEdgeFlow 0.42s linear infinite, canvasEdgePulse 0.7s ease-in-out infinite alternate;
 }
 .canvas-edges marker path {
   fill: var(--line-bright);
+}
+@keyframes canvasEdgeFlow {
+  to {
+    stroke-dashoffset: -19;
+  }
+}
+@keyframes canvasEdgePulse {
+  from {
+    filter: drop-shadow(0 0 3px rgba(90, 200, 224, 0.55));
+  }
+  to {
+    filter: drop-shadow(0 0 11px rgba(90, 200, 224, 1));
+  }
 }
 .canvas-windows {
   position: absolute;
