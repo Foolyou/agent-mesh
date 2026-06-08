@@ -26,7 +26,8 @@ test("router briefing names the agent, role, mesh, peers, and gateway duty + rou
   expect(b).toContain("opencode-1");
   expect(b).toMatch(/gateway|coordinate/i);
   expect(b).toContain("send_mail");
-  expect(b).toContain("mesh_status"); // router-only tool present in router briefing
+  expect(b).toContain("mesh_status");
+  expect(b).toContain("busy/idle");
   expect(b).toContain("interrupt");
 });
 
@@ -36,7 +37,9 @@ test("member briefing tells it to report back to the router and lists reachable 
   expect(b).toContain("member agent");
   expect(b).toMatch(/to the router/i);
   expect(b).toContain("opencode-1"); // codex-1 has an edge to opencode-1
-  expect(b).not.toContain("mesh_status"); // router-only tools are not advertised to members
+  expect(b).toContain("mesh_status");
+  expect(b).toContain("busy/idle");
+  expect(b).not.toContain("interrupt(target, reason)"); // interrupt remains router-only
 });
 
 test("briefing points agents to injected MCP tools, not env vars or mailbox files", () => {

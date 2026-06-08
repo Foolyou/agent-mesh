@@ -58,7 +58,7 @@ export function createMeshServicesServer(opts: {
 
     server.registerTool(
       "mesh_status",
-      { description: "Report the current state of the mesh you belong to." },
+      { description: "Report the current state of the mesh you belong to, including each peer's busy/idle activity." },
       async () => text(await opts.handlers.meshStatus(ctx)),
     );
 

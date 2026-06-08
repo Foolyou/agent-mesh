@@ -11,8 +11,8 @@ function seed(): GatewayState {
         status: "running",
         router: "router",
         agents: [
-          { id: "router", harness: "claude", role: "router", status: "ready" },
-          { id: "codex-1", harness: "codex", role: "member", status: "spawning" },
+          { id: "router", harness: "claude", role: "router", status: "ready", activity: "idle" },
+          { id: "codex-1", harness: "codex", role: "member", status: "spawning", activity: "idle" },
         ],
         edges: [["router", "codex-1"]],
       },
@@ -42,6 +42,11 @@ test("mesh.list replaces meshes", () => {
 test("agent.status updates the agent row", () => {
   const s = applyMsg(seed(), { t: "agent.status", name: "demo", agent: "codex-1", status: "ready" });
   expect(s.meshes[0].agents.find((a) => a.id === "codex-1")!.status).toBe("ready");
+});
+
+test("agent.activity updates the agent row", () => {
+  const s = applyMsg(seed(), { t: "agent.activity", name: "demo", agent: "codex-1", activity: "working" });
+  expect(s.meshes[0].agents.find((a) => a.id === "codex-1")!.activity).toBe("working");
 });
 
 test("agent.modes stores the agent's session modes; a later one updates current", () => {

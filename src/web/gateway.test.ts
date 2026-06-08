@@ -242,6 +242,17 @@ test("agent_status updates the mesh summary agent row", () => {
   expect(row?.status).toBe("ready");
 });
 
+test("agent_activity updates the mesh summary agent row and broadcasts", () => {
+  const m = fakeManager();
+  const gw = new WebGateway(m as any);
+  const got: any[] = [];
+  gw.subscribe((msg) => got.push(msg));
+  m.emit("demo", { kind: "agent_activity", agent: "codex-1", activity: "working", ts: "T" });
+  const row = gw.snapshot().meshes[0].agents.find((a) => a.id === "codex-1");
+  expect(row?.activity).toBe("working");
+  expect(got).toContainEqual({ t: "agent.activity", name: "demo", agent: "codex-1", activity: "working" });
+});
+
 test("promptMaster throws when no master is configured", () => {
   const m = fakeManager();
   const gw = new WebGateway(m as any);

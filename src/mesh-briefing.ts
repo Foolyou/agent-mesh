@@ -59,9 +59,9 @@ export function buildMeshBriefing(mesh: Mesh, agentId: AgentId): string {
       `You may mail: ${myReach.join(", ") || "(no one — you have no outgoing edges)"}.`,
   );
   lines.push("  - check_mail(): read new mail addressed to you.");
+  lines.push("  - mesh_status(): inspect the live mesh and peer busy/idle activity.");
   if (isRouter) {
     lines.push("  - interrupt(target, reason): cancel a member's current turn (router only).");
-    lines.push("  - mesh_status(): inspect the live mesh and member statuses (router only).");
   }
   lines.push(
     "Prefer using these tools to collaborate rather than assuming you must do everything yourself.",
