@@ -17,6 +17,26 @@ const STATUS_COLOR: Record<string, string> = {
 const NODE_W = 132;
 const NODE_H = 46;
 
+export function topologyNodePositions(summary: MeshSummary): { width: number; height: number; positions: Map<string, { x: number; y: number }> } {
+  const router = summary.agents.find((a) => a.id === summary.router) ?? summary.agents[0];
+  const members = summary.agents.filter((a) => a.id !== router?.id);
+
+  const n = members.length;
+  const R = Math.max(120, 30 * n);
+  const width = 640;
+  const height = n === 0 ? NODE_H + 60 : 2 * R + NODE_H + 70;
+  const cx = width / 2;
+  const cy = height / 2;
+
+  const positions = new Map<string, { x: number; y: number }>();
+  if (router) positions.set(router.id, { x: cx, y: cy });
+  members.forEach((m, i) => {
+    const theta = (2 * Math.PI * i) / Math.max(1, n) - Math.PI / 2;
+    positions.set(m.id, { x: cx + R * Math.cos(theta), y: cy + R * Math.sin(theta) });
+  });
+  return { width, height, positions };
+}
+
 export function Topology({
   summary,
   selectedAgent,
@@ -31,22 +51,10 @@ export function Topology({
   maxHeight?: number;
 }) {
   const live = summary.status === "running" || summary.status === "starting";
-  const router = summary.agents.find((a) => a.id === summary.router) ?? summary.agents[0];
-  const members = summary.agents.filter((a) => a.id !== router?.id);
-
-  const n = members.length;
-  const R = Math.max(120, 30 * n);
-  const W = 640;
-  const H = n === 0 ? NODE_H + 60 : 2 * R + NODE_H + 70;
-  const cx = W / 2;
-  const cy = H / 2;
-
-  const pos = new Map<string, { x: number; y: number }>();
-  if (router) pos.set(router.id, { x: cx, y: cy });
-  members.forEach((m, i) => {
-    const theta = (2 * Math.PI * i) / Math.max(1, n) - Math.PI / 2;
-    pos.set(m.id, { x: cx + R * Math.cos(theta), y: cy + R * Math.sin(theta) });
-  });
+  const layout = topologyNodePositions(summary);
+  const pos = layout.positions;
+  const W = layout.width;
+  const H = layout.height;
 
   function trim(from: { x: number; y: number }, to: { x: number; y: number }, inset: number) {
     const dx = to.x - from.x;

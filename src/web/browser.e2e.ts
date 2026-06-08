@@ -151,6 +151,14 @@ try {
     const activeVisible = await page.locator('.conv-member-tab.sel:has-text("extra-7")').isVisible();
     if (!activeVisible) throw new Error("overflow selection did not activate and scroll to extra-7 tab");
     await page.locator(".conv-router-tab").click();
+    await page.evaluate(() => {
+      const store = (window as any).__meshStore;
+      const state = store.getState();
+      store.apply({
+        t: "mesh.list",
+        meshes: state.meshes.map((m: any) => (m.name === "demo" ? { ...m, agents: m.agents.filter((a: any) => !String(a.id).startsWith("extra-")) } : m)),
+      });
+    });
   });
 
   await step("router message is COALESCED into one growing bubble (not per-chunk)", async () => {
@@ -410,6 +418,87 @@ try {
     await page.waitForSelector(".dmain.full", { timeout: 4000 });
     await page.keyboard.press("Escape");
     await page.waitForSelector(".drail", { timeout: 4000 }); // rail (topology + logs) returns
+  });
+
+  await step("mesh canvas opens from topology with draggable, resizable agent windows and directed edges", async () => {
+    await page.locator('.drail .panel:has(.head:has-text("topology")) .btn:has-text("⤢")').click();
+    const canvas = page.locator(".mesh-canvas");
+    await canvas.waitFor({ timeout: 5000 });
+    const windows = canvas.locator(".canvas-window");
+    const agentIds = await page.evaluate(() => (window as any).__meshStore.getState().meshes.find((m: any) => m.name === "demo").agents.map((a: any) => a.id));
+    if ((await windows.count()) !== agentIds.length) throw new Error(`expected ${agentIds.length} mesh agent windows, got ${await windows.count()}`);
+    for (const id of agentIds) {
+      if ((await canvas.locator(`.canvas-window[data-agent="${id}"]`).count()) !== 1) throw new Error(`missing canvas window for ${id}`);
+    }
+    if (await canvas.locator('.canvas-window:has-text("Mesh Assistant")').count()) throw new Error("master appeared on mesh canvas");
+    await canvas.locator('.canvas-window[data-agent="router"] .canvas-window-head .pin').waitFor({ timeout: 4000 });
+    await canvas.locator('.canvas-window[data-agent="codex-1"] .composer textarea[placeholder*="codex-1"]').waitFor({ timeout: 4000 });
+
+    const edgeCount = await canvas.locator(".canvas-edge").count();
+    if (edgeCount < 4) throw new Error(`expected directed mail edges, got ${edgeCount}`);
+    if ((await canvas.locator('.canvas-edge[data-from="codex-1"][data-to="opencode-1"]').count()) !== 1) throw new Error("missing codex-1 → opencode-1 edge");
+    if ((await canvas.locator('.canvas-edge[data-from="opencode-1"][data-to="codex-1"]').count()) !== 1) throw new Error("missing opencode-1 → codex-1 edge");
+    const marker = await canvas.locator('.canvas-edge[data-from="codex-1"][data-to="opencode-1"]').getAttribute("marker-end");
+    if (!marker?.includes("canvas-arrow")) throw new Error(`directed edge missing arrowhead marker: ${marker}`);
+
+    const win = canvas.locator('.canvas-window[data-agent="codex-1"]');
+    const before = await win.boundingBox();
+    if (!before) throw new Error("codex-1 window missing box");
+    await win.locator(".canvas-window-head").dragTo(canvas, { targetPosition: { x: before.x + 120, y: before.y + 80 } });
+    const moved = await win.boundingBox();
+    if (!moved || Math.abs(moved.x - before.x) < 20 || Math.abs(moved.y - before.y) < 20) throw new Error("canvas window did not move after drag");
+
+    const otherZ = Number(await canvas.locator('.canvas-window[data-agent="router"]').evaluate((el) => getComputedStyle(el as HTMLElement).zIndex));
+    const movedZ = Number(await win.evaluate((el) => getComputedStyle(el as HTMLElement).zIndex));
+    if (movedZ <= otherZ) throw new Error(`dragged window did not rise above router (${movedZ} <= ${otherZ})`);
+
+    const grip = win.locator(".canvas-resize-grip");
+    await grip.dragTo(canvas, { targetPosition: { x: moved.x + moved.width + 90, y: moved.y + moved.height + 60 } });
+    const resized = await win.boundingBox();
+    if (!resized || resized.width <= moved.width + 20 || resized.height <= moved.height + 20) throw new Error("canvas window did not resize");
+
+    await page.screenshot({ path: `${SHOTS}/05-canvas.png`, fullPage: true });
+    await canvas.locator(".canvas-close").click();
+    await canvas.waitFor({ state: "detached", timeout: 4000 });
+  });
+
+  await step("mesh canvas layout persists and topology signature changes relayout", async () => {
+    const key = "mesh-canvas-layout:demo";
+    if (await page.locator(".mesh-canvas").isVisible().catch(() => false)) await page.locator(".mesh-canvas .canvas-close").click();
+    await page.evaluate((k) => localStorage.removeItem(k), key);
+    await page.locator('.drail .panel:has(.head:has-text("topology")) .btn:has-text("⤢")').click();
+    const canvas = page.locator(".mesh-canvas");
+    await canvas.waitFor({ timeout: 5000 });
+    const router = canvas.locator('.canvas-window[data-agent="router"]');
+    const before = await router.boundingBox();
+    if (!before) throw new Error("router window missing");
+    await router.locator(".canvas-window-head").dragTo(canvas, { targetPosition: { x: before.x + 140, y: before.y + 90 } });
+    const moved = await router.boundingBox();
+    if (!moved) throw new Error("router window missing after drag");
+    await canvas.locator(".canvas-close").click();
+
+    await page.locator('.drail .panel:has(.head:has-text("topology")) .btn:has-text("⤢")').click();
+    await canvas.waitFor({ timeout: 5000 });
+    const restored = await router.boundingBox();
+    if (!restored || Math.abs(restored.x - moved.x) > 6 || Math.abs(restored.y - moved.y) > 6) {
+      throw new Error(`layout did not restore (${restored?.x},${restored?.y}) vs (${moved.x},${moved.y})`);
+    }
+    const saved = await page.evaluate((k) => JSON.parse(localStorage.getItem(k) || "null"), key);
+    if (!saved?.sig || !saved?.windows?.router) throw new Error("canvas layout was not persisted");
+    await canvas.locator(".canvas-close").click();
+
+    await page.evaluate((k) => {
+      const saved = JSON.parse(localStorage.getItem(k)!);
+      saved.sig = "stale-signature";
+      saved.windows.router.x = 19;
+      saved.windows.router.y = 19;
+      localStorage.setItem(k, JSON.stringify(saved));
+    }, key);
+    await page.locator('.drail .panel:has(.head:has-text("topology")) .btn:has-text("⤢")').click();
+    await canvas.waitFor({ timeout: 5000 });
+    const relayout = await router.boundingBox();
+    if (!relayout || Math.abs(relayout.x - 19) < 30 || Math.abs(relayout.y - 19) < 30) throw new Error("stale signature layout was reused");
+    await canvas.locator(".canvas-close").click();
   });
 
   await step("mobile detail has a single chat segment without separate agents segment", async () => {
