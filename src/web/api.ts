@@ -103,6 +103,10 @@ export async function handleApi(
           gw.promptAgent(name, agentId, str(body?.text), imagesOf(body));
           return ok();
         }
+        if (p[4] === "steer") {
+          gw.steerAgent(name, agentId, str(body?.text), imagesOf(body));
+          return ok();
+        }
         if (p[4] === "mode") {
           await gw.setMode(name, agentId, str(body?.modeId));
           return ok();

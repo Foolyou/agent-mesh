@@ -52,6 +52,9 @@ function fakeManager() {
     promptAgent(n: string, a: string, t: string, images?: any[]) {
       calls.push(["promptAgent", n, a, t, images]);
     },
+    steerAgent(n: string, a: string, t: string, images?: any[]) {
+      calls.push(["steerAgent", n, a, t, images]);
+    },
     resolvePermission(n: string, r: string, o: string) {
       calls.push(["resolve", n, r, o]);
     },
@@ -148,6 +151,25 @@ test("mail event emits both activity and mail entries", () => {
   expect((s.perMesh.demo.transcripts["codex-1"] ?? []).some((i: any) => i.kind === "mail" && i.from === "router")).toBe(true);
 });
 
+test("steer event emits a visible activity entry", () => {
+  const m = fakeManager();
+  const gw = new WebGateway(m as any);
+  const got: any[] = [];
+  gw.subscribe((msg) => got.push(msg));
+  m.emit("demo", { kind: "steer", from: "operator", to: "codex-1", body: "change course", ts: "T" });
+  const s = gw.snapshot();
+  expect(s.perMesh.demo.activity.some((a) => a.kind === "steer" && a.text.includes("change course"))).toBe(true);
+  expect(got.some((x) => x.t === "activity" && x.entry.kind === "steer")).toBe(true);
+});
+
+test("steerAgent echoes a user message and delegates to the manager", () => {
+  const m = fakeManager();
+  const gw = new WebGateway(m as any);
+  gw.steerAgent("demo", "codex-1", "urgent");
+  expect(m.calls).toContainEqual(["steerAgent", "demo", "codex-1", "urgent", []]);
+  expect(gw.snapshot().perMesh.demo.transcripts["codex-1"].some((i: any) => i.kind === "message" && i.role === "user" && i.text === "urgent")).toBe(true);
+});
+
 test("a current_mode_update syncs the mode picker + broadcasts (claude has no echo)", () => {
   const m = fakeManager();
   const gw = new WebGateway(m as any);
@@ -199,10 +221,12 @@ test("command methods delegate to the manager", async () => {
   const gw = new WebGateway(m as any);
   await gw.startMesh("demo");
   await gw.promptRouter("demo", "go");
+  gw.steerAgent("demo", "codex-1", "urgent");
   gw.resolvePermission("demo", "r1", "allow");
   await gw.setModel("demo", "codex-1", "deepseek-v3");
   expect(m.calls).toContainEqual(["start", "demo"]);
   expect(m.calls).toContainEqual(["promptRouter", "demo", "go", []]);
+  expect(m.calls).toContainEqual(["steerAgent", "demo", "codex-1", "urgent", []]);
   expect(m.calls).toContainEqual(["resolve", "demo", "r1", "allow"]);
   expect(m.calls).toContainEqual(["setModel", "demo", "codex-1", "deepseek-v3"]);
 });

@@ -29,6 +29,7 @@ const cp = {
   },
   async setMode() {},
   async setModel() {},
+  async steer() {},
   async interrupt() {},
   async stop() {
     if (childPid) killTree(childPid); // reap the "agent" tree, exactly like ControlPlane.stop()

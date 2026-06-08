@@ -152,6 +152,12 @@ export class ControlPlane {
     await this.agent(id).cancel();
   }
 
+  /** Operator-initiated steer: priority-inject a human message without edge checks. */
+  async steer(id: AgentId, text: string, images: PromptImageRef[] = []): Promise<void> {
+    this.emit({ kind: "steer", from: "operator", to: id, body: text, ts: now() });
+    this.steerWake(id, "operator", text, images);
+  }
+
   get mcpServer(): MeshServicesServer {
     if (!this.mcp) throw new Error("control plane not started");
     return this.mcp;

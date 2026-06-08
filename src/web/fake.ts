@@ -129,6 +129,10 @@ export class FakeManager {
   promptAgent(name: string, agentId: string, text: string, _images = []): void {
     void this.reply(name, agentId, `[${agentId}] working on: ${text}`);
   }
+  steerAgent(name: string, agentId: string, text: string, _images = []): void {
+    this.emit(name, { kind: "steer", from: "operator", to: agentId, body: text, ts: now() });
+    void this.reply(name, agentId, `[${agentId}] steering to: ${text}`);
+  }
   resolvePermission(name: string, requestId: string, optionId: string): void {
     this.emit(name, { kind: "permission_resolved", agent: "codex-1", requestId, optionId, by: "human", ts: now() });
     void this.reply(name, "codex-1", optionId.includes("allow") ? "Permission granted — running the command." : "Permission denied — skipping that step.");

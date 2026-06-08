@@ -255,6 +255,23 @@ test("steer mail validates permissions, emits steer, and uses front delivery", a
   }
 });
 
+test("operator steer emits audit activity and uses steerPrompt without direct cancel", async () => {
+  const cp = new ControlPlane(DEMO_MESH);
+  const fake = new RecordingSteerConnection();
+  (cp as any).conns.set("codex-1", fake);
+  (cp as any).mesh.setStatus("codex-1", "ready");
+  const events: any[] = [];
+  cp.on((e) => events.push(e));
+
+  await cp.steer("codex-1", "urgent redirect");
+
+  expect(fake.cancels).toBe(0);
+  expect(fake.prompts).toHaveLength(1);
+  expect(fake.prompts[0].text).toContain("[STEER from operator]: urgent redirect");
+  expect(events).toContainEqual(expect.objectContaining({ kind: "steer", from: "operator", to: "codex-1", body: "urgent redirect" }));
+  fake.prompts[0].resolve({});
+});
+
 test("dead agents are reported idle even with an in-flight turn", async () => {
   const root = await mkdtemp(join(tmpdir(), "mesh-control-plane-activity-"));
   const config: MeshConfig = {

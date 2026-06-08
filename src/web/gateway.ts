@@ -32,6 +32,7 @@ export interface ManagerLike {
   stopMesh(name: string): Promise<void>;
   promptRouter(name: string, text: string, images?: PromptImageRef[]): Promise<void>;
   promptAgent(name: string, agentId: string, text: string, images?: PromptImageRef[]): void;
+  steerAgent(name: string, agentId: string, text: string, images?: PromptImageRef[]): void;
   resolvePermission(name: string, requestId: string, optionId: string): void;
   setMode(name: string, agentId: string, modeId: string): Promise<void>;
   setModel(name: string, agentId: string, modelId: string): Promise<void>;
@@ -229,6 +230,14 @@ export class WebGateway {
         this.broadcast({ t: "agent.capabilities", name, agent: e.agent, image: e.image });
         break;
       }
+      case "steer": {
+        const from = e.from === "operator" ? "operator" : e.from;
+        const entry = this.act("steer", `${from} ⇢ ${e.to}: ${e.body}`, e.ts);
+        pm.activity.push(entry);
+        pm.activity = cap(pm.activity, CAP);
+        this.broadcast({ t: "activity", name, entry });
+        break;
+      }
       case "permission": {
         const req: PermissionReq = {
           requestId: e.requestId,
@@ -357,6 +366,11 @@ export class WebGateway {
     const refs = images.map((i) => this.withBucket(name, i));
     this.foldConv({ scope: "agent", mesh: name, agent: agentId }, { sessionUpdate: "user_message_chunk", content: { text }, images: refs.map(publicImageRef) }, now());
     this.manager.promptAgent(name, agentId, text, refs);
+  }
+  steerAgent(name: string, agentId: string, text: string, images: PromptImageRef[] = []): void {
+    const refs = images.map((i) => this.withBucket(name, i));
+    this.foldConv({ scope: "agent", mesh: name, agent: agentId }, { sessionUpdate: "user_message_chunk", content: { text }, images: refs.map(publicImageRef) }, now());
+    this.manager.steerAgent(name, agentId, text, refs);
   }
   configOf(name: string): MeshConfig {
     return this.manager.configOf(name);

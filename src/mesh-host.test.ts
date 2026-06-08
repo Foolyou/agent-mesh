@@ -21,6 +21,7 @@ function fakeCp() {
     on(l) { listener = l; return () => { listener = undefined; }; },
     snapshotEvents() { return []; },
     async prompt(target, text) { calls.push(`prompt:${target}:${text}`); listener?.({ kind: "log", text: "got prompt", ts: "t" }); return {}; },
+    async steer(target, text) { calls.push(`steer:${target}:${text}`); listener?.({ kind: "steer", from: "operator", to: target, body: text, ts: "t" }); },
     resolveDecision(requestId, optionId) { calls.push(`resolve:${requestId}:${optionId}`); return true; },
     async setMode(target, modeId) { calls.push(`setMode:${target}:${modeId}`); },
     async setModel(target, modelId) { calls.push(`setModel:${target}:${modelId}`); },
@@ -55,8 +56,10 @@ test("hello → ack(running, proto, seq); prompt relays a seq'd event; commands 
   expect(ack).toMatchObject({ t: "ack", proto: PROTO_VERSION, running: true });
 
   send({ t: "prompt", target: "router", text: "hi" });
+  send({ t: "steer", target: "codex-1", text: "urgent" });
   await Bun.sleep(50);
   expect(calls).toContain("prompt:router:hi");
+  expect(calls).toContain("steer:codex-1:urgent");
   const ev = got.find((m) => m.t === "event" && m.event.kind === "log");
   expect(ev).toBeTruthy();
   expect(typeof ev.seq).toBe("number");

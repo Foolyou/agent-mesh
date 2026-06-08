@@ -129,6 +129,7 @@ export interface Store {
   uploadImages(bucket: string, files: File[]): Promise<PromptImageRef[]>;
   promptRouter(name: string, text: string, images?: PromptImageRef[]): Promise<any>;
   promptAgent(name: string, agentId: string, text: string, images?: PromptImageRef[]): Promise<any>;
+  steerAgent(name: string, agentId: string, text: string, images?: PromptImageRef[]): Promise<any>;
   promptMaster(text: string, images?: PromptImageRef[]): Promise<any>;
   resolvePermission(name: string, requestId: string, optionId: string): Promise<any>;
   setMode(name: string, agentId: string, modeId: string): Promise<any>;
@@ -250,6 +251,7 @@ export function createStore(): Store {
     uploadImages: (bucket, files) => guard(uploadImages(bucket, files), "upload images"),
     promptRouter: (n, t, images) => guard(post(`/api/meshes/${enc(n)}/prompt`, { text: t, images }), `prompt ${n}`),
     promptAgent: (n, a, t, images) => guard(post(`/api/meshes/${enc(n)}/agents/${enc(a)}/prompt`, { text: t, images }), `prompt ${a}`),
+    steerAgent: (n, a, t, images) => guard(post(`/api/meshes/${enc(n)}/agents/${enc(a)}/steer`, { text: t, images }), `steer ${a}`),
     promptMaster: (t, images) => guard(post(`/api/master/prompt`, { text: t, images }), "master"),
     resolvePermission: (n, r, o) => guard(post(`/api/meshes/${enc(n)}/permissions/${enc(r)}/resolve`, { optionId: o }), "resolve permission"),
     setMode: (n, a, m) => guard(post(`/api/meshes/${enc(n)}/agents/${enc(a)}/mode`, { modeId: m }), `set mode ${a}`),

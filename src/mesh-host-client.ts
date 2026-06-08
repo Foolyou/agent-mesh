@@ -205,6 +205,7 @@ export class MeshHostClient {
   }
 
   prompt(target: string, text: string, images?: PromptImageRef[]): void { this.send({ t: "prompt", target, text, images }); }
+  steer(target: string, text: string, images?: PromptImageRef[]): void { this.send({ t: "steer", target, text, images }); }
   resolve(requestId: string, optionId: string): void { this.send({ t: "resolve", requestId, optionId }); }
   setMode(target: string, modeId: string): void { this.send({ t: "setMode", target, modeId }); }
   setModel(target: string, modelId: string): void { this.send({ t: "setModel", target, modelId }); }

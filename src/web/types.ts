@@ -78,7 +78,7 @@ export interface MeshSummary {
 export interface ActivityEntry {
   id: string;
   ts: string;
-  kind: "mail" | "interrupt" | "permission_resolved" | "log";
+  kind: "mail" | "steer" | "interrupt" | "permission_resolved" | "log";
   text: string;
 }
 

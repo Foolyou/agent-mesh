@@ -35,6 +35,9 @@ const cp = {
   },
   async setMode() {},
   async setModel() {},
+  async steer(_target: string, text: string) {
+    listener?.({ kind: "steer", from: "operator", to: _target, body: text, ts: "t" });
+  },
   async interrupt() {},
   async stop() {},
 };
