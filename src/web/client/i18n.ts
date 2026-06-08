@@ -34,8 +34,8 @@ const DICT: Record<string, Entry> = {
     "快捷键:  ↑↓ 选择 mesh · f 全屏 · n 新建 mesh · r 重载 · 1-9 处理权限 · esc 返回",
   ],
   "overview.hint": [
-    "select a mesh from the list to open its console — topology, router chat, per-agent panels, permissions, and live mail/activity timelines.",
-    "从列表选择一个 mesh 打开它的控制台 —— 拓扑、router 对话、各 agent 面板、权限,以及实时邮件/活动时间线。",
+    "select a mesh from the list to open its console — topology, unified conversation tabs, permissions, and live mail/activity timelines.",
+    "从列表选择一个 mesh 打开它的控制台 —— 拓扑、统一对话标签、权限,以及实时邮件/活动时间线。",
   ],
 
   // ── status ──
@@ -67,6 +67,7 @@ const DICT: Record<string, Entry> = {
   // ── detail panels ──
   topology: ["topology", "拓扑"],
   "topology.sub": ["agents · mail edges", "agent · 邮件边"],
+  conversation: ["Conversation", "对话"],
   "router chat": ["router chat", "router 对话"],
   interrupt: ["interrupt", "中断"],
   full: ["full", "全屏"],

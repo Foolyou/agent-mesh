@@ -75,8 +75,8 @@ try {
     await page.waitForSelector('.detail-head:has-text("running")', { timeout: 8000 });
   });
 
-  await step("Chat segment shows router chat + composer", async () => {
-    await page.waitForSelector('.mseg .panel:has(.head:has-text("router chat")) .composer textarea', { timeout: 6000 });
+  await step("Chat segment shows conversation tabs + composer", async () => {
+    await page.waitForSelector(".mseg .conv-panel .composer textarea", { timeout: 6000 });
   });
 
   await step("Map segment shows the topology", async () => {
@@ -86,9 +86,12 @@ try {
     if (!box || box.height < 100) throw new Error("topology too short on mobile");
   });
 
-  await step("Agents segment shows a member panel", async () => {
-    await page.locator('.mtab:has-text("Agents")').click();
-    await page.waitForSelector(".mseg .tabs .tab", { timeout: 4000 });
+  await step("Chat segment switches to a member tab; no separate Agents segment", async () => {
+    const labels = await page.locator(".mtabs .mtab").allTextContents();
+    if (labels.some((x) => /agents/i.test(x))) throw new Error(`unexpected Agents segment: ${labels.join(",")}`);
+    await page.locator('.mtab:has-text("Chat")').click();
+    await page.locator('.mseg .conv-member-tab:has-text("codex-1")').click();
+    await page.waitForSelector('.mseg .composer textarea[placeholder*="codex-1"]', { timeout: 4000 });
   });
 
   await step("permission card is pinned above the segments and resolves", async () => {

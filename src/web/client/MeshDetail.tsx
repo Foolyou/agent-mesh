@@ -200,7 +200,7 @@ function ConversationPanel({
   return (
     <div className="panel conv-panel">
       <div className="head conv-head">
-        <span className="ttl">{t("router chat")}</span>
+        <span className="ttl">{t("conversation")}</span>
         <span className="sub">{activeId}</span>
       </div>
       <div className="tabs conv-tabs">

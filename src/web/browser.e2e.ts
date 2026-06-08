@@ -87,6 +87,8 @@ try {
   await step("unified conversation tabs pin router with status dot and switch conversations", async () => {
     const panel = page.locator(".conv-panel").first();
     await panel.waitFor({ timeout: 8000 });
+    const title = ((await panel.locator(".head .ttl").first().textContent()) ?? "").trim().toLowerCase();
+    if (title !== "conversation") throw new Error(`conversation panel title was "${title}"`);
     const routerTab = panel.locator(".conv-router-tab");
     await routerTab.waitFor({ timeout: 4000 });
     if ((await routerTab.locator(".dot.ready, .dot.running").count()) < 1) throw new Error("router tab missing live status dot");
@@ -153,16 +155,17 @@ try {
 
   await step("router message is COALESCED into one growing bubble (not per-chunk)", async () => {
     // the fake streams 'Plan: codex-1 implements the calculator core, opencode-1 reviews.'
-    const bubble = page.locator('.panel:has(.head:has-text("router chat")) .msg.agent .bubble', {
+    const panel = page.locator(".conv-panel").first();
+    const bubble = panel.locator(".msg.agent .bubble", {
       hasText: "implements the calculator core",
     });
     await bubble.first().waitFor({ timeout: 10000 });
-    const count = await page.locator('.panel:has(.head:has-text("router chat")) .msg.agent').count();
+    const count = await panel.locator(".msg.agent").count();
     if (count > 3) throw new Error(`too many message bubbles (${count}) — chunks not coalesced`);
   });
 
   await step("agent prose renders markdown live", async () => {
-    const panel = page.locator('.panel:has(.head:has-text("router chat"))');
+    const panel = page.locator(".conv-panel").first();
     const bubble = panel.locator(".msg.agent .bubble", { hasText: "implements the calculator core" }).first();
     await bubble.locator("strong", { hasText: "codex-1" }).waitFor({ timeout: 4000 });
     await bubble.locator("ul li", { hasText: "implement core" }).waitFor({ timeout: 4000 });
@@ -191,16 +194,14 @@ try {
   });
 
   await step("router shows a plan checklist", async () => {
-    await page.waitForSelector('.panel:has(.head:has-text("router chat")) .plan .plan-row', { timeout: 9000 });
+    await page.locator(".conv-panel .plan .plan-row").first().waitFor({ timeout: 9000 });
   });
 
   await step("agent replies never render a streaming caret", async () => {
     // The UI intentionally renders no caret, including while replies are still streaming.
     await page.waitForFunction(
       () => {
-        const panel = [...document.querySelectorAll(".panel")].find((p) =>
-          p.querySelector(".head")?.textContent?.includes("router chat"),
-        );
+        const panel = document.querySelector(".conv-panel");
         const agentMsgs = panel?.querySelectorAll(".msg.agent") ?? [];
         return agentMsgs.length > 0 && document.querySelectorAll(".cursor").length === 0;
       },
@@ -266,7 +267,7 @@ try {
         item: { id: "of-tool", kind: "tool_call", toolCallId: "of-tc", title: "mcp__mesh__send_mail", toolKind: "other", status: "completed", input: '{ "to": "impl", "body": "hi" }', ts: now, updatedTs: now },
       });
     });
-    const panel = page.locator('.panel:has(.head:has-text("router chat"))');
+    const panel = page.locator(".conv-panel").first();
     const card = panel.locator(".tool", { hasText: "mcp__mesh__send_mail" }).first();
     await card.waitFor({ timeout: 4000 });
     const h = await card.evaluate((el) => (el as HTMLElement).offsetHeight);
@@ -334,11 +335,12 @@ try {
 
   await step("router chat: send prompt → user bubble", async () => {
     await page.locator(".conv-router-tab").click();
-    const input = page.locator('.panel:has(.head:has-text("router chat")) .composer textarea');
+    const panel = page.locator(".conv-panel").first();
+    const input = panel.locator(".composer textarea");
     await input.fill("status **please**");
     await input.press("Enter");
-    await page.waitForSelector('.panel:has(.head:has-text("router chat")) .msg.user', { timeout: 6000 });
-    const user = page.locator('.panel:has(.head:has-text("router chat")) .msg.user .bubble', { hasText: "**please**" }).last();
+    await panel.locator(".msg.user").last().waitFor({ timeout: 6000 });
+    const user = panel.locator(".msg.user .bubble", { hasText: "**please**" }).last();
     await user.waitFor({ timeout: 4000 });
     if ((await user.locator("strong").count()) !== 0) throw new Error("user message rendered markdown");
   });
@@ -354,7 +356,7 @@ try {
         item: { id: "md-stream", kind: "message", role: "agent", text: "Before\n```ts\nconst x = 1", ts: now, complete: false },
       });
     });
-    const panel = page.locator('.panel:has(.head:has-text("router chat"))');
+    const panel = page.locator(".conv-panel").first();
     await panel.locator("#md-stream").waitFor({ timeout: 4000 }).catch(() => {});
     await panel.locator(".msg.agent .bubble", { hasText: "Before" }).last().waitFor({ timeout: 4000 });
     await panel.locator(".msg.agent .bubble pre, .msg.agent .bubble code", { hasText: "const x = 1" }).last().waitFor({ timeout: 4000 });
@@ -373,7 +375,7 @@ try {
 
   await step("markdown height changes keep transcript pinned to bottom", async () => {
     await page.locator(".conv-router-tab").click();
-    const stream = page.locator('.panel:has(.head:has-text("router chat")) .stream').first();
+    const stream = page.locator(".conv-panel .stream").first();
     await stream.evaluate((el) => {
       el.scrollTop = el.scrollHeight;
       el.dispatchEvent(new Event("scroll", { bubbles: true }));
