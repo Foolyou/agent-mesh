@@ -8,8 +8,9 @@ import { MeshStore } from "./mesh-store";
 import { MeshHostClient } from "./mesh-host-client";
 import { listLiveRecords, readRecord, removeRecord, pidAlive, type MeshHostRecord } from "./mesh-registry";
 import { Mesh } from "./mesh";
+import { validateAddEdge } from "./mesh-validate";
 import { now } from "./acp/types";
-import type { MeshConfig, MeshEvent, ThinkingEffort } from "./acp/types";
+import type { AgentStatus, MeshConfig, MeshEdge, MeshEvent, ThinkingEffort } from "./acp/types";
 import type { PromptImageRef } from "./acp/types";
 import { deleteUploadBucket } from "./web/uploads";
 
@@ -40,6 +41,7 @@ export class MeshManager {
   private debug: boolean;
   private leaseMs: number;
   private entries = new Map<string, Entry>();
+  private agentStatuses = new Map<string, Map<string, AgentStatus>>();
   private listeners = new Set<(name: string, e: MeshEvent) => void>();
 
   constructor(opts: MeshManagerOptions = {}) {
@@ -59,6 +61,14 @@ export class MeshManager {
     return () => this.listeners.delete(listener);
   }
   private emit(name: string, e: MeshEvent): void {
+    if (e.kind === "agent_status") {
+      let statuses = this.agentStatuses.get(name);
+      if (!statuses) {
+        statuses = new Map();
+        this.agentStatuses.set(name, statuses);
+      }
+      statuses.set(e.agent, e.status);
+    }
     for (const l of this.listeners) l(name, e);
   }
 
@@ -266,6 +276,28 @@ export class MeshManager {
     await this.store.define(patched); // persists the runtime cache; does NOT restart the daemon
     entry.config = patched;
     entry.client?.setModel(agentId, modelId);
+  }
+
+  async addEdge(name: string, edgeInput: MeshEdge): Promise<void> {
+    const entry = this.require(name);
+    const previous = entry.config;
+    const statuses = this.agentStatuses.get(name);
+    const edge = validateAddEdge(previous, edgeInput, (id) => statuses?.get(id));
+    const patched: MeshConfig = { ...previous, edges: [...previous.edges, edge] };
+    entry.config = patched;
+    try {
+      await this.store.define(patched);
+    } catch (err) {
+      entry.config = previous;
+      throw err;
+    }
+    if (entry.status === "running" && entry.client) {
+      try {
+        entry.client.addEdge(edge);
+      } catch (err) {
+        this.emit(name, { kind: "log", text: `addEdge RPC failed for ${edge.from} -> ${edge.to}: ${String(err)}`, ts: now() });
+      }
+    }
   }
 
   /** Operator-initiated interrupt of an agent's current turn. */

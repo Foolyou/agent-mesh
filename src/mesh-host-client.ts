@@ -10,7 +10,7 @@ import { resolve } from "node:path";
 import { existsSync } from "node:fs";
 import { killTree } from "./acp/client";
 import { LineBuffer, encodeFrame, PROTO_VERSION, type ChildMsg, type ParentMsg } from "./protocol";
-import type { MeshConfig, MeshEvent } from "./acp/types";
+import type { MeshConfig, MeshEdge, MeshEvent } from "./acp/types";
 import type { PromptImageRef } from "./acp/types";
 
 export interface MeshHostClientOptions {
@@ -211,6 +211,7 @@ export class MeshHostClient {
   setModel(target: string, modelId: string): void { this.send({ t: "setModel", target, modelId }); }
   interrupt(target: string): void { this.send({ t: "interrupt", target }); }
   wakeAgent(target: string): void { this.send({ t: "wake", target }); }
+  addEdge(edge: MeshEdge): void { this.send({ t: "addEdge", edge }); }
 
   /** Disconnect WITHOUT stopping the daemon (used on backend shutdown — the mesh and
    *  its agents keep running; a future backend reconnects). */

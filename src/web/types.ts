@@ -147,4 +147,4 @@ export type ServerMsg =
   | { t: "permission.remove"; name: string; resolved: ResolvedPermission }
   | { t: "master.status"; status: MasterStatus; working?: boolean };
 
-export type { MeshConfig, AgentId, AgentStatus, AgentActivity, AgentRole, HarnessId };
+export type { MeshConfig, MeshEdge, AgentId, AgentStatus, AgentActivity, AgentRole, HarnessId };

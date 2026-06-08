@@ -10,8 +10,9 @@ import { Mesh } from "./mesh";
 import { buildMeshBriefing } from "./mesh-briefing";
 import { createMeshServicesServer, type MeshServicesServer, type MeshToolContext } from "./mcp/mesh-services";
 import { sendMail, readMailFor } from "./mailbox";
-import { now, type AgentActivity, type AgentConfig, type AgentId, type MeshConfig, type MeshEvent, type PromptImageRef, type SessionMode, type SessionModel } from "./acp/types";
+import { validateAddEdge } from "./mesh-validate";
 import { readSessionState, setMeshExpectedAlive, updateAgentSession, type MeshSessionState } from "./session-storage";
+import { now, type AgentActivity, type AgentConfig, type AgentId, type MeshConfig, type MeshEdge, type MeshEvent, type PromptImageRef, type SessionMode, type SessionModel } from "./acp/types";
 
 interface PendingDecision {
   resolve: (decision: PermissionDecision) => void;
@@ -50,6 +51,7 @@ export class ControlPlane {
   private spawning = new Map<AgentId, Promise<AcpAgentConnection>>();
   private registeredAgents = new Set<AgentId>();
   private spawnFails = new Map<AgentId, number>();
+  private dynamicEdges = new Set<string>();
   /** Per-agent advertised image-input capability (promptCapabilities.image). */
   private imageCaps = new Map<AgentId, boolean>();
   /** Per-agent advertised permission/session modes. */
@@ -479,6 +481,13 @@ export class ControlPlane {
     return !this.sessionState.meshExpectedAlive || this.mesh.status(id) === "dead";
   }
 
+  addEdge(edge: MeshEdge): void {
+    const normalized = validateAddEdge(this.mesh.config, edge, (id) => this.mesh.status(id));
+    this.mesh.addEdge(normalized);
+    this.dynamicEdges.add(edgeKey(normalized.from, normalized.to));
+    this.emit({ kind: "log", text: `edge added ${normalized.from} -> ${normalized.to}${normalized.steer ? " (steer)" : ""}`, ts: now() });
+  }
+
   // ---- mesh tool handlers ----
   private meshStatusText(forAgent: AgentId): string {
     const lines = this.mesh.agents.map((a) => {
@@ -538,7 +547,10 @@ export class ControlPlane {
     const target = this.mesh.agent(to);
     if (target?.lazy && this.mesh.status(to) !== "ready") this.wakeLazy(to, ctx.agentId);
     else this.wake(to, ctx.agentId, body);
-    return `delivered to ${to}`;
+    const note = this.dynamicEdges.has(edgeKey(ctx.agentId, to))
+      ? `\nnote: ${to} may have been added after your session started; current status is ${this.mesh.status(to) ?? "unknown"}.`
+      : "";
+    return `delivered to ${to}${note}`;
   }
 
   private wakeLazy(to: AgentId, from: AgentId): void {
@@ -703,4 +715,8 @@ function deriveConfigOption(session: unknown, category: "mode" | "model"): { cur
     : [];
   const current = String(configOption.currentValue ?? available[0]?.id ?? "");
   return { current, available: available as Array<{ id: string; name: string; description?: string }> };
+}
+
+function edgeKey(from: AgentId, to: AgentId): string {
+  return `${from}\u0000${to}`;
 }

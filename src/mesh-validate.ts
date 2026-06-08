@@ -3,7 +3,7 @@
 // every (possibly LLM-generated) MeshConfig before defining/persisting it.
 import { isAbsolute } from "node:path";
 import { HARNESSES } from "./harness";
-import { normalizeMeshEdges, type MeshConfig } from "./acp/types";
+import { normalizeMeshEdge, normalizeMeshEdges, type AgentStatus, type MeshConfig, type MeshEdge, type MeshEdgeInput } from "./acp/types";
 
 export function validateMeshConfig(config: MeshConfig): void {
   const { name, agents } = config;
@@ -61,4 +61,23 @@ export function validateMeshConfig(config: MeshConfig): void {
     if (typeof config.charter !== "string") throw new Error("mesh charter must be a string");
     if (config.charter.length > 4000) throw new Error("mesh charter is too long (max 4000 chars)");
   }
+}
+
+export function validateAddEdge(config: MeshConfig, edgeInput: MeshEdgeInput, statusOf: (id: string) => AgentStatus | undefined = () => undefined): MeshEdge {
+  const edge = normalizeMeshEdge(edgeInput);
+  const ids = new Set(config.agents.map((a) => a.id));
+  if (!ids.has(edge.from) || !ids.has(edge.to)) {
+    throw new Error(`edge [${edge.from}, ${edge.to}] references an unknown agent`);
+  }
+  if (statusOf(edge.to) === "dead") {
+    throw new Error(`edge [${edge.from}, ${edge.to}] targets dead agent "${edge.to}"`);
+  }
+  const routerId = config.agents.find((a) => a.role === "router")?.id;
+  if (edge.steer === true && edge.to === routerId) {
+    throw new Error(`edge [${edge.from}, ${edge.to}] cannot enable steer to the router`);
+  }
+  if (normalizeMeshEdges((config as any).edges ?? []).some((e) => e.from === edge.from && e.to === edge.to)) {
+    throw new Error(`edge [${edge.from}, ${edge.to}] already exists`);
+  }
+  return edge;
 }

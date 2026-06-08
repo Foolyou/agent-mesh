@@ -301,3 +301,69 @@ test("spawn timeout fails the lazy spawn", async () => {
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("addEdge mutates the running control plane and send_mail returns a dynamic peer note", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mesh-add-edge-cp-"));
+  const config: MeshConfig = {
+    name: "add-edge-cp",
+    agents: [
+      { id: "router", harness: "claude", project: ".", role: "router" },
+      { id: "a", harness: "codex", project: ".", role: "member" },
+      { id: "b", harness: "codex", project: ".", role: "member" },
+    ],
+    edges: [{ from: "router", to: "a" }],
+  };
+  const created: Record<string, RecordingConnection> = {};
+  const cp = new ControlPlane(config, {
+    mailboxPath: join(root, "mailbox.ndjson"),
+    connectionFactory: (opts) => {
+      const conn = new RecordingConnection(opts);
+      created[opts.id] = conn;
+      return conn as unknown as AcpAgentConnection;
+    },
+  });
+
+  try {
+    await cp.start();
+    expect((cp as any).mesh.canMail("a", "b")).toBe(false);
+    cp.addEdge({ from: "a", to: "b" });
+    expect((cp as any).mesh.canMail("a", "b")).toBe(true);
+
+    const res = await (cp as any).handleSendMail({ agentId: "a", role: "member" }, "b", "review this");
+    expect(res).toContain("delivered to b");
+    expect(res).toContain("may have been added after your session started");
+    await waitUntil(() => created.b.prompts.length === 1);
+    expect(created.b.prompts[0]).toContain("[MAIL from a]: review this");
+  } finally {
+    await cp.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("control-plane addEdge rejects duplicates, steer-to-router, and dead targets", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mesh-add-edge-cp-validate-"));
+  const config: MeshConfig = {
+    name: "add-edge-cp-validate",
+    agents: [
+      { id: "router", harness: "claude", project: ".", role: "router" },
+      { id: "a", harness: "codex", project: ".", role: "member" },
+      { id: "b", harness: "codex", project: ".", role: "member" },
+    ],
+    edges: [{ from: "router", to: "a" }],
+  };
+  const cp = new ControlPlane(config, {
+    mailboxPath: join(root, "mailbox.ndjson"),
+    connectionFactory: (opts) => new RecordingConnection(opts) as unknown as AcpAgentConnection,
+  });
+
+  try {
+    await cp.start();
+    expect(() => cp.addEdge({ from: "router", to: "a" })).toThrow(/already exists/i);
+    expect(() => cp.addEdge({ from: "a", to: "router", steer: true })).toThrow(/steer.*router/i);
+    (cp as any).mesh.setStatus("b", "dead");
+    expect(() => cp.addEdge({ from: "a", to: "b" })).toThrow(/dead/i);
+  } finally {
+    await cp.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});

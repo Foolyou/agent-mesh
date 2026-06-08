@@ -1,6 +1,6 @@
 // Mesh: pure model of a mesh's membership, the Router (gateway) designation,
 // the directed interaction graph (who may mail whom), and per-agent liveness.
-import { normalizeMeshEdges, type AgentConfig, type AgentId, type AgentStatus, type MeshConfig } from "./acp/types";
+import { normalizeMeshEdge, normalizeMeshEdges, type AgentConfig, type AgentId, type AgentStatus, type MeshConfig, type MeshEdge } from "./acp/types";
 
 export class Mesh {
   readonly config: MeshConfig;
@@ -49,6 +49,12 @@ export class Mesh {
     if (this.router.id === to) return false;
     if (!this.agent(from) || !this.agent(to)) return false;
     return this.config.edges.some((edge) => edge.from === from && edge.to === to && edge.steer === true);
+  }
+
+  addEdge(edge: MeshEdge): MeshEdge {
+    const normalized = normalizeMeshEdge(edge);
+    this.config.edges.push(normalized);
+    return normalized;
   }
 
   setStatus(id: AgentId, status: AgentStatus): void {

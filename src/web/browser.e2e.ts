@@ -115,6 +115,15 @@ try {
     await page.waitForSelector('.detail-head:has-text("running")', { timeout: 8000 });
   });
 
+  await step("running topology can add a mail edge", async () => {
+    await page.waitForSelector(".edge-add select", { timeout: 5000 });
+    const edgeAdd = page.locator(".edge-add").first();
+    await edgeAdd.locator("select").nth(0).selectOption("codex-1");
+    await edgeAdd.locator("select").nth(1).selectOption("router");
+    await edgeAdd.locator('.btn:has-text("+ edge")').click();
+    await page.waitForSelector('.topo .edge[data-from="codex-1"][data-to="router"]', { timeout: 5000 });
+  });
+
   await step("unified conversation tabs pin router with status dot and switch conversations", async () => {
     const panel = page.locator(".conv-panel").first();
     await panel.waitFor({ timeout: 8000 });

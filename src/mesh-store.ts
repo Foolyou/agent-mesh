@@ -1,7 +1,7 @@
 // src/mesh-store.ts
 // Persists mesh definitions as .mesh/meshes/<name>.json. Only definitions are
 // persisted; running state never survives a parent-process restart.
-import { mkdir, readFile, writeFile, readdir, unlink } from "node:fs/promises";
+import { mkdir, readFile, writeFile, readdir, unlink, rename } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { validateMeshConfig } from "./mesh-validate";
 import { normalizeMeshEdges, type MeshConfig } from "./acp/types";
@@ -24,7 +24,14 @@ export class MeshStore {
     validateMeshConfig(normalized);
     const path = this.fileFor(normalized.name);
     await mkdir(this.dir, { recursive: true });
-    await writeFile(path, JSON.stringify(normalized, null, 2), "utf8");
+    const tmp = join(this.dir, `.${normalized.name}.${process.pid}.${Date.now()}.tmp`);
+    try {
+      await writeFile(tmp, JSON.stringify(normalized, null, 2), "utf8");
+      await rename(tmp, path);
+    } catch (err) {
+      await unlink(tmp).catch(() => {});
+      throw err;
+    }
   }
 
   async delete(name: string): Promise<void> {

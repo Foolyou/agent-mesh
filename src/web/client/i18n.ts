@@ -68,6 +68,9 @@ const DICT: Record<string, Entry> = {
   // ── detail panels ──
   topology: ["topology", "拓扑"],
   "topology.sub": ["agents · mail edges", "agent · 邮件边"],
+  "edge.from": ["edge from", "边起点"],
+  "edge.to": ["edge to", "边终点"],
+  "edge.add": ["+ edge", "+ 边"],
   conversation: ["Conversation", "对话"],
   "canvas.title": ["Canvas", "画板"],
   "router chat": ["router chat", "router 对话"],

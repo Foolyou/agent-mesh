@@ -22,6 +22,7 @@ const cp = {
   async steer() {},
   async interrupt() {},
   async wakeAgent() {},
+  addEdge() {},
   async stop() {},
 };
 

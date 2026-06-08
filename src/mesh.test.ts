@@ -61,3 +61,11 @@ test("lazy agents default to spawning until the control plane marks them cold", 
   m.setStatus("a", "cold");
   expect(m.status("a")).toBe("cold");
 });
+
+test("addEdge mutates the live topology so canMail sees the new edge", () => {
+  const m = new Mesh(config);
+  expect(m.canMail("b", "a")).toBe(false);
+  m.addEdge({ from: "b", to: "a" });
+  expect(m.canMail("b", "a")).toBe(true);
+  expect(m.config.edges).toContainEqual({ from: "b", to: "a", steer: false });
+});

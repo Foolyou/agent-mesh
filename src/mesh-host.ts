@@ -10,7 +10,7 @@ import { rm, mkdir } from "node:fs/promises";
 import { ControlPlane, type ControlPlaneStopReason } from "./control-plane";
 import { LineBuffer, encodeFrame, PROTO_VERSION, type ParentMsg, type SeqEvent } from "./protocol";
 import { writeRecord, removeRecord } from "./mesh-registry";
-import { now, type MeshConfig, type MeshEvent, type PromptImageRef } from "./acp/types";
+import { now, type MeshConfig, type MeshEdge, type MeshEvent, type PromptImageRef } from "./acp/types";
 
 /** The slice of ControlPlane the daemon depends on (keeps it unit-testable). */
 export interface BridgeControlPlane {
@@ -23,6 +23,7 @@ export interface BridgeControlPlane {
   setModel(target: string, modelId: string): Promise<void>;
   interrupt(target: string): Promise<void>;
   wakeAgent(target: string): Promise<void>;
+  addEdge(edge: MeshEdge): void;
   stop(reason?: ControlPlaneStopReason): Promise<void>;
 }
 
@@ -156,6 +157,9 @@ export class MeshHostDaemon {
         break;
       case "wake":
         this.cp.wakeAgent(msg.target).catch(() => {});
+        break;
+      case "addEdge":
+        this.cp.addEdge(msg.edge);
         break;
       case "stop":
         void this.stop("explicit");

@@ -11,6 +11,15 @@ const cfg: MeshConfig = {
   agents: [{ id: "r", harness: "claude", project: "test_mesh_0", role: "router" }],
   edges: [],
 };
+const edgeCfg: MeshConfig = {
+  name: "edges",
+  agents: [
+    { id: "r", harness: "claude", project: "test_mesh_0", role: "router" },
+    { id: "a", harness: "codex", project: "test_mesh_0", role: "member" },
+    { id: "b", harness: "codex", project: "test_mesh_0", role: "member" },
+  ],
+  edges: [{ from: "r", to: "a" }],
+};
 const FIXTURE = join(import.meta.dir, "fixtures", "echo-host.ts");
 
 let dir: string;
@@ -20,6 +29,19 @@ beforeEach(async () => {
   mgr = new MeshManager({ meshesDir: join(dir, "meshes"), runDir: join(dir, "run"), hostScript: FIXTURE });
 });
 afterEach(async () => { await mgr.stopAll(); await rm(dir, { recursive: true, force: true }); });
+
+async function waitForPidExit(pid: number, timeoutMs = 1000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      process.kill(pid, 0);
+    } catch {
+      return;
+    }
+    await Bun.sleep(20);
+  }
+  throw new Error(`pid ${pid} still alive after ${timeoutMs}ms`);
+}
 
 test("defineMesh persists and listMeshes shows it stopped", async () => {
   await mgr.defineMesh(cfg);
@@ -66,6 +88,75 @@ test("setMode and setModel are allowed while running", async () => {
   expect(mgr.listMeshes()[0].status).toBe("running");
   expect(mgr.configOf("echo").agents[0].mode).toBe("plan");
   expect(mgr.configOf("echo").agents[0].model).toBe("test-model");
+});
+
+test("addEdge updates parent config, persists, then sends daemon RPC", async () => {
+  await mgr.defineMesh(edgeCfg);
+  const rpc: any[] = [];
+  const entry = (mgr as any).entries.get("edges");
+  entry.status = "running";
+  entry.client = { addEdge: (edge: any) => rpc.push(edge) };
+
+  await mgr.addEdge("edges", { from: "a", to: "b" });
+
+  expect(mgr.configOf("edges").edges).toContainEqual({ from: "a", to: "b", steer: false });
+  expect(rpc).toEqual([{ from: "a", to: "b", steer: false }]);
+  const fresh = new MeshManager({ meshesDir: join(dir, "meshes"), runDir: join(dir, "run"), hostScript: FIXTURE });
+  await fresh.loadDefinitions();
+  expect(fresh.configOf("edges").edges).toContainEqual({ from: "a", to: "b", steer: false });
+});
+
+test("addEdge rolls back parent memory and skips daemon RPC when persistence fails", async () => {
+  await mgr.defineMesh(edgeCfg);
+  const rpc: any[] = [];
+  const entry = (mgr as any).entries.get("edges");
+  entry.status = "running";
+  entry.client = { addEdge: (edge: any) => rpc.push(edge) };
+  const store = (mgr as any).store;
+  const originalDefine = store.define.bind(store);
+  store.define = async () => {
+    throw new Error("disk full");
+  };
+
+  await expect(mgr.addEdge("edges", { from: "a", to: "b" })).rejects.toThrow(/disk full/);
+
+  expect(mgr.configOf("edges").edges).toEqual(edgeCfg.edges);
+  expect(rpc).toEqual([]);
+  store.define = originalDefine;
+});
+
+test("addEdge keeps persisted parent config when daemon RPC fails", async () => {
+  await mgr.defineMesh(edgeCfg);
+  const entry = (mgr as any).entries.get("edges");
+  entry.status = "running";
+  entry.client = {
+    addEdge() {
+      throw new Error("socket closed");
+    },
+  };
+  const events: MeshEvent[] = [];
+  mgr.on((_name, e) => events.push(e));
+
+  await mgr.addEdge("edges", { from: "a", to: "b" });
+
+  expect(mgr.configOf("edges").edges).toContainEqual({ from: "a", to: "b", steer: false });
+  const fresh = new MeshManager({ meshesDir: join(dir, "meshes"), runDir: join(dir, "run"), hostScript: FIXTURE });
+  await fresh.loadDefinitions();
+  expect(fresh.configOf("edges").edges).toContainEqual({ from: "a", to: "b", steer: false });
+  expect(events).toContainEqual(expect.objectContaining({ kind: "log", text: expect.stringContaining("addEdge RPC failed") }));
+});
+
+test("addEdge validates duplicates, steer-to-router, and dead targets", async () => {
+  await mgr.defineMesh(edgeCfg);
+  const entry = (mgr as any).entries.get("edges");
+  entry.status = "running";
+  entry.client = { addEdge() {} };
+
+  await expect(mgr.addEdge("edges", { from: "r", to: "a" })).rejects.toThrow(/already exists/i);
+  await expect(mgr.addEdge("edges", { from: "a", to: "r", steer: true })).rejects.toThrow(/steer.*router/i);
+  (mgr as any).agentStatuses ??= new Map();
+  (mgr as any).agentStatuses.set("edges", new Map([["b", "dead"]]));
+  await expect(mgr.addEdge("edges", { from: "a", to: "b" })).rejects.toThrow(/dead/i);
 });
 
 test("setMode and setModel on an unknown agent throw", async () => {
@@ -120,6 +211,13 @@ test("deleteMesh refuses while running", async () => {
   expect(mgr.listMeshes()[0]!.status).toBe("running");
 });
 
+test("defineMesh still refuses full replacement while running", async () => {
+  await mgr.defineMesh(cfg);
+  await mgr.startMesh("echo");
+  await expect(mgr.defineMesh({ ...cfg, charter: "replace" })).rejects.toThrow(/running/i);
+  expect(mgr.configOf("echo").charter).toBeUndefined();
+});
+
 test("start -> running -> promptRouter relays events -> stop -> stopped, no orphan", async () => {
   await mgr.defineMesh(cfg);
   const events: { name: string; e: MeshEvent }[] = [];
@@ -135,7 +233,7 @@ test("start -> running -> promptRouter relays events -> stop -> stopped, no orph
 
   await mgr.stopMesh("echo");
   expect(mgr.listMeshes()[0]!.status).toBe("stopped");
-  expect(() => process.kill(pid, 0)).toThrow();
+  await waitForPidExit(pid);
 });
 
 test("startMesh twice errors", async () => {
@@ -182,7 +280,7 @@ test("a daemon outlives the backend: reattachRunning reconnects + replays + driv
   expect(ev2.some((e) => e.kind === "log" && (e as any).text === "echo:after")).toBe(true);
 
   await mgr2.stopMesh("echo");
-  expect(() => process.kill(pid, 0)).toThrow(); // now truly reaped
+  await waitForPidExit(pid); // now truly reaped
 });
 
 test("a crashed mesh host is reaped: status dead, socket file removed, restartable", async () => {

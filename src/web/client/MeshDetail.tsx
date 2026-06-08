@@ -444,6 +444,8 @@ export function MeshDetail({
   const [flashId, setFlashId] = useState<string | null>(null);
   const [seg, setSeg] = useState<"chat" | "map" | "log">("chat");
   const [topoOpen, setTopoOpen] = useState(false);
+  const [edgeFrom, setEdgeFrom] = useState("");
+  const [edgeTo, setEdgeTo] = useState("");
   const lastInterrupt = pm.activity.filter((a) => a.kind === "interrupt").slice(-1)[0];
   useEffect(() => {
     if (!lastInterrupt) return;
@@ -453,10 +455,50 @@ export function MeshDetail({
     const timer = setTimeout(() => setFlashId(null), 1000);
     return () => clearTimeout(timer);
   }, [lastInterrupt?.id]);
+  const agentIds = m?.agents.map((a) => a.id) ?? [];
+  const routerId = m?.router ?? "";
+  useEffect(() => {
+    if (!agentIds.length) return;
+    setEdgeFrom((v) => (agentIds.includes(v) ? v : (routerId || agentIds[0] || "")));
+    setEdgeTo((v) => (agentIds.includes(v) ? v : (agentIds.find((id) => id !== (routerId || agentIds[0])) || agentIds[0] || "")));
+  }, [agentIds.join("\u0000"), routerId]);
 
   if (!m) return <Empty>{t("empty.select")}</Empty>;
 
   const activeAgent = selectedAgent && m.agents.some((a) => a.id === selectedAgent) ? selectedAgent : m.router;
+  const live = m.status === "running" || m.status === "starting";
+  const addEdgeDisabled =
+    !edgeFrom ||
+    !edgeTo ||
+    edgeFrom === edgeTo ||
+    m.edges.some((e) => e.from === edgeFrom && e.to === edgeTo);
+  const submitEdge = () => {
+    if (addEdgeDisabled) return;
+    void store.addEdge(m.name, { from: edgeFrom, to: edgeTo });
+  };
+  const edgeAddControl =
+    live && agentIds.length >= 2 ? (
+      <span className="row edge-add" style={{ gap: 5 }}>
+        <select className="mode-sel" value={edgeFrom} aria-label={t("edge.from")} onChange={(e) => setEdgeFrom(e.target.value)}>
+          {agentIds.map((id) => (
+            <option key={id} value={id}>
+              {id}
+            </option>
+          ))}
+        </select>
+        <span className="sub">→</span>
+        <select className="mode-sel" value={edgeTo} aria-label={t("edge.to")} onChange={(e) => setEdgeTo(e.target.value)}>
+          {agentIds.map((id) => (
+            <option key={id} value={id}>
+              {id}
+            </option>
+          ))}
+        </select>
+        <Btn small kind="go" disabled={addEdgeDisabled} title={t("edge.add")} onClick={submitEdge}>
+          {t("edge.add")}
+        </Btn>
+      </span>
+    ) : null;
   const conversationPanel = (
     <ConversationPanel
       m={m}
@@ -474,6 +516,7 @@ export function MeshDetail({
       <div className="head">
         <span className="ttl">{t("topology")}</span>
         <span className="right">
+          {edgeAddControl}
           <InfoIcon text={t("topology.sub")} />
           <Btn small kind="ghost" title={t("topology")} onClick={() => setTopoOpen(true)}>
             ⤢
@@ -567,6 +610,7 @@ export function MeshDetail({
         <span className="ttl">topology</span>
         <span className="sub">agents · mail edges</span>
         <span className="right">
+          {edgeAddControl}
           <Btn small kind="ghost" title="expand topology" onClick={() => setTopoOpen(true)}>
             ⤢
           </Btn>

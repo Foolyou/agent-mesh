@@ -32,6 +32,7 @@ const cp = {
   async steer() {},
   async interrupt() {},
   async wakeAgent() {},
+  addEdge() {},
   async stop() {
     if (childPid) killTree(childPid); // reap the "agent" tree, exactly like ControlPlane.stop()
   },

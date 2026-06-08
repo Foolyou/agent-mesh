@@ -42,6 +42,9 @@ const cp = {
   async wakeAgent(target: string) {
     listener?.({ kind: "log", text: `wake:${target}`, ts: "t" });
   },
+  addEdge(edge: { from: string; to: string }) {
+    listener?.({ kind: "log", text: `addEdge:${edge.from}->${edge.to}`, ts: "t" });
+  },
   async stop() {},
 };
 

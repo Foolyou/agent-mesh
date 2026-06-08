@@ -3,7 +3,7 @@
 // to this; tests drive it directly without a socket.
 import { validateMeshConfig } from "../mesh-validate";
 import type { WebGateway } from "./gateway";
-import type { MeshConfig, PromptImageRef } from "../acp/types";
+import type { MeshConfig, MeshEdge, PromptImageRef } from "../acp/types";
 import type { UploadFileLike } from "./uploads";
 
 export interface ApiResult {
@@ -80,6 +80,11 @@ export async function handleApi(
       }
       // GET /api/meshes/:name/config
       if (method === "GET" && p.length === 3 && p[2] === "config") return ok(gw.configOf(name));
+      // POST /api/meshes/:name/edges
+      if (method === "POST" && p.length === 3 && p[2] === "edges") {
+        await gw.addEdge(name, { from: str(body?.from), to: str(body?.to), steer: body?.steer === true } as MeshEdge);
+        return ok();
+      }
       // POST /api/meshes/:name/(start|stop|prompt)
       if (method === "POST" && p.length === 3) {
         if (p[2] === "start") {

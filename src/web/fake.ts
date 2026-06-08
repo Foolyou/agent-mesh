@@ -172,6 +172,17 @@ export class FakeManager {
     const e = this.require(name);
     e.config = { ...e.config, agents: e.config.agents.map((a) => (a.id === agentId ? { ...a, effort } : a)) };
   }
+  async addEdge(name: string, edge: { from: string; to: string; steer?: boolean }): Promise<void> {
+    const e = this.require(name);
+    if (!e.config.agents.some((a) => a.id === edge.from) || !e.config.agents.some((a) => a.id === edge.to)) {
+      throw new Error(`edge ${edge.from}->${edge.to} references an unknown agent`);
+    }
+    if (e.config.edges.some((x) => x.from === edge.from && x.to === edge.to)) {
+      throw new Error(`edge ${edge.from}->${edge.to} already exists`);
+    }
+    e.config = { ...e.config, edges: [...e.config.edges, { from: edge.from, to: edge.to, steer: edge.steer === true }] };
+    this.emit(name, { kind: "log", text: `edge added ${edge.from} -> ${edge.to}`, ts: now() });
+  }
 
   /** Stream a short agent message word-by-word, then seal it. */
   private async reply(name: string, agent: AgentId, text: string): Promise<void> {
