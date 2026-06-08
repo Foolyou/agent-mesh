@@ -57,7 +57,7 @@ try {
   await page.locator('.detail-head .btn:has-text("start mesh")').click();
   await page.waitForSelector('.detail-head:has-text("running")', { timeout: 8000 });
 
-  const router = page.locator('.panel:has(.head:has-text("router chat"))');
+  const router = page.locator(".conv-panel");
   const textarea = router.locator(".composer textarea");
   const input = router.locator('.composer input[type="file"]');
 

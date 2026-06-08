@@ -75,7 +75,7 @@ try {
     await page.waitForSelector('.detail-head:has-text("running")', { timeout: 8000 });
     // a streamed router message proves live WS deltas traverse the proxy
     await page
-      .locator('.panel:has(.head:has-text("router chat")) .msg.agent .bubble', { hasText: "implements the calculator core" })
+      .locator(".conv-panel .msg.agent .bubble", { hasText: "implements the calculator core" })
       .first()
       .waitFor({ timeout: 12000 });
   });

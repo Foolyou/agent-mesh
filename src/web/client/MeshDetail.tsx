@@ -1,7 +1,7 @@
 // Right column = the TUI "mesh context" + the PoC three-pane intent, web-enhanced:
-// topology, router chat, per-member panels, permission cards, and activity/mail/
+// topology, unified conversation tabs, permission cards, and activity/mail/
 // permission-history timelines for the selected mesh.
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Store } from "./store";
 import type { GatewayState, MeshSummary, PerMeshState, ActivityEntry, MailEntry, ResolvedPermission, PermissionReq, AgentModes, ThinkingEffort } from "../types";
 import { Dot, Btn, Empty, ConfirmButton, InfoIcon, fmtTime } from "./ui";
@@ -140,57 +140,132 @@ function EffortControl({ m, agent, store }: { m: MeshSummary; agent: string; sto
   );
 }
 
-function AgentPanels({
+function ConversationPanel({
   m,
   pm,
   store,
   active,
   onActivate,
+  fullscreen,
+  onToggleFull,
+  mobile,
 }: {
   m: MeshSummary;
   pm: PerMeshState;
   store: Store;
   active: string | null;
   onActivate: (id: string) => void;
+  fullscreen: boolean;
+  onToggleFull: () => void;
+  mobile?: boolean;
 }) {
   const { t } = useI18n();
+  const live = m.status === "running" || m.status === "starting";
+  const router = m.agents.find((a) => a.id === m.router) ?? m.agents[0];
   const members = m.agents.filter((a) => a.id !== m.router);
-  if (!members.length) return <Empty>{t("empty.members")}</Empty>;
-  const cur = members.find((a) => a.id === active) ?? members[0];
-  const setTab = onActivate;
+  const cur = m.agents.find((a) => a.id === active) ?? router;
+  const activeId = cur?.id ?? m.router;
+  const isRouter = activeId === m.router;
+  const tabRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  useEffect(() => {
+    if (activeId === m.router) return;
+    tabRefs.current[activeId]?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [activeId, m.router]);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onDoc = (e: MouseEvent) => {
+      if (!menuRef.current?.contains(e.target as Node)) setMenuOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [menuOpen]);
+
+  if (!cur) return <Empty>{t("empty.members")}</Empty>;
+  const statusOf = (id: string) => (live ? (m.agents.find((a) => a.id === id)?.status ?? "stopped") : "stopped");
+  const activate = (id: string) => {
+    onActivate(id);
+    setMenuOpen(false);
+  };
   return (
-    <div className="panel">
-      <div className="head" style={{ padding: 0 }}>
-        <div className="tabs">
+    <div className="panel conv-panel">
+      <div className="head conv-head">
+        <span className="ttl">{t("conversation")}</span>
+        <span className="sub">{activeId}</span>
+      </div>
+      <div className="tabs conv-tabs">
+        <button className={`tab conv-router-tab ${isRouter ? "sel" : ""}`} onClick={() => activate(m.router)}>
+          <span className="pin">📌</span>
+          <Dot status={statusOf(m.router)} />
+          <span>{m.router}</span>
+        </button>
+        <div className="conv-member-strip">
           {members.map((a) => (
-            <span className={`tab ${a.id === cur.id ? "sel" : ""}`} key={a.id} onClick={() => setTab(a.id)}>
-              <Dot status={m.status === "running" || m.status === "starting" ? a.status : "stopped"} />
+            <button
+              className={`tab conv-member-tab ${a.id === activeId ? "sel" : ""}`}
+              key={a.id}
+              ref={(el) => {
+                tabRefs.current[a.id] = el;
+              }}
+              onClick={() => activate(a.id)}
+            >
+              <Dot status={statusOf(a.id)} />
               {a.id}
-            </span>
+            </button>
           ))}
+        </div>
+        <div className="conv-overflow" ref={menuRef}>
+          <button className="tab conv-overflow-btn" onClick={() => setMenuOpen((o) => !o)} title={t("tabs.allMembers", { n: members.length })}>
+            ⋯{members.length} ▾
+          </button>
+          {menuOpen ? (
+            <div className="conv-overflow-menu">
+              {members.map((a) => (
+                <button className="conv-overflow-item" key={a.id} onClick={() => activate(a.id)}>
+                  <Dot status={statusOf(a.id)} />
+                  <span>{a.id}</span>
+                </button>
+              ))}
+            </div>
+          ) : null}
         </div>
       </div>
       <div className="scroll-pane">
-        <div className="row" style={{ padding: "5px 10px", borderBottom: "1px solid var(--line)" }}>
+        <div className="row conv-control">
           <span className="sub">{cur.harness}</span>
           <span style={{ flex: 1 }} />
           <EffortControl m={m} agent={cur.id} store={store} />
-          {m.status === "running" || m.status === "starting" ? (
+          {live ? (
             <Btn small kind="stop" title={t("interrupt")} onClick={() => void store.interruptAgent(m.name, cur.id)}>
               {t("interrupt")}
             </Btn>
           ) : null}
-          {m.status === "running" || m.status === "starting" ? (
+          {live ? (
             <ModeControl mesh={m.name} agent={cur.id} store={store} modes={pm.modes?.[cur.id]} />
+          ) : null}
+          {!mobile ? (
+            <Btn small kind="ghost" onClick={onToggleFull} title={t("full")}>
+              {fullscreen ? `⊟ ${t("exit")}` : `⊞ ${t("full")}`}
+            </Btn>
           ) : null}
         </div>
         <ChatPane
-          items={pm.transcripts[cur.id] ?? []}
-          placeholder={t("agent.placeholder", { id: cur.id })}
+          items={pm.transcripts[activeId] ?? []}
+          placeholder={isRouter ? t("router.placeholder") : t("agent.placeholder", { id: activeId })}
           imageEnabled={!!pm.capabilities?.[cur.id]?.image}
           imageDisabledReason="This agent does not advertise image input support"
           onUploadImages={(files) => store.uploadImages(m.name, files)}
-          onSend={(msg, images) => void store.promptAgent(m.name, cur.id, msg, images)}
+          onSend={(msg, images) => (isRouter ? void store.promptRouter(m.name, msg, images) : void store.promptAgent(m.name, activeId, msg, images))}
         />
       </div>
     </div>
@@ -324,7 +399,7 @@ export function MeshDetail({
   // interrupt flash: highlight a node briefly when a new interrupt activity arrives
   const { t } = useI18n();
   const [flashId, setFlashId] = useState<string | null>(null);
-  const [seg, setSeg] = useState<"chat" | "agents" | "map" | "log">("chat");
+  const [seg, setSeg] = useState<"chat" | "map" | "log">("chat");
   const [topoOpen, setTopoOpen] = useState(false);
   const lastInterrupt = pm.activity.filter((a) => a.kind === "interrupt").slice(-1)[0];
   useEffect(() => {
@@ -338,41 +413,19 @@ export function MeshDetail({
 
   if (!m) return <Empty>{t("empty.select")}</Empty>;
 
-  const live = m.status === "running" || m.status === "starting";
-  const routerItems = pm.transcripts[m.router] ?? [];
-  const routerChat = (
-    <div className="panel">
-      <div className="head">
-        <span className="ttl">{t("router chat")}</span>
-        <span className="sub">{m.router}</span>
-        <span className="right">
-          <EffortControl m={m} agent={m.router} store={store} />
-          {live ? <ModeControl mesh={m.name} agent={m.router} store={store} modes={pm.modes?.[m.router]} /> : null}
-          {live ? (
-            <Btn small kind="stop" title={t("interrupt")} onClick={() => void store.interruptAgent(m.name, m.router)}>
-              {t("interrupt")}
-            </Btn>
-          ) : null}
-          {!mobile ? (
-            <Btn small kind="ghost" onClick={onToggleFull} title={t("full")}>
-              {fullscreen ? `⊟ ${t("exit")}` : `⊞ ${t("full")}`}
-            </Btn>
-          ) : null}
-        </span>
-      </div>
-      <div className="scroll-pane">
-        <ChatPane
-          items={routerItems}
-          placeholder={t("router.placeholder")}
-          imageEnabled={!!pm.capabilities?.[m.router]?.image}
-          imageDisabledReason="This agent does not advertise image input support"
-          onUploadImages={(files) => store.uploadImages(m.name, files)}
-          onSend={(msg, images) => void store.promptRouter(m.name, msg, images)}
-        />
-      </div>
-    </div>
+  const activeAgent = selectedAgent && m.agents.some((a) => a.id === selectedAgent) ? selectedAgent : m.router;
+  const conversationPanel = (
+    <ConversationPanel
+      m={m}
+      pm={pm}
+      store={store}
+      active={activeAgent}
+      onActivate={onSelectAgent}
+      fullscreen={fullscreen}
+      onToggleFull={onToggleFull}
+      mobile={mobile}
+    />
   );
-  const agentPanels = <AgentPanels m={m} pm={pm} store={store} active={selectedAgent} onActivate={onSelectAgent} />;
   const topologyPanel = (
     <div className="panel">
       <div className="head">
@@ -385,12 +438,12 @@ export function MeshDetail({
         </span>
       </div>
       <div className="body-scroll">
-        <Topology summary={m} selectedAgent={selectedAgent} onSelect={onSelectAgent} flashId={flashId} />
+        <Topology summary={m} selectedAgent={activeAgent} onSelect={onSelectAgent} flashId={flashId} />
       </div>
     </div>
   );
   const topoModal = topoOpen ? (
-    <TopologyModal summary={m} selectedAgent={selectedAgent} onSelect={onSelectAgent} onClose={() => setTopoOpen(false)} />
+    <TopologyModal summary={m} selectedAgent={activeAgent} onSelect={onSelectAgent} onClose={() => setTopoOpen(false)} />
   ) : null;
   const activityPanel = (
     <div className="panel">
@@ -431,7 +484,7 @@ export function MeshDetail({
   );
   const permissionEl = <PermissionCards pending={pm.pending} mesh={m.name} store={store} />;
 
-  // ── Mobile: a focused segment switcher (Chat / Agents / Map / Log) with the
+  // ── Mobile: a focused segment switcher (Chat / Map / Log) with the
   //    permission cards pinned, since they are action-required. ────────────────
   if (mobile) {
     const tab = (key: typeof seg, label: string, badge?: number) => (
@@ -446,8 +499,7 @@ export function MeshDetail({
         {topoModal}
         {pm.pending.length ? <div className="mperm">{permissionEl}</div> : null}
         <div className="mseg">
-          {seg === "chat" ? routerChat : null}
-          {seg === "agents" ? agentPanels : null}
+          {seg === "chat" ? conversationPanel : null}
           {seg === "map" ? topologyPanel : null}
           {seg === "log" ? (
             <div className="mlog">
@@ -459,7 +511,6 @@ export function MeshDetail({
         </div>
         <div className="mtabs">
           {tab("chat", t("seg.chat"))}
-          {tab("agents", t("seg.agents"))}
           {tab("map", t("seg.map"))}
           {tab("log", t("seg.log"))}
         </div>
@@ -481,7 +532,7 @@ export function MeshDetail({
         </span>
       </div>
       <div className="body-scroll">
-        <Topology summary={m} selectedAgent={selectedAgent} onSelect={onSelectAgent} flashId={flashId} maxHeight={230} />
+        <Topology summary={m} selectedAgent={activeAgent} onSelect={onSelectAgent} flashId={flashId} maxHeight={230} />
       </div>
     </div>
   );
@@ -491,13 +542,10 @@ export function MeshDetail({
       {topoModal}
       {pm.pending.length ? <div className="dperm">{permissionEl}</div> : null}
       {fullscreen ? (
-        <div className="dmain full">{routerChat}</div>
+        <div className="dmain full">{conversationPanel}</div>
       ) : (
         <div className="dmain">
-          <div className="dchat">
-            {routerChat}
-            {agentPanels}
-          </div>
+          <div className="dchat">{conversationPanel}</div>
           <div className="drail">
             {railTopology}
             <RailLogs pm={pm} />

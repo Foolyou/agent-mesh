@@ -1,5 +1,5 @@
 // Browser e2e for the agent session-mode picker: starts the fake mesh, opens a member
-// agent panel, and drives the <select> — proving the advertised modes render and that
+// conversation tab, and drives the <select> — proving the advertised modes render and that
 // switching round-trips through setMode → agent.modes back into the picker.
 // Run: bun run src/web/mode.e2e.ts
 import { chromium, type Page } from "playwright";
@@ -41,21 +41,23 @@ try {
     if (await page.locator(".mode-sel").count()) throw new Error("mode picker visible before the mesh is running");
   });
 
-  await step("start mesh → member panel shows the advertised modes", async () => {
+  await step("start mesh → member tab shows the advertised modes", async () => {
     await page.locator('.detail-head .btn:has-text("start mesh")').click();
     await page.waitForSelector('.detail-head:has-text("running")', { timeout: 8000 });
-    await page.waitForSelector(".mode-sel", { timeout: 8000 });
-    const opts = await page.locator(".mode-sel option").allTextContents();
+    await page.locator('.conv-member-tab:has-text("codex-1")').click();
+    const mode = page.locator(".conv-control .mode-sel");
+    await mode.waitFor({ timeout: 8000 });
+    const opts = await mode.locator("option").allTextContents();
     const want = ["read-only", "default", "full-access"];
     if (JSON.stringify(opts) !== JSON.stringify(want)) throw new Error(`options ${JSON.stringify(opts)} != ${JSON.stringify(want)}`);
-    const val = await page.locator(".mode-sel").inputValue();
+    const val = await mode.inputValue();
     if (val !== "default") throw new Error(`current mode "${val}" != "default"`);
   });
 
   await step("switching mode round-trips back into the picker + logs the change", async () => {
-    await page.selectOption(".mode-sel", "read-only");
+    await page.locator(".conv-control .mode-sel").selectOption("read-only");
     // the fake echoes agent.modes with the new current → the select reflects it
-    await page.waitForFunction(() => (document.querySelector(".mode-sel") as HTMLSelectElement)?.value === "read-only", { timeout: 5000 });
+    await page.waitForFunction(() => (document.querySelector(".conv-control .mode-sel") as HTMLSelectElement)?.value === "read-only", { timeout: 5000 });
     // and the activity log records it
     await page.locator('.drail .seg-tab:has-text("activity")').click();
     await page.waitForSelector('.drail .panel .tx:has-text("mode → read-only")', { timeout: 6000 });

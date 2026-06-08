@@ -40,7 +40,7 @@ try {
   await page.locator('.detail-head .btn:has-text("start mesh")').click();
   await page.waitForSelector('.detail-head:has-text("running")', { timeout: 8000 });
 
-  const routerPanel = '.panel:has(.head:has-text("router chat"))';
+  const routerPanel = ".conv-panel";
 
   await step("composer is a multi-line <textarea>", async () => {
     await page.waitForSelector(`${routerPanel} .composer textarea`, { timeout: 6000 });
