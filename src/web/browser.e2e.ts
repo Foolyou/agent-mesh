@@ -87,6 +87,12 @@ try {
   await step("unified conversation tabs pin router with status dot and switch conversations", async () => {
     const panel = page.locator(".conv-panel").first();
     await panel.waitFor({ timeout: 8000 });
+    const chatBox = await page.locator(".dchat").first().boundingBox();
+    const panelBox = await panel.boundingBox();
+    if (!chatBox || !panelBox) throw new Error("conversation panel/chat geometry missing");
+    if (panelBox.width < chatBox.width - 2) {
+      throw new Error(`conversation panel did not fill chat column (${panelBox.width}px < ${chatBox.width}px)`);
+    }
     const title = ((await panel.locator(".head .ttl").first().textContent()) ?? "").trim().toLowerCase();
     if (title !== "conversation") throw new Error(`conversation panel title was "${title}"`);
     const routerTab = panel.locator(".conv-router-tab");
@@ -96,12 +102,26 @@ try {
     const stripBox = await panel.locator(".conv-member-strip").boundingBox();
     if (!rbox || !stripBox || rbox.x >= stripBox.x) throw new Error("router tab is not pinned left of member strip");
 
+    const assertSelectedTab = async (selector: string, label: string) => {
+      const style = await panel.locator(selector).first().evaluate((el) => {
+        const cs = getComputedStyle(el as HTMLElement);
+        return { borderBottomColor: cs.borderBottomColor, borderBottomWidth: cs.borderBottomWidth, color: cs.color };
+      });
+      if (style.borderBottomWidth !== "2px") throw new Error(`${label} selected border width was ${style.borderBottomWidth}`);
+      if (style.borderBottomColor === "transparent" || style.borderBottomColor === "rgba(0, 0, 0, 0)") {
+        throw new Error(`${label} selected border was transparent`);
+      }
+    };
+    await assertSelectedTab(".conv-router-tab.sel", "router tab");
+
     await panel.locator('.conv-member-tab:has-text("codex-1")').click();
     await panel.locator('.composer textarea[placeholder*="codex-1"]').waitFor({ timeout: 4000 });
     await panel.locator(".conv-control .sub", { hasText: "codex" }).waitFor({ timeout: 4000 });
+    await assertSelectedTab('.conv-member-tab.sel:has-text("codex-1")', "member tab");
     await routerTab.click();
     await panel.locator('.composer textarea[placeholder*="router"]').waitFor({ timeout: 4000 });
     await panel.locator(".conv-control .sub", { hasText: "claude" }).waitFor({ timeout: 4000 });
+    await assertSelectedTab(".conv-router-tab.sel", "router tab");
   });
 
   await step("conversation member strip scrolls without visible scrollbar and overflow menu jumps", async () => {
