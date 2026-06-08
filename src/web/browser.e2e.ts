@@ -541,6 +541,121 @@ try {
     await canvas.locator(".canvas-close").click();
   });
 
+  await step("mesh canvas curves a blocked edge around an intervening window", async () => {
+    const key = "mesh-canvas-layout:demo";
+    if (await page.locator(".mesh-canvas").isVisible().catch(() => false)) {
+      await page.locator(".mesh-canvas .canvas-close").click();
+      await page.locator(".mesh-canvas").waitFor({ state: "detached", timeout: 4000 });
+    }
+    await page.evaluate((k) => localStorage.removeItem(k), key);
+    await page.locator('.drail .panel:has(.head:has-text("topology")) .btn:has-text("⤢")').click();
+    let canvas = page.locator(".mesh-canvas");
+    await canvas.waitFor({ timeout: 5000 });
+    await canvas.locator(".canvas-close").click();
+    await canvas.waitFor({ state: "detached", timeout: 4000 });
+    await page.evaluate((k) => {
+      const saved = JSON.parse(localStorage.getItem(k)!);
+      saved.windows["codex-1"] = { x: 110, y: 360, w: 300, h: 240 };
+      saved.windows["opencode-1"] = { x: 1030, y: 360, w: 300, h: 240 };
+      saved.windows.router = { x: 590, y: 330, w: 300, h: 300 };
+      localStorage.setItem(k, JSON.stringify(saved));
+    }, key);
+
+    await page.locator('.drail .panel:has(.head:has-text("topology")) .btn:has-text("⤢")').click();
+    canvas = page.locator(".mesh-canvas");
+    await canvas.waitFor({ timeout: 5000 });
+    const edge = canvas.locator('.canvas-edge[data-from="codex-1"][data-to="opencode-1"]');
+    await edge.waitFor({ state: "attached", timeout: 4000 });
+    const d = await edge.getAttribute("d");
+    const route = await edge.getAttribute("data-route");
+    if (!d?.includes(" C ")) throw new Error(`blocked edge did not render as a cubic path: ${d}`);
+    if (route !== "avoid") throw new Error(`blocked edge route was ${route}`);
+    const routerBox = await canvas.locator('.canvas-window[data-agent="router"]').boundingBox();
+    if (!routerBox) throw new Error("router blocker missing");
+    const intersects = await edge.evaluate((el, box) => {
+      const path = el as SVGPathElement;
+      const len = path.getTotalLength();
+      for (let i = 1; i < 40; i++) {
+        const p = path.getPointAtLength((len * i) / 40);
+        if (p.x >= box.x && p.x <= box.x + box.width && p.y >= box.y && p.y <= box.y + box.height) return true;
+      }
+      return false;
+    }, routerBox);
+    if (intersects) throw new Error("routed edge still sampled inside the intervening router window");
+    await page.screenshot({ path: `${SHOTS}/07-canvas-avoid.png`, fullPage: true });
+    await canvas.locator(".canvas-close").click();
+    await canvas.waitFor({ state: "detached", timeout: 4000 });
+  });
+
+  await step("mesh canvas falls back to a straight path when blockers box in the route", async () => {
+    const key = "mesh-canvas-layout:demo";
+    if (await page.locator(".mesh-canvas").isVisible().catch(() => false)) {
+      await page.locator(".mesh-canvas .canvas-close").click();
+      await page.locator(".mesh-canvas").waitFor({ state: "detached", timeout: 4000 });
+    }
+    await page.evaluate(() => {
+      const store = (window as any).__meshStore;
+      const state = store.getState();
+      const blockers = [
+        { id: "block-top", harness: "codex", role: "member", status: "ready", activity: "idle" },
+        { id: "block-bottom", harness: "codex", role: "member", status: "ready", activity: "idle" },
+      ];
+      store.apply({
+        t: "mesh.list",
+        meshes: state.meshes.map((m: any) =>
+          m.name === "demo"
+            ? { ...m, agents: [...m.agents.filter((a: any) => !String(a.id).startsWith("block-")), ...blockers] }
+            : m,
+        ),
+      });
+    });
+    try {
+      await page.evaluate((k) => localStorage.removeItem(k), key);
+      await page.locator('.drail .panel:has(.head:has-text("topology")) .btn:has-text("⤢")').click();
+      let canvas = page.locator(".mesh-canvas");
+      await canvas.waitFor({ timeout: 5000 });
+      await canvas.locator(".canvas-close").click();
+      await canvas.waitFor({ state: "detached", timeout: 4000 });
+      await page.evaluate((k) => {
+        const saved = JSON.parse(localStorage.getItem(k)!);
+        saved.windows["codex-1"] = { x: 80, y: 420, w: 280, h: 220 };
+        saved.windows["opencode-1"] = { x: 1140, y: 420, w: 280, h: 220 };
+        saved.windows.router = { x: 535, y: 390, w: 370, h: 260 };
+        saved.windows["block-top"] = { x: 300, y: 40, w: 820, h: 360 };
+        saved.windows["block-bottom"] = { x: 300, y: 610, w: 820, h: 280 };
+        localStorage.setItem(k, JSON.stringify(saved));
+      }, key);
+
+      await page.locator('.drail .panel:has(.head:has-text("topology")) .btn:has-text("⤢")').click();
+      canvas = page.locator(".mesh-canvas");
+      await canvas.waitFor({ timeout: 5000 });
+      const edge = canvas.locator('.canvas-edge[data-from="codex-1"][data-to="opencode-1"]');
+      await edge.waitFor({ state: "attached", timeout: 4000 });
+      const d = await edge.getAttribute("d");
+      const route = await edge.getAttribute("data-route");
+      if (route !== "fallback") throw new Error(`boxed-in route was ${route}`);
+      if (!d?.includes(" L ") || d.includes(" C ")) throw new Error(`fallback edge was not a straight path: ${d}`);
+      await canvas.locator(".canvas-close").click();
+      await canvas.waitFor({ state: "detached", timeout: 4000 });
+    } finally {
+      await page.evaluate((k) => {
+        const store = (window as any).__meshStore;
+        const state = store.getState();
+        store.apply({
+          t: "mesh.list",
+          meshes: state.meshes.map((m: any) =>
+            m.name === "demo" ? { ...m, agents: m.agents.filter((a: any) => !String(a.id).startsWith("block-")) } : m,
+          ),
+        });
+        localStorage.removeItem(k);
+      }, key);
+      if (await page.locator(".mesh-canvas").isVisible().catch(() => false)) {
+        await page.locator(".mesh-canvas .canvas-close").click();
+        await page.locator(".mesh-canvas").waitFor({ state: "detached", timeout: 4000 });
+      }
+    }
+  });
+
   await step("mobile detail has a single chat segment without separate agents segment", async () => {
     await page.setViewportSize({ width: 390, height: 760 });
     await page.waitForSelector(".mdetail .conv-panel", { timeout: 4000 });
