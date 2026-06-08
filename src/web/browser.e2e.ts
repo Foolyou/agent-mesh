@@ -432,7 +432,7 @@ try {
   await step("master chat fullscreens on mobile and Esc exits without hiding composer", async () => {
     await page.setViewportSize({ width: 375, height: 667 });
     const back = page.locator('.topbar .btn:has-text("back")');
-    if (await back.count()) await back.click();
+    await back.waitFor({ timeout: 4000 }).then(() => back.click()).catch(() => {});
     const panel = page.locator(".master-chat");
     await panel.locator('button[aria-label*="Mesh Assistant"]').click();
     await panel.evaluate((el) => {
