@@ -15,3 +15,6 @@ dist/
 *_rsa
 *_dsa
 secrets/
+
+# brainstorm visual-companion sessions
+.superpowers/
