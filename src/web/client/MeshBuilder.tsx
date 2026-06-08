@@ -14,6 +14,7 @@ interface AgentDraft {
   project: string;
   effort?: ThinkingEffort;
   mode?: string;
+  instructions?: string;
 }
 
 const HARNESSES: HarnessId[] = ["claude", "codex", "opencode"];
@@ -29,6 +30,8 @@ function validate(name: string, agents: AgentDraft[], edges: [string, string][])
   for (const a of agents) {
     if (!a.project.trim()) return `agent "${a.id}" needs a project (working dir)`;
     if (a.project.startsWith("/") || a.project.includes("..")) return `agent "${a.id}" project must be a relative path`;
+    const instructions = a.instructions?.trim();
+    if (instructions && instructions.length > 4000) return `agent "${a.id}" instructions are too long (max 4000 chars)`;
   }
   for (const [from, to] of edges) {
     if (!ids.includes(from) || !ids.includes(to)) return `edge ${from}→${to} references an unknown agent`;
@@ -50,7 +53,7 @@ export function MeshBuilder({
   const [name, setName] = useState(initial?.name ?? "");
   const [agents, setAgents] = useState<AgentDraft[]>(
     initial?.agents?.length
-      ? initial.agents.map((a) => ({ id: a.id, harness: a.harness, role: a.role, project: a.project, effort: a.effort, mode: a.mode }))
+      ? initial.agents.map((a) => ({ id: a.id, harness: a.harness, role: a.role, project: a.project, effort: a.effort, mode: a.mode, instructions: a.instructions }))
       : [{ id: "router", harness: "claude", role: "router", project: "test_mesh_0" }],
   );
   const [edges, setEdges] = useState<[string, string][]>(initial ? initial.edges.map((e) => [e[0], e[1]]) : []);
@@ -79,7 +82,11 @@ export function MeshBuilder({
     setErr(null);
     setBusy(true);
     try {
-      await store.defineMesh({ name, agents, edges, charter: charter.trim() || undefined });
+      const normalizedAgents = agents.map((a) => ({
+        ...a,
+        instructions: a.instructions?.trim() || undefined,
+      }));
+      await store.defineMesh({ name, agents: normalizedAgents, edges, charter: charter.trim() || undefined });
       onClose(name);
     } catch (e: any) {
       setErr(String(e?.message ?? e));
@@ -159,6 +166,19 @@ export function MeshBuilder({
                       </option>
                     ))}
                   </select>
+                </div>
+                <div className="agent-instructions-field">
+                  <label className="adv-label" htmlFor={`agent-${i}-instructions`}>
+                    {t("build.instructions")}
+                  </label>
+                  <textarea
+                    id={`agent-${i}-instructions`}
+                    className="inp agent-instructions"
+                    rows={3}
+                    value={a.instructions ?? ""}
+                    placeholder={t("build.instructions.placeholder")}
+                    onChange={(e) => setAgent(i, { instructions: e.target.value })}
+                  />
                 </div>
               </div>
             ))}

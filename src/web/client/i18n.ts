@@ -150,6 +150,11 @@ const DICT: Record<string, Entry> = {
   "build.name.locked": ["mesh name (locked)", "mesh 名称(锁定)"],
   "build.agents": ["agents — exactly one router", "agents —— 恰好一个 router"],
   "build.addAgent": ["+ agent", "+ agent"],
+  "build.instructions": ["role-specific instructions (optional)", "专属指令（可选）"],
+  "build.instructions.placeholder": [
+    "Only this agent sees this. Applies on the next start.",
+    "仅该 agent 可见,下次启动时生效。",
+  ],
   "build.edges": ["mail edges — from → to (directed)", "邮件边 —— from → to(有向)"],
   "build.addEdge": ["+ edge", "+ 边"],
   "build.charter": [

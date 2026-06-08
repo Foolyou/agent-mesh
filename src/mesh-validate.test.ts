@@ -82,3 +82,21 @@ test("accepts an optional charter and rejects an overly long one", () => {
   expect(() => validateMeshConfig({ ...ok, charter: "Be concise. Write tests." })).not.toThrow();
   expect(() => validateMeshConfig({ ...ok, charter: "x".repeat(4001) })).toThrow(/too long/i);
 });
+
+test("accepts optional per-agent instructions and ignores blank ones", () => {
+  expect(() =>
+    validateMeshConfig({
+      ...ok,
+      agents: [{ ...ok.agents[0], instructions: "Focus on routing and handoffs." }, { ...ok.agents[1], instructions: "   " }],
+    }),
+  ).not.toThrow();
+});
+
+test("rejects overly long per-agent instructions", () => {
+  expect(() =>
+    validateMeshConfig({
+      ...ok,
+      agents: [{ ...ok.agents[0], instructions: "x".repeat(4001) }, ok.agents[1]],
+    }),
+  ).toThrow(/instructions.*too long/i);
+});

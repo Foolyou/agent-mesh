@@ -73,5 +73,11 @@ export function buildMeshBriefing(mesh: Mesh, agentId: AgentId): string {
     lines.push("Team charter — the shared goal and working norms for this mesh. Follow it in all your work:");
     lines.push(charter.replace(/^/gm, "  "));
   }
+  const instructions = me.instructions?.trim();
+  if (instructions) {
+    lines.push("");
+    lines.push("Your role-specific instructions — additional guidance for you specifically (only you see this):");
+    lines.push(instructions.replace(/^/gm, "  "));
+  }
   return lines.join("\n");
 }

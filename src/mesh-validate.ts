@@ -33,6 +33,13 @@ export function validateMeshConfig(config: MeshConfig): void {
     if (a.effort !== undefined && !["minimal", "low", "medium", "high"].includes(a.effort)) {
       throw new Error(`agent "${a.id}" has invalid effort "${a.effort}" (use minimal|low|medium|high)`);
     }
+    if (a.instructions !== undefined) {
+      if (typeof a.instructions !== "string") throw new Error(`agent "${a.id}" instructions must be a string`);
+      const instructions = a.instructions.trim();
+      if (instructions && instructions.length > 4000) {
+        throw new Error(`agent "${a.id}" instructions are too long (max 4000 chars)`);
+      }
+    }
     // A configured initial mode must be a known mode id for the harness (no arbitrary strings),
     // and a permission-bypassing mode may only be PRE-ARMED at create time with an explicit opt-in
     // (the operator can still switch to it deliberately at runtime). This blocks an LLM-generated
