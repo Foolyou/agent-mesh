@@ -91,6 +91,15 @@ export interface AcpConnectionOptions {
   extraEnv?: Record<string, string>;
 }
 
+type PromptPlacement = "back" | "front";
+type QueuedPrompt = {
+  text: string;
+  images: PromptImageRef[];
+  priority: "normal" | "steer";
+  resolve: (r: any) => void;
+  reject: (e: any) => void;
+};
+
 export class AcpAgentConnection {
   readonly id: string;
   sessionId?: string;
@@ -196,7 +205,7 @@ export class AcpAgentConnection {
   }
 
   private busy = false;
-  private queue: { text: string; images: PromptImageRef[]; resolve: (r: any) => void; reject: (e: any) => void }[] = [];
+  private queue: QueuedPrompt[] = [];
 
   /**
    * Send a prompt turn. Resolves with the PromptResponse (stopReason) when the
@@ -205,9 +214,37 @@ export class AcpAgentConnection {
    * queued rather than sent concurrently (ACP allows one prompt turn at a time).
    */
   prompt(text: string, images: PromptImageRef[] = []): Promise<any> {
+    return this.enqueuePrompt(text, images, "back");
+  }
+
+  /**
+   * Queue a prompt ahead of ordinary queued prompts while preserving FIFO among
+   * steer prompts. The job is placed before cancel is sent, so when the cancelled
+   * in-flight turn settles and pump() runs, steer is already at the head. ACP
+   * writes cancel before the later prompt; if no turn is in flight, cancel is a no-op.
+   */
+  steerPrompt(text: string, images: PromptImageRef[] = []): Promise<any> {
+    const wasBusy = this.busy;
+    const turn = this.enqueuePrompt(text, images, "front");
+    if (wasBusy) {
+      this.cancel().catch((err) => {
+        console.warn(`${this.id}: steer cancel failed: ${String(err)}`);
+      });
+    }
+    return turn;
+  }
+
+  private enqueuePrompt(text: string, images: PromptImageRef[], placement: PromptPlacement): Promise<any> {
     if (!this.sessionId) throw new Error(`${this.id}: no session`);
     return new Promise((resolve, reject) => {
-      this.queue.push({ text, images, resolve, reject });
+      const job: QueuedPrompt = { text, images, priority: placement === "front" ? "steer" : "normal", resolve, reject };
+      if (placement === "front") {
+        const firstNormal = this.queue.findIndex((queued) => queued.priority !== "steer");
+        if (firstNormal === -1) this.queue.push(job);
+        else this.queue.splice(firstNormal, 0, job);
+      } else {
+        this.queue.push(job);
+      }
       void this.pump();
     });
   }
