@@ -1,7 +1,7 @@
 // Shared types for the WebUI: aggregated transcript items, gateway state, and the
 // WebSocket wire protocol. These are the contract between WebGateway (server) and
 // the client store.
-import type { MeshConfig, AgentId, AgentStatus, AgentActivity, AgentRole, HarnessId, SessionMode, SessionModel, PromptImageRef, ThinkingEffort } from "../acp/types";
+import type { MeshConfig, AgentId, AgentStatus, AgentActivity, AgentRole, HarnessId, SessionMode, SessionModel, PromptImageRef, ThinkingEffort, MeshEdge } from "../acp/types";
 export type { SessionMode };
 export type { SessionModel };
 export type { PromptImageRef };
@@ -71,8 +71,8 @@ export interface MeshSummary {
   status: MeshStatus;
   router: AgentId;
   agents: { id: AgentId; harness: HarnessId; role: AgentRole; status: AgentStatus; activity: AgentActivity; effort?: ThinkingEffort; model?: AgentModels }[];
-  /** Directed mail edges [from, to]; lets the topology render from the summary alone. */
-  edges: [AgentId, AgentId][];
+  /** Directed mail edges; lets the topology render from the summary alone. */
+  edges: MeshEdge[];
 }
 
 export interface ActivityEntry {

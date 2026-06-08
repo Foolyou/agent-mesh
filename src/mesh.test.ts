@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { Mesh } from "./mesh";
-import type { MeshConfig } from "./acp/types";
+import { normalizeMeshEdges, type MeshConfig } from "./acp/types";
 
 const config: MeshConfig = {
   name: "t",
@@ -9,7 +9,7 @@ const config: MeshConfig = {
     { id: "a", harness: "codex", project: "p", role: "member" },
     { id: "b", harness: "opencode", project: "p", role: "member" },
   ],
-  edges: [["a", "b"]],
+  edges: [{ from: "a", to: "b" }],
 };
 
 test("router is the role=router agent", () => {
@@ -21,6 +21,31 @@ test("canMail respects directed edges and membership", () => {
   expect(m.canMail("a", "b")).toBe(true);
   expect(m.canMail("b", "a")).toBe(false);
   expect(m.canMail("a", "z")).toBe(false);
+});
+
+test("normalizes old tuple edges and new object edges", () => {
+  expect(normalizeMeshEdges([["a", "b"], { from: "b", to: "a", steer: true }])).toEqual([
+    { from: "a", to: "b", steer: false },
+    { from: "b", to: "a", steer: true },
+  ]);
+});
+
+test("canSteer respects steer flag, membership, self, and router target", () => {
+  const m = new Mesh({
+    ...config,
+    edges: [
+      { from: "a", to: "b", steer: true },
+      { from: "b", to: "a" },
+      { from: "a", to: "a", steer: true },
+      { from: "a", to: "r", steer: true },
+    ],
+  });
+  expect(m.canSteer("a", "b")).toBe(true);
+  expect(m.canSteer("b", "a")).toBe(false);
+  expect(m.canSteer("b", "r")).toBe(false);
+  expect(m.canSteer("a", "a")).toBe(false);
+  expect(m.canSteer("a", "r")).toBe(false);
+  expect(m.canSteer("a", "z")).toBe(false);
 });
 
 test("members excludes the router", () => {

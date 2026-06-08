@@ -1,6 +1,6 @@
 // src/mesh-store.test.ts
 import { test, expect, beforeEach, afterEach } from "bun:test";
-import { rm, mkdtemp } from "node:fs/promises";
+import { rm, mkdtemp, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MeshStore } from "./mesh-store";
@@ -21,6 +21,19 @@ test("define then load round-trips the config", async () => {
   await store.define(cfg);
   const loaded = await store.load();
   expect(loaded).toEqual([cfg]);
+});
+
+test("define and load normalize old tuple edges at the persistence boundary", async () => {
+  const store = new MeshStore(dir);
+  await store.define({ ...cfg, agents: [...cfg.agents, { id: "m", harness: "codex", project: "test_mesh_0", role: "member" }], edges: [["r", "m"]] as any });
+  expect(JSON.parse(await readFile(join(dir, "alpha.json"), "utf8")).edges).toEqual([{ from: "r", to: "m", steer: false }]);
+
+  await writeFile(
+    join(dir, "legacy.json"),
+    JSON.stringify({ ...cfg, name: "legacy", agents: [...cfg.agents, { id: "m", harness: "codex", project: "test_mesh_0", role: "member" }], edges: [["r", "m"]] }),
+  );
+  const legacy = (await store.load()).find((m) => m.name === "legacy");
+  expect(legacy?.edges).toEqual([{ from: "r", to: "m", steer: false }]);
 });
 
 test("define validates before writing", async () => {

@@ -9,7 +9,7 @@ const ok: MeshConfig = {
     { id: "r", harness: "claude", project: "test_mesh_0", role: "router" },
     { id: "m", harness: "codex", project: "test_mesh_0", role: "member" },
   ],
-  edges: [["r", "m"]],
+  edges: [{ from: "r", to: "m" }],
 };
 
 test("accepts a valid mesh", () => {
@@ -59,7 +59,20 @@ test("rejects duplicate agent ids", () => {
 });
 
 test("rejects edges referencing unknown agents", () => {
-  expect(() => validateMeshConfig({ ...ok, edges: [["r", "ghost"]] })).toThrow(/edge/i);
+  expect(() => validateMeshConfig({ ...ok, edges: [{ from: "r", to: "ghost" }] })).toThrow(/edge/i);
+});
+
+test("accepts old tuple edges and new object edges", () => {
+  expect(() =>
+    validateMeshConfig({
+      ...ok,
+      edges: [["r", "m"], { from: "m", to: "r" }] as any,
+    }),
+  ).not.toThrow();
+});
+
+test("rejects steer edges targeting the router", () => {
+  expect(() => validateMeshConfig({ ...ok, edges: [{ from: "m", to: "r", steer: true }] })).toThrow(/steer.*router/i);
 });
 
 test("rejects absolute project paths", () => {

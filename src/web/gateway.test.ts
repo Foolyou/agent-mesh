@@ -8,7 +8,7 @@ const CFG: MeshConfig = {
     { id: "router", harness: "claude", project: "p", role: "router" },
     { id: "codex-1", harness: "codex", project: "p", role: "member" },
   ],
-  edges: [["router", "codex-1"]],
+  edges: [{ from: "router", to: "codex-1" }],
 };
 
 function fakeManager() {

@@ -6,7 +6,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { randomUUID } from "node:crypto";
 import type { MeshManager } from "../mesh-manager";
-import type { MeshConfig, HarnessId } from "../acp/types";
+import { normalizeMeshEdges, type MeshConfig, type HarnessId } from "../acp/types";
 import { HARNESSES } from "../harness";
 
 const harnessIds = Object.keys(HARNESSES) as [HarnessId, ...HarnessId[]];
@@ -62,18 +62,30 @@ const agentSchema = z.object({
   project: z.string().describe("relative working directory"),
   role: z.enum(["router", "member"]).describe("'router' (exactly one per mesh) or 'member'"),
 });
+const edgeSchema = z.union([
+  z.tuple([z.string(), z.string()]),
+  z.object({
+    from: z.string(),
+    to: z.string(),
+    steer: z.boolean().optional(),
+  }),
+]);
 const meshSpecShape = {
   name: z.string().describe("unique mesh name (filesystem-safe)"),
   agents: z.array(agentSchema).describe("agents; exactly one must have role 'router'"),
   edges: z
-    .array(z.tuple([z.string(), z.string()]))
-    .describe("directed [from, to] mail edges — both IDs must appear in agents[].id"),
+    .array(edgeSchema)
+    .describe("directed mail edges — either legacy [from, to] or {from, to, steer?}; both IDs must appear in agents[].id"),
   charter: z
     .string()
     .optional()
     .describe("optional team charter: shared goal + working norms, injected into every agent's briefing"),
 };
 const meshSpecSchema = z.object(meshSpecShape);
+function parseMeshSpec(spec: unknown): MeshConfig {
+  const parsed = meshSpecSchema.parse(spec);
+  return { ...parsed, edges: normalizeMeshEdges(parsed.edges) };
+}
 
 export interface MeshControlServer {
   readonly url: string;
@@ -92,13 +104,13 @@ export async function createMeshControlServer(opts: {
   const server = new McpServer({ name: "mesh-control", version: "0.1.0" });
   server.registerTool("create_mesh",
     { description: "Define a NEW mesh (validated + persisted; does not start it).", inputSchema: meshSpecShape },
-    async (spec) => text(await opts.handlers.createMesh(meshSpecSchema.parse(spec))));
+    async (spec) => text(await opts.handlers.createMesh(parseMeshSpec(spec))));
   server.registerTool("get_mesh",
     { description: "Get a mesh's full definition (agents, edges, project, charter) as JSON. Use this before update_mesh to see what to change.", inputSchema: { name: z.string() } },
     async ({ name }) => text(opts.handlers.getMesh(name)));
   server.registerTool("update_mesh",
     { description: "Replace the definition of an existing STOPPED mesh — same shape as create_mesh (validated + persisted). Read it first with get_mesh, change the fields you want, and pass the full updated spec.", inputSchema: meshSpecShape },
-    async (spec) => text(await opts.handlers.updateMesh(meshSpecSchema.parse(spec))));
+    async (spec) => text(await opts.handlers.updateMesh(parseMeshSpec(spec))));
   server.registerTool("delete_mesh",
     { description: "Delete a mesh definition permanently. The mesh must be stopped first.", inputSchema: { name: z.string() } },
     async ({ name }) => text(await opts.handlers.deleteMesh(name)));

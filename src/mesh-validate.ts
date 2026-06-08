@@ -3,10 +3,11 @@
 // every (possibly LLM-generated) MeshConfig before defining/persisting it.
 import { isAbsolute } from "node:path";
 import { HARNESSES } from "./harness";
-import type { MeshConfig } from "./acp/types";
+import { normalizeMeshEdges, type MeshConfig } from "./acp/types";
 
 export function validateMeshConfig(config: MeshConfig): void {
-  const { name, agents, edges } = config;
+  const { name, agents } = config;
+  const edges = normalizeMeshEdges((config as any).edges ?? []);
 
   if (!name || !/^[A-Za-z0-9._-]+$/.test(name) || name.includes("..")) {
     throw new Error(`invalid mesh name "${name}": use only letters, digits, '.', '_', '-'`);
@@ -42,9 +43,14 @@ export function validateMeshConfig(config: MeshConfig): void {
     }
   }
 
-  for (const [from, to] of edges ?? []) {
+  const routerId = routers[0]?.id;
+  for (const edge of edges) {
+    const { from, to, steer } = edge;
     if (!ids.has(from) || !ids.has(to)) {
       throw new Error(`edge [${from}, ${to}] references an unknown agent`);
+    }
+    if (steer === true && to === routerId) {
+      throw new Error(`edge [${from}, ${to}] cannot enable steer to the router`);
     }
   }
 

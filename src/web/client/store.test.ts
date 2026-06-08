@@ -14,7 +14,7 @@ function seed(): GatewayState {
           { id: "router", harness: "claude", role: "router", status: "ready", activity: "idle" },
           { id: "codex-1", harness: "codex", role: "member", status: "spawning", activity: "idle" },
         ],
-        edges: [["router", "codex-1"]],
+        edges: [{ from: "router", to: "codex-1" }],
       },
     ],
     master: { status: "ready", transcript: [] },

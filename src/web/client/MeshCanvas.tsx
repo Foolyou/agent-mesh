@@ -31,7 +31,7 @@ function edgeKey(from: string, to: string): string {
 
 function signature(m: MeshSummary): string {
   const agents = m.agents.map((a) => a.id).sort().join("|");
-  const edges = m.edges.map(([from, to]) => edgeKey(from, to)).sort().join("|");
+  const edges = m.edges.map((edge) => edgeKey(edge.from, edge.to)).sort().join("|");
   return hash(`${agents}::${edges}`);
 }
 
@@ -275,7 +275,7 @@ export function MeshCanvas({
   const scheduledPatches = useRef<Map<string, Partial<Rect>>>(new Map());
   const patchFrame = useRef<number | null>(null);
   const sig = useMemo(() => signature(m), [m]);
-  const edgeKeys = useMemo(() => new Set(m.edges.map(([from, to]) => edgeKey(from, to))), [m.edges]);
+  const edgeKeys = useMemo(() => new Set(m.edges.map((edge) => edgeKey(edge.from, edge.to))), [m.edges]);
   const live = m.status === "running" || m.status === "starting";
 
   useEffect(() => {
@@ -454,7 +454,8 @@ export function MeshCanvas({
             <path d="M0,0 L10,5 L0,10 z" />
           </marker>
         </defs>
-        {m.edges.map(([from, to], i) => {
+        {m.edges.map((edge, i) => {
+          const { from, to } = edge;
           const routed = routeEdge(from, to, layout.windows);
           if (!routed) return null;
           const key = edgeKey(from, to);

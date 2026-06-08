@@ -12,7 +12,7 @@ const CFG: MeshConfig = {
     { id: "router", harness: "claude", project: "p", role: "router" },
     { id: "codex-1", harness: "codex", project: "p", role: "member" },
   ],
-  edges: [["router", "codex-1"]],
+  edges: [{ from: "router", to: "codex-1" }],
 };
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]);
 

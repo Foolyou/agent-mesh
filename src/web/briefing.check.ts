@@ -40,8 +40,8 @@ async function main() {
       { id: "codex-1", harness: "codex", project: "test_mesh_0", role: "member" },
     ],
     edges: [
-      ["router", "codex-1"],
-      ["codex-1", "router"],
+      { from: "router", to: "codex-1" },
+      { from: "codex-1", to: "router" },
     ],
     charter:
       "Goal: collaboratively maintain a tiny wordcount CLI. " +

@@ -4,7 +4,7 @@
 import { mkdir, readFile, writeFile, readdir, unlink } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { validateMeshConfig } from "./mesh-validate";
-import type { MeshConfig } from "./acp/types";
+import { normalizeMeshEdges, type MeshConfig } from "./acp/types";
 
 export class MeshStore {
   constructor(private dir = resolve(process.cwd(), ".mesh", "meshes")) {}
@@ -20,10 +20,11 @@ export class MeshStore {
   }
 
   async define(config: MeshConfig): Promise<void> {
-    validateMeshConfig(config);
-    const path = this.fileFor(config.name);
+    const normalized = { ...config, edges: normalizeMeshEdges((config as any).edges) };
+    validateMeshConfig(normalized);
+    const path = this.fileFor(normalized.name);
     await mkdir(this.dir, { recursive: true });
-    await writeFile(path, JSON.stringify(config, null, 2), "utf8");
+    await writeFile(path, JSON.stringify(normalized, null, 2), "utf8");
   }
 
   async delete(name: string): Promise<void> {
@@ -45,7 +46,8 @@ export class MeshStore {
     }
     const out: MeshConfig[] = [];
     for (const f of files.filter((f) => f.endsWith(".json")).sort()) {
-      out.push(JSON.parse(await readFile(join(this.dir, f), "utf8")) as MeshConfig);
+      const parsed = JSON.parse(await readFile(join(this.dir, f), "utf8")) as MeshConfig;
+      out.push({ ...parsed, edges: normalizeMeshEdges((parsed as any).edges) });
     }
     return out;
   }

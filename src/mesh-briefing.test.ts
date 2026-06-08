@@ -11,9 +11,9 @@ const cfg: MeshConfig = {
     { id: "opencode-1", harness: "opencode", project: "p", role: "member" },
   ],
   edges: [
-    ["router", "codex-1"],
-    ["router", "opencode-1"],
-    ["codex-1", "opencode-1"],
+    { from: "router", to: "codex-1" },
+    { from: "router", to: "opencode-1" },
+    { from: "codex-1", to: "opencode-1" },
   ],
 };
 
@@ -59,7 +59,7 @@ test("an agent with no outgoing edges is told so", () => {
       { id: "router", harness: "claude", project: "p", role: "router" },
       { id: "m", harness: "codex", project: "p", role: "member" },
     ],
-    edges: [["router", "m"]],
+    edges: [{ from: "router", to: "m" }],
   };
   const b = buildMeshBriefing(new Mesh(isolated), "m");
   expect(b).toContain("no outgoing edges");

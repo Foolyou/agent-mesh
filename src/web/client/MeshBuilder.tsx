@@ -14,10 +14,15 @@ interface AgentDraft {
   effort?: ThinkingEffort;
   instructions?: string;
 }
+interface EdgeDraft {
+  from: string;
+  to: string;
+  steer?: boolean;
+}
 
 const HARNESSES: HarnessId[] = ["claude", "codex", "opencode", "kimi"];
 
-function validate(name: string, agents: AgentDraft[], edges: [string, string][]): string | null {
+function validate(name: string, agents: AgentDraft[], edges: EdgeDraft[]): string | null {
   if (!/^[A-Za-z0-9._-]+$/.test(name)) return "mesh name must match [A-Za-z0-9._-] and be non-empty";
   if (agents.length === 0) return "at least one agent is required";
   const ids = agents.map((a) => a.id);
@@ -31,8 +36,10 @@ function validate(name: string, agents: AgentDraft[], edges: [string, string][])
     const instructions = a.instructions?.trim();
     if (instructions && instructions.length > 4000) return `agent "${a.id}" instructions are too long (max 4000 chars)`;
   }
-  for (const [from, to] of edges) {
-    if (!ids.includes(from) || !ids.includes(to)) return `edge ${from}→${to} references an unknown agent`;
+  const router = agents.find((a) => a.role === "router")?.id;
+  for (const edge of edges) {
+    if (!ids.includes(edge.from) || !ids.includes(edge.to)) return `edge ${edge.from}→${edge.to} references an unknown agent`;
+    if (edge.steer === true && edge.to === router) return `edge ${edge.from}→${edge.to} cannot enable steer to the router`;
   }
   return null;
 }
@@ -54,7 +61,7 @@ export function MeshBuilder({
       ? initial.agents.map((a) => ({ id: a.id, harness: a.harness, role: a.role, project: a.project, effort: a.effort, instructions: a.instructions }))
       : [{ id: "router", harness: "claude", role: "router", project: "test_mesh_0" }],
   );
-  const [edges, setEdges] = useState<[string, string][]>(initial ? initial.edges.map((e) => [e[0], e[1]]) : []);
+  const [edges, setEdges] = useState<EdgeDraft[]>(initial ? initial.edges.map((e) => ({ from: e.from, to: e.to, steer: e.steer === true })) : []);
   const [charter, setCharter] = useState(initial?.charter ?? "");
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -66,9 +73,9 @@ export function MeshBuilder({
   const delAgent = (i: number) => setAgents((as) => as.filter((_, j) => j !== i));
 
   const ids = agents.map((a) => a.id);
-  const addEdge = () => setEdges((e) => [...e, [ids[0] ?? "", ids[1] ?? ids[0] ?? ""]]);
+  const addEdge = () => setEdges((e) => [...e, { from: ids[0] ?? "", to: ids[1] ?? ids[0] ?? "" }]);
   const setEdge = (i: number, which: 0 | 1, v: string) =>
-    setEdges((e) => e.map((pair, j) => (j === i ? (which === 0 ? [v, pair[1]] : [pair[0], v]) : pair)));
+    setEdges((e) => e.map((edge, j) => (j === i ? (which === 0 ? { ...edge, from: v } : { ...edge, to: v }) : edge)));
   const delEdge = (i: number) => setEdges((e) => e.filter((_, j) => j !== i));
 
   async function submit() {
@@ -175,9 +182,9 @@ export function MeshBuilder({
 
           <div className="field">
             <label>{t("build.edges")}</label>
-            {edges.map((pair, i) => (
+            {edges.map((edge, i) => (
               <div className="row" key={i}>
-                <select className="inp" value={pair[0]} onChange={(e) => setEdge(i, 0, e.target.value)}>
+                <select className="inp" value={edge.from} onChange={(e) => setEdge(i, 0, e.target.value)}>
                   {ids.map((id) => (
                     <option key={id} value={id}>
                       {id}
@@ -185,7 +192,7 @@ export function MeshBuilder({
                   ))}
                 </select>
                 <span className="sub">→</span>
-                <select className="inp" value={pair[1]} onChange={(e) => setEdge(i, 1, e.target.value)}>
+                <select className="inp" value={edge.to} onChange={(e) => setEdge(i, 1, e.target.value)}>
                   {ids.map((id) => (
                     <option key={id} value={id}>
                       {id}

@@ -102,7 +102,8 @@ export function Topology({
           </marker>
         </defs>
         {/* edges first, nodes drawn over them */}
-        {summary.edges.map(([from, to], i) => {
+        {summary.edges.map((edge, i) => {
+          const { from, to } = edge;
           const a = pos.get(from);
           const b = pos.get(to);
           if (!a || !b) return null;

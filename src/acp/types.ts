@@ -8,6 +8,25 @@ export type AgentRole = "router" | "member";
 /** Unique within a mesh, e.g. "codex-1". */
 export type AgentId = string;
 
+export interface MeshEdge {
+  from: AgentId;
+  to: AgentId;
+  steer?: boolean;
+}
+
+export type MeshEdgeInput = MeshEdge | [AgentId, AgentId];
+
+export function normalizeMeshEdge(edge: MeshEdgeInput): MeshEdge {
+  if (Array.isArray(edge)) {
+    return { from: edge[0], to: edge[1], steer: false };
+  }
+  return { from: edge.from, to: edge.to, steer: edge.steer === true };
+}
+
+export function normalizeMeshEdges(edges: readonly MeshEdgeInput[] = []): MeshEdge[] {
+  return edges.map((edge) => normalizeMeshEdge(edge));
+}
+
 /** Reasoning / thinking effort for an agent. Applied at spawn (codex: model_reasoning_effort;
  *  claude: MAX_THINKING_TOKENS). `undefined` = the harness's own default. */
 export type ThinkingEffort = "minimal" | "low" | "medium" | "high";
@@ -31,8 +50,8 @@ export interface AgentConfig {
 export interface MeshConfig {
   name: string;
   agents: AgentConfig[];
-  /** Directed edges: [from, to] means `from` may send mail to `to`. */
-  edges: Array<[AgentId, AgentId]>;
+  /** Directed mail edges; steer=true grants interrupting priority delivery for that edge. */
+  edges: MeshEdge[];
   /** Optional team charter — shared goal + working norms injected into every
    *  agent's mesh briefing. Free text. */
   charter?: string;

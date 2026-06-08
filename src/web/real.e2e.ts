@@ -25,10 +25,10 @@ const MESH = {
     { id: "opencode-1", harness: "opencode", project: "test_mesh_web", role: "member" },
   ],
   edges: [
-    ["router", "codex-1"],
-    ["router", "opencode-1"],
-    ["codex-1", "opencode-1"],
-    ["opencode-1", "codex-1"],
+    { from: "router", to: "codex-1" },
+    { from: "router", to: "opencode-1" },
+    { from: "codex-1", to: "opencode-1" },
+    { from: "opencode-1", to: "codex-1" },
   ],
 };
 
