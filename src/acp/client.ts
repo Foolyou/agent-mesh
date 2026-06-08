@@ -207,6 +207,12 @@ export class AcpAgentConnection {
     return res;
   }
 
+  async loadSession(sessionId: string, cwd: string, mcpServers: any[] = []) {
+    const res = await this.conn!.loadSession({ sessionId, cwd, mcpServers });
+    this.sessionId = sessionId;
+    return { ...res, sessionId };
+  }
+
   private busy = false;
   private queue: QueuedPrompt[] = [];
 

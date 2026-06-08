@@ -86,3 +86,10 @@ export async function updateAgentSession(
   await writeSessionState(runDir, meshName, state);
   return state;
 }
+
+export async function setMeshExpectedAlive(runDir: string, meshName: string, expectedAlive: boolean): Promise<MeshSessionState> {
+  const state = await readSessionState(runDir, meshName);
+  state.meshExpectedAlive = expectedAlive;
+  await writeSessionState(runDir, meshName, state);
+  return state;
+}

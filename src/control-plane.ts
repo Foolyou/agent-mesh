@@ -11,12 +11,14 @@ import { buildMeshBriefing } from "./mesh-briefing";
 import { createMeshServicesServer, type MeshServicesServer, type MeshToolContext } from "./mcp/mesh-services";
 import { sendMail, readMailFor } from "./mailbox";
 import { now, type AgentActivity, type AgentConfig, type AgentId, type MeshConfig, type MeshEvent, type PromptImageRef, type SessionMode, type SessionModel } from "./acp/types";
-import { updateAgentSession } from "./session-storage";
+import { readSessionState, setMeshExpectedAlive, updateAgentSession, type MeshSessionState } from "./session-storage";
 
 interface PendingDecision {
   resolve: (decision: PermissionDecision) => void;
   timer: ReturnType<typeof setTimeout>;
 }
+
+export type ControlPlaneStopReason = "explicit" | "idle" | "shutdown";
 
 export interface ControlPlaneOptions {
   mailboxPath?: string;
@@ -45,7 +47,7 @@ export class ControlPlane {
   private sessionRunDir?: string;
   private connectionFactory: (opts: AcpConnectionOptions) => AcpAgentConnection;
   private spawnTimeoutMs: number;
-  private spawning = new Map<AgentId, Promise<void>>();
+  private spawning = new Map<AgentId, Promise<AcpAgentConnection>>();
   private registeredAgents = new Set<AgentId>();
   private spawnFails = new Map<AgentId, number>();
   /** Per-agent advertised image-input capability (promptCapabilities.image). */
@@ -56,9 +58,14 @@ export class ControlPlane {
   private sessionModels = new Map<AgentId, { current: string; available: SessionModel[] }>();
   /** Agents that have already received the one-time mesh briefing. */
   private briefed = new Set<AgentId>();
+  /** Agents whose current process was attached to a loaded ACP session. */
+  private loadedSessions = new Set<AgentId>();
+  /** Loaded sessions whose first prompt has not yet succeeded. */
+  private resumePendingValidation = new Set<AgentId>();
   /** Per-agent in-flight prompt turns. count > 0 means working unless the agent is dead. */
   private turnCounts = new Map<AgentId, number>();
   private activityStates = new Map<AgentId, AgentActivity>();
+  private sessionState: MeshSessionState = { meshExpectedAlive: true, agents: {} };
 
   constructor(config: MeshConfig, opts: ControlPlaneOptions = {}) {
     this.mesh = new Mesh(config);
@@ -114,6 +121,7 @@ export class ControlPlane {
   /** Prepend the one-time mesh briefing to an agent's very first prompt, so it knows
    *  it is part of a collaborating mesh before it does any work. */
   private compose(id: AgentId, text: string): string {
+    if (this.loadedSessions.has(id)) return text;
     if (this.briefed.has(id)) return text;
     this.briefed.add(id);
     const briefing = buildMeshBriefing(this.mesh, id);
@@ -124,15 +132,10 @@ export class ControlPlane {
   /** Public: send a prompt turn to an agent (the control plane is the sole driver). Image
    *  blocks are dropped for agents that did not advertise image input, so a non-image agent
    *  still gets the text turn instead of rejecting the whole prompt. */
-  prompt(id: AgentId, text: string, images: PromptImageRef[] = []) {
+  async prompt(id: AgentId, text: string, images: PromptImageRef[] = []) {
     const imgs = this.imageCaps.get(id) ? images : [];
-    const conn = this.agent(id);
-    const prompt = this.compose(id, text);
     const promptImages = imgs.map((i) => this.resolveImagePath(i));
-    return this.trackTurn(
-      id,
-      () => conn.prompt(prompt, promptImages),
-    );
+    return this.promptWithResumeFallback(id, text, promptImages, false);
   }
 
   /** Switch an agent's permission/approval mode (delegates to its connection). */
@@ -180,6 +183,9 @@ export class ControlPlane {
   // ---- lifecycle ----
   async start(): Promise<void> {
     await mkdir(resolve(this.mailboxPath, ".."), { recursive: true });
+    this.sessionState = this.sessionRunDir
+      ? await readSessionState(this.sessionRunDir, this.mesh.name)
+      : { meshExpectedAlive: true, agents: {} };
 
     this.mcp = createMeshServicesServer({
       handlers: {
@@ -192,6 +198,14 @@ export class ControlPlane {
       },
     });
 
+    if (!this.sessionState.meshExpectedAlive) {
+      for (const a of this.mesh.agents) {
+        this.mesh.setStatus(a.id, "dead");
+        this.emit({ kind: "agent_status", agent: a.id, status: "dead", detail: "stopped", ts: now() });
+      }
+      return;
+    }
+
     for (const a of this.mesh.agents) {
       if (a.lazy) {
         this.mesh.setStatus(a.id, "cold");
@@ -202,19 +216,32 @@ export class ControlPlane {
     }
   }
 
-  async stop(): Promise<void> {
+  async stop(reason: ControlPlaneStopReason = "shutdown"): Promise<void> {
+    if ((reason === "explicit" || reason === "idle") && this.sessionRunDir) {
+      this.sessionState = await setMeshExpectedAlive(this.sessionRunDir, this.mesh.name, false);
+    }
     for (const c of this.conns.values()) c.kill();
     this.mcp?.close();
     for (const p of this.pending.values()) clearTimeout(p.timer);
     this.pending.clear();
     this.spawning.clear();
     this.registeredAgents.clear();
+    this.loadedSessions.clear();
+    this.resumePendingValidation.clear();
   }
 
-  private async spawnAgent(a: AgentConfig, opts: { drainPendingMail: boolean }): Promise<void> {
+  private async ensureMcpRegistered(agent: AgentConfig): Promise<void> {
     if (!this.mcp) throw new Error("control plane not started");
+    if (this.registeredAgents.has(agent.id)) return;
+    await this.mcp.register(agent.id, agent.role);
+    this.registeredAgents.add(agent.id);
+  }
+
+  private async spawnAgent(a: AgentConfig, opts: { drainPendingMail: boolean; forceFresh?: boolean }): Promise<AcpAgentConnection> {
+    if (!this.mcp) throw new Error("control plane not started");
+    await this.ensureMcpRegistered(a);
+
     const existing = this.conns.get(a.id);
-    if (existing && this.mesh.status(a.id) === "ready") return;
     if (existing) {
       existing.kill();
       this.conns.delete(a.id);
@@ -224,11 +251,6 @@ export class ControlPlane {
     // codex defaults to "low" for responsiveness when no effort is set.
     const { command, args, env } = spawnConfigFor(a);
     const cwd = resolve(process.cwd(), a.project);
-
-    if (!this.registeredAgents.has(a.id)) {
-      await this.mcp.register(a.id, a.role);
-      this.registeredAgents.add(a.id);
-    }
     const conn = this.connectionFactory({
       id: a.id,
       command,
@@ -254,10 +276,36 @@ export class ControlPlane {
     try {
       await conn.start();
       const initRes = await conn.initialize();
-      const session = await conn.newSession([{ type: "http", name: "mesh", url: this.mcp.urlFor(a.id), headers: [] }]);
+      const mcpServers = [{ type: "http", name: "mesh", url: this.mcp.urlFor(a.id), headers: [] }];
+      const saved = this.sessionState.agents[a.id];
+      let loaded = false;
+      let session: unknown;
+      if (!opts.forceFresh && conn.supportsLoadSession && saved?.sessionId) {
+        try {
+          session = await conn.loadSession(saved.sessionId, saved.cwd, mcpServers);
+          loaded = true;
+        } catch (err) {
+          this.log(`resume ${a.id} failed: ${String(err)}; starting fresh`);
+        }
+      }
+      if (!session) {
+        session = await conn.newSession(mcpServers);
+      }
       initialized = true;
+
+      if (loaded) {
+        this.loadedSessions.add(a.id);
+        this.resumePendingValidation.add(a.id);
+      } else {
+        this.loadedSessions.delete(a.id);
+        this.resumePendingValidation.delete(a.id);
+        this.briefed.delete(a.id);
+      }
+
       // Surface the agent's advertised session modes so the operator gets a real picker
       // (read-only / full-access / plan / …) instead of having to know mode-id strings.
+      const desiredMode = saved?.mode ?? a.mode;
+      const desiredModel = saved?.model ?? a.model;
       const standardModes = (session as any)?.modes;
       const configMode = deriveConfigOption(session, "mode");
       const available = ((standardModes?.availableModes ?? []).length
@@ -265,44 +313,44 @@ export class ControlPlane {
         : (configMode?.available ?? [])) as SessionMode[];
       // Apply a configured initial permission/session mode (best-effort) before the first turn.
       let current: string = standardModes?.currentModeId ?? configMode?.current ?? available[0]?.id ?? "";
-      if (a.mode && available.some((mo: any) => mo.id === a.mode)) {
+      if (desiredMode && available.some((mo: any) => mo.id === desiredMode)) {
         try {
-          await conn.setMode(a.mode);
-          current = a.mode;
+          await conn.setMode(desiredMode);
+          current = desiredMode;
         } catch (err) {
-          this.log(`set cached mode ${a.id}=${a.mode} failed: ${String(err)}`);
+          this.log(`set cached mode ${a.id}=${desiredMode} failed: ${String(err)}`);
         }
-      } else if (a.mode && available.length) {
-        this.log(`skip cached mode ${a.id}=${a.mode}: not advertised`);
+      } else if (desiredMode && available.length) {
+        this.log(`skip cached mode ${a.id}=${desiredMode}: not advertised`);
       }
       if (available.length) {
         this.sessionModes.set(a.id, { current, available });
         this.emit({ kind: "agent_modes", agent: a.id, current, available, ts: now() });
       }
       const configModel = deriveConfigOption(session, "model");
-      let currentModel: string | undefined = a.model;
+      let currentModel: string | undefined = desiredModel;
       if (configModel?.available.length) {
         currentModel = configModel.current;
-        if (a.model && configModel.available.some((mo) => mo.id === a.model)) {
+        if (desiredModel && configModel.available.some((mo) => mo.id === desiredModel)) {
           try {
-            await conn.setModel(a.model);
-            currentModel = a.model;
+            await conn.setModel(desiredModel);
+            currentModel = desiredModel;
           } catch (err) {
-            this.log(`set cached model ${a.id}=${a.model} failed: ${String(err)}`);
+            this.log(`set cached model ${a.id}=${desiredModel} failed: ${String(err)}`);
           }
-        } else if (a.model) {
-          this.log(`skip cached model ${a.id}=${a.model}: not advertised`);
+        } else if (desiredModel) {
+          this.log(`skip cached model ${a.id}=${desiredModel}: not advertised`);
         }
         this.sessionModels.set(a.id, { current: currentModel, available: configModel.available });
         this.emit({ kind: "agent_models", agent: a.id, current: currentModel, available: configModel.available, ts: now() });
       }
       if (this.sessionRunDir && typeof (session as any)?.sessionId === "string") {
-        await updateAgentSession(this.sessionRunDir, this.mesh.name, a.id, {
+        this.sessionState = await updateAgentSession(this.sessionRunDir, this.mesh.name, a.id, {
           sessionId: (session as any).sessionId,
           cwd,
           harness: a.harness,
           model: currentModel,
-          mode: current || a.mode,
+          mode: current || desiredMode,
           effort: a.effort,
         });
       }
@@ -317,6 +365,7 @@ export class ControlPlane {
       this.emit({ kind: "agent_status", agent: a.id, status: "ready", ts: now() });
       this.spawnFails.delete(a.id);
       if (opts.drainPendingMail) this.drainPendingMail(a.id);
+      return conn;
     } catch (err) {
       if (!initialized) {
         this.sessionModes.delete(a.id);
@@ -332,14 +381,14 @@ export class ControlPlane {
     }
   }
 
-  private async ensureSpawned(id: AgentId, opts: { manual?: boolean } = {}): Promise<void> {
+  private async ensureSpawned(id: AgentId, opts: { manual?: boolean; forceFresh?: boolean; drainPendingMail?: boolean } = {}): Promise<AcpAgentConnection> {
     const a = this.mesh.agent(id);
     if (!a) throw new Error(`no such agent "${id}"`);
-    if (this.mesh.status(id) === "ready" && this.conns.has(id)) return;
+    if (!opts.forceFresh && this.mesh.status(id) === "ready" && this.conns.has(id)) return this.conns.get(id)!;
     if (opts.manual) this.spawnFails.delete(id);
     const existing = this.spawning.get(id);
     if (existing) return existing;
-    const p = this.withSpawnTimeout(id, this.spawnAgent(a, { drainPendingMail: true }))
+    const p = this.withSpawnTimeout(id, this.spawnAgent(a, { drainPendingMail: opts.drainPendingMail ?? true, forceFresh: opts.forceFresh }))
       .catch((err) => {
         this.spawnFails.set(id, (this.spawnFails.get(id) ?? 0) + 1);
         throw err;
@@ -351,7 +400,7 @@ export class ControlPlane {
     return p;
   }
 
-  private async withSpawnTimeout(id: AgentId, spawn: Promise<void>): Promise<void> {
+  private async withSpawnTimeout<T>(id: AgentId, spawn: Promise<T>): Promise<T> {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<never>((_, reject) => {
       timer = setTimeout(() => {
@@ -364,7 +413,7 @@ export class ControlPlane {
       }, this.spawnTimeoutMs);
     });
     try {
-      await Promise.race([spawn, timeout]);
+      return await Promise.race([spawn, timeout]);
     } finally {
       if (timer) clearTimeout(timer);
     }
@@ -381,7 +430,53 @@ export class ControlPlane {
   }
 
   async wakeAgent(id: AgentId): Promise<void> {
-    await this.ensureSpawned(id, { manual: true });
+    await this.ensureSpawned(id, { manual: true, forceFresh: this.shouldForceFreshForEngagement(id) });
+  }
+
+  private promptWithResumeFallback(
+    id: AgentId,
+    text: string,
+    images: PromptImageRef[],
+    steer: boolean,
+  ): Promise<unknown> {
+    const existing = this.conns.get(id);
+    if (existing && this.mesh.status(id) !== "dead" && this.mesh.status(id) !== "cold") {
+      return this.sendPromptWithResumeFallback(id, text, images, steer, existing);
+    }
+    return this.ensureSpawned(id, { manual: true, forceFresh: this.shouldForceFreshForEngagement(id), drainPendingMail: false })
+      .then((conn) => this.sendPromptWithResumeFallback(id, text, images, steer, conn));
+  }
+
+  private async sendPromptWithResumeFallback(
+    id: AgentId,
+    text: string,
+    images: PromptImageRef[],
+    steer: boolean,
+    conn: AcpAgentConnection,
+  ): Promise<unknown> {
+    const prompt = this.compose(id, text);
+    try {
+      const result = await this.trackTurn(
+        id,
+        () => steer ? conn.steerPrompt(prompt, images) : conn.prompt(prompt, images),
+      );
+      this.resumePendingValidation.delete(id);
+      return result;
+    } catch (err) {
+      if (!this.resumePendingValidation.has(id)) throw err;
+      this.log(`first prompt after resume failed for ${id}: ${String(err)}; starting fresh`);
+      this.resumePendingValidation.delete(id);
+      conn = await this.ensureSpawned(id, { manual: true, forceFresh: true, drainPendingMail: false });
+      const retryPrompt = this.compose(id, text);
+      return this.trackTurn(
+        id,
+        () => steer ? conn.steerPrompt(retryPrompt, images) : conn.prompt(retryPrompt, images),
+      );
+    }
+  }
+
+  private shouldForceFreshForEngagement(id: AgentId): boolean {
+    return !this.sessionState.meshExpectedAlive || this.mesh.status(id) === "dead";
   }
 
   // ---- mesh tool handlers ----
@@ -426,10 +521,10 @@ export class ControlPlane {
   }
 
   private finishTurn(id: AgentId): void {
-      const next = Math.max(0, (this.turnCounts.get(id) ?? 0) - 1);
-      if (next === 0) this.turnCounts.delete(id);
-      else this.turnCounts.set(id, next);
-      this.emitActivityIfChanged(id);
+    const next = Math.max(0, (this.turnCounts.get(id) ?? 0) - 1);
+    if (next === 0) this.turnCounts.delete(id);
+    else this.turnCounts.set(id, next);
+    this.emitActivityIfChanged(id);
   }
 
   private async handleSendMail(ctx: MeshToolContext, to: AgentId, body: string): Promise<string> {
@@ -451,7 +546,7 @@ export class ControlPlane {
       this.sendSpawnFailedReceipt(to, from, "spawn fuse is locked after 3 consecutive failures; use manual wake to retry");
       return;
     }
-    this.ensureSpawned(to).catch((err) => this.sendSpawnFailedReceipt(to, from, String(err)));
+    this.ensureSpawned(to, { forceFresh: this.shouldForceFreshForEngagement(to) }).catch((err) => this.sendSpawnFailedReceipt(to, from, String(err)));
   }
 
   private sendSpawnFailedReceipt(to: AgentId, from: AgentId, detail: string): void {
@@ -465,14 +560,11 @@ export class ControlPlane {
   }
 
   private wake(to: AgentId, from: AgentId, body: string): void {
-    const conn = this.conns.get(to);
-    if (!conn) return;
     const mail =
       `[MAIL from ${from}]: ${body}\n\n` +
       `This arrived in your mesh mailbox. Read it and respond appropriately; ` +
       `you may reply with the send_mail tool (to: "${from}").`;
-    const prompt = this.compose(to, mail);
-    this.trackTurn(to, () => conn.prompt(prompt)).catch((err) => this.log(`wake(${to}) failed: ${String(err)}`));
+    this.prompt(to, mail).catch((err) => this.log(`wake(${to}) failed: ${String(err)}`));
   }
 
   private async handleSteerMail(ctx: MeshToolContext, to: AgentId, body: string): Promise<string> {
@@ -491,16 +583,13 @@ export class ControlPlane {
     return `steered to ${to}`;
   }
 
-  private steerWake(to: AgentId, from: AgentId | "operator", body: string, images: PromptImageRef[] = []): void {
-    const conn = this.conns.get(to);
-    if (!conn) return;
+  private async steerWake(to: AgentId, from: AgentId | "operator", body: string, images: PromptImageRef[] = []): Promise<void> {
     const mail =
       `[STEER from ${from}]: ${body}\n\n` +
       `This interrupted your current turn and was placed ahead of ordinary queued mail. ` +
       `Read it and adjust course appropriately.`;
-    const prompt = this.compose(to, mail);
     const promptImages = images.map((i) => this.resolveImagePath(i));
-    this.trackTurn(to, () => conn.steerPrompt(prompt, promptImages)).catch((err) => this.log(`steerWake(${to}) failed: ${String(err)}`));
+    await this.promptWithResumeFallback(to, mail, promptImages, true).catch((err) => this.log(`steerWake(${to}) failed: ${String(err)}`));
   }
 
   private resolveImagePath(image: PromptImageRef): PromptImageRef {

@@ -7,7 +7,7 @@
 import net from "node:net";
 import { join, dirname } from "node:path";
 import { rm, mkdir } from "node:fs/promises";
-import { ControlPlane } from "./control-plane";
+import { ControlPlane, type ControlPlaneStopReason } from "./control-plane";
 import { LineBuffer, encodeFrame, PROTO_VERSION, type ParentMsg, type SeqEvent } from "./protocol";
 import { writeRecord, removeRecord } from "./mesh-registry";
 import { now, type MeshConfig, type MeshEvent, type PromptImageRef } from "./acp/types";
@@ -23,7 +23,7 @@ export interface BridgeControlPlane {
   setModel(target: string, modelId: string): Promise<void>;
   interrupt(target: string): Promise<void>;
   wakeAgent(target: string): Promise<void>;
-  stop(): Promise<void>;
+  stop(reason?: ControlPlaneStopReason): Promise<void>;
 }
 
 export interface MeshHostDaemonOptions {
@@ -158,7 +158,7 @@ export class MeshHostDaemon {
         this.cp.wakeAgent(msg.target).catch(() => {});
         break;
       case "stop":
-        void this.stop();
+        void this.stop("explicit");
         break;
     }
   }
@@ -166,7 +166,7 @@ export class MeshHostDaemon {
   private armLease(): void {
     this.clearLease();
     const ms = this.everConnected ? this.leaseMs : this.startupGraceMs;
-    if (ms > 0) this.leaseTimer = setTimeout(() => void this.stop(), ms);
+    if (ms > 0) this.leaseTimer = setTimeout(() => void this.stop("idle"), ms);
   }
   private clearLease(): void {
     if (this.leaseTimer) {
@@ -176,12 +176,12 @@ export class MeshHostDaemon {
   }
 
   /** Graceful shutdown: stop agents, tell the client, tear down the socket. */
-  async stop(): Promise<void> {
+  async stop(reason: ControlPlaneStopReason = "shutdown"): Promise<void> {
     if (this.stopping) return;
     this.stopping = true;
     this.clearLease();
     this.unsub?.();
-    await this.cp.stop().catch(() => {});
+    await this.cp.stop(reason).catch(() => {});
     if (this.client) this.write(this.client, { t: "stopped" });
     this.client?.destroy();
     this.server?.close();
@@ -222,7 +222,7 @@ export async function runMeshHost(): Promise<void> {
   await writeRecord(runDir, { name: config.name, pid: process.pid, socketPath, proto: PROTO_VERSION, startedAt: now() });
 
   // `mesh kill` sends SIGTERM → reap agents + drop the registry record cleanly.
-  process.on("SIGTERM", () => void daemon.stop());
+  process.on("SIGTERM", () => void daemon.stop("explicit"));
   // Survive the backend's terminal going away: ignore SIGINT (Ctrl-C) and SIGHUP so a
   // foreground backend's Ctrl-C / terminal close doesn't take the daemon down with it.
   // (The daemon is reclaimable via `mesh kill`, the stop command, or the idle lease.)

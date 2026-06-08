@@ -81,6 +81,31 @@ test("setModel writes one raw ACP session/set_model line to child stdin", async 
   );
 });
 
+test("loadSession wraps ACP session/load and returns a session setup shape", async () => {
+  const calls: any[] = [];
+  const c = Object.create(AcpAgentConnection.prototype) as AcpAgentConnection;
+  (c as any).id = "a";
+  (c as any).conn = {
+    loadSession: async (params: any) => {
+      calls.push(params);
+      return {
+        modes: { currentModeId: "default", availableModes: [{ id: "default", name: "Default" }] },
+        configOptions: [{ category: "model", currentValue: "m", options: [{ value: "m", name: "m" }] }],
+      };
+    },
+  };
+
+  const res = await c.loadSession("saved-session", "/tmp/worktree", [{ type: "http", name: "mesh", url: "http://mesh", headers: [] }]);
+
+  expect(calls).toEqual([{ sessionId: "saved-session", cwd: "/tmp/worktree", mcpServers: [{ type: "http", name: "mesh", url: "http://mesh", headers: [] }] }]);
+  expect(c.sessionId).toBe("saved-session");
+  expect(res as any).toEqual({
+    sessionId: "saved-session",
+    modes: { currentModeId: "default", availableModes: [{ id: "default", name: "Default" }] },
+    configOptions: [{ category: "model", currentValue: "m", options: [{ value: "m", name: "m" }] }],
+  });
+});
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (err: unknown) => void;

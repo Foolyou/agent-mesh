@@ -7,7 +7,7 @@ import type { AcpAgentConnection, AcpConnectionOptions } from "./acp/client";
 import type { MeshConfig } from "./acp/types";
 import { ControlPlane } from "./control-plane";
 import { DEMO_MESH } from "./config";
-import { readSessionState } from "./session-storage";
+import { readSessionState, writeSessionState } from "./session-storage";
 
 class FakeAcpConnection {
   constructor(private opts: AcpConnectionOptions) {}
@@ -80,6 +80,82 @@ class ConfigOptionsConnection {
   }
   async cancel(): Promise<void> {}
   kill(): void {}
+}
+
+function sessionSetup(sessionId: string): unknown {
+  return {
+    sessionId,
+    modes: {
+      currentModeId: "build",
+      availableModes: [
+        { id: "build", name: "Build", description: "can edit" },
+        { id: "plan", name: "Plan", description: "read-only planning" },
+      ],
+    },
+    configOptions: [
+      {
+        category: "model",
+        currentValue: "kimi-k2",
+        options: [
+          { value: "kimi-k2", name: "kimi-k2" },
+          { value: "deepseek-v3", name: "deepseek-v3" },
+        ],
+      },
+    ],
+  };
+}
+
+class ResumeConnection {
+  supportsLoadSession = false;
+  newSessionCount = 0;
+  loadCalls: any[] = [];
+  prompts: string[] = [];
+  setModes: string[] = [];
+  setModels: string[] = [];
+  kills = 0;
+  promptFailuresRemaining = 0;
+
+  constructor(
+    readonly opts: AcpConnectionOptions,
+    private behavior: { supportsLoadSession?: boolean; loadError?: Error; promptFailures?: number } = {},
+  ) {
+    this.promptFailuresRemaining = behavior.promptFailures ?? 0;
+  }
+  async start(): Promise<void> {}
+  async initialize(): Promise<unknown> {
+    this.supportsLoadSession = this.behavior.supportsLoadSession === true;
+    return { agentCapabilities: { loadSession: this.supportsLoadSession, promptCapabilities: { image: true } } };
+  }
+  async newSession(): Promise<unknown> {
+    this.newSessionCount++;
+    return sessionSetup(`new-${this.opts.id}-${this.newSessionCount}`);
+  }
+  async loadSession(sessionId: string, cwd: string, mcpServers: any[]): Promise<unknown> {
+    if (this.behavior.loadError) throw this.behavior.loadError;
+    this.loadCalls.push({ sessionId, cwd, mcpServers });
+    return sessionSetup(sessionId);
+  }
+  async prompt(text: string): Promise<unknown> {
+    this.prompts.push(text);
+    if (this.promptFailuresRemaining > 0) {
+      this.promptFailuresRemaining--;
+      throw new Error("prompt failed");
+    }
+    return { stopReason: "end_turn" };
+  }
+  async steerPrompt(text: string): Promise<unknown> {
+    return this.prompt(text);
+  }
+  async setMode(modeId: string): Promise<void> {
+    this.setModes.push(modeId);
+  }
+  async setModel(modelId: string): Promise<void> {
+    this.setModels.push(modelId);
+  }
+  async cancel(): Promise<void> {}
+  kill(): void {
+    this.kills++;
+  }
 }
 
 class DeferredPromptConnection {
@@ -451,6 +527,190 @@ test("start persists fresh session identity into the sessions store", async () =
     });
   } finally {
     await cp.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("start loads a saved session when supported and skips mesh briefing", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mesh-control-plane-resume-"));
+  const runDir = join(root, "run");
+  const config: MeshConfig = {
+    name: "resume-load",
+    agents: [{ id: "router", harness: "codex", project: root, role: "router", mode: "build", model: "kimi-k2", effort: "medium" }],
+    edges: [],
+  };
+  await writeSessionState(runDir, config.name, {
+    meshExpectedAlive: true,
+    agents: {
+      router: { sessionId: "saved-session", cwd: root, harness: "codex", mode: "plan", model: "deepseek-v3", effort: "medium" },
+    },
+  });
+  const created: ResumeConnection[] = [];
+  const cp = new ControlPlane(config, {
+    mailboxPath: join(root, "mailbox.ndjson"),
+    sessionRunDir: runDir,
+    connectionFactory: (opts) => {
+      const conn = new ResumeConnection(opts, { supportsLoadSession: true });
+      created.push(conn);
+      return conn as unknown as AcpAgentConnection;
+    },
+  });
+
+  try {
+    await cp.start();
+    expect(created).toHaveLength(1);
+    expect(created[0].loadCalls[0]).toMatchObject({ sessionId: "saved-session", cwd: root });
+    expect(created[0].newSessionCount).toBe(0);
+    expect(created[0].setModes).toEqual(["plan"]);
+    expect(created[0].setModels).toEqual(["deepseek-v3"]);
+
+    await cp.prompt("router", "after resume");
+    expect(created[0].prompts).toEqual(["after resume"]);
+  } finally {
+    await cp.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("load error falls back to a fresh session that receives briefing", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mesh-control-plane-load-error-"));
+  const runDir = join(root, "run");
+  const config: MeshConfig = {
+    name: "resume-fallback",
+    agents: [{ id: "router", harness: "codex", project: root, role: "router" }],
+    edges: [],
+  };
+  await writeSessionState(runDir, config.name, {
+    meshExpectedAlive: true,
+    agents: { router: { sessionId: "missing-session", cwd: root, harness: "codex" } },
+  });
+  let conn: ResumeConnection | undefined;
+  const cp = new ControlPlane(config, {
+    mailboxPath: join(root, "mailbox.ndjson"),
+    sessionRunDir: runDir,
+    connectionFactory: (opts) => {
+      conn = new ResumeConnection(opts, { supportsLoadSession: true, loadError: new Error("resource not found") });
+      return conn as unknown as AcpAgentConnection;
+    },
+  });
+
+  try {
+    await cp.start();
+    expect(conn?.loadCalls).toEqual([]);
+    expect(conn?.newSessionCount).toBe(1);
+    await cp.prompt("router", "fresh work");
+    expect(conn?.prompts[0]).toContain("[MESH BRIEFING]");
+    expect(conn?.prompts[0]).toContain("fresh work");
+  } finally {
+    await cp.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("first prompt after load failure fresh-starts and retries the same prompt once", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mesh-control-plane-first-prompt-"));
+  const runDir = join(root, "run");
+  const config: MeshConfig = {
+    name: "first-prompt-fallback",
+    agents: [{ id: "router", harness: "claude", project: root, role: "router" }],
+    edges: [],
+  };
+  await writeSessionState(runDir, config.name, {
+    meshExpectedAlive: true,
+    agents: { router: { sessionId: "saved-session", cwd: root, harness: "claude" } },
+  });
+  const created: ResumeConnection[] = [];
+  const cp = new ControlPlane(config, {
+    mailboxPath: join(root, "mailbox.ndjson"),
+    sessionRunDir: runDir,
+    connectionFactory: (opts) => {
+      const conn = new ResumeConnection(opts, { supportsLoadSession: true, promptFailures: created.length === 0 ? 1 : 0 });
+      created.push(conn);
+      return conn as unknown as AcpAgentConnection;
+    },
+  });
+
+  try {
+    await cp.start();
+    await cp.prompt("router", "do not lose this");
+    expect(created).toHaveLength(2);
+    expect(created[0].prompts).toEqual(["do not lose this"]);
+    expect(created[1].newSessionCount).toBe(1);
+    expect(created[1].prompts[0]).toContain("[MESH BRIEFING]");
+    expect(created[1].prompts[0]).toContain("do not lose this");
+  } finally {
+    await cp.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("meshExpectedAlive false skips startup; prompt to dead agent starts fresh and flips flag true", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mesh-control-plane-dead-prompt-"));
+  const runDir = join(root, "run");
+  const config: MeshConfig = {
+    name: "dead-prompt",
+    agents: [{ id: "router", harness: "kimi", project: root, role: "router" }],
+    edges: [],
+  };
+  await writeSessionState(runDir, config.name, {
+    meshExpectedAlive: false,
+    agents: { router: { sessionId: "old-session", cwd: root, harness: "kimi" } },
+  });
+  const created: ResumeConnection[] = [];
+  const events: any[] = [];
+  const cp = new ControlPlane(config, {
+    mailboxPath: join(root, "mailbox.ndjson"),
+    sessionRunDir: runDir,
+    connectionFactory: (opts) => {
+      const conn = new ResumeConnection(opts, { supportsLoadSession: true });
+      created.push(conn);
+      return conn as unknown as AcpAgentConnection;
+    },
+  });
+  cp.on((event) => events.push(event));
+
+  try {
+    await cp.start();
+    expect(created).toHaveLength(0);
+    expect(cp.snapshotEvents()).toContainEqual(expect.objectContaining({ kind: "agent_status", agent: "router", status: "dead" }));
+
+    await cp.prompt("router", "revive");
+    expect(created).toHaveLength(1);
+    expect(created[0].loadCalls).toEqual([]);
+    expect(created[0].newSessionCount).toBe(1);
+    expect(created[0].prompts[0]).toContain("[MESH BRIEFING]");
+    expect(created[0].prompts[0]).toContain("revive");
+    expect((await readSessionState(runDir, config.name)).meshExpectedAlive).toBe(true);
+    expect(events).toContainEqual(expect.objectContaining({ kind: "agent_status", agent: "router", status: "dead", detail: "stopped" }));
+    expect(events).toContainEqual(expect.objectContaining({ kind: "agent_status", agent: "router", status: "ready" }));
+  } finally {
+    await cp.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("explicit stop clears meshExpectedAlive while shutdown cleanup leaves it unchanged", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mesh-control-plane-stop-flag-"));
+  const runDir = join(root, "run");
+  const config: MeshConfig = {
+    name: "stop-flag",
+    agents: [{ id: "router", harness: "opencode", project: root, role: "router" }],
+    edges: [],
+  };
+  const cp = new ControlPlane(config, {
+    mailboxPath: join(root, "mailbox.ndjson"),
+    sessionRunDir: runDir,
+    connectionFactory: (opts) => new ResumeConnection(opts) as unknown as AcpAgentConnection,
+  });
+
+  try {
+    await cp.start();
+    expect((await readSessionState(runDir, config.name)).meshExpectedAlive).toBe(true);
+    await cp.stop("shutdown");
+    expect((await readSessionState(runDir, config.name)).meshExpectedAlive).toBe(true);
+    await cp.stop("explicit");
+    expect((await readSessionState(runDir, config.name)).meshExpectedAlive).toBe(false);
+  } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
