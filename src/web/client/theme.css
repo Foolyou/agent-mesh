@@ -1201,6 +1201,7 @@ body::after {
   pointer-events: none;
 }
 .canvas-edge {
+  fill: none;
   stroke: var(--line-bright);
   stroke-width: 1.4;
   vector-effect: non-scaling-stroke;

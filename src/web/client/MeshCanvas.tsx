@@ -9,6 +9,8 @@ import { useI18n } from "./i18n";
 type Rect = { x: number; y: number; w: number; h: number };
 type Layout = { sig: string; windows: Record<string, Rect> };
 type FlashTimer = number;
+type Point = { x: number; y: number };
+type EdgeRoute = { d: string; route: "clear" | "avoid" | "fallback" };
 
 const DEFAULT_W = 360;
 const DEFAULT_H = 320;
@@ -121,7 +123,7 @@ function saveLayout(mesh: string, layout: Layout): void {
   }
 }
 
-function edgePoint(from: Rect, to: Rect): { x: number; y: number } {
+function edgePoint(from: Rect, to: Rect): Point {
   const ax = from.x + from.w / 2;
   const ay = from.y + from.h / 2;
   const bx = to.x + to.w / 2;
@@ -132,6 +134,125 @@ function edgePoint(from: Rect, to: Rect): { x: number; y: number } {
   const sy = dy === 0 ? Infinity : from.h / 2 / Math.abs(dy);
   const t = Math.min(sx, sy);
   return { x: ax + dx * t, y: ay + dy * t };
+}
+
+function pathNum(n: number): string {
+  return Number.isFinite(n) ? n.toFixed(1) : "0.0";
+}
+
+function pathLine(s: Point, e: Point): string {
+  return `M ${pathNum(s.x)} ${pathNum(s.y)} L ${pathNum(e.x)} ${pathNum(e.y)}`;
+}
+
+function pathCubic(s: Point, c1: Point, c2: Point, e: Point): string {
+  return `M ${pathNum(s.x)} ${pathNum(s.y)} C ${pathNum(c1.x)} ${pathNum(c1.y)} ${pathNum(c2.x)} ${pathNum(c2.y)} ${pathNum(e.x)} ${pathNum(e.y)}`;
+}
+
+function expanded(r: Rect, margin: number): Rect {
+  return { x: r.x - margin, y: r.y - margin, w: r.w + margin * 2, h: r.h + margin * 2 };
+}
+
+function inRect(p: Point, r: Rect): boolean {
+  return p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h;
+}
+
+function orient(a: Point, b: Point, c: Point): number {
+  return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+}
+
+function between(a: number, b: number, c: number): boolean {
+  return Math.min(a, b) <= c + 0.001 && c <= Math.max(a, b) + 0.001;
+}
+
+function segmentsIntersect(a: Point, b: Point, c: Point, d: Point): boolean {
+  const o1 = orient(a, b, c);
+  const o2 = orient(a, b, d);
+  const o3 = orient(c, d, a);
+  const o4 = orient(c, d, b);
+  if (Math.abs(o1) < 0.001 && between(a.x, b.x, c.x) && between(a.y, b.y, c.y)) return true;
+  if (Math.abs(o2) < 0.001 && between(a.x, b.x, d.x) && between(a.y, b.y, d.y)) return true;
+  if (Math.abs(o3) < 0.001 && between(c.x, d.x, a.x) && between(c.y, d.y, a.y)) return true;
+  if (Math.abs(o4) < 0.001 && between(c.x, d.x, b.x) && between(c.y, d.y, b.y)) return true;
+  return (o1 > 0) !== (o2 > 0) && (o3 > 0) !== (o4 > 0);
+}
+
+function segmentIntersectsRect(a: Point, b: Point, r: Rect): boolean {
+  if (inRect(a, r) || inRect(b, r)) return true;
+  const tl = { x: r.x, y: r.y };
+  const tr = { x: r.x + r.w, y: r.y };
+  const br = { x: r.x + r.w, y: r.y + r.h };
+  const bl = { x: r.x, y: r.y + r.h };
+  return segmentsIntersect(a, b, tl, tr) || segmentsIntersect(a, b, tr, br) || segmentsIntersect(a, b, br, bl) || segmentsIntersect(a, b, bl, tl);
+}
+
+function cubicPoint(s: Point, c1: Point, c2: Point, e: Point, t: number): Point {
+  const mt = 1 - t;
+  return {
+    x: mt * mt * mt * s.x + 3 * mt * mt * t * c1.x + 3 * mt * t * t * c2.x + t * t * t * e.x,
+    y: mt * mt * mt * s.y + 3 * mt * mt * t * c1.y + 3 * mt * t * t * c2.y + t * t * t * e.y,
+  };
+}
+
+function cubicHitsRects(s: Point, c1: Point, c2: Point, e: Point, rects: Rect[]): boolean {
+  for (let i = 1; i < 32; i++) {
+    const p = cubicPoint(s, c1, c2, e, i / 32);
+    if (rects.some((r) => inRect(p, r))) return true;
+  }
+  return false;
+}
+
+function controlsFor(s: Point, e: Point, nx: number, ny: number, offset: number): [Point, Point] {
+  const dx = e.x - s.x;
+  const dy = e.y - s.y;
+  return [
+    { x: s.x + dx * 0.33 + nx * offset, y: s.y + dy * 0.33 + ny * offset },
+    { x: s.x + dx * 0.67 + nx * offset, y: s.y + dy * 0.67 + ny * offset },
+  ];
+}
+
+function routeEdge(fromId: string, toId: string, windows: Record<string, Rect>): EdgeRoute | null {
+  const from = windows[fromId];
+  const to = windows[toId];
+  if (!from || !to) return null;
+  const s = edgePoint(from, to);
+  const e = edgePoint(to, from);
+  const dx = e.x - s.x;
+  const dy = e.y - s.y;
+  const len = Math.hypot(dx, dy);
+  if (!len) return { d: pathLine(s, e), route: "fallback" };
+  const blockers = Object.entries(windows)
+    .filter(([id]) => id !== fromId && id !== toId)
+    .map(([, r]) => expanded(r, 10));
+  const directHits = blockers.filter((r) => segmentIntersectsRect(s, e, r));
+  const nx = -dy / len;
+  const ny = dx / len;
+  if (!directHits.length) {
+    const [c1, c2] = controlsFor(s, e, nx, ny, Math.min(18, len * 0.04));
+    return { d: pathCubic(s, c1, c2, e), route: "clear" };
+  }
+
+  const base = s.x * nx + s.y * ny;
+  const margin = 18;
+  const candidates = [1, -1].map((sign) => {
+    let needed = 48;
+    for (const r of directHits) {
+      const dots = [
+        r.x * nx + r.y * ny,
+        (r.x + r.w) * nx + r.y * ny,
+        (r.x + r.w) * nx + (r.y + r.h) * ny,
+        r.x * nx + (r.y + r.h) * ny,
+      ];
+      if (sign > 0) needed = Math.max(needed, Math.max(...dots) + margin - base);
+      else needed = Math.max(needed, base - (Math.min(...dots) - margin));
+    }
+    return sign * Math.max(48, needed / 0.5);
+  });
+  candidates.sort((a, b) => Math.abs(a) - Math.abs(b));
+  for (const offset of candidates) {
+    const [c1, c2] = controlsFor(s, e, nx, ny, offset);
+    if (!cubicHitsRects(s, c1, c2, e, blockers)) return { d: pathCubic(s, c1, c2, e), route: "avoid" };
+  }
+  return { d: pathLine(s, e), route: "fallback" };
 }
 
 export function MeshCanvas({
@@ -151,6 +272,8 @@ export function MeshCanvas({
   const [activeEdges, setActiveEdges] = useState<Set<string>>(() => new Set());
   const seenMailIds = useRef<Set<string>>(new Set(pm.mail.map((mail) => mail.id)));
   const flashTimers = useRef<Map<string, FlashTimer>>(new Map());
+  const scheduledPatches = useRef<Map<string, Partial<Rect>>>(new Map());
+  const patchFrame = useRef<number | null>(null);
   const sig = useMemo(() => signature(m), [m]);
   const edgeKeys = useMemo(() => new Set(m.edges.map(([from, to]) => edgeKey(from, to))), [m.edges]);
   const live = m.status === "running" || m.status === "starting";
@@ -200,6 +323,7 @@ export function MeshCanvas({
     return () => {
       for (const timer of flashTimers.current.values()) window.clearTimeout(timer);
       flashTimers.current.clear();
+      if (patchFrame.current !== null) window.cancelAnimationFrame(patchFrame.current);
     };
   }, []);
 
@@ -220,6 +344,35 @@ export function MeshCanvas({
     });
   }
 
+  function scheduleRectPatch(id: string, patch: Partial<Rect>): void {
+    scheduledPatches.current.set(id, { ...(scheduledPatches.current.get(id) ?? {}), ...patch });
+    if (patchFrame.current !== null) return;
+    patchFrame.current = window.requestAnimationFrame(() => {
+      patchFrame.current = null;
+      const patches = scheduledPatches.current;
+      scheduledPatches.current = new Map();
+      setLayout((cur) => {
+        let changed = false;
+        const windows = { ...cur.windows };
+        for (const [patchId, rectPatch] of patches) {
+          const prev = windows[patchId];
+          if (!prev) continue;
+          windows[patchId] = { ...prev, ...rectPatch };
+          changed = true;
+        }
+        return changed ? { ...cur, windows } : cur;
+      });
+    });
+  }
+
+  function cancelScheduledPatches(): void {
+    scheduledPatches.current.clear();
+    if (patchFrame.current !== null) {
+      window.cancelAnimationFrame(patchFrame.current);
+      patchFrame.current = null;
+    }
+  }
+
   function focus(id: string): void {
     setOrder((cur) => [...cur.filter((x) => x !== id), id]);
   }
@@ -234,12 +387,13 @@ export function MeshCanvas({
     const target = e.currentTarget as HTMLElement;
     target.setPointerCapture(e.pointerId);
     const onMove = (ev: PointerEvent) => {
-      patchRect(id, {
+      scheduleRectPatch(id, {
         x: clamp(start.x + ev.clientX - sx, 8, Math.max(8, window.innerWidth - start.w - 8)),
         y: clamp(start.y + ev.clientY - sy, 46, Math.max(46, window.innerHeight - start.h - 8)),
       });
     };
     const onEnd = (ev: PointerEvent) => {
+      cancelScheduledPatches();
       target.releasePointerCapture(e.pointerId);
       target.removeEventListener("pointermove", onMove);
       target.removeEventListener("pointerup", onEnd);
@@ -264,12 +418,13 @@ export function MeshCanvas({
     const target = e.currentTarget as HTMLElement;
     target.setPointerCapture(e.pointerId);
     const onMove = (ev: PointerEvent) => {
-      patchRect(id, {
+      scheduleRectPatch(id, {
         w: clamp(start.w + ev.clientX - sx, MIN_W, Math.max(MIN_W, window.innerWidth - start.x - 8)),
         h: clamp(start.h + ev.clientY - sy, MIN_H, Math.max(MIN_H, window.innerHeight - start.y - 8)),
       });
     };
     const onEnd = (ev: PointerEvent) => {
+      cancelScheduledPatches();
       target.releasePointerCapture(e.pointerId);
       target.removeEventListener("pointermove", onMove);
       target.removeEventListener("pointerup", onEnd);
@@ -300,13 +455,10 @@ export function MeshCanvas({
           </marker>
         </defs>
         {m.edges.map(([from, to], i) => {
-          const a = layout.windows[from];
-          const b = layout.windows[to];
-          if (!a || !b) return null;
-          const s = edgePoint(a, b);
-          const e = edgePoint(b, a);
+          const routed = routeEdge(from, to, layout.windows);
+          if (!routed) return null;
           const key = edgeKey(from, to);
-          return <line key={`${from}-${to}-${i}`} className={`canvas-edge ${activeEdges.has(key) ? "active" : ""}`} data-from={from} data-to={to} x1={s.x} y1={s.y} x2={e.x} y2={e.y} markerEnd="url(#canvas-arrow)" />;
+          return <path key={`${from}-${to}-${i}`} className={`canvas-edge ${activeEdges.has(key) ? "active" : ""}`} data-from={from} data-to={to} data-route={routed.route} d={routed.d} markerEnd="url(#canvas-arrow)" />;
         })}
       </svg>
       <div className="canvas-windows">
