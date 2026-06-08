@@ -159,6 +159,82 @@ test("addEdge validates duplicates, steer-to-router, and dead targets", async ()
   await expect(mgr.addEdge("edges", { from: "a", to: "b" })).rejects.toThrow(/dead/i);
 });
 
+test("addAgent updates parent config, persists, then sends daemon RPC", async () => {
+  await mgr.defineMesh(edgeCfg);
+  const rpc: any[] = [];
+  const entry = (mgr as any).entries.get("edges");
+  entry.status = "running";
+  entry.client = { addAgent: (agent: any, edges?: any[]) => rpc.push({ agent, edges }) };
+
+  await mgr.addAgent("edges", { id: "c", harness: "codex", project: "test_mesh_0", role: "member" });
+
+  expect(mgr.configOf("edges").agents).toContainEqual({ id: "c", harness: "codex", project: "test_mesh_0", role: "member", lazy: true });
+  expect(rpc).toEqual([{ agent: { id: "c", harness: "codex", project: "test_mesh_0", role: "member", lazy: true }, edges: [] }]);
+  const fresh = new MeshManager({ meshesDir: join(dir, "meshes"), runDir: join(dir, "run"), hostScript: FIXTURE });
+  await fresh.loadDefinitions();
+  expect(fresh.configOf("edges").agents).toContainEqual({ id: "c", harness: "codex", project: "test_mesh_0", role: "member", lazy: true });
+});
+
+test("addAgent can persist optional edges in the same update", async () => {
+  await mgr.defineMesh(edgeCfg);
+  const rpc: any[] = [];
+  const entry = (mgr as any).entries.get("edges");
+  entry.status = "running";
+  entry.client = { addAgent: (agent: any, edges?: any[]) => rpc.push({ agent, edges }) };
+
+  await mgr.addAgent("edges", { id: "c", harness: "codex", project: "test_mesh_0", role: "member" }, [{ from: "a", to: "c" }]);
+
+  expect(mgr.configOf("edges").edges).toContainEqual({ from: "a", to: "c", steer: false });
+  expect(rpc[0].edges).toEqual([{ from: "a", to: "c", steer: false }]);
+});
+
+test("addAgent rolls back parent memory and skips daemon RPC when persistence fails", async () => {
+  await mgr.defineMesh(edgeCfg);
+  const rpc: any[] = [];
+  const entry = (mgr as any).entries.get("edges");
+  entry.status = "running";
+  entry.client = { addAgent: (agent: any) => rpc.push(agent) };
+  const store = (mgr as any).store;
+  const originalDefine = store.define.bind(store);
+  store.define = async () => {
+    throw new Error("disk full");
+  };
+
+  await expect(mgr.addAgent("edges", { id: "c", harness: "codex", project: "test_mesh_0", role: "member" })).rejects.toThrow(/disk full/);
+
+  expect(mgr.configOf("edges").agents.map((a) => a.id)).toEqual(edgeCfg.agents.map((a) => a.id));
+  expect(rpc).toEqual([]);
+  store.define = originalDefine;
+});
+
+test("addAgent keeps persisted parent config when daemon RPC fails", async () => {
+  await mgr.defineMesh(edgeCfg);
+  const entry = (mgr as any).entries.get("edges");
+  entry.status = "running";
+  entry.client = {
+    addAgent() {
+      throw new Error("socket closed");
+    },
+  };
+  const events: MeshEvent[] = [];
+  mgr.on((_name, e) => events.push(e));
+
+  await mgr.addAgent("edges", { id: "c", harness: "codex", project: "test_mesh_0", role: "member" });
+
+  expect(mgr.configOf("edges").agents).toContainEqual({ id: "c", harness: "codex", project: "test_mesh_0", role: "member", lazy: true });
+  const fresh = new MeshManager({ meshesDir: join(dir, "meshes"), runDir: join(dir, "run"), hostScript: FIXTURE });
+  await fresh.loadDefinitions();
+  expect(fresh.configOf("edges").agents).toContainEqual({ id: "c", harness: "codex", project: "test_mesh_0", role: "member", lazy: true });
+  expect(events).toContainEqual(expect.objectContaining({ kind: "log", text: expect.stringContaining("addAgent RPC failed") }));
+});
+
+test("addAgent rejects duplicate ids, duplicate routers, and invalid harnesses", async () => {
+  await mgr.defineMesh(edgeCfg);
+  await expect(mgr.addAgent("edges", { id: "a", harness: "codex", project: "test_mesh_0", role: "member" })).rejects.toThrow(/duplicate agent id/i);
+  await expect(mgr.addAgent("edges", { id: "r2", harness: "claude", project: "test_mesh_0", role: "router" })).rejects.toThrow(/router/i);
+  await expect(mgr.addAgent("edges", { id: "x", harness: "missing" as any, project: "test_mesh_0", role: "member" })).rejects.toThrow(/unknown harness/i);
+});
+
 test("setMode and setModel on an unknown agent throw", async () => {
   await mgr.defineMesh(cfg);
   await expect(mgr.setMode("echo", "nope", "plan")).rejects.toThrow(/no agent/i);

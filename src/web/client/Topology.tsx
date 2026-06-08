@@ -120,6 +120,7 @@ export function Topology({
             <g
               key={a.id}
               className={`node ${sel ? "sel" : ""} ${flash ? "flash" : ""}`}
+              data-agent={a.id}
               transform={`translate(${p.x - NODE_W / 2}, ${p.y - NODE_H / 2})`}
               onClick={() => onSelect(a.id)}
             >

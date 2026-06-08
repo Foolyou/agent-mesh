@@ -69,3 +69,13 @@ test("addEdge mutates the live topology so canMail sees the new edge", () => {
   expect(m.canMail("b", "a")).toBe(true);
   expect(m.config.edges).toContainEqual({ from: "b", to: "a", steer: false });
 });
+
+test("addAgent appends a cold lazy member to the live topology", () => {
+  const m = new Mesh(config);
+  const added = m.addAgent({ id: "c", harness: "codex", project: "p", role: "member" });
+  expect(added).toEqual({ id: "c", harness: "codex", project: "p", role: "member", lazy: true });
+  expect(m.agent("c")).toEqual(added);
+  expect(m.members.map((a) => a.id)).toEqual(["a", "b", "c"]);
+  expect(m.status("c")).toBe("cold");
+  expect(m.canMail("a", "c")).toBe(false);
+});

@@ -1365,6 +1365,12 @@ body::after {
 .inp:focus {
   border-color: var(--fg-dim);
 }
+.inp.compact {
+  width: 86px;
+  min-width: 0;
+  padding: 2px 6px;
+  font-size: 11px;
+}
 select.inp {
   cursor: pointer;
 }

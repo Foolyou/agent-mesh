@@ -8,9 +8,9 @@ import { MeshStore } from "./mesh-store";
 import { MeshHostClient } from "./mesh-host-client";
 import { listLiveRecords, readRecord, removeRecord, pidAlive, type MeshHostRecord } from "./mesh-registry";
 import { Mesh } from "./mesh";
-import { validateAddEdge } from "./mesh-validate";
+import { validateAddAgent, validateAddEdge } from "./mesh-validate";
 import { now } from "./acp/types";
-import type { AgentStatus, MeshConfig, MeshEdge, MeshEvent, ThinkingEffort } from "./acp/types";
+import type { AgentConfig, AgentStatus, MeshConfig, MeshEdge, MeshEvent, ThinkingEffort } from "./acp/types";
 import type { PromptImageRef } from "./acp/types";
 import { deleteUploadBucket } from "./web/uploads";
 
@@ -296,6 +296,35 @@ export class MeshManager {
         entry.client.addEdge(edge);
       } catch (err) {
         this.emit(name, { kind: "log", text: `addEdge RPC failed for ${edge.from} -> ${edge.to}: ${String(err)}`, ts: now() });
+      }
+    }
+  }
+
+  async addAgent(name: string, cfg: AgentConfig, edgeInputs: MeshEdge[] = []): Promise<void> {
+    const entry = this.require(name);
+    const previous = entry.config;
+    const statuses = this.agentStatuses.get(name);
+    const agent = validateAddAgent(previous, cfg);
+    let patched: MeshConfig = { ...previous, agents: [...previous.agents, agent], edges: [...previous.edges] };
+    const edges: MeshEdge[] = [];
+    for (const edgeInput of edgeInputs) {
+      const edge = validateAddEdge(patched, edgeInput, (id) => statuses?.get(id));
+      edges.push(edge);
+      patched = { ...patched, edges: [...patched.edges, edge] };
+    }
+
+    entry.config = patched;
+    try {
+      await this.store.define(patched);
+    } catch (err) {
+      entry.config = previous;
+      throw err;
+    }
+    if (entry.status === "running" && entry.client) {
+      try {
+        entry.client.addAgent(agent, edges);
+      } catch (err) {
+        this.emit(name, { kind: "log", text: `addAgent RPC failed for ${agent.id}: ${String(err)}`, ts: now() });
       }
     }
   }

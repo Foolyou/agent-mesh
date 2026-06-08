@@ -57,6 +57,13 @@ export class Mesh {
     return normalized;
   }
 
+  addAgent(cfg: AgentConfig): AgentConfig {
+    const agent: AgentConfig = cfg.role === "member" ? { ...cfg, lazy: cfg.lazy ?? true } : { ...cfg };
+    this.config.agents.push(agent);
+    this.statuses.set(agent.id, "cold");
+    return agent;
+  }
+
   setStatus(id: AgentId, status: AgentStatus): void {
     this.statuses.set(id, status);
   }

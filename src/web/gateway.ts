@@ -4,7 +4,7 @@
 // It has no HTTP/WS dependency: server.ts adapts it to Bun.serve, tests drive it directly.
 import { reduceTranscript } from "./transcript";
 import { now } from "../acp/types";
-import type { MeshConfig, MeshEdge, MeshEvent, AgentId, AgentStatus, AgentActivity, PromptImageRef, ThinkingEffort } from "../acp/types";
+import type { AgentConfig, MeshConfig, MeshEdge, MeshEvent, AgentId, AgentStatus, AgentActivity, PromptImageRef, ThinkingEffort } from "../acp/types";
 import { readUpload, storeUploads, uploadPath, type UploadFileLike } from "./uploads";
 import type {
   GatewayState,
@@ -38,6 +38,7 @@ export interface ManagerLike {
   setModel(name: string, agentId: string, modelId: string): Promise<void>;
   setAgentEffort(name: string, agentId: string, effort?: ThinkingEffort): Promise<void>;
   addEdge(name: string, edge: MeshEdge): Promise<void>;
+  addAgent(name: string, agent: AgentConfig, edges?: MeshEdge[]): Promise<void>;
   interruptAgent(name: string, agentId: string): void;
   wakeAgent(name: string, agentId: string): void;
   defineMesh(config: MeshConfig): Promise<void>;
@@ -397,6 +398,10 @@ export class WebGateway {
   }
   async addEdge(name: string, edge: MeshEdge): Promise<void> {
     await this.manager.addEdge(name, edge);
+    this.refreshMeshes();
+  }
+  async addAgent(name: string, agent: AgentConfig, edges: MeshEdge[] = []): Promise<void> {
+    await this.manager.addAgent(name, agent, edges);
     this.refreshMeshes();
   }
   interruptAgent(name: string, agentId: string): void {

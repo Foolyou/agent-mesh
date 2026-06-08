@@ -3,7 +3,7 @@
 // the client. createStore() owns the socket + REST command helpers; useStore wires it
 // into React via useSyncExternalStore.
 import { useSyncExternalStore } from "react";
-import type { GatewayState, ServerMsg, PerMeshState, TranscriptItem, ConvRef, MeshConfig, MeshEdge, PromptImageRef, ThinkingEffort } from "../types";
+import type { AgentConfig, GatewayState, ServerMsg, PerMeshState, TranscriptItem, ConvRef, MeshConfig, MeshEdge, PromptImageRef, ThinkingEffort } from "../types";
 
 const CAP = 500;
 function cap<T>(a: T[], n: number): T[] {
@@ -136,6 +136,7 @@ export interface Store {
   setModel(name: string, agentId: string, modelId: string): Promise<any>;
   setEffort(name: string, agentId: string, effort?: ThinkingEffort): Promise<any>;
   addEdge(name: string, edge: MeshEdge): Promise<any>;
+  addAgent(name: string, agent: AgentConfig, edges?: MeshEdge[]): Promise<any>;
   interruptAgent(name: string, agentId: string): Promise<any>;
   wakeAgent(name: string, agentId: string): Promise<any>;
   interruptMaster(): Promise<any>;
@@ -262,6 +263,7 @@ export function createStore(): Store {
     setModel: (n, a, m) => guard(post(`/api/meshes/${enc(n)}/agents/${enc(a)}/model`, { modelId: m }), `set model ${a}`),
     setEffort: (n, a, e) => guard(post(`/api/meshes/${enc(n)}/agents/${enc(a)}/effort`, { effort: e }), `set effort ${a}`),
     addEdge: (n, edge) => guard(post(`/api/meshes/${enc(n)}/edges`, edge), `add edge ${edge.from}->${edge.to}`),
+    addAgent: (n, agent, edges = []) => guard(post(`/api/meshes/${enc(n)}/agents`, { agent, edges }), `add agent ${agent.id}`),
     interruptAgent: (n, a) => guard(post(`/api/meshes/${enc(n)}/agents/${enc(a)}/interrupt`), `interrupt ${a}`),
     wakeAgent: (n, a) => guard(post(`/api/meshes/${enc(n)}/agents/${enc(a)}/wake`), `wake ${a}`),
   };

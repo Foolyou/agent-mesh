@@ -1,11 +1,12 @@
 // Shared types for the WebUI: aggregated transcript items, gateway state, and the
 // WebSocket wire protocol. These are the contract between WebGateway (server) and
 // the client store.
-import type { MeshConfig, AgentId, AgentStatus, AgentActivity, AgentRole, HarnessId, SessionMode, SessionModel, PromptImageRef, ThinkingEffort, MeshEdge } from "../acp/types";
+import type { AgentConfig, MeshConfig, AgentId, AgentStatus, AgentActivity, AgentRole, HarnessId, SessionMode, SessionModel, PromptImageRef, ThinkingEffort, MeshEdge } from "../acp/types";
 export type { SessionMode };
 export type { SessionModel };
 export type { PromptImageRef };
 export type { ThinkingEffort };
+export type { AgentConfig };
 
 /** The session modes an agent advertises plus which one is active. */
 export interface AgentModes {

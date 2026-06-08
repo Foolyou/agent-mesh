@@ -28,6 +28,7 @@ function fakeCp() {
     async interrupt(target) { calls.push(`interrupt:${target}`); },
     async wakeAgent(target) { calls.push(`wake:${target}`); },
     addEdge(edge) { calls.push(`addEdge:${edge.from}:${edge.to}:${edge.steer === true}`); },
+    addAgent(agent, edges = []) { calls.push(`addAgent:${agent.id}:${edges.map((e) => `${e.from}->${e.to}`).join(",")}`); },
     async stop() { calls.push("stop"); },
   };
   return { cp, calls, emit: (e: MeshEvent) => listener?.(e) };
@@ -71,12 +72,14 @@ test("hello → ack(running, proto, seq); prompt relays a seq'd event; commands 
   send({ t: "interrupt", target: "codex-1" });
   send({ t: "wake", target: "codex-1" });
   send({ t: "addEdge", edge: { from: "router", to: "codex-1", steer: true } });
+  send({ t: "addAgent", agent: { id: "newbie", harness: "codex", project: ".", role: "member", lazy: true }, edges: [{ from: "router", to: "newbie" }] });
   await Bun.sleep(50);
   expect(calls).toContain("setMode:codex-1:read-only");
   expect(calls).toContain("setModel:codex-1:kimi-k2");
   expect(calls).toContain("interrupt:codex-1");
   expect(calls).toContain("wake:codex-1");
   expect(calls).toContain("addEdge:router:codex-1:true");
+  expect(calls).toContain("addAgent:newbie:router->newbie");
 
   send({ t: "stop" });
   await Bun.sleep(50);

@@ -3,7 +3,7 @@
 // every (possibly LLM-generated) MeshConfig before defining/persisting it.
 import { isAbsolute } from "node:path";
 import { HARNESSES } from "./harness";
-import { normalizeMeshEdge, normalizeMeshEdges, type AgentStatus, type MeshConfig, type MeshEdge, type MeshEdgeInput } from "./acp/types";
+import { normalizeMeshEdge, normalizeMeshEdges, type AgentConfig, type AgentStatus, type MeshConfig, type MeshEdge, type MeshEdgeInput } from "./acp/types";
 
 export function validateMeshConfig(config: MeshConfig): void {
   const { name, agents } = config;
@@ -80,4 +80,38 @@ export function validateAddEdge(config: MeshConfig, edgeInput: MeshEdgeInput, st
     throw new Error(`edge [${edge.from}, ${edge.to}] already exists`);
   }
   return edge;
+}
+
+export function validateAddAgent(config: MeshConfig, cfg: AgentConfig): AgentConfig {
+  const role = cfg.role ?? "member";
+  const agent: AgentConfig = role === "member" ? { ...cfg, role, lazy: cfg.lazy ?? true } : { ...cfg, role };
+  if (!agent.id || !/^[A-Za-z0-9._-]+$/.test(agent.id) || agent.id.includes("..")) {
+    throw new Error(`invalid agent id "${agent.id}": use only letters, digits, '.', '_', '-'`);
+  }
+  if (config.agents.some((a) => a.id === agent.id)) throw new Error(`duplicate agent id "${agent.id}"`);
+  if (!(agent.harness in HARNESSES)) {
+    throw new Error(`agent "${agent.id}" has unknown harness "${agent.harness}"`);
+  }
+  if (!agent.project || isAbsolute(agent.project)) {
+    throw new Error(`agent "${agent.id}" project must be a relative path (got "${agent.project}")`);
+  }
+  if (agent.effort !== undefined && !["minimal", "low", "medium", "high"].includes(agent.effort)) {
+    throw new Error(`agent "${agent.id}" has invalid effort "${agent.effort}" (use minimal|low|medium|high)`);
+  }
+  if (agent.role === "router") {
+    if (config.agents.some((a) => a.role === "router")) {
+      throw new Error(`mesh already has a router; cannot add router agent "${agent.id}"`);
+    }
+    if (agent.lazy === true) {
+      throw new Error(`router agent "${agent.id}" cannot be lazy`);
+    }
+  }
+  if (agent.instructions !== undefined) {
+    if (typeof agent.instructions !== "string") throw new Error(`agent "${agent.id}" instructions must be a string`);
+    const instructions = agent.instructions.trim();
+    if (instructions && instructions.length > 4000) {
+      throw new Error(`agent "${agent.id}" instructions are too long (max 4000 chars)`);
+    }
+  }
+  return agent;
 }

@@ -3,7 +3,7 @@
 // permission-history timelines for the selected mesh.
 import { useEffect, useRef, useState } from "react";
 import type { Store } from "./store";
-import type { GatewayState, MeshSummary, PerMeshState, ActivityEntry, MailEntry, ResolvedPermission, PermissionReq, AgentModes, AgentModels, ThinkingEffort } from "../types";
+import type { GatewayState, MeshSummary, PerMeshState, ActivityEntry, MailEntry, ResolvedPermission, PermissionReq, AgentModes, AgentModels, ThinkingEffort, HarnessId } from "../types";
 import { Dot, Btn, Empty, ConfirmButton, InfoIcon, fmtTime } from "./ui";
 import { ChatPane } from "./ChatPane";
 import { MeshCanvas } from "./MeshCanvas";
@@ -437,6 +437,7 @@ export function MeshDetail({
       pending: [],
       history: [],
       modes: {},
+      models: {},
       capabilities: {},
     };
   // interrupt flash: highlight a node briefly when a new interrupt activity arrives
@@ -446,6 +447,8 @@ export function MeshDetail({
   const [topoOpen, setTopoOpen] = useState(false);
   const [edgeFrom, setEdgeFrom] = useState("");
   const [edgeTo, setEdgeTo] = useState("");
+  const [agentId, setAgentId] = useState("");
+  const [agentHarness, setAgentHarness] = useState<HarnessId>("codex");
   const lastInterrupt = pm.activity.filter((a) => a.kind === "interrupt").slice(-1)[0];
   useEffect(() => {
     if (!lastInterrupt) return;
@@ -461,6 +464,10 @@ export function MeshDetail({
     if (!agentIds.length) return;
     setEdgeFrom((v) => (agentIds.includes(v) ? v : (routerId || agentIds[0] || "")));
     setEdgeTo((v) => (agentIds.includes(v) ? v : (agentIds.find((id) => id !== (routerId || agentIds[0])) || agentIds[0] || "")));
+    setAgentId((v) => {
+      const next = v.trim() || `agent-${agentIds.length}`;
+      return agentIds.includes(next) ? `agent-${agentIds.length}` : next;
+    });
   }, [agentIds.join("\u0000"), routerId]);
 
   if (!m) return <Empty>{t("empty.select")}</Empty>;
@@ -476,6 +483,29 @@ export function MeshDetail({
     if (addEdgeDisabled) return;
     void store.addEdge(m.name, { from: edgeFrom, to: edgeTo });
   };
+  const addAgentDisabled = !agentId.trim() || agentIds.includes(agentId.trim());
+  const submitAgent = () => {
+    const id = agentId.trim();
+    if (addAgentDisabled) return;
+    void store.addAgent(m.name, { id, harness: agentHarness, project: "test_mesh_0", role: "member" }).then(() => {
+      setAgentId(`agent-${agentIds.length + 1}`);
+      onSelectAgent(id);
+    }, () => {});
+  };
+  const agentAddControl = live ? (
+    <span className="row agent-add" style={{ gap: 5 }}>
+      <input className="inp compact" value={agentId} aria-label={t("agent.id")} onChange={(e) => setAgentId(e.target.value)} />
+      <select className="mode-sel" value={agentHarness} aria-label={t("agent.harness")} onChange={(e) => setAgentHarness(e.target.value as HarnessId)}>
+        <option value="codex">codex</option>
+        <option value="claude">claude</option>
+        <option value="kimi">kimi</option>
+        <option value="opencode">opencode</option>
+      </select>
+      <Btn small kind="go" disabled={addAgentDisabled} title={t("agent.add")} onClick={submitAgent}>
+        {t("agent.add")}
+      </Btn>
+    </span>
+  ) : null;
   const edgeAddControl =
     live && agentIds.length >= 2 ? (
       <span className="row edge-add" style={{ gap: 5 }}>
@@ -516,6 +546,7 @@ export function MeshDetail({
       <div className="head">
         <span className="ttl">{t("topology")}</span>
         <span className="right">
+          {agentAddControl}
           {edgeAddControl}
           <InfoIcon text={t("topology.sub")} />
           <Btn small kind="ghost" title={t("topology")} onClick={() => setTopoOpen(true)}>
@@ -610,6 +641,7 @@ export function MeshDetail({
         <span className="ttl">topology</span>
         <span className="sub">agents · mail edges</span>
         <span className="right">
+          {agentAddControl}
           {edgeAddControl}
           <Btn small kind="ghost" title="expand topology" onClick={() => setTopoOpen(true)}>
             ⤢

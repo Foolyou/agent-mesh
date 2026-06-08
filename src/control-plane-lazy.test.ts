@@ -367,3 +367,65 @@ test("control-plane addEdge rejects duplicates, steer-to-router, and dead target
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("control-plane addAgent creates a cold lazy member and optional edges can wake it", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mesh-add-agent-cp-"));
+  const config: MeshConfig = {
+    name: "add-agent-cp",
+    agents: [
+      { id: "router", harness: "claude", project: ".", role: "router" },
+      { id: "a", harness: "codex", project: ".", role: "member" },
+    ],
+    edges: [{ from: "router", to: "a" }],
+  };
+  const created: Record<string, RecordingConnection> = {};
+  const events: any[] = [];
+  const cp = new ControlPlane(config, {
+    mailboxPath: join(root, "mailbox.ndjson"),
+    connectionFactory: (opts) => {
+      const conn = new RecordingConnection(opts);
+      created[opts.id] = conn;
+      return conn as unknown as AcpAgentConnection;
+    },
+  });
+
+  try {
+    cp.on((e) => events.push(e));
+    await cp.start();
+    cp.addAgent({ id: "c", harness: "codex", project: ".", role: "member" }, [{ from: "a", to: "c" }]);
+
+    expect((cp as any).mesh.agent("c")).toEqual({ id: "c", harness: "codex", project: ".", role: "member", lazy: true });
+    expect((cp as any).mesh.status("c")).toBe("cold");
+    expect(created.c).toBeUndefined();
+    expect(events).toContainEqual(expect.objectContaining({ kind: "agent_status", agent: "c", status: "cold" }));
+
+    const res = await (cp as any).handleSendMail({ agentId: "a", role: "member" }, "c", "hello new peer");
+    expect(res).toContain("delivered to c");
+    expect(res).toContain("may have been added after your session started");
+    await waitUntil(() => created.c?.prompts.length === 1);
+    expect((cp as any).mesh.status("c")).toBe("ready");
+    expect(created.c.prompts[0]).toContain("call check_mail");
+  } finally {
+    await cp.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("control-plane addAgent rejects duplicate ids and duplicate routers", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mesh-add-agent-cp-validate-"));
+  const cp = new ControlPlane(lazyConfig, {
+    mailboxPath: join(root, "mailbox.ndjson"),
+    connectionFactory: (opts) => new RecordingConnection(opts) as unknown as AcpAgentConnection,
+  });
+
+  try {
+    await cp.start();
+    expect(() => cp.addAgent({ id: "lazy-1", harness: "codex", project: ".", role: "member" })).toThrow(/duplicate agent id/i);
+    expect(() => cp.addAgent({ id: "router-2", harness: "claude", project: ".", role: "router" })).toThrow(/router/i);
+    expect(() => cp.addAgent({ id: "bad-edge", harness: "codex", project: ".", role: "member" }, [{ from: "router", to: "missing" }])).toThrow(/unknown agent/i);
+    expect((cp as any).mesh.agent("bad-edge")).toBeUndefined();
+  } finally {
+    await cp.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});

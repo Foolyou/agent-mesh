@@ -10,7 +10,7 @@ import { Mesh } from "./mesh";
 import { buildMeshBriefing } from "./mesh-briefing";
 import { createMeshServicesServer, type MeshServicesServer, type MeshToolContext } from "./mcp/mesh-services";
 import { sendMail, readMailFor } from "./mailbox";
-import { validateAddEdge } from "./mesh-validate";
+import { validateAddAgent, validateAddEdge } from "./mesh-validate";
 import { readSessionState, setMeshExpectedAlive, updateAgentSession, type MeshSessionState } from "./session-storage";
 import { now, type AgentActivity, type AgentConfig, type AgentId, type MeshConfig, type MeshEdge, type MeshEvent, type PromptImageRef, type SessionMode, type SessionModel } from "./acp/types";
 
@@ -486,6 +486,22 @@ export class ControlPlane {
     this.mesh.addEdge(normalized);
     this.dynamicEdges.add(edgeKey(normalized.from, normalized.to));
     this.emit({ kind: "log", text: `edge added ${normalized.from} -> ${normalized.to}${normalized.steer ? " (steer)" : ""}`, ts: now() });
+  }
+
+  addAgent(cfg: AgentConfig, edges: MeshEdge[] = []): void {
+    const agent = validateAddAgent(this.mesh.config, cfg);
+    let staged: MeshConfig = { ...this.mesh.config, agents: [...this.mesh.config.agents, agent], edges: [...this.mesh.config.edges] };
+    const normalizedEdges: MeshEdge[] = [];
+    for (const edgeInput of edges) {
+      const edge = validateAddEdge(staged, edgeInput, (id) => (id === agent.id ? "cold" : this.mesh.status(id)));
+      normalizedEdges.push(edge);
+      staged = { ...staged, edges: [...staged.edges, edge] };
+    }
+    this.mesh.addAgent(agent);
+    this.emit({ kind: "agent_status", agent: agent.id, status: "cold", ts: now() });
+    this.emit({ kind: "agent_activity", agent: agent.id, activity: this.activityOf(agent.id), ts: now() });
+    for (const edge of normalizedEdges) this.addEdge(edge);
+    this.emit({ kind: "log", text: `agent added ${agent.id} (${agent.harness})`, ts: now() });
   }
 
   // ---- mesh tool handlers ----

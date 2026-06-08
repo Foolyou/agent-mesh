@@ -6,7 +6,7 @@ import { dirname } from "node:path";
 import { MeshHostDaemon } from "../mesh-host";
 import { writeRecord, removeRecord } from "../mesh-registry";
 import { PROTO_VERSION } from "../protocol";
-import type { MeshConfig, MeshEvent } from "../acp/types";
+import type { AgentConfig, MeshConfig, MeshEdge, MeshEvent } from "../acp/types";
 
 let listener: ((e: MeshEvent) => void) | undefined;
 const cp = {
@@ -44,6 +44,9 @@ const cp = {
   },
   addEdge(edge: { from: string; to: string }) {
     listener?.({ kind: "log", text: `addEdge:${edge.from}->${edge.to}`, ts: "t" });
+  },
+  addAgent(agent: AgentConfig, edges: MeshEdge[] = []) {
+    listener?.({ kind: "log", text: `addAgent:${agent.id}:${edges.map((e) => `${e.from}->${e.to}`).join(",")}`, ts: "t" });
   },
   async stop() {},
 };

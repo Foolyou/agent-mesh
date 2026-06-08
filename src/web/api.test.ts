@@ -53,6 +53,9 @@ function fakeManager() {
     async addEdge(n: string, edge: any) {
       calls.push(["addEdge", n, edge]);
     },
+    async addAgent(n: string, agent: any, edges: any[] = []) {
+      calls.push(["addAgent", n, agent, edges]);
+    },
     resolvePermission(n: string, r: string, o: string) {
       calls.push(["resolve", n, r, o]);
     },
@@ -131,6 +134,22 @@ test("POST /api/meshes/demo/edges delegates to addEdge", async () => {
   const r = await handleApi(gw, "POST", "/api/meshes/demo/edges", { from: "codex-1", to: "router", steer: true });
   expect(r.status).toBe(200);
   expect(m.calls).toContainEqual(["addEdge", "demo", { from: "codex-1", to: "router", steer: true }]);
+});
+
+test("POST /api/meshes/demo/agents delegates to addAgent", async () => {
+  const m = fakeManager();
+  const gw = new WebGateway(m as any);
+  const r = await handleApi(gw, "POST", "/api/meshes/demo/agents", {
+    agent: { id: "newbie", harness: "codex", project: "p" },
+    edges: [{ from: "router", to: "newbie" }],
+  });
+  expect(r.status).toBe(200);
+  expect(m.calls).toContainEqual([
+    "addAgent",
+    "demo",
+    { id: "newbie", harness: "codex", project: "p", role: "member", lazy: undefined, effort: undefined, mode: undefined, model: undefined, instructions: undefined },
+    [{ from: "router", to: "newbie", steer: false }],
+  ]);
 });
 
 test("POST /api/meshes/demo/agents/codex-1/mode delegates to setMode", async () => {

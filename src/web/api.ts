@@ -3,7 +3,7 @@
 // to this; tests drive it directly without a socket.
 import { validateMeshConfig } from "../mesh-validate";
 import type { WebGateway } from "./gateway";
-import type { MeshConfig, MeshEdge, PromptImageRef } from "../acp/types";
+import type { AgentConfig, MeshConfig, MeshEdge, PromptImageRef } from "../acp/types";
 import type { UploadFileLike } from "./uploads";
 
 export interface ApiResult {
@@ -83,6 +83,25 @@ export async function handleApi(
       // POST /api/meshes/:name/edges
       if (method === "POST" && p.length === 3 && p[2] === "edges") {
         await gw.addEdge(name, { from: str(body?.from), to: str(body?.to), steer: body?.steer === true } as MeshEdge);
+        return ok();
+      }
+      // POST /api/meshes/:name/agents
+      if (method === "POST" && p.length === 3 && p[2] === "agents") {
+        const agent = body?.agent ?? body;
+        const edges = Array.isArray(body?.edges)
+          ? body.edges.map((edge: any) => ({ from: str(edge?.from), to: str(edge?.to), steer: edge?.steer === true } as MeshEdge))
+          : [];
+        await gw.addAgent(name, {
+          id: str(agent?.id),
+          harness: str(agent?.harness) as AgentConfig["harness"],
+          project: str(agent?.project),
+          role: (agent?.role === "router" ? "router" : "member") as AgentConfig["role"],
+          lazy: agent?.lazy === undefined ? undefined : agent?.lazy === true,
+          effort: agent?.effort || undefined,
+          mode: agent?.mode || undefined,
+          model: agent?.model || undefined,
+          instructions: agent?.instructions || undefined,
+        }, edges);
         return ok();
       }
       // POST /api/meshes/:name/(start|stop|prompt)

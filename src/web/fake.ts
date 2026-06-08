@@ -2,7 +2,7 @@
 // (streamed messages, a thought, a tool call with status transitions, inter-agent
 // mail, a permission escalation, and an interrupt) so every widget can be exercised
 // in the browser without spawning real agents. Doubles as a zero-dependency demo.
-import type { MeshConfig, MeshEvent, AgentId } from "../acp/types";
+import type { AgentConfig, MeshConfig, MeshEdge, MeshEvent, AgentId } from "../acp/types";
 import { now } from "../acp/types";
 import type { MeshStatus } from "./types";
 
@@ -182,6 +182,24 @@ export class FakeManager {
     }
     e.config = { ...e.config, edges: [...e.config.edges, { from: edge.from, to: edge.to, steer: edge.steer === true }] };
     this.emit(name, { kind: "log", text: `edge added ${edge.from} -> ${edge.to}`, ts: now() });
+  }
+  async addAgent(name: string, cfg: AgentConfig, edges: MeshEdge[] = []): Promise<void> {
+    const e = this.require(name);
+    if (e.config.agents.some((a) => a.id === cfg.id)) throw new Error(`duplicate agent id "${cfg.id}"`);
+    if (cfg.role === "router" && e.config.agents.some((a) => a.role === "router")) throw new Error(`mesh already has a router`);
+    const agent: AgentConfig = cfg.role === "member" ? { ...cfg, lazy: cfg.lazy ?? true } : { ...cfg };
+    const nextEdges = [...e.config.edges];
+    for (const edge of edges) {
+      if (!e.config.agents.some((a) => a.id === edge.from) && edge.from !== agent.id) throw new Error(`edge ${edge.from}->${edge.to} references an unknown agent`);
+      if (!e.config.agents.some((a) => a.id === edge.to) && edge.to !== agent.id) throw new Error(`edge ${edge.from}->${edge.to} references an unknown agent`);
+      nextEdges.push({ from: edge.from, to: edge.to, steer: edge.steer === true });
+    }
+    e.config = { ...e.config, agents: [...e.config.agents, agent], edges: nextEdges };
+    if (e.status === "running") {
+      this.emit(name, { kind: "agent_status", agent: agent.id, status: "cold", ts: now() });
+      this.emit(name, { kind: "agent_activity", agent: agent.id, activity: "idle", ts: now() });
+    }
+    this.emit(name, { kind: "log", text: `agent added ${agent.id}`, ts: now() });
   }
 
   /** Stream a short agent message word-by-word, then seal it. */

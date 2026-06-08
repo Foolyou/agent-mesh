@@ -23,6 +23,7 @@ const cp = {
   async interrupt() {},
   async wakeAgent() {},
   addEdge() {},
+  addAgent() {},
   async stop() {},
 };
 

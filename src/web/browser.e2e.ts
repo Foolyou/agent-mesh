@@ -124,6 +124,19 @@ try {
     await page.waitForSelector('.topo .edge[data-from="codex-1"][data-to="router"]', { timeout: 5000 });
   });
 
+  await step("running topology can add a cold lazy agent", async () => {
+    await page.waitForSelector(".agent-add input", { timeout: 5000 });
+    const add = page.locator(".agent-add").first();
+    await add.locator("input").fill("newbie");
+    await add.locator("select").selectOption("codex");
+    await add.locator('.btn:has-text("+ agent")').click();
+    await page.waitForSelector('.topo .node[data-agent="newbie"]', { timeout: 5000 });
+    await page.locator('.conv-member-tab:has-text("newbie")').click();
+    await page.waitForSelector('.conv-panel:has-text("newbie") .dot.cold', { timeout: 5000 });
+    await page.waitForSelector('.conv-panel .btn:has-text("start")', { timeout: 5000 });
+    await page.locator(".conv-router-tab").click();
+  });
+
   await step("unified conversation tabs pin router with status dot and switch conversations", async () => {
     const panel = page.locator(".conv-panel").first();
     await panel.waitFor({ timeout: 8000 });
