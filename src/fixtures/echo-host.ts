@@ -39,6 +39,9 @@ const cp = {
     listener?.({ kind: "steer", from: "operator", to: _target, body: text, ts: "t" });
   },
   async interrupt() {},
+  async wakeAgent(target: string) {
+    listener?.({ kind: "log", text: `wake:${target}`, ts: "t" });
+  },
   async stop() {},
 };
 

@@ -10,7 +10,7 @@ import { Mesh } from "./mesh";
 import { buildMeshBriefing } from "./mesh-briefing";
 import { createMeshServicesServer, type MeshServicesServer, type MeshToolContext } from "./mcp/mesh-services";
 import { sendMail, readMailFor } from "./mailbox";
-import { now, type AgentActivity, type AgentId, type MeshConfig, type MeshEvent, type PromptImageRef, type SessionMode, type SessionModel } from "./acp/types";
+import { now, type AgentActivity, type AgentConfig, type AgentId, type MeshConfig, type MeshEvent, type PromptImageRef, type SessionMode, type SessionModel } from "./acp/types";
 
 interface PendingDecision {
   resolve: (decision: PermissionDecision) => void;
@@ -24,6 +24,8 @@ export interface ControlPlaneOptions {
   debug?: boolean;
   uploadRoot?: string;
   connectionFactory?: (opts: AcpConnectionOptions) => AcpAgentConnection;
+  /** lazy agent spawn must either finish or fail within this window */
+  spawnTimeoutMs?: number;
 }
 
 export class ControlPlane {
@@ -38,6 +40,10 @@ export class ControlPlane {
   private debug: boolean;
   private uploadRoot?: string;
   private connectionFactory: (opts: AcpConnectionOptions) => AcpAgentConnection;
+  private spawnTimeoutMs: number;
+  private spawning = new Map<AgentId, Promise<void>>();
+  private registeredAgents = new Set<AgentId>();
+  private spawnFails = new Map<AgentId, number>();
   /** Per-agent advertised image-input capability (promptCapabilities.image). */
   private imageCaps = new Map<AgentId, boolean>();
   /** Per-agent advertised permission/session modes. */
@@ -57,6 +63,7 @@ export class ControlPlane {
     this.debug = opts.debug ?? false;
     this.uploadRoot = opts.uploadRoot;
     this.connectionFactory = opts.connectionFactory ?? ((connOpts) => new AcpAgentConnection(connOpts));
+    this.spawnTimeoutMs = opts.spawnTimeoutMs ?? 60_000;
   }
 
   // ---- event bus ----
@@ -181,34 +188,68 @@ export class ControlPlane {
     });
 
     for (const a of this.mesh.agents) {
-      // Per-agent spawn config applies the chosen thinking effort (codex flag / claude env);
-      // codex defaults to "low" for responsiveness when no effort is set.
-      const { command, args, env } = spawnConfigFor(a);
-      const cwd = resolve(process.cwd(), a.project);
+      if (a.lazy) {
+        this.mesh.setStatus(a.id, "cold");
+        this.emit({ kind: "agent_status", agent: a.id, status: "cold", ts: now() });
+        continue;
+      }
+      await this.spawnAgent(a, { drainPendingMail: false });
+    }
+  }
 
+  async stop(): Promise<void> {
+    for (const c of this.conns.values()) c.kill();
+    this.mcp?.close();
+    for (const p of this.pending.values()) clearTimeout(p.timer);
+    this.pending.clear();
+    this.spawning.clear();
+  }
+
+  private async spawnAgent(a: AgentConfig, opts: { drainPendingMail: boolean }): Promise<void> {
+    if (!this.mcp) throw new Error("control plane not started");
+    const existing = this.conns.get(a.id);
+    if (existing && this.mesh.status(a.id) === "ready") return;
+    if (existing) {
+      existing.kill();
+      this.conns.delete(a.id);
+    }
+
+    // Per-agent spawn config applies the chosen thinking effort (codex flag / claude env);
+    // codex defaults to "low" for responsiveness when no effort is set.
+    const { command, args, env } = spawnConfigFor(a);
+    const cwd = resolve(process.cwd(), a.project);
+
+    if (!this.registeredAgents.has(a.id)) {
       await this.mcp.register(a.id, a.role);
-      const conn = this.connectionFactory({
-        id: a.id,
-        command,
-        args,
-        cwd,
-        extraEnv: env,
-        debug: this.debug,
-        onUpdate: (u) => this.emit({ kind: "update", agent: a.id, update: u, ts: now() }),
-        onPermission: (req) => this.handlePermission(a.id, req),
-        onExit: (code) => {
-          this.mesh.setStatus(a.id, "dead");
-          this.turnCounts.set(a.id, 0);
-          this.emitActivityIfChanged(a.id);
-          this.emit({ kind: "agent_status", agent: a.id, status: "dead", detail: `exit ${code}`, ts: now() });
-        },
-      });
-      this.conns.set(a.id, conn);
+      this.registeredAgents.add(a.id);
+    }
+    const conn = this.connectionFactory({
+      id: a.id,
+      command,
+      args,
+      cwd,
+      extraEnv: env,
+      debug: this.debug,
+      onUpdate: (u) => this.emit({ kind: "update", agent: a.id, update: u, ts: now() }),
+      onPermission: (req) => this.handlePermission(a.id, req),
+      onExit: (code) => {
+        if (this.conns.get(a.id) !== conn) return;
+        this.mesh.setStatus(a.id, "dead");
+        this.turnCounts.set(a.id, 0);
+        this.emitActivityIfChanged(a.id);
+        this.emit({ kind: "agent_status", agent: a.id, status: "dead", detail: `exit ${code}`, ts: now() });
+      },
+    });
+    this.conns.set(a.id, conn);
 
-      this.emit({ kind: "agent_status", agent: a.id, status: "spawning", ts: now() });
+    this.mesh.setStatus(a.id, "spawning");
+    this.emit({ kind: "agent_status", agent: a.id, status: "spawning", ts: now() });
+    let initialized = false;
+    try {
       await conn.start();
       const initRes = await conn.initialize();
       const session = await conn.newSession([{ type: "http", name: "mesh", url: this.mcp.urlFor(a.id), headers: [] }]);
+      initialized = true;
       // Surface the agent's advertised session modes so the operator gets a real picker
       // (read-only / full-access / plan / …) instead of having to know mode-id strings.
       const standardModes = (session as any)?.modes;
@@ -253,14 +294,73 @@ export class ControlPlane {
       this.emit({ kind: "agent_capabilities", agent: a.id, image: imageCap, ts: now() });
       this.mesh.setStatus(a.id, "ready");
       this.emit({ kind: "agent_status", agent: a.id, status: "ready", ts: now() });
+      this.spawnFails.delete(a.id);
+      if (opts.drainPendingMail) this.drainPendingMail(a.id);
+    } catch (err) {
+      if (!initialized) {
+        this.sessionModes.delete(a.id);
+        this.sessionModels.delete(a.id);
+        this.imageCaps.delete(a.id);
+      }
+      this.mesh.setStatus(a.id, "dead");
+      this.conns.delete(a.id);
+      conn.kill();
+      this.emitActivityIfChanged(a.id);
+      this.emit({ kind: "agent_status", agent: a.id, status: "dead", detail: String(err), ts: now() });
+      throw err;
     }
   }
 
-  async stop(): Promise<void> {
-    for (const c of this.conns.values()) c.kill();
-    this.mcp?.close();
-    for (const p of this.pending.values()) clearTimeout(p.timer);
-    this.pending.clear();
+  private async ensureSpawned(id: AgentId, opts: { manual?: boolean } = {}): Promise<void> {
+    const a = this.mesh.agent(id);
+    if (!a) throw new Error(`no such agent "${id}"`);
+    if (this.mesh.status(id) === "ready" && this.conns.has(id)) return;
+    if (opts.manual) this.spawnFails.delete(id);
+    const existing = this.spawning.get(id);
+    if (existing) return existing;
+    const p = this.withSpawnTimeout(id, this.spawnAgent(a, { drainPendingMail: true }))
+      .catch((err) => {
+        this.spawnFails.set(id, (this.spawnFails.get(id) ?? 0) + 1);
+        throw err;
+      })
+      .finally(() => {
+        this.spawning.delete(id);
+      });
+    this.spawning.set(id, p);
+    return p;
+  }
+
+  private async withSpawnTimeout(id: AgentId, spawn: Promise<void>): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        this.conns.get(id)?.kill();
+        this.conns.delete(id);
+        this.mesh.setStatus(id, "dead");
+        this.emitActivityIfChanged(id);
+        this.emit({ kind: "agent_status", agent: id, status: "dead", detail: `spawn timed out after ${this.spawnTimeoutMs}ms`, ts: now() });
+        reject(new Error(`spawn for ${id} timed out after ${this.spawnTimeoutMs}ms`));
+      }, this.spawnTimeoutMs);
+    });
+    try {
+      await Promise.race([spawn, timeout]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
+  private drainPendingMail(id: AgentId): void {
+    const conn = this.conns.get(id);
+    if (!conn) return;
+    const prompt = this.compose(
+      id,
+      "You may have pending mail that arrived while you were cold or spawning. Please call check_mail now and handle all pending messages.",
+    );
+    this.trackTurn(id, () => conn.prompt(prompt)).catch((err) => this.log(`drainPendingMail(${id}) failed: ${String(err)}`));
+  }
+
+  async wakeAgent(id: AgentId): Promise<void> {
+    await this.ensureSpawned(id, { manual: true });
   }
 
   // ---- mesh tool handlers ----
@@ -319,8 +419,28 @@ export class ControlPlane {
     await sendMail({ mailboxPath: this.mailboxPath, mesh: this.mesh.name, from: ctx.agentId, to, body });
     this.emit({ kind: "mail", from: ctx.agentId, to, body, ts: now() });
     // Wake the recipient asynchronously (fire-and-forget; sender's tool returns now).
-    this.wake(to, ctx.agentId, body);
+    const target = this.mesh.agent(to);
+    if (target?.lazy && this.mesh.status(to) !== "ready") this.wakeLazy(to, ctx.agentId);
+    else this.wake(to, ctx.agentId, body);
     return `delivered to ${to}`;
+  }
+
+  private wakeLazy(to: AgentId, from: AgentId): void {
+    if ((this.spawnFails.get(to) ?? 0) >= 3) {
+      this.sendSpawnFailedReceipt(to, from, "spawn fuse is locked after 3 consecutive failures; use manual wake to retry");
+      return;
+    }
+    this.ensureSpawned(to).catch((err) => this.sendSpawnFailedReceipt(to, from, String(err)));
+  }
+
+  private sendSpawnFailedReceipt(to: AgentId, from: AgentId, detail: string): void {
+    const body = `[SPAWN FAILED] ${to} could not be started. ${detail}`;
+    void sendMail({ mailboxPath: this.mailboxPath, mesh: this.mesh.name, from: to, to: from, body })
+      .then(() => {
+        this.emit({ kind: "mail", from: to, to: from, body, ts: now() });
+        this.wake(from, to, body);
+      })
+      .catch((err) => this.log(`spawn failed receipt ${to}->${from} failed: ${String(err)}`));
   }
 
   private wake(to: AgentId, from: AgentId, body: string): void {

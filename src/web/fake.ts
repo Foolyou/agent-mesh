@@ -90,9 +90,15 @@ export class FakeManager {
     const e = this.require(name);
     if (e.status === "running" || e.status === "starting") throw new Error(`mesh "${name}" is already running`);
     e.status = "starting";
-    for (const a of e.config.agents) this.emit(name, { kind: "agent_status", agent: a.id, status: "spawning", ts: now() });
+    for (const a of e.config.agents) {
+      if (!a.lazy) this.emit(name, { kind: "agent_status", agent: a.id, status: "spawning", ts: now() });
+    }
     await sleep(400);
     for (const a of e.config.agents) {
+      if (a.lazy) {
+        this.emit(name, { kind: "agent_status", agent: a.id, status: "cold", ts: now() });
+        continue;
+      }
       this.emit(name, { kind: "agent_status", agent: a.id, status: "ready", ts: now() });
       this.emit(name, { kind: "agent_capabilities", agent: a.id, image: a.id !== "opencode-1", ts: now() });
       // members advertise session modes (the router has none, like real harnesses vary)
@@ -108,6 +114,17 @@ export class FakeManager {
     e.status = "running";
     this.emit(name, { kind: "log", text: `mesh "${name}" started (fake)`, ts: now() });
     void this.scenario(name);
+  }
+  wakeAgent(name: string, agentId: string): void {
+    const e = this.require(name);
+    const a = e.config.agents.find((x) => x.id === agentId);
+    if (!a) throw new Error(`no agent "${agentId}" in mesh "${name}"`);
+    this.emit(name, { kind: "agent_status", agent: agentId, status: "spawning", ts: now() });
+    setTimeout(() => {
+      this.emit(name, { kind: "agent_status", agent: agentId, status: "ready", ts: now() });
+      this.emit(name, { kind: "agent_capabilities", agent: agentId, image: a.id !== "opencode-1", ts: now() });
+      this.emit(name, { kind: "log", text: `agent "${agentId}" woken (fake)`, ts: now() });
+    }, 200);
   }
   async stopMesh(name: string): Promise<void> {
     const e = this.require(name);

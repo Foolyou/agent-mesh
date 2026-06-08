@@ -51,3 +51,13 @@ test("canSteer respects steer flag, membership, self, and router target", () => 
 test("members excludes the router", () => {
   expect(new Mesh(config).members.map((a) => a.id)).toEqual(["a", "b"]);
 });
+
+test("lazy agents default to spawning until the control plane marks them cold", () => {
+  const m = new Mesh({
+    ...config,
+    agents: config.agents.map((a) => (a.id === "a" ? { ...a, lazy: true } : a)),
+  });
+  expect(m.status("a")).toBe("spawning");
+  m.setStatus("a", "cold");
+  expect(m.status("a")).toBe("cold");
+});

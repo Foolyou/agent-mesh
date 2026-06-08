@@ -840,6 +840,7 @@ try {
     const adv = page.locator(".modal .agrow-adv .adv-sel");
     if ((await adv.count()) !== 2) throw new Error("builder should render one effort selector per agent and no mode/model selectors");
     await adv.nth(0).selectOption("high"); // effort
+    await page.locator(".modal .agent-block").nth(1).locator('label:has-text("lazy start") input').check();
     await page.screenshot({ path: `${SHOTS}/03-builder.png`, fullPage: true });
     await page.locator('.modal .btn:has-text("define mesh")').click();
     await page.waitForSelector('.mrow:has-text("squad-x")', { timeout: 6000 });
@@ -861,11 +862,27 @@ try {
     const adv2 = page.locator(".modal .agrow-adv .adv-sel");
     if ((await adv2.count()) !== 2) throw new Error("edit builder should render one effort selector per agent and no mode/model selectors");
     if ((await adv2.nth(0).inputValue()) !== "high") throw new Error("effort not prefilled");
+    if (!(await page.locator(".modal .agent-block").nth(1).locator('label:has-text("lazy start") input').isChecked())) {
+      throw new Error("lazy checkbox not prefilled");
+    }
     const steerChecked = await page.locator('.modal .field:has(label:has-text("mail edges")) input[type="checkbox"]').first().isChecked();
     if (!steerChecked) throw new Error("steer checkbox not prefilled");
     await page.locator('.modal .btn:has-text("save mesh")').click();
     await page.waitForSelector(".modal", { state: "detached", timeout: 4000 });
     await page.waitForSelector('.mrow:has-text("squad-x")', { timeout: 4000 });
+  });
+
+  await step("lazy member starts cold and can be manually woken", async () => {
+    await page.locator('.detail-head .btn:has-text("start mesh")').click();
+    await page.waitForSelector('.detail-head:has-text("squad-x") .meta:has-text("running")', { timeout: 6000 });
+    await page.locator('.conv-member-tab:has-text("worker")').click();
+    await page.waitForSelector('.conv-control .btn:has-text("start")', { timeout: 5000 });
+    const workerTab = page.locator('.conv-member-tab:has-text("worker") .dot').first();
+    if (!(await workerTab.evaluate((el) => el.classList.contains("cold")))) throw new Error("worker tab did not show cold status");
+    await page.locator('.conv-control .btn:has-text("start")').click();
+    await page.locator('.conv-member-tab:has-text("worker") .dot.ready').waitFor({ timeout: 5000 });
+    await page.locator('.detail-head .btn:has-text("stop mesh")').click();
+    await page.waitForSelector('.detail-head .btn:has-text("start mesh")', { timeout: 5000 });
   });
 
   await step("mesh builder rejects steer edges targeting the router", async () => {

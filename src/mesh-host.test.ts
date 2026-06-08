@@ -26,6 +26,7 @@ function fakeCp() {
     async setMode(target, modeId) { calls.push(`setMode:${target}:${modeId}`); },
     async setModel(target, modelId) { calls.push(`setModel:${target}:${modelId}`); },
     async interrupt(target) { calls.push(`interrupt:${target}`); },
+    async wakeAgent(target) { calls.push(`wake:${target}`); },
     async stop() { calls.push("stop"); },
   };
   return { cp, calls, emit: (e: MeshEvent) => listener?.(e) };
@@ -67,10 +68,12 @@ test("hello → ack(running, proto, seq); prompt relays a seq'd event; commands 
   send({ t: "setMode", target: "codex-1", modeId: "read-only" });
   send({ t: "setModel", target: "codex-1", modelId: "kimi-k2" });
   send({ t: "interrupt", target: "codex-1" });
+  send({ t: "wake", target: "codex-1" });
   await Bun.sleep(50);
   expect(calls).toContain("setMode:codex-1:read-only");
   expect(calls).toContain("setModel:codex-1:kimi-k2");
   expect(calls).toContain("interrupt:codex-1");
+  expect(calls).toContain("wake:codex-1");
 
   send({ t: "stop" });
   await Bun.sleep(50);

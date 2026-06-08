@@ -136,6 +136,7 @@ export interface Store {
   setModel(name: string, agentId: string, modelId: string): Promise<any>;
   setEffort(name: string, agentId: string, effort?: ThinkingEffort): Promise<any>;
   interruptAgent(name: string, agentId: string): Promise<any>;
+  wakeAgent(name: string, agentId: string): Promise<any>;
   interruptMaster(): Promise<any>;
 }
 
@@ -260,6 +261,7 @@ export function createStore(): Store {
     setModel: (n, a, m) => guard(post(`/api/meshes/${enc(n)}/agents/${enc(a)}/model`, { modelId: m }), `set model ${a}`),
     setEffort: (n, a, e) => guard(post(`/api/meshes/${enc(n)}/agents/${enc(a)}/effort`, { effort: e }), `set effort ${a}`),
     interruptAgent: (n, a) => guard(post(`/api/meshes/${enc(n)}/agents/${enc(a)}/interrupt`), `interrupt ${a}`),
+    wakeAgent: (n, a) => guard(post(`/api/meshes/${enc(n)}/agents/${enc(a)}/wake`), `wake ${a}`),
   };
 }
 

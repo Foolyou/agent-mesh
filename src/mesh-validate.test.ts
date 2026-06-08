@@ -102,3 +102,11 @@ test("rejects overly long per-agent instructions", () => {
     }),
   ).toThrow(/instructions.*too long/i);
 });
+
+test("accepts lazy member agents", () => {
+  expect(() => validateMeshConfig({ ...ok, agents: [ok.agents[0]!, { ...ok.agents[1]!, lazy: true }] })).not.toThrow();
+});
+
+test("rejects lazy routers", () => {
+  expect(() => validateMeshConfig({ ...ok, agents: [{ ...ok.agents[0]!, lazy: true }, ok.agents[1]!] })).toThrow(/router.*lazy/i);
+});

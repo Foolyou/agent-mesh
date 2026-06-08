@@ -70,7 +70,7 @@ export interface MeshSummary {
   defined: boolean;
   status: MeshStatus;
   router: AgentId;
-  agents: { id: AgentId; harness: HarnessId; role: AgentRole; status: AgentStatus; activity: AgentActivity; effort?: ThinkingEffort; model?: AgentModels }[];
+  agents: { id: AgentId; harness: HarnessId; role: AgentRole; status: AgentStatus; activity: AgentActivity; effort?: ThinkingEffort; lazy?: boolean; model?: AgentModels }[];
   /** Directed mail edges; lets the topology render from the summary alone. */
   edges: MeshEdge[];
 }

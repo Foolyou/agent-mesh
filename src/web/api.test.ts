@@ -47,6 +47,9 @@ function fakeManager() {
     steerAgent(n: string, a: string, t: string, images?: any[]) {
       calls.push(["steerAgent", n, a, t, images]);
     },
+    wakeAgent(n: string, a: string) {
+      calls.push(["wakeAgent", n, a]);
+    },
     resolvePermission(n: string, r: string, o: string) {
       calls.push(["resolve", n, r, o]);
     },
@@ -109,6 +112,14 @@ test("POST /api/meshes/demo/agents/codex-1/steer delegates to steerAgent", async
   const r = await handleApi(gw, "POST", "/api/meshes/demo/agents/codex-1/steer", { text: "urgent" });
   expect(r.status).toBe(200);
   expect(m.calls).toContainEqual(["steerAgent", "demo", "codex-1", "urgent", []]);
+});
+
+test("POST /api/meshes/demo/agents/codex-1/wake delegates to wakeAgent", async () => {
+  const m = fakeManager();
+  const gw = new WebGateway(m as any);
+  const r = await handleApi(gw, "POST", "/api/meshes/demo/agents/codex-1/wake", {});
+  expect(r.status).toBe(200);
+  expect(m.calls).toContainEqual(["wakeAgent", "demo", "codex-1"]);
 });
 
 test("POST /api/meshes/demo/agents/codex-1/mode delegates to setMode", async () => {

@@ -210,6 +210,7 @@ export class MeshHostClient {
   setMode(target: string, modeId: string): void { this.send({ t: "setMode", target, modeId }); }
   setModel(target: string, modelId: string): void { this.send({ t: "setModel", target, modelId }); }
   interrupt(target: string): void { this.send({ t: "interrupt", target }); }
+  wakeAgent(target: string): void { this.send({ t: "wake", target }); }
 
   /** Disconnect WITHOUT stopping the daemon (used on backend shutdown — the mesh and
    *  its agents keep running; a future backend reconnects). */

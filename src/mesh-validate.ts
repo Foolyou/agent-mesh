@@ -34,6 +34,9 @@ export function validateMeshConfig(config: MeshConfig): void {
     if (a.effort !== undefined && !["minimal", "low", "medium", "high"].includes(a.effort)) {
       throw new Error(`agent "${a.id}" has invalid effort "${a.effort}" (use minimal|low|medium|high)`);
     }
+    if (a.role === "router" && a.lazy === true) {
+      throw new Error(`router agent "${a.id}" cannot be lazy`);
+    }
     if (a.instructions !== undefined) {
       if (typeof a.instructions !== "string") throw new Error(`agent "${a.id}" instructions must be a string`);
       const instructions = a.instructions.trim();

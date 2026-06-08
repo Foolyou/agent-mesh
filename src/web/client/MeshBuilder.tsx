@@ -12,6 +12,7 @@ interface AgentDraft {
   role: AgentRole;
   project: string;
   effort?: ThinkingEffort;
+  lazy?: boolean;
   instructions?: string;
 }
 interface EdgeDraft {
@@ -30,6 +31,7 @@ function validate(name: string, agents: AgentDraft[], edges: EdgeDraft[]): strin
   if (new Set(ids).size !== ids.length) return "agent ids must be unique";
   const routers = agents.filter((a) => a.role === "router");
   if (routers.length !== 1) return "exactly one agent must be the router";
+  if (routers.some((a) => a.lazy === true)) return "router agents cannot be lazy";
   for (const a of agents) {
     if (!a.project.trim()) return `agent "${a.id}" needs a project (working dir)`;
     if (a.project.startsWith("/") || a.project.includes("..")) return `agent "${a.id}" project must be a relative path`;
@@ -58,7 +60,7 @@ export function MeshBuilder({
   const [name, setName] = useState(initial?.name ?? "");
   const [agents, setAgents] = useState<AgentDraft[]>(
     initial?.agents?.length
-      ? initial.agents.map((a) => ({ id: a.id, harness: a.harness, role: a.role, project: a.project, effort: a.effort, instructions: a.instructions }))
+      ? initial.agents.map((a) => ({ id: a.id, harness: a.harness, role: a.role, project: a.project, effort: a.effort, lazy: a.lazy, instructions: a.instructions }))
       : [{ id: "router", harness: "claude", role: "router", project: "test_mesh_0" }],
   );
   const [edges, setEdges] = useState<EdgeDraft[]>(initial ? initial.edges.map((e) => ({ from: e.from, to: e.to, steer: e.steer === true })) : []);
@@ -135,7 +137,14 @@ export function MeshBuilder({
                       </option>
                     ))}
                   </select>
-                  <select className="inp" value={a.role} onChange={(e) => setAgent(i, { role: e.target.value as AgentRole })}>
+                  <select
+                    className="inp"
+                    value={a.role}
+                    onChange={(e) => {
+                      const role = e.target.value as AgentRole;
+                      setAgent(i, { role, lazy: role === "router" ? undefined : a.lazy });
+                    }}
+                  >
                     <option value="router">router</option>
                     <option value="member">member</option>
                   </select>
@@ -158,6 +167,15 @@ export function MeshBuilder({
                     <option value="medium">{t("effort.medium")}</option>
                     <option value="high">{t("effort.high")}</option>
                   </select>
+                  <label className="check-inline" title={t("build.lazy.tooltip")}>
+                    <input
+                      type="checkbox"
+                      checked={a.lazy === true}
+                      disabled={a.role === "router"}
+                      onChange={(e) => setAgent(i, { lazy: e.target.checked || undefined })}
+                    />
+                    {t("build.lazy")}
+                  </label>
                 </div>
                 <div className="agent-instructions-field">
                   <label className="adv-label" htmlFor={`agent-${i}-instructions`}>

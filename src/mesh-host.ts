@@ -22,6 +22,7 @@ export interface BridgeControlPlane {
   setMode(target: string, modeId: string): Promise<void>;
   setModel(target: string, modelId: string): Promise<void>;
   interrupt(target: string): Promise<void>;
+  wakeAgent(target: string): Promise<void>;
   stop(): Promise<void>;
 }
 
@@ -152,6 +153,9 @@ export class MeshHostDaemon {
         break;
       case "interrupt":
         this.cp.interrupt(msg.target).catch(() => {});
+        break;
+      case "wake":
+        this.cp.wakeAgent(msg.target).catch(() => {});
         break;
       case "stop":
         void this.stop();

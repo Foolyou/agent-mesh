@@ -45,6 +45,7 @@ const DICT: Record<string, Entry> = {
   "st.stopped": ["stopped", "已停止"],
   "st.dead": ["dead", "已退出"],
   "st.spawning": ["spawning", "启动中"],
+  "st.cold": ["cold", "冷启动"],
   "st.absent": ["absent", "未配置"],
 
   // ── mesh list ──
@@ -72,6 +73,8 @@ const DICT: Record<string, Entry> = {
   "router chat": ["router chat", "router 对话"],
   interrupt: ["interrupt", "中断"],
   "interrupt.current": ["interrupt current agent", "中断当前 agent 回合"],
+  wake: ["start", "启动"],
+  "wake.hint": ["start this cold lazy agent", "启动这个冷态 lazy agent"],
   full: ["full", "全屏"],
   exit: ["exit", "退出"],
   "router.placeholder": ["talk to the router… (Enter send)", "与 router 对话…(Enter 发送)"],
@@ -160,6 +163,8 @@ const DICT: Record<string, Entry> = {
   ],
   "build.edges": ["mail edges — from → to (directed)", "邮件边 —— from → to(有向)"],
   "build.steer": ["steer", "引导"],
+  "build.lazy": ["lazy start", "懒启动"],
+  "build.lazy.tooltip": ["Start this member only on first mail or manual wake.", "仅在收到首封邮件或手动唤醒时启动该成员。"],
   "build.steer.tooltip": [
     "Allow this agent to cancel the recipient's current turn, including router/human-started turns, and steer ahead of queued mail.",
     "允许该 agent 取消收件人当前回合（含 router/人类发起的回合）并插队引导。",

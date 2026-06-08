@@ -38,6 +38,7 @@ export interface ManagerLike {
   setModel(name: string, agentId: string, modelId: string): Promise<void>;
   setAgentEffort(name: string, agentId: string, effort?: ThinkingEffort): Promise<void>;
   interruptAgent(name: string, agentId: string): void;
+  wakeAgent(name: string, agentId: string): void;
   defineMesh(config: MeshConfig): Promise<void>;
   deleteMesh(name: string): Promise<void>;
   loadDefinitions(): Promise<void>;
@@ -149,6 +150,7 @@ export class WebGateway {
             status,
             activity: status === "dead" ? "idle" : ((live ? activity?.get(a.id) : undefined) ?? "idle"),
             effort: a.effort,
+            lazy: a.lazy,
             model: pm?.models?.[a.id],
           };
         }),
@@ -394,6 +396,9 @@ export class WebGateway {
   }
   interruptAgent(name: string, agentId: string): void {
     this.manager.interruptAgent(name, agentId);
+  }
+  wakeAgent(name: string, agentId: string): void {
+    this.manager.wakeAgent(name, agentId);
   }
   async promptMaster(text: string, images: PromptImageRef[] = []): Promise<void> {
     if (!this.master) throw new Error("master agent is not configured");

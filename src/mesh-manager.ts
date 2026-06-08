@@ -275,6 +275,13 @@ export class MeshManager {
     entry.client.interrupt(agentId);
   }
 
+  wakeAgent(name: string, agentId: string): void {
+    const entry = this.require(name);
+    if (entry.status !== "running" || !entry.client) throw new Error(`mesh "${name}" is not running`);
+    if (!entry.config.agents.some((a) => a.id === agentId)) throw new Error(`no agent "${agentId}" in mesh "${name}"`);
+    entry.client.wakeAgent(agentId);
+  }
+
   pidOf(name: string): number | undefined {
     return this.entries.get(name)?.client?.pid;
   }

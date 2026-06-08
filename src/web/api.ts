@@ -127,6 +127,10 @@ export async function handleApi(
           gw.interruptAgent(name, agentId);
           return ok();
         }
+        if (p[4] === "wake") {
+          gw.wakeAgent(name, agentId);
+          return ok();
+        }
       }
     }
 

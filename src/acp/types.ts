@@ -37,6 +37,8 @@ export interface AgentConfig {
   /** Working directory (the "Project" layer), relative to repo root. */
   project: string;
   role: AgentRole;
+  /** If true, the agent starts cold and is spawned on first mail or manual wake. Routers may not be lazy. */
+  lazy?: boolean;
   /** Optional reasoning/thinking effort; applied when the agent process (re)starts. */
   effort?: ThinkingEffort;
   /** Runtime-selected session mode cache. Applied best-effort after spawn when advertised. */
@@ -57,7 +59,7 @@ export interface MeshConfig {
   charter?: string;
 }
 
-export type AgentStatus = "spawning" | "ready" | "dead";
+export type AgentStatus = "cold" | "spawning" | "ready" | "dead";
 export type AgentActivity = "idle" | "working";
 
 /** An ACP session operating mode the agent advertises (e.g. codex read-only / full-access,

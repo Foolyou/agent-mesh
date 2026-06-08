@@ -223,6 +223,7 @@ function ConversationPanel({
   if (!cur) return <Empty>{t("empty.members")}</Empty>;
   const statusOf = (id: string) => (live ? (m.agents.find((a) => a.id === id)?.status ?? "stopped") : "stopped");
   const working = live && cur.activity === "working";
+  const canWake = live && cur.lazy === true && cur.status === "cold";
   const activate = (id: string) => {
     onActivate(id);
     setMenuOpen(false);
@@ -280,6 +281,11 @@ function ConversationPanel({
           ) : null}
           {live ? (
             <ModelControl mesh={m.name} agent={cur.id} store={store} models={pm.models?.[cur.id]} />
+          ) : null}
+          {canWake ? (
+            <Btn small kind="go" onClick={() => void store.wakeAgent(m.name, cur.id)} title={t("wake.hint")}>
+              {t("wake")}
+            </Btn>
           ) : null}
           {!mobile ? (
             <Btn small kind="ghost" onClick={onToggleFull} title={fullscreen ? t("exit") : t("full")} ariaLabel={`${fullscreen ? t("exit") : t("full")} ${t("conversation")}`} >
