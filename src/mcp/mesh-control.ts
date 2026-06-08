@@ -6,7 +6,10 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { randomUUID } from "node:crypto";
 import type { MeshManager } from "../mesh-manager";
-import type { MeshConfig } from "../acp/types";
+import type { MeshConfig, HarnessId } from "../acp/types";
+import { HARNESSES } from "../harness";
+
+const harnessIds = Object.keys(HARNESSES) as [HarnessId, ...HarnessId[]];
 
 export interface MeshControlHandlers {
   createMesh(spec: MeshConfig): Promise<string>;
@@ -55,7 +58,7 @@ export function createMeshControlHandlers(manager: MeshManager): MeshControlHand
 
 const agentSchema = z.object({
   id: z.string(),
-  harness: z.enum(["codex", "opencode", "claude"]).describe("agent harness type"),
+  harness: z.enum(harnessIds).describe("agent harness type"),
   project: z.string().describe("relative working directory"),
   role: z.enum(["router", "member"]).describe("'router' (exactly one per mesh) or 'member'"),
 });
