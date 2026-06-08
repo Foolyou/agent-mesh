@@ -182,7 +182,7 @@ export const Composer = forwardRef<HTMLTextAreaElement, {
   }
 
   const canAttach = !disabled;
-  const showInterrupt = !!onInterrupt && !!working;
+  const showInterrupt = !!onInterrupt;
   // images were attached to an agent that can't receive them — they'll be dropped on send
   const imagesWontSend = pending.length > 0 && imageEnabled === false;
   return (
@@ -219,7 +219,7 @@ export const Composer = forwardRef<HTMLTextAreaElement, {
           <button
             className="compose-interrupt"
             type="button"
-            disabled={disabled || sending}
+            disabled={disabled || sending || !working}
             title={t("interrupt.current")}
             aria-label={t("interrupt.current")}
             onClick={() => void onInterrupt?.()}

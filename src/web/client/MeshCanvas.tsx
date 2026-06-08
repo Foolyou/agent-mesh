@@ -492,8 +492,8 @@ export function MeshCanvas({
                   imageDisabledReason="This agent does not advertise image input support"
                   onUploadImages={(files) => store.uploadImages(m.name, files)}
                   working={working}
-                  steerEnabled={!isRouter && live}
-                  onInterrupt={!isRouter && working ? () => store.interruptAgent(m.name, agent.id) : undefined}
+                  steerEnabled={live}
+                  onInterrupt={live ? () => store.interruptAgent(m.name, agent.id) : undefined}
                   onSend={(msg, images, opts) =>
                     isRouter
                       ? void store.promptRouter(m.name, msg, images)
