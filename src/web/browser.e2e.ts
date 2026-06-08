@@ -154,21 +154,26 @@ try {
     await page.waitForSelector(".thought .txt strong", { timeout: 4000 });
   });
 
-  await step("tool-call card shows detail by default; toggle collapses", async () => {
+  await step("tool-call card defaults collapsed; toggle expands and collapses", async () => {
     // switch to codex-1 agent panel via topology node click
     await page.locator('.topo .node:has-text("codex-1")').click();
     await page.waitForSelector('.tool .badge.completed', { timeout: 12000 });
     const cards = await page.locator(".tool").count();
     if (cards < 1) throw new Error("no tool card");
-    // detail is visible WITHOUT a click — detail-bearing cards default to open
-    await page.waitForSelector(".tool .tout", { timeout: 4000 });
+    const detailed = page.locator(".tool", { has: page.locator(".kbd") }).first();
+    await detailed.waitFor({ timeout: 4000 });
+    const defaultDetails = await detailed.locator(".tdetail").count();
+    if (defaultDetails) throw new Error("tool detail was visible before expansion");
+    // detail appears after clicking a detail-bearing card
+    await detailed.locator(".thead").click();
+    await detailed.locator(".tdetail").waitFor({ timeout: 4000 });
+    await detailed.locator(".tout").first().waitFor({ timeout: 4000 });
     await page.waitForSelector('.tool .tdetail .tlabel:has-text("input")', { timeout: 4000 });
     const strongInTool = await page.locator(".tool .tout strong").count();
     if (strongInTool) throw new Error("tool detail rendered markdown");
     const raw = await page.locator(".tool .tout", { hasText: "**raw output**" }).count();
     if (!raw) throw new Error("tool output did not preserve raw markdown text");
-    // the manual toggle still collapses a detail-bearing card
-    const detailed = page.locator(".tool", { has: page.locator(".tdetail") }).first();
+    // the manual toggle collapses the expanded detail-bearing card
     await detailed.locator(".thead").click();
     await detailed.locator(".tdetail").waitFor({ state: "detached", timeout: 4000 });
   });
