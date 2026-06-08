@@ -64,7 +64,7 @@ export interface MeshSummary {
   defined: boolean;
   status: MeshStatus;
   router: AgentId;
-  agents: { id: AgentId; harness: HarnessId; role: AgentRole; status: AgentStatus }[];
+  agents: { id: AgentId; harness: HarnessId; role: AgentRole; status: AgentStatus; effort?: ThinkingEffort }[];
   /** Directed mail edges [from, to]; lets the topology render from the summary alone. */
   edges: [AgentId, AgentId][];
 }

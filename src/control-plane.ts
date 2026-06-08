@@ -86,8 +86,12 @@ export class ControlPlane {
   }
 
   /** Switch an agent's permission/approval mode (delegates to its connection). */
-  setMode(id: AgentId, modeId: string): Promise<void> {
-    return this.agent(id).setMode(modeId);
+  async setMode(id: AgentId, modeId: string): Promise<void> {
+    await this.agent(id).setMode(modeId);
+    // Some agents (e.g. claude) don't emit a current_mode_update after setSessionMode, so the
+    // operator's picker would snap back to the old mode. Echo the change ourselves so the UI
+    // reflects the switch immediately (the gateway folds current_mode_update into pm.modes).
+    this.emit({ kind: "update", agent: id, update: { sessionUpdate: "current_mode_update", currentModeId: modeId }, ts: now() });
   }
 
   /** Operator-initiated interrupt: cancel an agent's current turn and record it.

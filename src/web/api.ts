@@ -107,6 +107,10 @@ export async function handleApi(
           gw.setMode(name, agentId, str(body?.modeId));
           return ok();
         }
+        if (p[4] === "effort") {
+          await gw.setEffort(name, agentId, (body?.effort || undefined) as any);
+          return ok();
+        }
         if (p[4] === "interrupt") {
           gw.interruptAgent(name, agentId);
           return ok();

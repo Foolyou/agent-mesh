@@ -133,6 +133,10 @@ export class FakeManager {
   interruptAgent(name: string, agentId: string): void {
     this.emit(name, { kind: "interrupt", from: "operator", target: agentId, reason: "operator interrupt", ts: now() });
   }
+  async setAgentEffort(name: string, agentId: string, effort?: any): Promise<void> {
+    const e = this.require(name);
+    e.config = { ...e.config, agents: e.config.agents.map((a) => (a.id === agentId ? { ...a, effort } : a)) };
+  }
 
   /** Stream a short agent message word-by-word, then seal it. */
   private async reply(name: string, agent: AgentId, text: string): Promise<void> {

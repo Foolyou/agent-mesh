@@ -173,6 +173,20 @@ try {
     await detailed.locator(".tdetail").waitFor({ state: "detached", timeout: 4000 });
   });
 
+  await step("thinking-effort persists + reflects without restarting the mesh", async () => {
+    await page.locator('.topo .node:has-text("codex-1")').click();
+    const sel = page.locator('.dchat .panel:has(.tabs) .effort-sel').first();
+    await sel.waitFor({ timeout: 6000 });
+    await sel.selectOption("high");
+    // round-trips back through the summary so the picker reflects the saved value
+    await page.waitForFunction(
+      () => (document.querySelector('.dchat .panel:has(.tabs) .effort-sel') as HTMLSelectElement)?.value === "high",
+      { timeout: 6000 },
+    );
+    // the running mesh was NOT restarted by the effort change
+    if (!(await page.locator('.detail-head:has-text("running")').count())) throw new Error("mesh left the running state");
+  });
+
   await step("failed command surfaces an error toast", async () => {
     // starting an already-running mesh fails → toast (drives the store directly)
     await page.evaluate(() => (window as any).__meshStore.startMesh("demo").catch(() => {}));

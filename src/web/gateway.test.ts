@@ -15,6 +15,7 @@ function fakeManager() {
   let listener: ((n: string, e: MeshEvent) => void) | null = null;
   const calls: any[] = [];
   let alive = true;
+  let config: MeshConfig = structuredClone(CFG);
   return {
     calls,
     emit(n: string, e: MeshEvent) {
@@ -30,7 +31,11 @@ function fakeManager() {
       return alive ? [{ name: "demo", defined: true, status: "running" as const }] : [];
     },
     configOf() {
-      return CFG;
+      return config;
+    },
+    async setAgentEffort(n: string, a: string, effort?: any) {
+      calls.push(["setAgentEffort", n, a, effort]);
+      config = { ...config, agents: config.agents.map((x) => (x.id === a ? { ...x, effort } : x)) };
     },
     routerOf() {
       return "router";
@@ -138,6 +143,29 @@ test("mail event emits both activity and mail entries", () => {
   // mail is ALSO folded inline into the recipient's conversation, labeled with the sender
   expect(got.some((x) => x.t === "transcript.upsert" && x.conv.scope === "agent" && x.conv.agent === "codex-1" && x.item.kind === "mail" && x.item.from === "router")).toBe(true);
   expect((s.perMesh.demo.transcripts["codex-1"] ?? []).some((i: any) => i.kind === "mail" && i.from === "router")).toBe(true);
+});
+
+test("a current_mode_update syncs the mode picker + broadcasts (claude has no echo)", () => {
+  const m = fakeManager();
+  const gw = new WebGateway(m as any);
+  const got: any[] = [];
+  gw.subscribe((msg) => got.push(msg));
+  m.emit("demo", { kind: "agent_modes", agent: "router", current: "default", available: [{ id: "default", name: "default" }, { id: "plan", name: "plan" }], ts: "T" });
+  m.emit("demo", { kind: "update", agent: "router", update: { sessionUpdate: "current_mode_update", currentModeId: "plan" }, ts: "T" });
+  expect(gw.snapshot().perMesh.demo.modes.router.current).toBe("plan");
+  expect(got.some((x) => x.t === "agent.modes" && x.agent === "router" && x.current === "plan")).toBe(true);
+});
+
+test("setEffort persists the effort into the summary and broadcasts mesh.list (no restart)", async () => {
+  const m = fakeManager();
+  const gw = new WebGateway(m as any);
+  const got: any[] = [];
+  gw.subscribe((msg) => got.push(msg));
+  await gw.setEffort("demo", "codex-1", "high");
+  expect(m.calls).toContainEqual(["setAgentEffort", "demo", "codex-1", "high"]);
+  const summary = gw.snapshot().meshes.find((x) => x.name === "demo");
+  expect(summary?.agents.find((a) => a.id === "codex-1")?.effort).toBe("high");
+  expect(got.some((x) => x.t === "mesh.list")).toBe(true);
 });
 
 test("command methods delegate to the manager", async () => {

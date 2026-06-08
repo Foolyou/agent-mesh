@@ -26,6 +26,24 @@ test("defineMesh persists and listMeshes shows it stopped", async () => {
   expect(mgr.listMeshes()).toEqual([{ name: "echo", defined: true, status: "stopped" }]);
 });
 
+test("setAgentEffort persists the effort and reloads from disk (no restart)", async () => {
+  await mgr.defineMesh(cfg);
+  await mgr.setAgentEffort("echo", "r", "high");
+  expect(mgr.configOf("echo").agents[0].effort).toBe("high");
+  expect(mgr.listMeshes()[0].status).toBe("stopped"); // unchanged — no restart
+  // persisted: a fresh manager loading the same dir sees the effort
+  const fresh = new MeshManager({ meshesDir: join(dir, "meshes"), runDir: join(dir, "run"), hostScript: FIXTURE });
+  await fresh.loadDefinitions();
+  expect(fresh.configOf("echo").agents[0].effort).toBe("high");
+  await mgr.setAgentEffort("echo", "r", undefined); // clearing back to default works
+  expect(mgr.configOf("echo").agents[0].effort).toBeUndefined();
+});
+
+test("setAgentEffort on an unknown agent throws", async () => {
+  await mgr.defineMesh(cfg);
+  await expect(mgr.setAgentEffort("echo", "nope", "low")).rejects.toThrow(/no agent/i);
+});
+
 test("root option derives meshesDir (<root>/meshes)", async () => {
   const { existsSync } = await import("node:fs");
   const r = await mkdtemp(join(tmpdir(), "root-"));

@@ -4,7 +4,7 @@
 // It has no HTTP/WS dependency: server.ts adapts it to Bun.serve, tests drive it directly.
 import { reduceTranscript } from "./transcript";
 import { now } from "../acp/types";
-import type { MeshConfig, MeshEvent, AgentId, AgentStatus, PromptImageRef } from "../acp/types";
+import type { MeshConfig, MeshEvent, AgentId, AgentStatus, PromptImageRef, ThinkingEffort } from "../acp/types";
 import { readUpload, storeUploads, uploadPath, type UploadFileLike } from "./uploads";
 import type {
   GatewayState,
@@ -34,6 +34,7 @@ export interface ManagerLike {
   promptAgent(name: string, agentId: string, text: string, images?: PromptImageRef[]): void;
   resolvePermission(name: string, requestId: string, optionId: string): void;
   setMode(name: string, agentId: string, modeId: string): void;
+  setAgentEffort(name: string, agentId: string, effort?: ThinkingEffort): Promise<void>;
   interruptAgent(name: string, agentId: string): void;
   defineMesh(config: MeshConfig): Promise<void>;
   deleteMesh(name: string): Promise<void>;
@@ -137,6 +138,7 @@ export class WebGateway {
           harness: a.harness,
           role: a.role,
           status: (live ? tracked?.get(a.id) : undefined) ?? (live ? "spawning" : "dead"),
+          effort: a.effort,
         })),
         edges: config.edges,
       };
@@ -335,6 +337,10 @@ export class WebGateway {
   }
   resolvePermission(name: string, requestId: string, optionId: string): void {
     this.manager.resolvePermission(name, requestId, optionId);
+  }
+  async setEffort(name: string, agentId: string, effort?: ThinkingEffort): Promise<void> {
+    await this.manager.setAgentEffort(name, agentId, effort);
+    this.refreshMeshes(); // re-broadcast the summary so the picker reflects the new value
   }
   setMode(name: string, agentId: string, modeId: string): void {
     this.manager.setMode(name, agentId, modeId);

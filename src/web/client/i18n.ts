@@ -76,7 +76,7 @@ const DICT: Record<string, Entry> = {
   mode: ["mode", "模式"],
   "mode.hint": ["agent operating mode", "agent 工作模式"],
   effort: ["effort", "思考强度"],
-  "effort.hint": ["reasoning / thinking effort — applied when the agent (re)starts", "思考/推理强度 —— 在 agent(重)启动时生效"],
+  "effort.hint": ["thinking effort — saved now, applies on the agent's next start (does not restart a running mesh)", "思考强度 —— 立即保存,在 agent 下次启动时生效(不会重启运行中的 mesh)"],
   "effort.default": ["default", "默认"],
   "effort.minimal": ["minimal", "最小"],
   "effort.low": ["low", "低"],

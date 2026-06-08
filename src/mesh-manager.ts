@@ -9,7 +9,7 @@ import { MeshHostClient } from "./mesh-host-client";
 import { listLiveRecords, readRecord, removeRecord, pidAlive, type MeshHostRecord } from "./mesh-registry";
 import { Mesh } from "./mesh";
 import { now } from "./acp/types";
-import type { MeshConfig, MeshEvent } from "./acp/types";
+import type { MeshConfig, MeshEvent, ThinkingEffort } from "./acp/types";
 import type { PromptImageRef } from "./acp/types";
 import { deleteUploadBucket } from "./web/uploads";
 
@@ -76,6 +76,17 @@ export class MeshManager {
     }
     await this.store.define(config); // validates + persists
     this.entries.set(config.name, { config, status: "stopped" });
+  }
+
+  /** Update one agent's thinking effort and persist it, WITHOUT restarting. Effort is a
+   *  launch-time setting, so a running mesh keeps its current agents; the new value takes hold
+   *  on the next start. Allowed while running (unlike defineMesh) since the topology is unchanged. */
+  async setAgentEffort(name: string, agentId: string, effort?: ThinkingEffort): Promise<void> {
+    const entry = this.require(name);
+    if (!entry.config.agents.some((a) => a.id === agentId)) throw new Error(`no agent "${agentId}" in mesh "${name}"`);
+    const patched: MeshConfig = { ...entry.config, agents: entry.config.agents.map((a) => (a.id === agentId ? { ...a, effort } : a)) };
+    await this.store.define(patched); // validates + persists; does NOT touch the running daemon
+    entry.config = patched;
   }
 
   /** Delete a mesh definition (and forget it). Refuses while running/starting. */

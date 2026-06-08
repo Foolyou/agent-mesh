@@ -3,7 +3,7 @@
 // the client. createStore() owns the socket + REST command helpers; useStore wires it
 // into React via useSyncExternalStore.
 import { useSyncExternalStore } from "react";
-import type { GatewayState, ServerMsg, PerMeshState, TranscriptItem, ConvRef, MeshConfig, PromptImageRef } from "../types";
+import type { GatewayState, ServerMsg, PerMeshState, TranscriptItem, ConvRef, MeshConfig, PromptImageRef, ThinkingEffort } from "../types";
 
 const CAP = 500;
 function cap<T>(a: T[], n: number): T[] {
@@ -117,6 +117,7 @@ export interface Store {
   promptMaster(text: string, images?: PromptImageRef[]): Promise<any>;
   resolvePermission(name: string, requestId: string, optionId: string): Promise<any>;
   setMode(name: string, agentId: string, modeId: string): Promise<any>;
+  setEffort(name: string, agentId: string, effort?: ThinkingEffort): Promise<any>;
   interruptAgent(name: string, agentId: string): Promise<any>;
 }
 
@@ -236,6 +237,7 @@ export function createStore(): Store {
     promptMaster: (t, images) => guard(post(`/api/master/prompt`, { text: t, images }), "master"),
     resolvePermission: (n, r, o) => guard(post(`/api/meshes/${enc(n)}/permissions/${enc(r)}/resolve`, { optionId: o }), "resolve permission"),
     setMode: (n, a, m) => guard(post(`/api/meshes/${enc(n)}/agents/${enc(a)}/mode`, { modeId: m }), `set mode ${a}`),
+    setEffort: (n, a, e) => guard(post(`/api/meshes/${enc(n)}/agents/${enc(a)}/effort`, { effort: e }), `set effort ${a}`),
     interruptAgent: (n, a) => guard(post(`/api/meshes/${enc(n)}/agents/${enc(a)}/interrupt`), `interrupt ${a}`),
   };
 }
