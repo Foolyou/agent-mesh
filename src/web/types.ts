@@ -1,8 +1,9 @@
 // Shared types for the WebUI: aggregated transcript items, gateway state, and the
 // WebSocket wire protocol. These are the contract between WebGateway (server) and
 // the client store.
-import type { MeshConfig, AgentId, AgentStatus, AgentActivity, AgentRole, HarnessId, SessionMode, PromptImageRef, ThinkingEffort } from "../acp/types";
+import type { MeshConfig, AgentId, AgentStatus, AgentActivity, AgentRole, HarnessId, SessionMode, SessionModel, PromptImageRef, ThinkingEffort } from "../acp/types";
 export type { SessionMode };
+export type { SessionModel };
 export type { PromptImageRef };
 export type { ThinkingEffort };
 
@@ -10,6 +11,11 @@ export type { ThinkingEffort };
 export interface AgentModes {
   current: string;
   available: SessionMode[];
+}
+
+export interface AgentModels {
+  current: string;
+  available: SessionModel[];
 }
 
 export interface AgentCapabilities {
@@ -64,7 +70,7 @@ export interface MeshSummary {
   defined: boolean;
   status: MeshStatus;
   router: AgentId;
-  agents: { id: AgentId; harness: HarnessId; role: AgentRole; status: AgentStatus; activity: AgentActivity; effort?: ThinkingEffort }[];
+  agents: { id: AgentId; harness: HarnessId; role: AgentRole; status: AgentStatus; activity: AgentActivity; effort?: ThinkingEffort; model?: AgentModels }[];
   /** Directed mail edges [from, to]; lets the topology render from the summary alone. */
   edges: [AgentId, AgentId][];
 }
@@ -109,6 +115,8 @@ export interface PerMeshState {
   history: ResolvedPermission[];
   /** Per-agent session modes (advertised + active), populated while the mesh runs. */
   modes: Record<AgentId, AgentModes>;
+  /** Per-agent model choices (advertised + active), populated while the mesh runs. */
+  models: Record<AgentId, AgentModels>;
   /** Per-agent prompt capabilities, populated while the mesh runs. */
   capabilities: Record<AgentId, AgentCapabilities>;
 }
@@ -128,6 +136,7 @@ export type ServerMsg =
   | { t: "agent.status"; name: string; agent: AgentId; status: AgentStatus; detail?: string }
   | { t: "agent.activity"; name: string; agent: AgentId; activity: AgentActivity }
   | { t: "agent.modes"; name: string; agent: AgentId; current: string; available: SessionMode[] }
+  | { t: "agent.models"; name: string; agent: AgentId; current: string; available: SessionModel[] }
   | { t: "agent.capabilities"; name: string; agent: AgentId; image: boolean }
   | { t: "master.capabilities"; image: boolean }
   | { t: "transcript.upsert"; conv: ConvRef; item: TranscriptItem }

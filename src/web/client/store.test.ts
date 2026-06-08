@@ -19,7 +19,7 @@ function seed(): GatewayState {
     ],
     master: { status: "ready", transcript: [] },
     perMesh: {
-      demo: { config: { name: "demo", agents: [], edges: [] }, transcripts: {}, activity: [], mail: [], pending: [], history: [], modes: {}, capabilities: {} },
+      demo: { config: { name: "demo", agents: [], edges: [] }, transcripts: {}, activity: [], mail: [], pending: [], history: [], modes: {}, models: {}, capabilities: {} },
     },
   };
 }
@@ -61,6 +61,20 @@ test("agent.modes stores the agent's session modes; a later one updates current"
   expect(s.perMesh.demo.modes["codex-1"].available).toHaveLength(2);
   s = applyMsg(s, { t: "agent.modes", name: "demo", agent: "codex-1", current: "read-only", available: [{ id: "read-only", name: "read-only" }, { id: "default", name: "default" }] });
   expect(s.perMesh.demo.modes["codex-1"].current).toBe("read-only");
+});
+
+test("agent.models stores the agent's model choices; a later one updates current", () => {
+  let s = applyMsg(seed(), {
+    t: "agent.models",
+    name: "demo",
+    agent: "codex-1",
+    current: "kimi-k2",
+    available: [{ id: "kimi-k2", name: "kimi-k2" }, { id: "deepseek-v3", name: "deepseek-v3" }],
+  });
+  expect(s.perMesh.demo.models["codex-1"].current).toBe("kimi-k2");
+  expect(s.perMesh.demo.models["codex-1"].available).toHaveLength(2);
+  s = applyMsg(s, { t: "agent.models", name: "demo", agent: "codex-1", current: "deepseek-v3", available: [{ id: "kimi-k2", name: "kimi-k2" }, { id: "deepseek-v3", name: "deepseek-v3" }] });
+  expect(s.perMesh.demo.models["codex-1"].current).toBe("deepseek-v3");
 });
 
 test("transcript.upsert then patch on an agent conv", () => {

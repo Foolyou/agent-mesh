@@ -3,7 +3,6 @@
 import { useState } from "react";
 import type { Store } from "./store";
 import type { HarnessId, AgentRole, MeshConfig, ThinkingEffort } from "../types";
-import { builderModesFor } from "../../harness";
 import { Btn } from "./ui";
 import { useI18n } from "./i18n";
 
@@ -13,11 +12,10 @@ interface AgentDraft {
   role: AgentRole;
   project: string;
   effort?: ThinkingEffort;
-  mode?: string;
   instructions?: string;
 }
 
-const HARNESSES: HarnessId[] = ["claude", "codex", "opencode"];
+const HARNESSES: HarnessId[] = ["claude", "codex", "opencode", "kimi"];
 
 function validate(name: string, agents: AgentDraft[], edges: [string, string][]): string | null {
   if (!/^[A-Za-z0-9._-]+$/.test(name)) return "mesh name must match [A-Za-z0-9._-] and be non-empty";
@@ -53,7 +51,7 @@ export function MeshBuilder({
   const [name, setName] = useState(initial?.name ?? "");
   const [agents, setAgents] = useState<AgentDraft[]>(
     initial?.agents?.length
-      ? initial.agents.map((a) => ({ id: a.id, harness: a.harness, role: a.role, project: a.project, effort: a.effort, mode: a.mode, instructions: a.instructions }))
+      ? initial.agents.map((a) => ({ id: a.id, harness: a.harness, role: a.role, project: a.project, effort: a.effort, instructions: a.instructions }))
       : [{ id: "router", harness: "claude", role: "router", project: "test_mesh_0" }],
   );
   const [edges, setEdges] = useState<[string, string][]>(initial ? initial.edges.map((e) => [e[0], e[1]]) : []);
@@ -151,20 +149,6 @@ export function MeshBuilder({
                     <option value="low">{t("effort.low")}</option>
                     <option value="medium">{t("effort.medium")}</option>
                     <option value="high">{t("effort.high")}</option>
-                  </select>
-                  <span className="adv-label">{t("mode")}</span>
-                  <select
-                    className="inp adv-sel"
-                    value={a.mode ?? ""}
-                    title={t("mode.hint")}
-                    onChange={(e) => setAgent(i, { mode: e.target.value || undefined })}
-                  >
-                    <option value="">{t("mode.default")}</option>
-                    {builderModesFor(a.harness).map((mo) => (
-                      <option key={mo} value={mo}>
-                        {mo}
-                      </option>
-                    ))}
                   </select>
                 </div>
                 <div className="agent-instructions-field">

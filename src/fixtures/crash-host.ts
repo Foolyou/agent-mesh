@@ -18,6 +18,7 @@ const cp = {
     return true;
   },
   async setMode() {},
+  async setModel() {},
   async interrupt() {},
   async stop() {},
 };

@@ -1,6 +1,6 @@
-// Browser e2e for the agent session-mode picker: starts the fake mesh, opens a member
-// conversation tab, and drives the <select> — proving the advertised modes render and that
-// switching round-trips through setMode → agent.modes back into the picker.
+// Browser e2e for the agent session mode/model pickers: starts the fake mesh, opens a member
+// conversation tab, and drives the <select>s — proving the advertised choices render and that
+// switching round-trips through setMode/setModel back into the pickers.
 // Run: bun run src/web/mode.e2e.ts
 import { chromium, type Page } from "playwright";
 
@@ -39,6 +39,7 @@ try {
 
   await step("stopped mesh shows NO mode picker", async () => {
     if (await page.locator(".mode-sel").count()) throw new Error("mode picker visible before the mesh is running");
+    if (await page.locator(".model-sel").count()) throw new Error("model picker visible before the mesh is running");
   });
 
   await step("start mesh → member tab shows the advertised modes", async () => {
@@ -52,6 +53,12 @@ try {
     if (JSON.stringify(opts) !== JSON.stringify(want)) throw new Error(`options ${JSON.stringify(opts)} != ${JSON.stringify(want)}`);
     const val = await mode.inputValue();
     if (val !== "default") throw new Error(`current mode "${val}" != "default"`);
+    const model = page.locator(".conv-control .model-sel");
+    await model.waitFor({ timeout: 8000 });
+    const modelOpts = await model.locator("option").allTextContents();
+    const wantModels = ["kimi-k2", "deepseek-v3"];
+    if (JSON.stringify(modelOpts) !== JSON.stringify(wantModels)) throw new Error(`model options ${JSON.stringify(modelOpts)} != ${JSON.stringify(wantModels)}`);
+    if ((await model.inputValue()) !== "kimi-k2") throw new Error(`current model "${await model.inputValue()}" != "kimi-k2"`);
   });
 
   await step("switching mode round-trips back into the picker + logs the change", async () => {
@@ -63,6 +70,13 @@ try {
     await page.waitForSelector('.drail .panel .tx:has-text("mode → read-only")', { timeout: 6000 });
   });
 
+  await step("switching model round-trips back into the picker + logs the change", async () => {
+    await page.locator(".conv-control .model-sel").selectOption("deepseek-v3");
+    await page.waitForFunction(() => (document.querySelector(".conv-control .model-sel") as HTMLSelectElement)?.value === "deepseek-v3", { timeout: 5000 });
+    await page.locator('.drail .seg-tab:has-text("activity")').click();
+    await page.waitForSelector('.drail .panel .tx:has-text("model → deepseek-v3")', { timeout: 6000 });
+  });
+
   await step("no page errors", async () => {
     if (errors.length) throw new Error(`${errors.length}: ${errors.slice(0, 2).join(" || ")}`);
   });
@@ -72,7 +86,7 @@ try {
     console.log("  FAILED:", fails.join(", "));
     process.exitCode = 1;
   } else {
-    console.log("  MODE E2E OK — session-mode picker renders + round-trips");
+    console.log("  MODE E2E OK — session mode/model pickers render + round-trip");
   }
 } finally {
   await browser.close();

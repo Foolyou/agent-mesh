@@ -44,6 +44,36 @@ test("setAgentEffort on an unknown agent throws", async () => {
   await expect(mgr.setAgentEffort("echo", "nope", "low")).rejects.toThrow(/no agent/i);
 });
 
+test("setMode and setModel persist runtime selections and reload from disk", async () => {
+  await mgr.defineMesh(cfg);
+  await mgr.setMode("echo", "r", "plan");
+  await mgr.setModel("echo", "r", "deepseek/deepseek-chat");
+  expect(mgr.configOf("echo").agents[0].mode).toBe("plan");
+  expect(mgr.configOf("echo").agents[0].model).toBe("deepseek/deepseek-chat");
+  expect(mgr.listMeshes()[0].status).toBe("stopped");
+
+  const fresh = new MeshManager({ meshesDir: join(dir, "meshes"), runDir: join(dir, "run"), hostScript: FIXTURE });
+  await fresh.loadDefinitions();
+  expect(fresh.configOf("echo").agents[0].mode).toBe("plan");
+  expect(fresh.configOf("echo").agents[0].model).toBe("deepseek/deepseek-chat");
+});
+
+test("setMode and setModel are allowed while running", async () => {
+  await mgr.defineMesh(cfg);
+  await mgr.startMesh("echo");
+  await mgr.setMode("echo", "r", "plan");
+  await mgr.setModel("echo", "r", "test-model");
+  expect(mgr.listMeshes()[0].status).toBe("running");
+  expect(mgr.configOf("echo").agents[0].mode).toBe("plan");
+  expect(mgr.configOf("echo").agents[0].model).toBe("test-model");
+});
+
+test("setMode and setModel on an unknown agent throw", async () => {
+  await mgr.defineMesh(cfg);
+  await expect(mgr.setMode("echo", "nope", "plan")).rejects.toThrow(/no agent/i);
+  await expect(mgr.setModel("echo", "nope", "test-model")).rejects.toThrow(/no agent/i);
+});
+
 test("root option derives meshesDir (<root>/meshes)", async () => {
   const { existsSync } = await import("node:fs");
   const r = await mkdtemp(join(tmpdir(), "root-"));

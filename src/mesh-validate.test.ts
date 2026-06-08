@@ -25,24 +25,13 @@ test("accepts a valid per-agent effort and rejects an invalid one", () => {
   expect(() => validateMeshConfig({ ...ok, agents: [{ ...ok.agents[0], effort: "turbo" as any }, ok.agents[1]] })).toThrow(/effort/i);
 });
 
-test("mode: known safe mode accepted; unknown / wrong-harness / blank rejected", () => {
-  expect(() => validateMeshConfig({ ...ok, agents: [{ ...ok.agents[0], mode: "plan" }, ok.agents[1]] })).not.toThrow();
-  expect(() => validateMeshConfig({ ...ok, agents: [{ ...ok.agents[0], mode: "  " }, ok.agents[1]] })).toThrow(/mode/i);
-  expect(() => validateMeshConfig({ ...ok, agents: [{ ...ok.agents[0], mode: "yolo" }, ok.agents[1]] })).toThrow(/not a known/i);
-  // "read-only" is a codex mode — rejected on a claude agent (no cross-harness / arbitrary ids)
-  expect(() => validateMeshConfig({ ...ok, agents: [{ ...ok.agents[0], mode: "read-only" }, ok.agents[1]] })).toThrow(/not a known/i);
-});
-
-test("mode: a permission-bypassing mode is rejected at create time unless explicitly opted in", () => {
-  const cfg = { ...ok, agents: [{ ...ok.agents[0], mode: "bypassPermissions" }, ok.agents[1]] };
-  delete process.env.ALLOW_UNSAFE_MESH_MODES;
-  expect(() => validateMeshConfig(cfg)).toThrow(/permission prompts|ALLOW_UNSAFE/i);
-  process.env.ALLOW_UNSAFE_MESH_MODES = "1";
-  try {
-    expect(() => validateMeshConfig(cfg)).not.toThrow();
-  } finally {
-    delete process.env.ALLOW_UNSAFE_MESH_MODES;
-  }
+test("accepts arbitrary cached mode/model strings", () => {
+  expect(() =>
+    validateMeshConfig({
+      ...ok,
+      agents: [{ ...ok.agents[0], mode: "yolo custom mode", model: "vendor/model:latest" }, ok.agents[1]],
+    }),
+  ).not.toThrow();
 });
 
 test("rejects names containing '..' (path traversal)", () => {

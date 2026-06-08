@@ -2,7 +2,7 @@
 // Re-export the ACP schema/classes under `schema` for convenient access.
 export * as schema from "@zed-industries/agent-client-protocol";
 
-export type HarnessId = "codex" | "opencode" | "claude";
+export type HarnessId = "codex" | "opencode" | "claude" | "kimi";
 export type AgentRole = "router" | "member";
 
 /** Unique within a mesh, e.g. "codex-1". */
@@ -20,10 +20,10 @@ export interface AgentConfig {
   role: AgentRole;
   /** Optional reasoning/thinking effort; applied when the agent process (re)starts. */
   effort?: ThinkingEffort;
-  /** Optional initial permission/session mode id (e.g. claude "plan", codex "read-only");
-   *  applied via setSessionMode right after the session starts. Operator can still switch at
-   *  runtime. `undefined` = the agent's own default mode. */
+  /** Runtime-selected session mode cache. Applied best-effort after spawn when advertised. */
   mode?: string;
+  /** Runtime-selected model cache. Applied best-effort after spawn when advertised. */
+  model?: string;
   /** Optional per-agent instructions injected into THIS agent's briefing only. Free text. */
   instructions?: string;
 }
@@ -49,6 +49,11 @@ export interface SessionMode {
   description?: string;
 }
 
+export interface SessionModel {
+  id: string;
+  name: string;
+}
+
 export interface PromptImageRef {
   id: string;
   mimeType: string;
@@ -63,6 +68,7 @@ export type MeshEvent =
   | { kind: "agent_activity"; agent: AgentId; activity: AgentActivity; ts: string }
   | { kind: "update"; agent: AgentId; update: unknown; ts: string }
   | { kind: "agent_modes"; agent: AgentId; current: string; available: SessionMode[]; ts: string }
+  | { kind: "agent_models"; agent: AgentId; current: string; available: SessionModel[]; ts: string }
   | { kind: "agent_capabilities"; agent: AgentId; image: boolean; ts: string }
   | { kind: "mail"; from: AgentId; to: AgentId; body: string; ts: string }
   | {

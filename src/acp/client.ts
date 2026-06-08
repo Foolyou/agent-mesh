@@ -8,6 +8,7 @@ import {
   ndJsonStream,
   PROTOCOL_VERSION,
   type Client,
+  type Stream,
 } from "@zed-industries/agent-client-protocol";
 import type { PromptImageRef } from "./types";
 
@@ -97,6 +98,8 @@ export class AcpAgentConnection {
   alive = false;
   private child?: ReturnType<typeof Bun.spawn>;
   private conn?: ClientSideConnection;
+  private stream?: Stream;
+  private rawRequestSeq = 0;
 
   constructor(private opts: AcpConnectionOptions) {
     this.id = opts.id;
@@ -132,6 +135,7 @@ export class AcpAgentConnection {
       },
     });
     const stream = ndJsonStream(output, child.stdout as ReadableStream<Uint8Array>);
+    this.stream = stream;
 
     const self = this;
     this.conn = new ClientSideConnection(
@@ -246,6 +250,29 @@ export class AcpAgentConnection {
   /** Switch the session's permission/approval mode (e.g. codex "read-only"). */
   async setMode(modeId: string) {
     if (this.sessionId) await this.conn!.setSessionMode({ sessionId: this.sessionId, modeId });
+  }
+
+  /** Switch the session's model when the agent advertises ACP configOptions(model). */
+  async setModel(modelId: string) {
+    if (!this.sessionId) return;
+    // @zed-industries/agent-client-protocol@0.4.5 exposes setSessionModel(), but its
+    // implementation currently sends session/set_mode. Send the unstable ACP method directly.
+    const stream = this.stream;
+    if (!stream) {
+      await this.conn!.setSessionModel({ sessionId: this.sessionId, modelId });
+      return;
+    }
+    const writer = stream.writable.getWriter();
+    try {
+      await writer.write({
+        jsonrpc: "2.0",
+        id: `mesh-set-model-${++this.rawRequestSeq}`,
+        method: "session/set_model",
+        params: { sessionId: this.sessionId, modelId },
+      });
+    } finally {
+      writer.releaseLock();
+    }
   }
 
   /** Interrupt the current turn (Router-authorized at the control-plane layer). */

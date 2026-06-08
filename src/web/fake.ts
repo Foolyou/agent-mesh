@@ -34,12 +34,18 @@ const FAKE_MODES = [
   { id: "default", name: "default", description: "asks before risky actions" },
   { id: "full-access", name: "full-access", description: "may edit files and run commands freely" },
 ];
+const FAKE_MODELS = [
+  { id: "kimi-k2", name: "kimi-k2" },
+  { id: "deepseek-v3", name: "deepseek-v3" },
+];
 
 export class FakeManager {
   private listeners = new Set<(name: string, e: MeshEvent) => void>();
   private meshes = new Map<string, Entry>();
   /** current mode per `${mesh}:${agent}` so setMode reflects back into the picker */
   private modeOf = new Map<string, string>();
+  /** current model per `${mesh}:${agent}` so setModel reflects back into the picker */
+  private modelOf = new Map<string, string>();
 
   constructor() {
     this.meshes.set("demo", { config: DEMO, status: "stopped" });
@@ -94,6 +100,9 @@ export class FakeManager {
         const cur = this.modeOf.get(`${name}:${a.id}`) ?? "default";
         this.modeOf.set(`${name}:${a.id}`, cur);
         this.emit(name, { kind: "agent_modes", agent: a.id, current: cur, available: FAKE_MODES, ts: now() });
+        const model = this.modelOf.get(`${name}:${a.id}`) ?? FAKE_MODELS[0]!.id;
+        this.modelOf.set(`${name}:${a.id}`, model);
+        this.emit(name, { kind: "agent_models", agent: a.id, current: model, available: FAKE_MODELS, ts: now() });
       }
     }
     e.status = "running";
@@ -124,11 +133,16 @@ export class FakeManager {
     this.emit(name, { kind: "permission_resolved", agent: "codex-1", requestId, optionId, by: "human", ts: now() });
     void this.reply(name, "codex-1", optionId.includes("allow") ? "Permission granted — running the command." : "Permission denied — skipping that step.");
   }
-  setMode(name: string, agentId: string, modeId: string): void {
+  async setMode(name: string, agentId: string, modeId: string): Promise<void> {
     this.modeOf.set(`${name}:${agentId}`, modeId);
     this.emit(name, { kind: "log", text: `${agentId} mode → ${modeId}`, ts: now() });
     // echo the new current back so the picker reflects it (mirrors a real current_mode_update)
     this.emit(name, { kind: "agent_modes", agent: agentId, current: modeId, available: FAKE_MODES, ts: now() });
+  }
+  async setModel(name: string, agentId: string, modelId: string): Promise<void> {
+    this.modelOf.set(`${name}:${agentId}`, modelId);
+    this.emit(name, { kind: "log", text: `${agentId} model → ${modelId}`, ts: now() });
+    this.emit(name, { kind: "agent_models", agent: agentId, current: modelId, available: FAKE_MODELS, ts: now() });
   }
   interruptAgent(name: string, agentId: string): void {
     this.emit(name, { kind: "interrupt", from: "operator", target: agentId, reason: "operator interrupt", ts: now() });

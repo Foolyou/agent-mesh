@@ -19,6 +19,7 @@ export interface BridgeControlPlane {
   prompt(target: string, text: string, images?: PromptImageRef[]): Promise<unknown>;
   resolveDecision(requestId: string, optionId: string, by?: "human" | "timeout"): boolean;
   setMode(target: string, modeId: string): Promise<void>;
+  setModel(target: string, modelId: string): Promise<void>;
   interrupt(target: string): Promise<void>;
   stop(): Promise<void>;
 }
@@ -141,6 +142,9 @@ export class MeshHostDaemon {
         break;
       case "setMode":
         this.cp.setMode(msg.target, msg.modeId).catch(() => {});
+        break;
+      case "setModel":
+        this.cp.setModel(msg.target, msg.modelId).catch(() => {});
         break;
       case "interrupt":
         this.cp.interrupt(msg.target).catch(() => {});

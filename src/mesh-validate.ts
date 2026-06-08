@@ -2,7 +2,7 @@
 // Deterministic validation of a mesh topology. The control plane runs this over
 // every (possibly LLM-generated) MeshConfig before defining/persisting it.
 import { isAbsolute } from "node:path";
-import { HARNESSES, HARNESS_MODES, UNSAFE_MODES } from "./harness";
+import { HARNESSES } from "./harness";
 import type { MeshConfig } from "./acp/types";
 
 export function validateMeshConfig(config: MeshConfig): void {
@@ -38,19 +38,6 @@ export function validateMeshConfig(config: MeshConfig): void {
       const instructions = a.instructions.trim();
       if (instructions && instructions.length > 4000) {
         throw new Error(`agent "${a.id}" instructions are too long (max 4000 chars)`);
-      }
-    }
-    // A configured initial mode must be a known mode id for the harness (no arbitrary strings),
-    // and a permission-bypassing mode may only be PRE-ARMED at create time with an explicit opt-in
-    // (the operator can still switch to it deliberately at runtime). This blocks an LLM-generated
-    // or API config from silently launching an agent into a no-prompt, auto-approve state.
-    if (a.mode !== undefined) {
-      if (typeof a.mode !== "string" || !a.mode.trim()) throw new Error(`agent "${a.id}" mode must be a non-empty string`);
-      if (!(HARNESS_MODES[a.harness] ?? []).includes(a.mode)) {
-        throw new Error(`agent "${a.id}" mode "${a.mode}" is not a known ${a.harness} mode`);
-      }
-      if (UNSAFE_MODES.has(a.mode) && !process.env.ALLOW_UNSAFE_MESH_MODES) {
-        throw new Error(`agent "${a.id}" mode "${a.mode}" disables permission prompts; set ALLOW_UNSAFE_MESH_MODES=1 to pre-arm it (or switch to it at runtime)`);
       }
     }
   }

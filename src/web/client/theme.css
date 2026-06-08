@@ -1733,6 +1733,7 @@ select.inp {
 }
 /* agent session-mode picker (in the per-agent panel toolbar) */
 .mode-sel,
+.model-sel,
 .effort-sel {
   font: inherit;
   font-size: 11px;
@@ -1746,6 +1747,7 @@ select.inp {
   max-width: 130px;
 }
 .mode-sel:hover,
+.model-sel:hover,
 .effort-sel:hover {
   color: var(--fg);
   border-color: var(--fg-faint);

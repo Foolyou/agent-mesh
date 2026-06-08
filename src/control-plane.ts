@@ -10,7 +10,7 @@ import { Mesh } from "./mesh";
 import { buildMeshBriefing } from "./mesh-briefing";
 import { createMeshServicesServer, type MeshServicesServer, type MeshToolContext } from "./mcp/mesh-services";
 import { sendMail, readMailFor } from "./mailbox";
-import { now, type AgentActivity, type AgentId, type MeshConfig, type MeshEvent, type PromptImageRef, type SessionMode } from "./acp/types";
+import { now, type AgentActivity, type AgentId, type MeshConfig, type MeshEvent, type PromptImageRef, type SessionMode, type SessionModel } from "./acp/types";
 
 interface PendingDecision {
   resolve: (decision: PermissionDecision) => void;
@@ -42,6 +42,8 @@ export class ControlPlane {
   private imageCaps = new Map<AgentId, boolean>();
   /** Per-agent advertised permission/session modes. */
   private sessionModes = new Map<AgentId, { current: string; available: SessionMode[] }>();
+  /** Per-agent advertised model choices. */
+  private sessionModels = new Map<AgentId, { current: string; available: SessionModel[] }>();
   /** Agents that have already received the one-time mesh briefing. */
   private briefed = new Set<AgentId>();
   /** Per-agent in-flight prompt turns. count > 0 means working unless the agent is dead. */
@@ -89,6 +91,10 @@ export class ControlPlane {
       if (modes) {
         events.push({ kind: "agent_modes", agent: a.id, current: modes.current, available: modes.available, ts });
       }
+      const models = this.sessionModels.get(a.id);
+      if (models) {
+        events.push({ kind: "agent_models", agent: a.id, current: models.current, available: models.available, ts });
+      }
     }
     return events;
   }
@@ -126,6 +132,17 @@ export class ControlPlane {
     // operator's picker would snap back to the old mode. Echo the change ourselves so the UI
     // reflects the switch immediately (the gateway folds current_mode_update into pm.modes).
     this.emit({ kind: "update", agent: id, update: { sessionUpdate: "current_mode_update", currentModeId: modeId }, ts: now() });
+  }
+
+  /** Switch an agent's model (delegates to its connection, then echoes state for the UI). */
+  async setModel(id: AgentId, modelId: string): Promise<void> {
+    await this.agent(id).setModel(modelId);
+    const models = this.sessionModels.get(id);
+    if (models) {
+      const next = { ...models, current: modelId };
+      this.sessionModels.set(id, next);
+      this.emit({ kind: "agent_models", agent: id, current: next.current, available: next.available, ts: now() });
+    }
   }
 
   /** Operator-initiated interrupt: cancel an agent's current turn and record it.
@@ -184,21 +201,42 @@ export class ControlPlane {
       const session = await conn.newSession([{ type: "http", name: "mesh", url: this.mcp.urlFor(a.id), headers: [] }]);
       // Surface the agent's advertised session modes so the operator gets a real picker
       // (read-only / full-access / plan / …) instead of having to know mode-id strings.
-      const modes = (session as any)?.modes;
-      const available = (modes?.availableModes ?? []).map((mo: any) => ({ id: mo.id, name: mo.name ?? mo.id, description: mo.description ?? undefined }));
+      const standardModes = (session as any)?.modes;
+      const configMode = deriveConfigOption(session, "mode");
+      const available = ((standardModes?.availableModes ?? []).length
+        ? (standardModes.availableModes ?? []).map((mo: any) => ({ id: mo.id, name: mo.name ?? mo.id, description: mo.description ?? undefined }))
+        : (configMode?.available ?? [])) as SessionMode[];
       // Apply a configured initial permission/session mode (best-effort) before the first turn.
-      let current: string = modes?.currentModeId ?? available[0]?.id ?? "";
+      let current: string = standardModes?.currentModeId ?? configMode?.current ?? available[0]?.id ?? "";
       if (a.mode && available.some((mo: any) => mo.id === a.mode)) {
         try {
           await conn.setMode(a.mode);
           current = a.mode;
         } catch (err) {
-          this.log(`set initial mode ${a.id}=${a.mode} failed: ${String(err)}`);
+          this.log(`set cached mode ${a.id}=${a.mode} failed: ${String(err)}`);
         }
+      } else if (a.mode && available.length) {
+        this.log(`skip cached mode ${a.id}=${a.mode}: not advertised`);
       }
       if (available.length) {
         this.sessionModes.set(a.id, { current, available });
         this.emit({ kind: "agent_modes", agent: a.id, current, available, ts: now() });
+      }
+      const configModel = deriveConfigOption(session, "model");
+      if (configModel?.available.length) {
+        let currentModel = configModel.current;
+        if (a.model && configModel.available.some((mo) => mo.id === a.model)) {
+          try {
+            await conn.setModel(a.model);
+            currentModel = a.model;
+          } catch (err) {
+            this.log(`set cached model ${a.id}=${a.model} failed: ${String(err)}`);
+          }
+        } else if (a.model) {
+          this.log(`skip cached model ${a.id}=${a.model}: not advertised`);
+        }
+        this.sessionModels.set(a.id, { current: currentModel, available: configModel.available });
+        this.emit({ kind: "agent_models", agent: a.id, current: currentModel, available: configModel.available, ts: now() });
       }
       const imageCap = !!(initRes as any)?.agentCapabilities?.promptCapabilities?.image;
       this.imageCaps.set(a.id, imageCap);
@@ -373,4 +411,24 @@ export class ControlPlane {
   pendingDecisions(): { requestId: string }[] {
     return [...this.pending.keys()].map((requestId) => ({ requestId }));
   }
+}
+
+function deriveConfigOption(session: unknown, category: "mode" | "model"): { current: string; available: Array<{ id: string; name: string; description?: string }> } | undefined {
+  const options = (session as any)?.configOptions;
+  if (!Array.isArray(options)) return undefined;
+  const configOption = options.find((o: any) => o?.category === category);
+  if (!configOption) return undefined;
+  const available = Array.isArray(configOption.options)
+    ? configOption.options
+        .map((o: any) => {
+          const id = String(o?.value ?? "");
+          if (!id) return undefined;
+          const item: { id: string; name: string; description?: string } = { id, name: String(o?.name ?? o?.value ?? id) };
+          if (o?.description !== undefined) item.description = String(o.description);
+          return item;
+        })
+        .filter(Boolean)
+    : [];
+  const current = String(configOption.currentValue ?? available[0]?.id ?? "");
+  return { current, available: available as Array<{ id: string; name: string; description?: string }> };
 }
