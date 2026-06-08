@@ -34,7 +34,6 @@ function validate(name: string, agents: AgentDraft[], edges: EdgeDraft[]): strin
   if (routers.some((a) => a.lazy === true)) return "router agents cannot be lazy";
   for (const a of agents) {
     if (!a.project.trim()) return `agent "${a.id}" needs a project (working dir)`;
-    if (a.project.startsWith("/") || a.project.includes("..")) return `agent "${a.id}" project must be a relative path`;
     const instructions = a.instructions?.trim();
     if (instructions && instructions.length > 4000) return `agent "${a.id}" instructions are too long (max 4000 chars)`;
   }

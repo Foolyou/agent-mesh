@@ -59,7 +59,7 @@ export function createMeshControlHandlers(manager: MeshManager): MeshControlHand
 const agentSchema = z.object({
   id: z.string(),
   harness: z.enum(harnessIds).describe("agent harness type"),
-  project: z.string().describe("relative working directory"),
+  project: z.string().describe("working directory"),
   role: z.enum(["router", "member"]).describe("'router' (exactly one per mesh) or 'member'"),
 });
 const edgeSchema = z.union([

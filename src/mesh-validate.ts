@@ -1,7 +1,6 @@
 // src/mesh-validate.ts
 // Deterministic validation of a mesh topology. The control plane runs this over
 // every (possibly LLM-generated) MeshConfig before defining/persisting it.
-import { isAbsolute } from "node:path";
 import { HARNESSES } from "./harness";
 import { normalizeMeshEdge, normalizeMeshEdges, type AgentConfig, type AgentStatus, type MeshConfig, type MeshEdge, type MeshEdgeInput } from "./acp/types";
 
@@ -28,8 +27,8 @@ export function validateMeshConfig(config: MeshConfig): void {
     }
     if (ids.has(a.id)) throw new Error(`duplicate agent id "${a.id}"`);
     ids.add(a.id);
-    if (!a.project || isAbsolute(a.project)) {
-      throw new Error(`agent "${a.id}" project must be a relative path (got "${a.project}")`);
+    if (!a.project) {
+      throw new Error(`agent "${a.id}" project is required`);
     }
     if (a.effort !== undefined && !["minimal", "low", "medium", "high"].includes(a.effort)) {
       throw new Error(`agent "${a.id}" has invalid effort "${a.effort}" (use minimal|low|medium|high)`);
@@ -92,8 +91,8 @@ export function validateAddAgent(config: MeshConfig, cfg: AgentConfig): AgentCon
   if (!(agent.harness in HARNESSES)) {
     throw new Error(`agent "${agent.id}" has unknown harness "${agent.harness}"`);
   }
-  if (!agent.project || isAbsolute(agent.project)) {
-    throw new Error(`agent "${agent.id}" project must be a relative path (got "${agent.project}")`);
+  if (!agent.project) {
+    throw new Error(`agent "${agent.id}" project is required`);
   }
   if (agent.effort !== undefined && !["minimal", "low", "medium", "high"].includes(agent.effort)) {
     throw new Error(`agent "${agent.id}" has invalid effort "${agent.effort}" (use minimal|low|medium|high)`);

@@ -75,9 +75,9 @@ test("rejects steer edges targeting the router", () => {
   expect(() => validateMeshConfig({ ...ok, edges: [{ from: "m", to: "r", steer: true }] })).toThrow(/steer.*router/i);
 });
 
-test("rejects absolute project paths", () => {
+test("accepts absolute project paths", () => {
   const abs = { ...ok, agents: [{ ...ok.agents[0]!, project: "/etc" }, ok.agents[1]!] };
-  expect(() => validateMeshConfig(abs)).toThrow(/relative/i);
+  expect(() => validateMeshConfig(abs)).not.toThrow();
 });
 
 test("accepts an optional charter and rejects an overly long one", () => {
