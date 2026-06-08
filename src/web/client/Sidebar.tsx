@@ -121,12 +121,23 @@ function MeshList({
   );
 }
 
-function MasterChat({ state, store }: { state: GatewayState; store: Store }) {
+function MasterChat({
+  state,
+  store,
+  isFullscreen,
+  onToggleFull,
+}: {
+  state: GatewayState;
+  store: Store;
+  isFullscreen: boolean;
+  onToggleFull: () => void;
+}) {
   const { t } = useI18n();
   const st = state.master.status;
   const absent = st === "absent";
+  const fullLabel = isFullscreen ? t("exit") : t("full");
   return (
-    <div className="panel">
+    <div className={`panel master-chat ${isFullscreen ? "master-full" : ""}`}>
       <div className="head">
         <span className="ttl">{t("conductor")}</span>
         <span className="row" style={{ gap: 6 }}>
@@ -134,6 +145,9 @@ function MasterChat({ state, store }: { state: GatewayState; store: Store }) {
           <span className="sub">{tStatus(t, st)}</span>
         </span>
         <span className="right">
+          <Btn small kind="ghost" title={fullLabel} ariaLabel={`${fullLabel} ${t("conductor")}`} onClick={onToggleFull}>
+            {isFullscreen ? "⊟" : "⊞"}
+          </Btn>
           <InfoIcon text={t("conductor.sub")} />
         </span>
       </div>
@@ -162,17 +176,21 @@ export function Sidebar({
   selected,
   onSelect,
   onNewMesh,
+  masterFullscreen,
+  onToggleMasterFull,
 }: {
   state: GatewayState;
   store: Store;
   selected: string | null;
   onSelect: (n: string) => void;
   onNewMesh: () => void;
+  masterFullscreen: boolean;
+  onToggleMasterFull: () => void;
 }) {
   return (
     <div className="sidebar">
       <MeshList state={state} store={store} selected={selected} onSelect={onSelect} onNewMesh={onNewMesh} />
-      <MasterChat state={state} store={store} />
+      <MasterChat state={state} store={store} isFullscreen={masterFullscreen} onToggleFull={onToggleMasterFull} />
     </div>
   );
 }

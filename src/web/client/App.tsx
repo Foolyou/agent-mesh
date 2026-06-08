@@ -12,6 +12,7 @@ import { I18nContext, loadLang, saveLang, translate, tStatus, type Lang } from "
 import { Dot, Btn, InfoIcon } from "./ui";
 
 const SEL_KEY = "mesh.selected";
+type FullView = "agent" | "master" | null;
 
 function Toaster({ store }: { store: Store }) {
   const toasts = useToasts(store);
@@ -54,7 +55,7 @@ export function App() {
 
   const [selectedMesh, setSelectedMeshRaw] = useState<string | null>(null);
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
-  const [fullscreen, setFullscreen] = useState(false);
+  const [fullView, setFullView] = useState<FullView>(null);
   const [newMeshOpen, setNewMeshOpen] = useState(false);
   const [editInitial, setEditInitial] = useState<import("../types").MeshConfig | null>(null);
 
@@ -99,7 +100,7 @@ export function App() {
   // reset agent selection + fullscreen when switching mesh
   useEffect(() => {
     setSelectedAgent(null);
-    setFullscreen(false);
+    setFullView(null);
   }, [selectedMesh]);
 
   const names = state.meshes.map((m) => m.name);
@@ -114,14 +115,14 @@ export function App() {
     onPrev: () => cycle(-1),
     onNext: () => cycle(1),
     onReload: () => void store.reload(),
-    onToggleFull: () => selectedMesh && setFullscreen((f) => !f),
+    onToggleFull: () => selectedMesh && setFullView((v) => (v === "agent" ? null : "agent")),
     onNewMesh: () => {
       setEditInitial(null);
       setNewMeshOpen(true);
     },
     onEsc: () => {
       if (newMeshOpen) setNewMeshOpen(false);
-      else if (fullscreen) setFullscreen(false);
+      else if (fullView) setFullView(null);
       else setSelectedMesh(null);
     },
     onDigit: (idx) => {
@@ -155,8 +156,8 @@ export function App() {
         meshName={selectedMesh!}
         selectedAgent={selectedAgent}
         onSelectAgent={setSelectedAgent}
-        fullscreen={fullscreen}
-        onToggleFull={() => setFullscreen((f) => !f)}
+        fullscreen={fullView === "agent"}
+        onToggleFull={() => setFullView((v) => (v === "agent" ? null : "agent"))}
         onDeleted={() => setSelectedMesh(null)}
         onEdit={() => selectedMesh && void openEditor(selectedMesh)}
         mobile={mobile}
@@ -164,7 +165,15 @@ export function App() {
     </div>
   );
   const overview = (
-    <Sidebar state={state} store={store} selected={selectedMesh} onSelect={setSelectedMesh} onNewMesh={openNew} />
+    <Sidebar
+      state={state}
+      store={store}
+      selected={selectedMesh}
+      onSelect={setSelectedMesh}
+      onNewMesh={openNew}
+      masterFullscreen={fullView === "master"}
+      onToggleMasterFull={() => setFullView((v) => (v === "master" ? null : "master"))}
+    />
   );
 
   return (
