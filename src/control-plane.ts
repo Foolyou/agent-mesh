@@ -10,7 +10,7 @@ import { Mesh } from "./mesh";
 import { buildMeshBriefing } from "./mesh-briefing";
 import { createMeshServicesServer, type MeshServicesServer, type MeshToolContext } from "./mcp/mesh-services";
 import { sendMail, readMailFor } from "./mailbox";
-import { now, type AgentActivity, type AgentId, type MeshConfig, type MeshEvent, type PromptImageRef } from "./acp/types";
+import { now, type AgentActivity, type AgentId, type MeshConfig, type MeshEvent, type PromptImageRef, type SessionMode } from "./acp/types";
 
 interface PendingDecision {
   resolve: (decision: PermissionDecision) => void;
@@ -40,6 +40,8 @@ export class ControlPlane {
   private connectionFactory: (opts: AcpConnectionOptions) => AcpAgentConnection;
   /** Per-agent advertised image-input capability (promptCapabilities.image). */
   private imageCaps = new Map<AgentId, boolean>();
+  /** Per-agent advertised permission/session modes. */
+  private sessionModes = new Map<AgentId, { current: string; available: SessionMode[] }>();
   /** Agents that have already received the one-time mesh briefing. */
   private briefed = new Set<AgentId>();
   /** Per-agent in-flight prompt turns. count > 0 means working unless the agent is dead. */
@@ -73,6 +75,24 @@ export class ControlPlane {
     return c;
   }
 
+  /** Current authoritative agent state for reconnecting clients. */
+  snapshotEvents(): MeshEvent[] {
+    const ts = now();
+    const events: MeshEvent[] = [];
+    for (const a of this.mesh.agents) {
+      events.push({ kind: "agent_status", agent: a.id, status: this.mesh.status(a.id) ?? "spawning", ts });
+      events.push({ kind: "agent_activity", agent: a.id, activity: this.activityOf(a.id), ts });
+      if (this.imageCaps.has(a.id)) {
+        events.push({ kind: "agent_capabilities", agent: a.id, image: this.imageCaps.get(a.id)!, ts });
+      }
+      const modes = this.sessionModes.get(a.id);
+      if (modes) {
+        events.push({ kind: "agent_modes", agent: a.id, current: modes.current, available: modes.available, ts });
+      }
+    }
+    return events;
+  }
+
   /** Prepend the one-time mesh briefing to an agent's very first prompt, so it knows
    *  it is part of a collaborating mesh before it does any work. */
   private compose(id: AgentId, text: string): string {
@@ -100,6 +120,8 @@ export class ControlPlane {
   /** Switch an agent's permission/approval mode (delegates to its connection). */
   async setMode(id: AgentId, modeId: string): Promise<void> {
     await this.agent(id).setMode(modeId);
+    const modes = this.sessionModes.get(id);
+    if (modes) this.sessionModes.set(id, { ...modes, current: modeId });
     // Some agents (e.g. claude) don't emit a current_mode_update after setSessionMode, so the
     // operator's picker would snap back to the old mode. Echo the change ourselves so the UI
     // reflects the switch immediately (the gateway folds current_mode_update into pm.modes).
@@ -175,6 +197,7 @@ export class ControlPlane {
         }
       }
       if (available.length) {
+        this.sessionModes.set(a.id, { current, available });
         this.emit({ kind: "agent_modes", agent: a.id, current, available, ts: now() });
       }
       const imageCap = !!(initRes as any)?.agentCapabilities?.promptCapabilities?.image;

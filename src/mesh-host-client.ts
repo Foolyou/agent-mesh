@@ -156,6 +156,9 @@ export class MeshHostClient {
           this.opts.onEvent?.(e.event);
         }
         break;
+      case "snapshot":
+        for (const e of msg.events) this.opts.onEvent?.(e);
+        break;
       case "event":
         if (msg.seq > this.lastSeq) this.lastSeq = msg.seq;
         this.opts.onEvent?.(msg.event);

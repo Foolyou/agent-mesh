@@ -25,6 +25,7 @@ export type ChildMsg =
   | { t: "ack"; proto: number; running: boolean; seq: number }
   | { t: "event"; seq: number; event: MeshEvent }
   | { t: "replay"; events: SeqEvent[] }
+  | { t: "snapshot"; events: MeshEvent[] }
   | { t: "stopped" };
 
 /** parent (MeshManager) -> child (mesh-host) */

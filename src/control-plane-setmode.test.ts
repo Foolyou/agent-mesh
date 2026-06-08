@@ -15,7 +15,17 @@ class FakeAcpConnection {
     return { agentCapabilities: { promptCapabilities: { image: true } } };
   }
   async newSession(): Promise<unknown> {
-    return { sessionId: `s-${this.opts.id}`, promptCapabilities: { image: false } };
+    return {
+      sessionId: `s-${this.opts.id}`,
+      promptCapabilities: { image: false },
+      modes: {
+        currentModeId: "default",
+        availableModes: [
+          { id: "default", name: "Default", description: "normal access" },
+          { id: "plan", name: "Plan" },
+        ],
+      },
+    };
   }
   async prompt(): Promise<unknown> {
     return { stopReason: "end_turn" };
@@ -190,6 +200,41 @@ test("start emits image capability advertised by initialize", async () => {
     await cp.start();
     const cap = events.find((e) => e.kind === "agent_capabilities" && e.agent === "router");
     expect(cap?.image).toBe(true);
+  } finally {
+    await cp.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("snapshotEvents backfills current status, activity, capabilities, and modes", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mesh-control-plane-snapshot-"));
+  const config: MeshConfig = {
+    name: "snapshot",
+    agents: [{ id: "router", harness: "claude", project: ".", role: "router" }],
+    edges: [],
+  };
+  const cp = new ControlPlane(config, {
+    mailboxPath: join(root, "mailbox.ndjson"),
+    connectionFactory: (opts) => new FakeAcpConnection(opts) as unknown as AcpAgentConnection,
+  });
+  try {
+    await cp.start();
+    const events = cp.snapshotEvents();
+    expect(events).toContainEqual(expect.objectContaining({ kind: "agent_status", agent: "router", status: "ready" }));
+    expect(events).toContainEqual(expect.objectContaining({ kind: "agent_activity", agent: "router", activity: "idle" }));
+    expect(events).toContainEqual(expect.objectContaining({ kind: "agent_capabilities", agent: "router", image: true }));
+    expect(events).toContainEqual(expect.objectContaining({
+      kind: "agent_modes",
+      agent: "router",
+      current: "default",
+      available: [
+        { id: "default", name: "Default", description: "normal access" },
+        { id: "plan", name: "Plan", description: undefined },
+      ],
+    }));
+
+    (cp as any).mesh.setStatus("router", "dead");
+    expect(cp.snapshotEvents()).toContainEqual(expect.objectContaining({ kind: "agent_status", agent: "router", status: "dead" }));
   } finally {
     await cp.stop();
     await rm(root, { recursive: true, force: true });

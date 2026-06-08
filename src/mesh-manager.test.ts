@@ -141,6 +141,10 @@ test("a daemon outlives the backend: reattachRunning reconnects + replays + driv
   // replay rebuilt the pre-restart event into the fresh manager's stream
   await Bun.sleep(50);
   expect(ev2.some((e) => e.kind === "log" && (e as any).text === "echo:before")).toBe(true);
+  expect(ev2).toContainEqual(expect.objectContaining({ kind: "agent_status", agent: "r", status: "ready" }));
+  expect(ev2).toContainEqual(expect.objectContaining({ kind: "agent_activity", agent: "r", activity: "idle" }));
+  expect(ev2).toContainEqual(expect.objectContaining({ kind: "agent_capabilities", agent: "r", image: true }));
+  expect(ev2).toContainEqual(expect.objectContaining({ kind: "agent_modes", agent: "r", current: "default" }));
 
   // and the fresh manager can drive the reattached daemon
   mgr2.promptAgent("echo", "r", "after");

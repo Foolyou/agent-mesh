@@ -8,6 +8,9 @@ const cp = {
   on(_l: (e: MeshEvent) => void) {
     return () => {};
   },
+  snapshotEvents() {
+    return [];
+  },
   async prompt() {
     return {};
   },
