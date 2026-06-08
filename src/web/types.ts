@@ -1,7 +1,7 @@
 // Shared types for the WebUI: aggregated transcript items, gateway state, and the
 // WebSocket wire protocol. These are the contract between WebGateway (server) and
 // the client store.
-import type { MeshConfig, AgentId, AgentStatus, AgentRole, HarnessId, SessionMode, PromptImageRef, ThinkingEffort } from "../acp/types";
+import type { MeshConfig, AgentId, AgentStatus, AgentActivity, AgentRole, HarnessId, SessionMode, PromptImageRef, ThinkingEffort } from "../acp/types";
 export type { SessionMode };
 export type { PromptImageRef };
 export type { ThinkingEffort };
@@ -64,7 +64,7 @@ export interface MeshSummary {
   defined: boolean;
   status: MeshStatus;
   router: AgentId;
-  agents: { id: AgentId; harness: HarnessId; role: AgentRole; status: AgentStatus; effort?: ThinkingEffort }[];
+  agents: { id: AgentId; harness: HarnessId; role: AgentRole; status: AgentStatus; activity: AgentActivity; effort?: ThinkingEffort }[];
   /** Directed mail edges [from, to]; lets the topology render from the summary alone. */
   edges: [AgentId, AgentId][];
 }
@@ -126,6 +126,7 @@ export type ServerMsg =
   | { t: "mesh.list"; meshes: MeshSummary[] }
   | { t: "mesh.status"; name: string; status: MeshStatus }
   | { t: "agent.status"; name: string; agent: AgentId; status: AgentStatus; detail?: string }
+  | { t: "agent.activity"; name: string; agent: AgentId; activity: AgentActivity }
   | { t: "agent.modes"; name: string; agent: AgentId; current: string; available: SessionMode[] }
   | { t: "agent.capabilities"; name: string; agent: AgentId; image: boolean }
   | { t: "master.capabilities"; image: boolean }
@@ -137,4 +138,4 @@ export type ServerMsg =
   | { t: "permission.remove"; name: string; resolved: ResolvedPermission }
   | { t: "master.status"; status: MasterStatus };
 
-export type { MeshConfig, AgentId, AgentStatus, AgentRole, HarnessId };
+export type { MeshConfig, AgentId, AgentStatus, AgentActivity, AgentRole, HarnessId };

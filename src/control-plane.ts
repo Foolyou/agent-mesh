@@ -10,7 +10,7 @@ import { Mesh } from "./mesh";
 import { buildMeshBriefing } from "./mesh-briefing";
 import { createMeshServicesServer, type MeshServicesServer, type MeshToolContext } from "./mcp/mesh-services";
 import { sendMail, readMailFor } from "./mailbox";
-import { now, type AgentId, type MeshConfig, type MeshEvent, type PromptImageRef } from "./acp/types";
+import { now, type AgentActivity, type AgentId, type MeshConfig, type MeshEvent, type PromptImageRef } from "./acp/types";
 
 interface PendingDecision {
   resolve: (decision: PermissionDecision) => void;
@@ -42,6 +42,9 @@ export class ControlPlane {
   private imageCaps = new Map<AgentId, boolean>();
   /** Agents that have already received the one-time mesh briefing. */
   private briefed = new Set<AgentId>();
+  /** Per-agent in-flight prompt turns. count > 0 means working unless the agent is dead. */
+  private turnCounts = new Map<AgentId, number>();
+  private activityStates = new Map<AgentId, AgentActivity>();
 
   constructor(config: MeshConfig, opts: ControlPlaneOptions = {}) {
     this.mesh = new Mesh(config);
@@ -85,7 +88,13 @@ export class ControlPlane {
    *  still gets the text turn instead of rejecting the whole prompt. */
   prompt(id: AgentId, text: string, images: PromptImageRef[] = []) {
     const imgs = this.imageCaps.get(id) ? images : [];
-    return this.agent(id).prompt(this.compose(id, text), imgs.map((i) => this.resolveImagePath(i)));
+    const conn = this.agent(id);
+    const prompt = this.compose(id, text);
+    const promptImages = imgs.map((i) => this.resolveImagePath(i));
+    return this.trackTurn(
+      id,
+      () => conn.prompt(prompt, promptImages),
+    );
   }
 
   /** Switch an agent's permission/approval mode (delegates to its connection). */
@@ -140,6 +149,8 @@ export class ControlPlane {
         onPermission: (req) => this.handlePermission(a.id, req),
         onExit: (code) => {
           this.mesh.setStatus(a.id, "dead");
+          this.turnCounts.set(a.id, 0);
+          this.emitActivityIfChanged(a.id);
           this.emit({ kind: "agent_status", agent: a.id, status: "dead", detail: `exit ${code}`, ts: now() });
         },
       });
@@ -188,9 +199,41 @@ export class ControlPlane {
         .filter((o) => o.id !== a.id && this.mesh.canMail(a.id, o.id))
         .map((o) => o.id);
       const me = a.id === forAgent ? " (you)" : "";
-      return `- ${a.id}${me} [${a.harness}, ${a.role}, ${this.mesh.status(a.id)}] can mail: ${reach.join(", ") || "(none)"}`;
+      return `- ${a.id}${me} [${a.harness}, ${a.role}, ${this.mesh.status(a.id)}, ${this.activityOf(a.id)}] can mail: ${reach.join(", ") || "(none)"}`;
     });
     return `Mesh "${this.mesh.name}" — router is ${this.mesh.router.id}.\n${lines.join("\n")}`;
+  }
+
+  private activityOf(id: AgentId): AgentActivity {
+    if (this.mesh.status(id) === "dead") return "idle";
+    return (this.turnCounts.get(id) ?? 0) > 0 ? "working" : "idle";
+  }
+
+  private emitActivityIfChanged(id: AgentId): void {
+    const activity = this.activityOf(id);
+    if ((this.activityStates.get(id) ?? "idle") === activity) return;
+    this.activityStates.set(id, activity);
+    this.emit({ kind: "agent_activity", agent: id, activity, ts: now() });
+  }
+
+  private trackTurn<T>(id: AgentId, start: () => Promise<T>): Promise<T> {
+    this.turnCounts.set(id, (this.turnCounts.get(id) ?? 0) + 1);
+    this.emitActivityIfChanged(id);
+    let turn: Promise<T>;
+    try {
+      turn = start();
+    } catch (err) {
+      this.finishTurn(id);
+      throw err;
+    }
+    return turn.finally(() => this.finishTurn(id));
+  }
+
+  private finishTurn(id: AgentId): void {
+      const next = Math.max(0, (this.turnCounts.get(id) ?? 0) - 1);
+      if (next === 0) this.turnCounts.delete(id);
+      else this.turnCounts.set(id, next);
+      this.emitActivityIfChanged(id);
   }
 
   private async handleSendMail(ctx: MeshToolContext, to: AgentId, body: string): Promise<string> {
@@ -212,7 +255,8 @@ export class ControlPlane {
       `[MAIL from ${from}]: ${body}\n\n` +
       `This arrived in your mesh mailbox. Read it and respond appropriately; ` +
       `you may reply with the send_mail tool (to: "${from}").`;
-    conn.prompt(this.compose(to, mail)).catch((err) => this.log(`wake(${to}) failed: ${String(err)}`));
+    const prompt = this.compose(to, mail);
+    this.trackTurn(to, () => conn.prompt(prompt)).catch((err) => this.log(`wake(${to}) failed: ${String(err)}`));
   }
 
   private resolveImagePath(image: PromptImageRef): PromptImageRef {

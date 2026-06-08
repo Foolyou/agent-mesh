@@ -55,6 +55,15 @@ export function applyMsg(state: GatewayState, msg: ServerMsg): GatewayState {
             : m,
         ),
       };
+    case "agent.activity":
+      return {
+        ...state,
+        meshes: state.meshes.map((m) =>
+          m.name === msg.name
+            ? { ...m, agents: m.agents.map((a) => (a.id === msg.agent ? { ...a, activity: msg.activity } : a)) }
+            : m,
+        ),
+      };
     case "agent.modes":
       return withPerMesh(state, msg.name, (pm) => ({
         ...pm,

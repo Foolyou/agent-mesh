@@ -4,7 +4,7 @@
 // It has no HTTP/WS dependency: server.ts adapts it to Bun.serve, tests drive it directly.
 import { reduceTranscript } from "./transcript";
 import { now } from "../acp/types";
-import type { MeshConfig, MeshEvent, AgentId, AgentStatus, PromptImageRef, ThinkingEffort } from "../acp/types";
+import type { MeshConfig, MeshEvent, AgentId, AgentStatus, AgentActivity, PromptImageRef, ThinkingEffort } from "../acp/types";
 import { readUpload, storeUploads, uploadPath, type UploadFileLike } from "./uploads";
 import type {
   GatewayState,
@@ -66,6 +66,7 @@ export class WebGateway {
   private state: GatewayState;
   private listeners = new Set<(m: ServerMsg) => void>();
   private agStatus = new Map<string, Map<AgentId, AgentStatus>>();
+  private agActivity = new Map<string, Map<AgentId, AgentActivity>>();
   private uidc = 0;
   private unsubMgr?: () => void;
   private unsubMaster?: () => void;
@@ -128,18 +129,23 @@ export class WebGateway {
       }
       const live = m.status === "running" || m.status === "starting";
       const tracked = this.agStatus.get(m.name);
+      const activity = this.agActivity.get(m.name);
       return {
         name: m.name,
         defined: m.defined,
         status: m.status,
         router,
-        agents: config.agents.map((a) => ({
-          id: a.id,
-          harness: a.harness,
-          role: a.role,
-          status: (live ? tracked?.get(a.id) : undefined) ?? (live ? "spawning" : "dead"),
-          effort: a.effort,
-        })),
+        agents: config.agents.map((a) => {
+          const status = (live ? tracked?.get(a.id) : undefined) ?? (live ? "spawning" : "dead");
+          return {
+            id: a.id,
+            harness: a.harness,
+            role: a.role,
+            status,
+            activity: status === "dead" ? "idle" : ((live ? activity?.get(a.id) : undefined) ?? "idle"),
+            effort: a.effort,
+          };
+        }),
         edges: config.edges,
       };
     });
@@ -283,6 +289,16 @@ export class WebGateway {
         this.broadcast({ t: "agent.status", name, agent: e.agent, status: e.status, detail: e.detail });
         break;
       }
+      case "agent_activity": {
+        let a = this.agActivity.get(name);
+        if (!a) {
+          a = new Map();
+          this.agActivity.set(name, a);
+        }
+        a.set(e.agent, e.activity);
+        this.broadcast({ t: "agent.activity", name, agent: e.agent, activity: e.activity });
+        break;
+      }
     }
     this.refreshMeshes();
   }
@@ -299,6 +315,7 @@ export class WebGateway {
   async stopMesh(name: string): Promise<void> {
     await this.manager.stopMesh(name);
     this.agStatus.delete(name);
+    this.agActivity.delete(name);
     this.refreshMeshes();
   }
   async reload(): Promise<void> {
@@ -313,6 +330,7 @@ export class WebGateway {
     await this.manager.deleteMesh(name);
     delete this.state.perMesh[name];
     this.agStatus.delete(name);
+    this.agActivity.delete(name);
     this.refreshMeshes();
   }
   private routerId(name: string): string {
