@@ -108,13 +108,14 @@ function ModeControl({ mesh, agent, store, modes }: { mesh: string; agent: strin
 
 const EFFORTS: ThinkingEffort[] = ["minimal", "low", "medium", "high"];
 
-// Per-agent thinking-effort picker. Effort is a launch-time setting (codex flag / claude env),
-// so changing it just PERSISTS the choice (no restart) and it takes hold on the agent's next
-// start — never restarting the running mesh. opencode has no mechanism, so the control is hidden.
+// Per-agent thinking-effort picker. Effort is a launch-time setting, so it's editable only while
+// the mesh is STOPPED (the choice persists and applies on next start); while running it's shown
+// read-only. opencode has no mechanism, so the control is hidden for it.
 function EffortControl({ m, agent, store }: { m: MeshSummary; agent: string; store: Store }) {
   const { t } = useI18n();
   const a = m.agents.find((x) => x.id === agent);
   if (!a || a.harness === "opencode") return null;
+  const live = m.status === "running" || m.status === "starting";
   return (
     <span className="row" style={{ gap: 5 }}>
       <span className="sub" style={{ fontSize: 10 }}>
@@ -123,7 +124,8 @@ function EffortControl({ m, agent, store }: { m: MeshSummary; agent: string; sto
       <select
         className="effort-sel"
         value={a.effort ?? ""}
-        title={t("effort.hint")}
+        disabled={live}
+        title={live ? t("effort.hint.live") : t("effort.hint")}
         onKeyDown={(e) => e.stopPropagation()}
         onChange={(e) => void store.setEffort(m.name, agent, (e.target.value || undefined) as ThinkingEffort | undefined)}
       >

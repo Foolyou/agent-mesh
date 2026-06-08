@@ -33,6 +33,11 @@ export function validateMeshConfig(config: MeshConfig): void {
     if (a.effort !== undefined && !["minimal", "low", "medium", "high"].includes(a.effort)) {
       throw new Error(`agent "${a.id}" has invalid effort "${a.effort}" (use minimal|low|medium|high)`);
     }
+    // mode is the agent's authority at runtime; only sanity-check the shape here (lenient, since
+    // the advertised mode ids vary by harness/version and the agent rejects unknown ones).
+    if (a.mode !== undefined && (typeof a.mode !== "string" || !a.mode.trim())) {
+      throw new Error(`agent "${a.id}" mode must be a non-empty string`);
+    }
   }
 
   for (const [from, to] of edges ?? []) {

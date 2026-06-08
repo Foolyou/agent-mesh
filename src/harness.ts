@@ -18,6 +18,15 @@ export function resolveHarness(id: HarnessId): HarnessSpec {
   return spec;
 }
 
+// Permission/session modes each harness advertises, used to offer a create-time choice in the
+// builder (the agent re-advertises the authoritative list at runtime). An empty list = the
+// harness exposes no selectable modes. These are applied best-effort via setSessionMode at start.
+export const HARNESS_MODES: Record<HarnessId, string[]> = {
+  claude: ["default", "acceptEdits", "plan", "bypassPermissions"],
+  codex: ["read-only", "default", "full-access"],
+  opencode: [],
+};
+
 // claude reads MAX_THINKING_TOKENS at session start; map the effort levels to token budgets.
 const CLAUDE_THINK_TOKENS: Record<ThinkingEffort, number> = {
   minimal: 1024,

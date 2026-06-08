@@ -173,18 +173,13 @@ try {
     await detailed.locator(".tdetail").waitFor({ state: "detached", timeout: 4000 });
   });
 
-  await step("thinking-effort persists + reflects without restarting the mesh", async () => {
+  await step("thinking effort is read-only while the mesh is running", async () => {
+    // effort is a launch-time setting — while running it's shown but not editable (edit when stopped
+    // or in the builder). The create/edit builder test covers the stopped-edit + persist round-trip.
     await page.locator('.topo .node:has-text("codex-1")').click();
     const sel = page.locator('.dchat .panel:has(.tabs) .effort-sel').first();
     await sel.waitFor({ timeout: 6000 });
-    await sel.selectOption("high");
-    // round-trips back through the summary so the picker reflects the saved value
-    await page.waitForFunction(
-      () => (document.querySelector('.dchat .panel:has(.tabs) .effort-sel') as HTMLSelectElement)?.value === "high",
-      { timeout: 6000 },
-    );
-    // the running mesh was NOT restarted by the effort change
-    if (!(await page.locator('.detail-head:has-text("running")').count())) throw new Error("mesh left the running state");
+    if (!(await sel.isDisabled())) throw new Error("effort select should be read-only (disabled) while running");
   });
 
   await step("failed command surfaces an error toast", async () => {
@@ -323,6 +318,10 @@ try {
   await step("mesh builder: valid config creates a mesh", async () => {
     await page.locator('.modal .field:has(label:has-text("mesh name")) input').fill("squad-x");
     await page.locator(".modal textarea").fill("Goal: build a tiny CLI. Norms: be concise, write a test.");
+    // set the (claude) agent's thinking effort + initial permission mode in the builder
+    const adv = page.locator(".modal .agrow-adv .adv-sel");
+    await adv.nth(0).selectOption("high"); // effort
+    await adv.nth(1).selectOption("plan"); // mode
     await page.screenshot({ path: `${SHOTS}/03-builder.png`, fullPage: true });
     await page.locator('.modal .btn:has-text("define mesh")').click();
     await page.waitForSelector('.mrow:has-text("squad-x")', { timeout: 6000 });
@@ -338,6 +337,10 @@ try {
     if (val !== "squad-x") throw new Error(`edit prefill wrong name: "${val}"`);
     const charterVal = await page.locator(".modal textarea").inputValue();
     if (!charterVal.includes("build a tiny CLI")) throw new Error(`charter not prefilled: "${charterVal}"`);
+    // effort + initial mode round-trip from the saved config back into the builder
+    const adv2 = page.locator(".modal .agrow-adv .adv-sel");
+    if ((await adv2.nth(0).inputValue()) !== "high") throw new Error("effort not prefilled");
+    if ((await adv2.nth(1).inputValue()) !== "plan") throw new Error("mode not prefilled");
     await page.locator('.modal .btn:has-text("save mesh")').click();
     await page.waitForSelector(".modal", { state: "detached", timeout: 4000 });
     await page.waitForSelector('.mrow:has-text("squad-x")', { timeout: 4000 });

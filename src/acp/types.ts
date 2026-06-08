@@ -20,6 +20,10 @@ export interface AgentConfig {
   role: AgentRole;
   /** Optional reasoning/thinking effort; applied when the agent process (re)starts. */
   effort?: ThinkingEffort;
+  /** Optional initial permission/session mode id (e.g. claude "plan", codex "read-only");
+   *  applied via setSessionMode right after the session starts. Operator can still switch at
+   *  runtime. `undefined` = the agent's own default mode. */
+  mode?: string;
 }
 
 export interface MeshConfig {

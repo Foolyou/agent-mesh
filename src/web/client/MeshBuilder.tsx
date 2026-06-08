@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { Store } from "./store";
 import type { HarnessId, AgentRole, MeshConfig, ThinkingEffort } from "../types";
+import { HARNESS_MODES } from "../../harness";
 import { Btn } from "./ui";
 import { useI18n } from "./i18n";
 
@@ -12,6 +13,7 @@ interface AgentDraft {
   role: AgentRole;
   project: string;
   effort?: ThinkingEffort;
+  mode?: string;
 }
 
 const HARNESSES: HarnessId[] = ["claude", "codex", "opencode"];
@@ -48,7 +50,7 @@ export function MeshBuilder({
   const [name, setName] = useState(initial?.name ?? "");
   const [agents, setAgents] = useState<AgentDraft[]>(
     initial?.agents?.length
-      ? initial.agents.map((a) => ({ id: a.id, harness: a.harness, role: a.role, project: a.project, effort: a.effort }))
+      ? initial.agents.map((a) => ({ id: a.id, harness: a.harness, role: a.role, project: a.project, effort: a.effort, mode: a.mode }))
       : [{ id: "router", harness: "claude", role: "router", project: "test_mesh_0" }],
   );
   const [edges, setEdges] = useState<[string, string][]>(initial ? initial.edges.map((e) => [e[0], e[1]]) : []);
@@ -110,35 +112,54 @@ export function MeshBuilder({
           <div className="field">
             <label>{t("build.agents")}</label>
             {agents.map((a, i) => (
-              <div className="agrow" key={i}>
-                <input className="inp" value={a.id} placeholder="id" onChange={(e) => setAgent(i, { id: e.target.value })} />
-                <select className="inp" value={a.harness} onChange={(e) => setAgent(i, { harness: e.target.value as HarnessId })}>
-                  {HARNESSES.map((h) => (
-                    <option key={h} value={h}>
-                      {h}
-                    </option>
-                  ))}
-                </select>
-                <select className="inp" value={a.role} onChange={(e) => setAgent(i, { role: e.target.value as AgentRole })}>
-                  <option value="router">router</option>
-                  <option value="member">member</option>
-                </select>
-                <input className="inp" value={a.project} placeholder="project dir" onChange={(e) => setAgent(i, { project: e.target.value })} />
-                <select
-                  className="inp"
-                  value={a.effort ?? ""}
-                  title={t("effort.hint")}
-                  onChange={(e) => setAgent(i, { effort: (e.target.value || undefined) as ThinkingEffort | undefined })}
-                >
-                  <option value="">{t("effort.default")}</option>
-                  <option value="minimal">{t("effort.minimal")}</option>
-                  <option value="low">{t("effort.low")}</option>
-                  <option value="medium">{t("effort.medium")}</option>
-                  <option value="high">{t("effort.high")}</option>
-                </select>
-                <Btn small kind="ghost" onClick={() => delAgent(i)} disabled={agents.length === 1}>
-                  ✕
-                </Btn>
+              <div className="agent-block" key={i}>
+                <div className="agrow">
+                  <input className="inp" value={a.id} placeholder="id" onChange={(e) => setAgent(i, { id: e.target.value })} />
+                  <select className="inp" value={a.harness} onChange={(e) => setAgent(i, { harness: e.target.value as HarnessId })}>
+                    {HARNESSES.map((h) => (
+                      <option key={h} value={h}>
+                        {h}
+                      </option>
+                    ))}
+                  </select>
+                  <select className="inp" value={a.role} onChange={(e) => setAgent(i, { role: e.target.value as AgentRole })}>
+                    <option value="router">router</option>
+                    <option value="member">member</option>
+                  </select>
+                  <input className="inp" value={a.project} placeholder="project dir" onChange={(e) => setAgent(i, { project: e.target.value })} />
+                  <Btn small kind="ghost" onClick={() => delAgent(i)} disabled={agents.length === 1}>
+                    ✕
+                  </Btn>
+                </div>
+                <div className="agrow-adv">
+                  <span className="adv-label">{t("effort")}</span>
+                  <select
+                    className="inp adv-sel"
+                    value={a.effort ?? ""}
+                    title={t("effort.hint")}
+                    onChange={(e) => setAgent(i, { effort: (e.target.value || undefined) as ThinkingEffort | undefined })}
+                  >
+                    <option value="">{t("effort.default")}</option>
+                    <option value="minimal">{t("effort.minimal")}</option>
+                    <option value="low">{t("effort.low")}</option>
+                    <option value="medium">{t("effort.medium")}</option>
+                    <option value="high">{t("effort.high")}</option>
+                  </select>
+                  <span className="adv-label">{t("mode")}</span>
+                  <select
+                    className="inp adv-sel"
+                    value={a.mode ?? ""}
+                    title={t("mode.hint")}
+                    onChange={(e) => setAgent(i, { mode: e.target.value || undefined })}
+                  >
+                    <option value="">{t("mode.default")}</option>
+                    {HARNESS_MODES[a.harness].map((mo) => (
+                      <option key={mo} value={mo}>
+                        {mo}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
             ))}
             <div>

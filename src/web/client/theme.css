@@ -1086,11 +1086,41 @@ body::after {
 select.inp {
   cursor: pointer;
 }
+.agent-block {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line);
+}
+.agent-block:last-of-type {
+  border-bottom: none;
+}
 .agrow {
   display: grid;
   grid-template-columns: 1.3fr 1fr 1fr 1.3fr auto;
   gap: 6px;
   align-items: center;
+}
+/* advanced per-agent settings (effort + initial mode) on a labeled sub-row */
+.agrow-adv {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-left: 2px;
+}
+.adv-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--fg-faint);
+  white-space: nowrap;
+}
+.adv-sel {
+  flex: 1;
+  min-width: 0;
+  padding: 3px 6px;
+  font-size: 12px;
 }
 .err {
   color: var(--bad);

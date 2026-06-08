@@ -25,6 +25,11 @@ test("accepts a valid per-agent effort and rejects an invalid one", () => {
   expect(() => validateMeshConfig({ ...ok, agents: [{ ...ok.agents[0], effort: "turbo" as any }, ok.agents[1]] })).toThrow(/effort/i);
 });
 
+test("accepts a per-agent mode (any non-empty string) and rejects a blank one", () => {
+  expect(() => validateMeshConfig({ ...ok, agents: [{ ...ok.agents[0], mode: "plan" }, ok.agents[1]] })).not.toThrow();
+  expect(() => validateMeshConfig({ ...ok, agents: [{ ...ok.agents[0], mode: "  " }, ok.agents[1]] })).toThrow(/mode/i);
+});
+
 test("rejects names containing '..' (path traversal)", () => {
   expect(() => validateMeshConfig({ ...ok, name: "a..b" })).toThrow(/name/i);
   expect(() => validateMeshConfig({ ...ok, name: ".." })).toThrow(/name/i);

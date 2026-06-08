@@ -150,8 +150,18 @@ export class ControlPlane {
       // (read-only / full-access / plan / …) instead of having to know mode-id strings.
       const modes = (session as any)?.modes;
       const available = (modes?.availableModes ?? []).map((mo: any) => ({ id: mo.id, name: mo.name ?? mo.id, description: mo.description ?? undefined }));
+      // Apply a configured initial permission/session mode (best-effort) before the first turn.
+      let current: string = modes?.currentModeId ?? available[0]?.id ?? "";
+      if (a.mode && available.some((mo: any) => mo.id === a.mode)) {
+        try {
+          await conn.setMode(a.mode);
+          current = a.mode;
+        } catch (err) {
+          this.log(`set initial mode ${a.id}=${a.mode} failed: ${String(err)}`);
+        }
+      }
       if (available.length) {
-        this.emit({ kind: "agent_modes", agent: a.id, current: modes?.currentModeId ?? available[0].id, available, ts: now() });
+        this.emit({ kind: "agent_modes", agent: a.id, current, available, ts: now() });
       }
       const imageCap = !!(session as any)?.promptCapabilities?.image;
       this.imageCaps.set(a.id, imageCap);
