@@ -28,31 +28,32 @@ test("prompt constructs ACP text plus readable image blocks and skips missing fi
   }
 });
 
-test("setModel sends the ACP session/set_model method directly", async () => {
-  const sent: any[] = [];
+test("setModel writes one raw ACP session/set_model line to child stdin", async () => {
+  const chunks: Uint8Array[] = [];
+  let flushes = 0;
   const c = Object.create(AcpAgentConnection.prototype) as AcpAgentConnection;
   (c as any).id = "a";
   (c as any).sessionId = "s";
   (c as any).rawRequestSeq = 0;
-  (c as any).stream = {
-    writable: {
-      getWriter() {
-        return {
-          async write(message: any) {
-            sent.push(message);
-          },
-          releaseLock() {},
-        };
+  (c as any).child = {
+    stdin: {
+      write(chunk: Uint8Array) {
+        chunks.push(chunk);
+      },
+      flush() {
+        flushes++;
       },
     },
   };
   await c.setModel("deepseek/deepseek-chat");
-  expect(sent).toEqual([
-    {
+  expect(flushes).toBe(1);
+  expect(chunks).toHaveLength(1);
+  expect(new TextDecoder().decode(chunks[0])).toBe(
+    JSON.stringify({
       jsonrpc: "2.0",
       id: "mesh-set-model-1",
       method: "session/set_model",
       params: { sessionId: "s", modelId: "deepseek/deepseek-chat" },
-    },
-  ]);
+    }) + "\n",
+  );
 });
