@@ -92,6 +92,7 @@ const DICT: Record<string, Entry> = {
   "tab.activity": ["activity", "活动"],
   "tab.mail": ["mail", "邮件"],
   "tab.history": ["history", "历史"],
+  "tabs.allMembers": ["all {n} members", "全部 {n} 个成员"],
 
   // ── empties ──
   "empty.members": ["no member agents", "没有成员 agent"],

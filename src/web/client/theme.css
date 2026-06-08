@@ -1030,6 +1030,96 @@ body::after {
   color: var(--fg);
   border-bottom-color: var(--ok);
 }
+.conv-panel {
+  min-height: 0;
+}
+.conv-head {
+  flex: none;
+}
+.conv-tabs {
+  flex: none;
+  align-items: stretch;
+  overflow: visible;
+  padding: 0;
+}
+.conv-tabs .tab {
+  font: inherit;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+}
+.conv-router-tab {
+  flex: none;
+  background: var(--bg-inset) !important;
+  border-right: 1px solid var(--line) !important;
+  box-shadow: inset -8px 0 12px rgba(0, 0, 0, 0.16);
+}
+.conv-router-tab .pin {
+  color: var(--fg-faint);
+  font-size: 11px;
+}
+.conv-member-strip {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  gap: 2px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  mask-image: linear-gradient(to right, #000 82%, transparent);
+  -webkit-mask-image: linear-gradient(to right, #000 82%, transparent);
+}
+.conv-member-strip::-webkit-scrollbar {
+  display: none;
+}
+.conv-member-tab {
+  flex: none;
+}
+.conv-overflow {
+  position: relative;
+  flex: none;
+  border-left: 1px solid var(--line);
+  background: var(--bg-raise);
+}
+.conv-overflow-btn {
+  height: 100%;
+}
+.conv-overflow-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 4px;
+  z-index: 30;
+  width: min(240px, 72vw);
+  max-height: 320px;
+  overflow: auto;
+  border: 1px solid var(--line-bright);
+  background: var(--bg-inset);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45);
+  padding: 4px;
+}
+.conv-overflow-item {
+  width: 100%;
+  font: inherit;
+  color: var(--fg-dim);
+  background: transparent;
+  border: none;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 8px;
+  cursor: pointer;
+  text-align: left;
+}
+.conv-overflow-item:hover {
+  color: var(--fg);
+  background: rgba(255, 255, 255, 0.05);
+}
+.conv-control {
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--line);
+  min-height: 36px;
+  gap: 7px;
+}
 
 /* ── modal ─────────────────────────────────────────────────────────────── */
 .scrim {
@@ -1267,9 +1357,7 @@ select.inp {
 .dchat {
   min-height: 0;
   min-width: 0;
-  display: grid;
-  grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 12px;
+  display: flex;
 }
 .drail {
   min-height: 0;
@@ -1360,7 +1448,7 @@ select.inp {
 .mtabs {
   flex: none;
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   border-top: 1px solid var(--line);
   background: var(--bg-raise);
   padding-bottom: env(safe-area-inset-bottom);
