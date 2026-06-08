@@ -68,6 +68,7 @@ const DICT: Record<string, Entry> = {
   topology: ["topology", "拓扑"],
   "topology.sub": ["agents · mail edges", "agent · 邮件边"],
   conversation: ["Conversation", "对话"],
+  "canvas.title": ["Canvas", "画板"],
   "router chat": ["router chat", "router 对话"],
   interrupt: ["interrupt", "中断"],
   full: ["full", "全屏"],

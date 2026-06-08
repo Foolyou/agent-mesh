@@ -6,7 +6,8 @@ import type { Store } from "./store";
 import type { GatewayState, MeshSummary, PerMeshState, ActivityEntry, MailEntry, ResolvedPermission, PermissionReq, AgentModes, ThinkingEffort } from "../types";
 import { Dot, Btn, Empty, ConfirmButton, InfoIcon, fmtTime } from "./ui";
 import { ChatPane } from "./ChatPane";
-import { Topology, TopologyModal } from "./Topology";
+import { MeshCanvas } from "./MeshCanvas";
+import { Topology } from "./Topology";
 import { useI18n, tStatus } from "./i18n";
 
 function Header({ m, store, onDeleted, onEdit }: { m: MeshSummary; store: Store; onDeleted: () => void; onEdit: () => void }) {
@@ -442,9 +443,7 @@ export function MeshDetail({
       </div>
     </div>
   );
-  const topoModal = topoOpen ? (
-    <TopologyModal summary={m} selectedAgent={activeAgent} onSelect={onSelectAgent} onClose={() => setTopoOpen(false)} />
-  ) : null;
+  const canvasOverlay = topoOpen ? <MeshCanvas m={m} pm={pm} store={store} onClose={() => setTopoOpen(false)} /> : null;
   const activityPanel = (
     <div className="panel">
       <div className="head">
@@ -496,7 +495,7 @@ export function MeshDetail({
     return (
       <div className="mdetail">
         <Header m={m} store={store} onDeleted={onDeleted} onEdit={onEdit} />
-        {topoModal}
+        {canvasOverlay}
         {pm.pending.length ? <div className="mperm">{permissionEl}</div> : null}
         <div className="mseg">
           {seg === "chat" ? conversationPanel : null}
@@ -539,7 +538,7 @@ export function MeshDetail({
   return (
     <div className="dgrid">
       <Header m={m} store={store} onDeleted={onDeleted} onEdit={onEdit} />
-      {topoModal}
+      {canvasOverlay}
       {pm.pending.length ? <div className="dperm">{permissionEl}</div> : null}
       {fullscreen ? (
         <div className="dmain full">{conversationPanel}</div>
