@@ -31,6 +31,52 @@ class FakeAcpConnection {
     return { stopReason: "end_turn" };
   }
   async setMode(): Promise<void> {}
+  async setModel(): Promise<void> {}
+  async cancel(): Promise<void> {}
+  kill(): void {}
+}
+
+class ConfigOptionsConnection {
+  setModes: string[] = [];
+  setModels: string[] = [];
+
+  constructor(private opts: AcpConnectionOptions) {}
+  async start(): Promise<void> {}
+  async initialize(): Promise<unknown> {
+    return {};
+  }
+  async newSession(): Promise<unknown> {
+    return {
+      sessionId: `s-${this.opts.id}`,
+      configOptions: [
+        {
+          category: "mode",
+          currentValue: "build",
+          options: [
+            { value: "build", name: "Build", description: "can edit" },
+            { value: "plan", name: "Plan", description: "read-only planning" },
+          ],
+        },
+        {
+          category: "model",
+          currentValue: "kimi-k2",
+          options: [
+            { value: "kimi-k2", name: "kimi-k2" },
+            { value: "deepseek-v3", name: "deepseek-v3" },
+          ],
+        },
+      ],
+    };
+  }
+  async prompt(): Promise<unknown> {
+    return { stopReason: "end_turn" };
+  }
+  async setMode(modeId: string): Promise<void> {
+    this.setModes.push(modeId);
+  }
+  async setModel(modelId: string): Promise<void> {
+    this.setModels.push(modelId);
+  }
   async cancel(): Promise<void> {}
   kill(): void {}
 }
@@ -55,13 +101,19 @@ class StartableDeferredConnection extends DeferredPromptConnection {
     return {};
   }
   async setMode(): Promise<void> {}
+  async setModel(): Promise<void> {}
   async cancel(): Promise<void> {}
   kill(): void {}
 }
 
-test("setMode throws for an unknown agent (no connection)", () => {
+test("setMode throws for an unknown agent (no connection)", async () => {
   const cp = new ControlPlane(DEMO_MESH);
-  expect(() => cp.setMode("ghost", "read-only")).toThrow(/no connection/);
+  await expect(cp.setMode("ghost", "read-only")).rejects.toThrow(/no connection/);
+});
+
+test("setModel throws for an unknown agent (no connection)", async () => {
+  const cp = new ControlPlane(DEMO_MESH);
+  await expect(cp.setModel("ghost", "kimi-k2")).rejects.toThrow(/no connection/);
 });
 
 test("prompt injects the mesh briefing exactly once per agent", () => {
@@ -235,6 +287,57 @@ test("snapshotEvents backfills current status, activity, capabilities, and modes
 
     (cp as any).mesh.setStatus("router", "dead");
     expect(cp.snapshotEvents()).toContainEqual(expect.objectContaining({ kind: "agent_status", agent: "router", status: "dead" }));
+  } finally {
+    await cp.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("start derives modes and models from configOptions when availableModes are absent", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mesh-control-plane-config-options-"));
+  const config: MeshConfig = {
+    name: "config-options",
+    agents: [{ id: "router", harness: "opencode", project: ".", role: "router", mode: "plan", model: "deepseek-v3" }],
+    edges: [],
+  };
+  let conn: ConfigOptionsConnection | undefined;
+  const cp = new ControlPlane(config, {
+    mailboxPath: join(root, "mailbox.ndjson"),
+    connectionFactory: (opts) => {
+      conn = new ConfigOptionsConnection(opts);
+      return conn as unknown as AcpAgentConnection;
+    },
+  });
+  const events: any[] = [];
+  cp.on((e) => events.push(e));
+
+  try {
+    await cp.start();
+    expect(events).toContainEqual(expect.objectContaining({
+      kind: "agent_modes",
+      agent: "router",
+      current: "plan",
+      available: [
+        { id: "build", name: "Build", description: "can edit" },
+        { id: "plan", name: "Plan", description: "read-only planning" },
+      ],
+    }));
+    expect(events).toContainEqual(expect.objectContaining({
+      kind: "agent_models",
+      agent: "router",
+      current: "deepseek-v3",
+      available: [
+        { id: "kimi-k2", name: "kimi-k2" },
+        { id: "deepseek-v3", name: "deepseek-v3" },
+      ],
+    }));
+    expect(conn?.setModes).toEqual(["plan"]);
+    expect(conn?.setModels).toEqual(["deepseek-v3"]);
+    expect(cp.snapshotEvents()).toContainEqual(expect.objectContaining({ kind: "agent_models", agent: "router", current: "deepseek-v3" }));
+
+    await cp.setModel("router", "kimi-k2");
+    expect(conn?.setModels).toEqual(["deepseek-v3", "kimi-k2"]);
+    expect(events).toContainEqual(expect.objectContaining({ kind: "agent_models", agent: "router", current: "kimi-k2" }));
   } finally {
     await cp.stop();
     await rm(root, { recursive: true, force: true });

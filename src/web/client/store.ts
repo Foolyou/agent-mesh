@@ -15,7 +15,7 @@ export function emptyState(): GatewayState {
 }
 
 function emptyPerMesh(name: string): PerMeshState {
-  return { config: { name, agents: [], edges: [] }, transcripts: {}, activity: [], mail: [], pending: [], history: [], modes: {}, capabilities: {} };
+  return { config: { name, agents: [], edges: [] }, transcripts: {}, activity: [], mail: [], pending: [], history: [], modes: {}, models: {}, capabilities: {} };
 }
 function withPerMesh(state: GatewayState, name: string, fn: (pm: PerMeshState) => PerMeshState): GatewayState {
   const pm = state.perMesh[name] ?? emptyPerMesh(name);
@@ -68,6 +68,12 @@ export function applyMsg(state: GatewayState, msg: ServerMsg): GatewayState {
       return withPerMesh(state, msg.name, (pm) => ({
         ...pm,
         modes: { ...pm.modes, [msg.agent]: { current: msg.current, available: msg.available } },
+      }));
+    case "agent.models":
+      return withPerMesh(state, msg.name, (pm) => ({
+        ...pm,
+        models: { ...pm.models, [msg.agent]: { current: msg.current, available: msg.available } },
+        config: pm.config,
       }));
     case "agent.capabilities":
       return withPerMesh(state, msg.name, (pm) => ({
@@ -126,6 +132,7 @@ export interface Store {
   promptMaster(text: string, images?: PromptImageRef[]): Promise<any>;
   resolvePermission(name: string, requestId: string, optionId: string): Promise<any>;
   setMode(name: string, agentId: string, modeId: string): Promise<any>;
+  setModel(name: string, agentId: string, modelId: string): Promise<any>;
   setEffort(name: string, agentId: string, effort?: ThinkingEffort): Promise<any>;
   interruptAgent(name: string, agentId: string): Promise<any>;
 }
@@ -246,6 +253,7 @@ export function createStore(): Store {
     promptMaster: (t, images) => guard(post(`/api/master/prompt`, { text: t, images }), "master"),
     resolvePermission: (n, r, o) => guard(post(`/api/meshes/${enc(n)}/permissions/${enc(r)}/resolve`, { optionId: o }), "resolve permission"),
     setMode: (n, a, m) => guard(post(`/api/meshes/${enc(n)}/agents/${enc(a)}/mode`, { modeId: m }), `set mode ${a}`),
+    setModel: (n, a, m) => guard(post(`/api/meshes/${enc(n)}/agents/${enc(a)}/model`, { modelId: m }), `set model ${a}`),
     setEffort: (n, a, e) => guard(post(`/api/meshes/${enc(n)}/agents/${enc(a)}/effort`, { effort: e }), `set effort ${a}`),
     interruptAgent: (n, a) => guard(post(`/api/meshes/${enc(n)}/agents/${enc(a)}/interrupt`), `interrupt ${a}`),
   };

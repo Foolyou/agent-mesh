@@ -207,6 +207,7 @@ export class MeshHostClient {
   prompt(target: string, text: string, images?: PromptImageRef[]): void { this.send({ t: "prompt", target, text, images }); }
   resolve(requestId: string, optionId: string): void { this.send({ t: "resolve", requestId, optionId }); }
   setMode(target: string, modeId: string): void { this.send({ t: "setMode", target, modeId }); }
+  setModel(target: string, modelId: string): void { this.send({ t: "setModel", target, modelId }); }
   interrupt(target: string): void { this.send({ t: "interrupt", target }); }
 
   /** Disconnect WITHOUT stopping the daemon (used on backend shutdown — the mesh and

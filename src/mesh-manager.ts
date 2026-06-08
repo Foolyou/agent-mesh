@@ -244,8 +244,22 @@ export class MeshManager {
     this.require(name).client?.resolve(requestId, optionId);
   }
 
-  setMode(name: string, agentId: string, modeId: string): void {
-    this.require(name).client?.setMode(agentId, modeId);
+  async setMode(name: string, agentId: string, modeId: string): Promise<void> {
+    const entry = this.require(name);
+    if (!entry.config.agents.some((a) => a.id === agentId)) throw new Error(`no agent "${agentId}" in mesh "${name}"`);
+    const patched: MeshConfig = { ...entry.config, agents: entry.config.agents.map((a) => (a.id === agentId ? { ...a, mode: modeId } : a)) };
+    await this.store.define(patched); // persists the runtime cache; does NOT restart the daemon
+    entry.config = patched;
+    entry.client?.setMode(agentId, modeId);
+  }
+
+  async setModel(name: string, agentId: string, modelId: string): Promise<void> {
+    const entry = this.require(name);
+    if (!entry.config.agents.some((a) => a.id === agentId)) throw new Error(`no agent "${agentId}" in mesh "${name}"`);
+    const patched: MeshConfig = { ...entry.config, agents: entry.config.agents.map((a) => (a.id === agentId ? { ...a, model: modelId } : a)) };
+    await this.store.define(patched); // persists the runtime cache; does NOT restart the daemon
+    entry.config = patched;
+    entry.client?.setModel(agentId, modelId);
   }
 
   /** Operator-initiated interrupt of an agent's current turn. */

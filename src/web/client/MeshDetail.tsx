@@ -3,7 +3,7 @@
 // permission-history timelines for the selected mesh.
 import { useEffect, useRef, useState } from "react";
 import type { Store } from "./store";
-import type { GatewayState, MeshSummary, PerMeshState, ActivityEntry, MailEntry, ResolvedPermission, PermissionReq, AgentModes, ThinkingEffort } from "../types";
+import type { GatewayState, MeshSummary, PerMeshState, ActivityEntry, MailEntry, ResolvedPermission, PermissionReq, AgentModes, AgentModels, ThinkingEffort } from "../types";
 import { Dot, Btn, Empty, ConfirmButton, InfoIcon, fmtTime } from "./ui";
 import { ChatPane } from "./ChatPane";
 import { MeshCanvas } from "./MeshCanvas";
@@ -107,15 +107,40 @@ function ModeControl({ mesh, agent, store, modes }: { mesh: string; agent: strin
   );
 }
 
+function ModelControl({ mesh, agent, store, models }: { mesh: string; agent: string; store: Store; models?: AgentModels }) {
+  const { t } = useI18n();
+  if (!models || models.available.length === 0) return null;
+  return (
+    <span className="row" style={{ gap: 5 }}>
+      <span className="sub" style={{ fontSize: 10 }}>
+        {t("model")}
+      </span>
+      <select
+        className="model-sel"
+        value={models.current}
+        title={t("model.hint")}
+        onKeyDown={(e) => e.stopPropagation()}
+        onChange={(e) => void store.setModel(mesh, agent, e.target.value)}
+      >
+        {models.available.map((m) => (
+          <option key={m.id} value={m.id}>
+            {m.name}
+          </option>
+        ))}
+      </select>
+    </span>
+  );
+}
+
 const EFFORTS: ThinkingEffort[] = ["minimal", "low", "medium", "high"];
 
 // Per-agent thinking-effort picker. Effort is a launch-time setting, so it's editable only while
 // the mesh is STOPPED (the choice persists and applies on next start); while running it's shown
-// read-only. opencode has no mechanism, so the control is hidden for it.
+// read-only. opencode/kimi have no mechanism, so the control is hidden for them.
 function EffortControl({ m, agent, store }: { m: MeshSummary; agent: string; store: Store }) {
   const { t } = useI18n();
   const a = m.agents.find((x) => x.id === agent);
-  if (!a || a.harness === "opencode") return null;
+  if (!a || a.harness === "opencode" || a.harness === "kimi") return null;
   const live = m.status === "running" || m.status === "starting";
   return (
     <span className="row" style={{ gap: 5 }}>
@@ -253,6 +278,9 @@ function ConversationPanel({
           ) : null}
           {live ? (
             <ModeControl mesh={m.name} agent={cur.id} store={store} modes={pm.modes?.[cur.id]} />
+          ) : null}
+          {live ? (
+            <ModelControl mesh={m.name} agent={cur.id} store={store} models={pm.models?.[cur.id]} />
           ) : null}
           {!mobile ? (
             <Btn small kind="ghost" onClick={onToggleFull} title={t("full")}>

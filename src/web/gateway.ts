@@ -33,7 +33,8 @@ export interface ManagerLike {
   promptRouter(name: string, text: string, images?: PromptImageRef[]): Promise<void>;
   promptAgent(name: string, agentId: string, text: string, images?: PromptImageRef[]): void;
   resolvePermission(name: string, requestId: string, optionId: string): void;
-  setMode(name: string, agentId: string, modeId: string): void;
+  setMode(name: string, agentId: string, modeId: string): Promise<void>;
+  setModel(name: string, agentId: string, modelId: string): Promise<void>;
   setAgentEffort(name: string, agentId: string, effort?: ThinkingEffort): Promise<void>;
   interruptAgent(name: string, agentId: string): void;
   defineMesh(config: MeshConfig): Promise<void>;
@@ -130,6 +131,7 @@ export class WebGateway {
       const live = m.status === "running" || m.status === "starting";
       const tracked = this.agStatus.get(m.name);
       const activity = this.agActivity.get(m.name);
+      const pm = this.state.perMesh[m.name];
       return {
         name: m.name,
         defined: m.defined,
@@ -144,6 +146,7 @@ export class WebGateway {
             status,
             activity: status === "dead" ? "idle" : ((live ? activity?.get(a.id) : undefined) ?? "idle"),
             effort: a.effort,
+            model: pm?.models?.[a.id],
           };
         }),
         edges: config.edges,
@@ -171,7 +174,7 @@ export class WebGateway {
       } catch {
         config = { name, agents: [], edges: [] };
       }
-      pm = { config, transcripts: {}, activity: [], mail: [], pending: [], history: [], modes: {}, capabilities: {} };
+      pm = { config, transcripts: {}, activity: [], mail: [], pending: [], history: [], modes: {}, models: {}, capabilities: {} };
       this.state.perMesh[name] = pm;
     }
     return pm;
@@ -214,6 +217,11 @@ export class WebGateway {
       case "agent_modes": {
         pm.modes[e.agent] = { current: e.current, available: e.available };
         this.broadcast({ t: "agent.modes", name, agent: e.agent, current: e.current, available: e.available });
+        break;
+      }
+      case "agent_models": {
+        pm.models[e.agent] = { current: e.current, available: e.available };
+        this.broadcast({ t: "agent.models", name, agent: e.agent, current: e.current, available: e.available });
         break;
       }
       case "agent_capabilities": {
@@ -360,8 +368,13 @@ export class WebGateway {
     await this.manager.setAgentEffort(name, agentId, effort);
     this.refreshMeshes(); // re-broadcast the summary so the picker reflects the new value
   }
-  setMode(name: string, agentId: string, modeId: string): void {
-    this.manager.setMode(name, agentId, modeId);
+  async setMode(name: string, agentId: string, modeId: string): Promise<void> {
+    await this.manager.setMode(name, agentId, modeId);
+    this.refreshMeshes();
+  }
+  async setModel(name: string, agentId: string, modelId: string): Promise<void> {
+    await this.manager.setModel(name, agentId, modelId);
+    this.refreshMeshes();
   }
   interruptAgent(name: string, agentId: string): void {
     this.manager.interruptAgent(name, agentId);

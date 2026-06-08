@@ -96,7 +96,7 @@ export async function handleApi(
         gw.resolvePermission(name, str(p[3]), str(body?.optionId));
         return ok();
       }
-      // POST /api/meshes/:name/agents/:id/(prompt|mode)
+      // POST /api/meshes/:name/agents/:id/(prompt|mode|model)
       if (method === "POST" && p.length === 5 && p[2] === "agents") {
         const agentId = str(p[3]);
         if (p[4] === "prompt") {
@@ -104,7 +104,11 @@ export async function handleApi(
           return ok();
         }
         if (p[4] === "mode") {
-          gw.setMode(name, agentId, str(body?.modeId));
+          await gw.setMode(name, agentId, str(body?.modeId));
+          return ok();
+        }
+        if (p[4] === "model") {
+          await gw.setModel(name, agentId, str(body?.modelId));
           return ok();
         }
         if (p[4] === "effort") {

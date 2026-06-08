@@ -97,6 +97,7 @@ export class AcpAgentConnection {
   alive = false;
   private child?: ReturnType<typeof Bun.spawn>;
   private conn?: ClientSideConnection;
+  private rawRequestSeq = 0;
 
   constructor(private opts: AcpConnectionOptions) {
     this.id = opts.id;
@@ -246,6 +247,31 @@ export class AcpAgentConnection {
   /** Switch the session's permission/approval mode (e.g. codex "read-only"). */
   async setMode(modeId: string) {
     if (this.sessionId) await this.conn!.setSessionMode({ sessionId: this.sessionId, modeId });
+  }
+
+  /** Switch the session's model when the agent advertises ACP configOptions(model). */
+  async setModel(modelId: string) {
+    if (!this.sessionId) return;
+    if (!this.child) throw new Error(`${this.id}: no child process`);
+    // WORKAROUND (@zed-industries/agent-client-protocol@0.4.5): setSessionModel() is bugged —
+    // it sends "session/set_mode" instead of "session/set_model" (dist/acp.js:434). We can't use
+    // conn.setSessionModel(); extMethod() also mangles the name with a "_" prefix which the agent
+    // rejects. So we write the raw session/set_model line straight to child.stdin (the same sink
+    // `output` writes to), bypassing stream.writable's per-message writer lock to avoid racing the
+    // library's Connection.#writeQueue. Fire-and-forget: the library doesn't track our response id
+    // and drops it; we optimistically re-emit agent_models.
+    // TODO: once upstream fixes setSessionModel, delete this raw-write and call
+    // conn.setSessionModel({ sessionId, modelId }) instead.
+    const line = JSON.stringify({
+      jsonrpc: "2.0",
+      id: `mesh-set-model-${++this.rawRequestSeq}`,
+      method: "session/set_model",
+      params: { sessionId: this.sessionId, modelId },
+    }) + "\n";
+    const stdin = this.child.stdin;
+    if (!stdin || typeof stdin === "number") throw new Error(`${this.id}: child stdin is not writable`);
+    stdin.write(new TextEncoder().encode(line));
+    stdin.flush();
   }
 
   /** Interrupt the current turn (Router-authorized at the control-plane layer). */

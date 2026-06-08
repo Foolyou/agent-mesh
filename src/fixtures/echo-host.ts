@@ -23,6 +23,7 @@ const cp = {
       { kind: "agent_activity" as const, agent: agent.id, activity: "idle" as const, ts },
       { kind: "agent_capabilities" as const, agent: agent.id, image: true, ts },
       { kind: "agent_modes" as const, agent: agent.id, current: "default", available: [{ id: "default", name: "Default" }], ts },
+      { kind: "agent_models" as const, agent: agent.id, current: "test-model", available: [{ id: "test-model", name: "Test Model" }], ts },
     ]);
   },
   async prompt(_target: string, text: string) {
@@ -33,6 +34,7 @@ const cp = {
     return true;
   },
   async setMode() {},
+  async setModel() {},
   async interrupt() {},
   async stop() {},
 };

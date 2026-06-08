@@ -18,16 +18,21 @@ test("claude sets MAX_THINKING_TOKENS only when an effort is chosen", () => {
   expect(spawnConfigFor(A({ harness: "claude", effort: "minimal" })).env).toEqual({ MAX_THINKING_TOKENS: "1024" });
 });
 
-test("opencode ignores effort (no mechanism)", () => {
+test("opencode and kimi ignore effort (no mechanism)", () => {
   const c = spawnConfigFor(A({ harness: "opencode", effort: "high" }));
   expect(c.args).toEqual(["acp"]);
   expect(c.env).toEqual({});
+  const k = spawnConfigFor(A({ harness: "kimi", effort: "high" }));
+  expect(k.command).toBe("kimi");
+  expect(k.args).toEqual(["acp"]);
+  expect(k.env).toEqual({});
 });
 
-test("resolves all three harnesses to a command", () => {
+test("resolves all harnesses to a command", () => {
   expect(resolveHarness("codex").command).toBe("codex-acp");
   expect(resolveHarness("opencode").args).toEqual(["acp"]);
   expect(resolveHarness("claude").command).toBe("claude-agent-acp");
+  expect(resolveHarness("kimi")).toEqual({ command: "kimi", args: ["acp"] });
 });
 
 test("unknown harness throws", () => {

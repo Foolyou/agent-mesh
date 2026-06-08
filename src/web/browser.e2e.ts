@@ -736,17 +736,16 @@ try {
 
   await step("mesh builder: valid config creates a mesh", async () => {
     await page.locator('.modal .field:has(label:has-text("mesh name")) input').fill("squad-x");
+    const harnessOpts = await page.locator(".modal .agrow select").nth(0).locator("option").allTextContents();
+    if (!harnessOpts.includes("kimi")) throw new Error(`builder harness options missing kimi: ${harnessOpts.join(",")}`);
     await page.locator(".modal .agent-instructions").first().fill("Router should coordinate handoffs and keep tasks scoped.");
     await page
       .locator('.modal .field:has(label:has-text("team charter")) textarea')
       .fill("Goal: build a tiny CLI. Norms: be concise, write a test.");
-    // set the (claude) agent's thinking effort + initial permission mode in the builder
+    // set the (claude) agent's thinking effort; mode/model are runtime-only pickers now.
     const adv = page.locator(".modal .agrow-adv .adv-sel");
+    if ((await adv.count()) !== 1) throw new Error("builder should only render the effort selector");
     await adv.nth(0).selectOption("high"); // effort
-    // the no-prompt modes must NOT be advertised in the builder (can't pre-arm a bypass session)
-    const modeOpts = await adv.nth(1).locator("option").allTextContents();
-    if (modeOpts.some((o) => /bypassPermissions|full-access/.test(o))) throw new Error(`unsafe mode advertised in builder: ${modeOpts.join(",")}`);
-    await adv.nth(1).selectOption("plan"); // mode (safe)
     await page.screenshot({ path: `${SHOTS}/03-builder.png`, fullPage: true });
     await page.locator('.modal .btn:has-text("define mesh")').click();
     await page.waitForSelector('.mrow:has-text("squad-x")', { timeout: 6000 });
@@ -764,10 +763,10 @@ try {
     if (!charterVal.includes("build a tiny CLI")) throw new Error(`charter not prefilled: "${charterVal}"`);
     const instructionsVal = await page.locator(".modal .agent-instructions").first().inputValue();
     if (!instructionsVal.includes("coordinate handoffs")) throw new Error(`instructions not prefilled: "${instructionsVal}"`);
-    // effort + initial mode round-trip from the saved config back into the builder
+    // effort round-trips from the saved config; mode/model are not editable in the builder.
     const adv2 = page.locator(".modal .agrow-adv .adv-sel");
+    if ((await adv2.count()) !== 1) throw new Error("edit builder should only render the effort selector");
     if ((await adv2.nth(0).inputValue()) !== "high") throw new Error("effort not prefilled");
-    if ((await adv2.nth(1).inputValue()) !== "plan") throw new Error("mode not prefilled");
     await page.locator('.modal .btn:has-text("save mesh")').click();
     await page.waitForSelector(".modal", { state: "detached", timeout: 4000 });
     await page.waitForSelector('.mrow:has-text("squad-x")', { timeout: 4000 });

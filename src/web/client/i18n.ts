@@ -78,6 +78,8 @@ const DICT: Record<string, Entry> = {
   mode: ["mode", "模式"],
   "mode.hint": ["initial permission/operating mode (the agent can also switch at runtime)", "初始许可/工作模式(运行时也可切换)"],
   "mode.default": ["default", "默认"],
+  model: ["model", "模型"],
+  "model.hint": ["runtime model advertised by this agent", "该 agent 当前广告的运行时模型"],
   effort: ["effort", "思考强度"],
   "effort.hint": ["thinking effort — saved now, applies on the agent's next start (does not restart a running mesh)", "思考强度 —— 立即保存,在 agent 下次启动时生效(不会重启运行中的 mesh)"],
   "effort.hint.live": ["thinking effort (read-only while running — stop the mesh to change)", "思考强度(运行中只读 —— 停止 mesh 后可修改)"],

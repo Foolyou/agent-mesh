@@ -23,6 +23,7 @@ function fakeCp() {
     async prompt(target, text) { calls.push(`prompt:${target}:${text}`); listener?.({ kind: "log", text: "got prompt", ts: "t" }); return {}; },
     resolveDecision(requestId, optionId) { calls.push(`resolve:${requestId}:${optionId}`); return true; },
     async setMode(target, modeId) { calls.push(`setMode:${target}:${modeId}`); },
+    async setModel(target, modelId) { calls.push(`setModel:${target}:${modelId}`); },
     async interrupt(target) { calls.push(`interrupt:${target}`); },
     async stop() { calls.push("stop"); },
   };
@@ -61,9 +62,11 @@ test("hello → ack(running, proto, seq); prompt relays a seq'd event; commands 
   expect(typeof ev.seq).toBe("number");
 
   send({ t: "setMode", target: "codex-1", modeId: "read-only" });
+  send({ t: "setModel", target: "codex-1", modelId: "kimi-k2" });
   send({ t: "interrupt", target: "codex-1" });
   await Bun.sleep(50);
   expect(calls).toContain("setMode:codex-1:read-only");
+  expect(calls).toContain("setModel:codex-1:kimi-k2");
   expect(calls).toContain("interrupt:codex-1");
 
   send({ t: "stop" });
@@ -107,6 +110,7 @@ test("hello backfills current agent state after ring replay", async () => {
     { kind: "agent_activity", agent: "router", activity: "idle", ts: "snap" },
     { kind: "agent_capabilities", agent: "router", image: true, ts: "snap" },
     { kind: "agent_modes", agent: "router", current: "default", available: [{ id: "default", name: "Default" }], ts: "snap" },
+    { kind: "agent_models", agent: "router", current: "test-model", available: [{ id: "test-model", name: "Test Model" }], ts: "snap" },
   ];
   daemon = new MeshHostDaemon(cp, { socketPath: sock, ringCap: 1 });
   await daemon.listen();
@@ -130,6 +134,7 @@ test("hello backfills current agent state after ring replay", async () => {
   expect(events).toContainEqual(expect.objectContaining({ kind: "agent_activity", agent: "router", activity: "idle" }));
   expect(events).toContainEqual(expect.objectContaining({ kind: "agent_capabilities", agent: "router", image: true }));
   expect(events).toContainEqual(expect.objectContaining({ kind: "agent_modes", agent: "router", current: "default" }));
+  expect(events).toContainEqual(expect.objectContaining({ kind: "agent_models", agent: "router", current: "test-model" }));
   expect(got.filter((m) => m.t === "event")).toHaveLength(0);
   expect(got.find((m) => m.t === "ack")?.seq).toBe(2);
 });

@@ -47,8 +47,11 @@ function fakeManager() {
     resolvePermission(n: string, r: string, o: string) {
       calls.push(["resolve", n, r, o]);
     },
-    setMode(n: string, a: string, m: string) {
+    async setMode(n: string, a: string, m: string) {
       calls.push(["setMode", n, a, m]);
+    },
+    async setModel(n: string, a: string, m: string) {
+      calls.push(["setModel", n, a, m]);
     },
     interruptAgent(n: string, a: string) {
       calls.push(["interrupt", n, a]);
@@ -103,6 +106,14 @@ test("POST /api/meshes/demo/agents/codex-1/mode delegates to setMode", async () 
   const r = await handleApi(gw, "POST", "/api/meshes/demo/agents/codex-1/mode", { modeId: "read-only" });
   expect(r.status).toBe(200);
   expect(m.calls).toContainEqual(["setMode", "demo", "codex-1", "read-only"]);
+});
+
+test("POST /api/meshes/demo/agents/codex-1/model delegates to setModel", async () => {
+  const m = fakeManager();
+  const gw = new WebGateway(m as any);
+  const r = await handleApi(gw, "POST", "/api/meshes/demo/agents/codex-1/model", { modelId: "deepseek-v3" });
+  expect(r.status).toBe(200);
+  expect(m.calls).toContainEqual(["setModel", "demo", "codex-1", "deepseek-v3"]);
 });
 
 test("POST /api/meshes/demo/agents/codex-1/interrupt delegates to interruptAgent", async () => {

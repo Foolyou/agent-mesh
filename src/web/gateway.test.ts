@@ -55,8 +55,11 @@ function fakeManager() {
     resolvePermission(n: string, r: string, o: string) {
       calls.push(["resolve", n, r, o]);
     },
-    setMode(n: string, a: string, m: string) {
+    async setMode(n: string, a: string, m: string) {
       calls.push(["setMode", n, a, m]);
+    },
+    async setModel(n: string, a: string, m: string) {
+      calls.push(["setModel", n, a, m]);
     },
     interruptAgent(n: string, a: string) {
       calls.push(["interrupt", n, a]);
@@ -156,6 +159,29 @@ test("a current_mode_update syncs the mode picker + broadcasts (claude has no ec
   expect(got.some((x) => x.t === "agent.modes" && x.agent === "router" && x.current === "plan")).toBe(true);
 });
 
+test("agent_models updates gateway state, summary, and broadcasts", () => {
+  const m = fakeManager();
+  const gw = new WebGateway(m as any);
+  const got: any[] = [];
+  gw.subscribe((msg) => got.push(msg));
+  m.emit("demo", {
+    kind: "agent_models",
+    agent: "codex-1",
+    current: "kimi-k2",
+    available: [{ id: "kimi-k2", name: "kimi-k2" }, { id: "deepseek-v3", name: "deepseek-v3" }],
+    ts: "T",
+  });
+  expect(gw.snapshot().perMesh.demo.models["codex-1"].current).toBe("kimi-k2");
+  expect(gw.snapshot().meshes[0].agents.find((a) => a.id === "codex-1")?.model?.current).toBe("kimi-k2");
+  expect(got).toContainEqual({
+    t: "agent.models",
+    name: "demo",
+    agent: "codex-1",
+    current: "kimi-k2",
+    available: [{ id: "kimi-k2", name: "kimi-k2" }, { id: "deepseek-v3", name: "deepseek-v3" }],
+  });
+});
+
 test("setEffort persists the effort into the summary and broadcasts mesh.list (no restart)", async () => {
   const m = fakeManager();
   const gw = new WebGateway(m as any);
@@ -174,9 +200,11 @@ test("command methods delegate to the manager", async () => {
   await gw.startMesh("demo");
   await gw.promptRouter("demo", "go");
   gw.resolvePermission("demo", "r1", "allow");
+  await gw.setModel("demo", "codex-1", "deepseek-v3");
   expect(m.calls).toContainEqual(["start", "demo"]);
   expect(m.calls).toContainEqual(["promptRouter", "demo", "go", []]);
   expect(m.calls).toContainEqual(["resolve", "demo", "r1", "allow"]);
+  expect(m.calls).toContainEqual(["setModel", "demo", "codex-1", "deepseek-v3"]);
 });
 
 test("promptRouter echoes a user message into the router transcript", async () => {
