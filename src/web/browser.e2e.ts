@@ -173,6 +173,33 @@ try {
     await detailed.locator(".tdetail").waitFor({ state: "detached", timeout: 4000 });
   });
 
+  await step("tool cards keep full height when the transcript overflows (no flex-shrink collapse)", async () => {
+    // Regression: .stream is a flex column; an overflowing transcript used to let flexbox
+    // shrink .tool cards (overflow:hidden → flex min-size 0) down to their ~2px borders.
+    await page.evaluate(() => {
+      const store = (window as any).__meshStore;
+      const now = new Date().toISOString();
+      const conv = { scope: "agent", mesh: "demo", agent: "router" };
+      for (let i = 0; i < 14; i++) {
+        store.apply({
+          t: "transcript.upsert",
+          conv,
+          item: { id: `of-${i}`, kind: "message", role: "agent", text: Array.from({ length: 6 }, (_, j) => `overflow filler ${i}.${j}`).join("\n"), ts: now, complete: true },
+        });
+      }
+      store.apply({
+        t: "transcript.upsert",
+        conv,
+        item: { id: "of-tool", kind: "tool_call", toolCallId: "of-tc", title: "mcp__mesh__send_mail", toolKind: "other", status: "completed", input: '{ "to": "impl", "body": "hi" }', ts: now, updatedTs: now },
+      });
+    });
+    const panel = page.locator('.panel:has(.head:has-text("router chat"))');
+    const card = panel.locator(".tool", { hasText: "mcp__mesh__send_mail" }).first();
+    await card.waitFor({ timeout: 4000 });
+    const h = await card.evaluate((el) => (el as HTMLElement).offsetHeight);
+    if (h < 24) throw new Error(`tool card collapsed to ${h}px under overflow (flex-shrink regression)`);
+  });
+
   await step("thinking effort is read-only while the mesh is running", async () => {
     // effort is a launch-time setting — while running it's shown but not editable (edit when stopped
     // or in the builder). The create/edit builder test covers the stopped-edit + persist round-trip.
