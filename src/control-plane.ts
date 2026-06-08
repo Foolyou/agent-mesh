@@ -203,6 +203,7 @@ export class ControlPlane {
     for (const p of this.pending.values()) clearTimeout(p.timer);
     this.pending.clear();
     this.spawning.clear();
+    this.registeredAgents.clear();
   }
 
   private async spawnAgent(a: AgentConfig, opts: { drainPendingMail: boolean }): Promise<void> {
@@ -292,6 +293,10 @@ export class ControlPlane {
       const imageCap = !!(initRes as any)?.agentCapabilities?.promptCapabilities?.image;
       this.imageCaps.set(a.id, imageCap);
       this.emit({ kind: "agent_capabilities", agent: a.id, image: imageCap, ts: now() });
+      if (this.conns.get(a.id) !== conn) {
+        conn.kill();
+        throw new Error(`spawn for ${a.id} was superseded`);
+      }
       this.mesh.setStatus(a.id, "ready");
       this.emit({ kind: "agent_status", agent: a.id, status: "ready", ts: now() });
       this.spawnFails.delete(a.id);

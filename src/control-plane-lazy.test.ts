@@ -275,11 +275,15 @@ test("three automatic spawn failures trip a fuse until manual wake resets it", a
 
 test("spawn timeout fails the lazy spawn", async () => {
   const root = await mkdtemp(join(tmpdir(), "mesh-lazy-timeout-"));
+  let lazyConn: DeferredStartConnection | undefined;
   const cp = new ControlPlane(lazyConfig, {
     mailboxPath: join(root, "mailbox.ndjson"),
     spawnTimeoutMs: 10,
     connectionFactory: (opts) => {
-      if (opts.id === "lazy-1") return new DeferredStartConnection(opts) as unknown as AcpAgentConnection;
+      if (opts.id === "lazy-1") {
+        lazyConn = new DeferredStartConnection(opts);
+        return lazyConn as unknown as AcpAgentConnection;
+      }
       return new RecordingConnection(opts) as unknown as AcpAgentConnection;
     },
   });
@@ -288,6 +292,10 @@ test("spawn timeout fails the lazy spawn", async () => {
     await cp.start();
     await expect(cp.wakeAgent("lazy-1")).rejects.toThrow(/timed out/i);
     expect((cp as any).mesh.status("lazy-1")).toBe("dead");
+    lazyConn!.startResolve();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect((cp as any).mesh.status("lazy-1")).toBe("dead");
+    expect((cp as any).conns.has("lazy-1")).toBe(false);
   } finally {
     await cp.stop();
     await rm(root, { recursive: true, force: true });
