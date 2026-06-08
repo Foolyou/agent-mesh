@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import type { Store } from "./store";
 import type { MeshSummary, PerMeshState } from "../types";
 import { Dot } from "./ui";
@@ -8,6 +8,7 @@ import { useI18n } from "./i18n";
 
 type Rect = { x: number; y: number; w: number; h: number };
 type Layout = { sig: string; windows: Record<string, Rect> };
+type FlashTimer = number;
 
 const DEFAULT_W = 360;
 const DEFAULT_H = 320;
@@ -22,9 +23,13 @@ function layoutKey(mesh: string): string {
   return `mesh-canvas-layout:${mesh}`;
 }
 
+function edgeKey(from: string, to: string): string {
+  return `${from}->${to}`;
+}
+
 function signature(m: MeshSummary): string {
   const agents = m.agents.map((a) => a.id).sort().join("|");
-  const edges = m.edges.map(([from, to]) => `${from}->${to}`).sort().join("|");
+  const edges = m.edges.map(([from, to]) => edgeKey(from, to)).sort().join("|");
   return hash(`${agents}::${edges}`);
 }
 
@@ -143,12 +148,20 @@ export function MeshCanvas({
   const { t } = useI18n();
   const [layout, setLayout] = useState<Layout>(() => readLayout(m));
   const [order, setOrder] = useState<string[]>(() => m.agents.map((a) => a.id));
+  const [activeEdges, setActiveEdges] = useState<Set<string>>(() => new Set());
+  const seenMailIds = useRef<Set<string>>(new Set(pm.mail.map((mail) => mail.id)));
+  const flashTimers = useRef<Map<string, FlashTimer>>(new Map());
   const sig = useMemo(() => signature(m), [m]);
+  const edgeKeys = useMemo(() => new Set(m.edges.map(([from, to]) => edgeKey(from, to))), [m.edges]);
   const live = m.status === "running" || m.status === "starting";
 
   useEffect(() => {
     setLayout(readLayout(m));
     setOrder(m.agents.map((a) => a.id));
+    seenMailIds.current = new Set(pm.mail.map((mail) => mail.id));
+    for (const timer of flashTimers.current.values()) window.clearTimeout(timer);
+    flashTimers.current.clear();
+    setActiveEdges(new Set());
   }, [m.name, sig]);
 
   useEffect(() => {
@@ -158,6 +171,37 @@ export function MeshCanvas({
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [onClose]);
+
+  useEffect(() => {
+    const nextSeen = new Set(seenMailIds.current);
+    for (const mail of pm.mail) {
+      if (nextSeen.has(mail.id)) continue;
+      nextSeen.add(mail.id);
+      const key = edgeKey(mail.from, mail.to);
+      if (!edgeKeys.has(key)) continue;
+      const prior = flashTimers.current.get(key);
+      if (prior) window.clearTimeout(prior);
+      setActiveEdges((cur) => (cur.has(key) ? cur : new Set(cur).add(key)));
+      const timer = window.setTimeout(() => {
+        flashTimers.current.delete(key);
+        setActiveEdges((cur) => {
+          if (!cur.has(key)) return cur;
+          const next = new Set(cur);
+          next.delete(key);
+          return next;
+        });
+      }, 500);
+      flashTimers.current.set(key, timer);
+    }
+    seenMailIds.current = nextSeen;
+  }, [pm.mail, edgeKeys]);
+
+  useEffect(() => {
+    return () => {
+      for (const timer of flashTimers.current.values()) window.clearTimeout(timer);
+      flashTimers.current.clear();
+    };
+  }, []);
 
   function persist(next: Layout): void {
     saveLayout(m.name, next);
@@ -261,7 +305,8 @@ export function MeshCanvas({
           if (!a || !b) return null;
           const s = edgePoint(a, b);
           const e = edgePoint(b, a);
-          return <line key={`${from}-${to}-${i}`} className="canvas-edge" data-from={from} data-to={to} x1={s.x} y1={s.y} x2={e.x} y2={e.y} markerEnd="url(#canvas-arrow)" />;
+          const key = edgeKey(from, to);
+          return <line key={`${from}-${to}-${i}`} className={`canvas-edge ${activeEdges.has(key) ? "active" : ""}`} data-from={from} data-to={to} x1={s.x} y1={s.y} x2={e.x} y2={e.y} markerEnd="url(#canvas-arrow)" />;
         })}
       </svg>
       <div className="canvas-windows">

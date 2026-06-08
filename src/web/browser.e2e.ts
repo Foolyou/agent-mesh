@@ -462,6 +462,46 @@ try {
     await canvas.waitFor({ state: "detached", timeout: 4000 });
   });
 
+  await step("mesh canvas mail flashes only the matching directed edge then cools down", async () => {
+    await page.locator('.drail .panel:has(.head:has-text("topology")) .btn:has-text("⤢")').click();
+    const canvas = page.locator(".mesh-canvas");
+    await canvas.waitFor({ timeout: 5000 });
+    const edge = canvas.locator('.canvas-edge[data-from="codex-1"][data-to="opencode-1"]');
+    const reverse = canvas.locator('.canvas-edge[data-from="opencode-1"][data-to="codex-1"]');
+    await edge.waitFor({ timeout: 4000 });
+    if (await edge.evaluate((el) => el.classList.contains("active"))) throw new Error("edge was active before a new mail event");
+
+    await page.evaluate(() => {
+      const now = new Date().toISOString();
+      (window as any).__meshStore.apply({
+        t: "mail",
+        name: "demo",
+        entry: { id: `canvas-flash-${Date.now()}`, ts: now, from: "codex-1", to: "opencode-1", body: "flash this directed edge" },
+      });
+    });
+    await page.waitForFunction(() => document.querySelector('.canvas-edge[data-from="codex-1"][data-to="opencode-1"]')?.classList.contains("active"), { timeout: 1000 });
+    const activeStroke = await edge.evaluate((el) => getComputedStyle(el).stroke);
+    if (!activeStroke) throw new Error("active edge had no visible stroke");
+    if (await reverse.evaluate((el) => el.classList.contains("active"))) throw new Error("reverse edge flashed for one-way mail");
+    await page.screenshot({ path: `${SHOTS}/06-canvas-flash-active.png`, fullPage: true });
+
+    await sleep(260);
+    await page.evaluate(() => {
+      const now = new Date().toISOString();
+      (window as any).__meshStore.apply({
+        t: "mail",
+        name: "demo",
+        entry: { id: `canvas-flash-renew-${Date.now()}`, ts: now, from: "codex-1", to: "opencode-1", body: "renew the glow" },
+      });
+    });
+    await sleep(320);
+    if (!(await edge.evaluate((el) => el.classList.contains("active")))) throw new Error("edge glow was not renewed by a second mail");
+    await sleep(300);
+    if (await edge.evaluate((el) => el.classList.contains("active"))) throw new Error("edge stayed active after trailing timeout");
+    await canvas.locator(".canvas-close").click();
+    await canvas.waitFor({ state: "detached", timeout: 4000 });
+  });
+
   await step("mesh canvas layout persists and topology signature changes relayout", async () => {
     const key = "mesh-canvas-layout:demo";
     if (await page.locator(".mesh-canvas").isVisible().catch(() => false)) await page.locator(".mesh-canvas .canvas-close").click();
