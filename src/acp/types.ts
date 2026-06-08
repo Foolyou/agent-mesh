@@ -90,6 +90,7 @@ export type MeshEvent =
   | { kind: "agent_models"; agent: AgentId; current: string; available: SessionModel[]; ts: string }
   | { kind: "agent_capabilities"; agent: AgentId; image: boolean; ts: string }
   | { kind: "mail"; from: AgentId; to: AgentId; body: string; ts: string }
+  | { kind: "steer"; from: AgentId | "operator"; to: AgentId; body: string; ts: string }
   | {
       kind: "permission";
       agent: AgentId;

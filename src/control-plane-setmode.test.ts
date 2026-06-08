@@ -89,6 +89,21 @@ class DeferredPromptConnection {
   }
 }
 
+class RecordingSteerConnection {
+  prompts: Array<{ text: string; resolve: (value?: unknown) => void; reject: (err: unknown) => void }> = [];
+  cancels = 0;
+
+  prompt(text: string): Promise<unknown> {
+    return new Promise((resolve, reject) => this.prompts.push({ text, resolve, reject }));
+  }
+  steerPrompt(text: string): Promise<unknown> {
+    return new Promise((resolve, reject) => this.prompts.push({ text, resolve, reject }));
+  }
+  async cancel(): Promise<void> {
+    this.cancels++;
+  }
+}
+
 class StartableDeferredConnection extends DeferredPromptConnection {
   constructor(readonly opts: any) {
     super();
@@ -191,6 +206,50 @@ test("mail wake emits working while the recipient handles the turn", async () =>
 
     expect(events).toContainEqual(expect.objectContaining({ kind: "agent_activity", agent: "codex-1", activity: "idle" }));
     expect((cp as any).meshStatusText("router")).toContain("- codex-1 [codex, member, ready, idle]");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("steer mail validates permissions, emits steer, and uses front delivery", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mesh-control-plane-steer-"));
+  const config: MeshConfig = {
+    name: "steer",
+    agents: [
+      { id: "router", harness: "claude", project: ".", role: "router" },
+      { id: "a", harness: "codex", project: ".", role: "member" },
+      { id: "b", harness: "opencode", project: ".", role: "member" },
+    ],
+    edges: [
+      { from: "a", to: "b", steer: true },
+      { from: "a", to: "router", steer: true },
+      { from: "router", to: "a" },
+    ],
+  };
+  const cp = new ControlPlane(config, { mailboxPath: join(root, "mailbox.ndjson") });
+  const fake = new RecordingSteerConnection();
+  (cp as any).conns.set("b", fake);
+  (cp as any).mesh.setStatus("b", "ready");
+  const events: any[] = [];
+  cp.on((e) => events.push(e));
+
+  try {
+    expect(await (cp as any).handleSteerMail({ agentId: "a", role: "member" }, "ghost", "x")).toMatch(/no such agent.*send_mail/i);
+    expect(await (cp as any).handleSteerMail({ agentId: "a", role: "member" }, "a", "x")).toMatch(/yourself.*send_mail/i);
+    expect(await (cp as any).handleSteerMail({ agentId: "b", role: "member" }, "a", "x")).toMatch(/not allowed.*send_mail/i);
+    expect(await (cp as any).handleSteerMail({ agentId: "router", role: "router" }, "a", "x")).toMatch(/not enabled.*send_mail/i);
+    expect(await (cp as any).handleSteerMail({ agentId: "a", role: "member" }, "router", "x")).toMatch(/router.*send_mail/i);
+
+    expect(await (cp as any).handleSteerMail({ agentId: "a", role: "member" }, "b", "urgent")).toMatch(/steered to b/i);
+    expect(fake.cancels).toBe(0);
+    expect(fake.prompts).toHaveLength(1);
+    expect(fake.prompts[0].text).toContain("[STEER from a]: urgent");
+    expect(events).toContainEqual(expect.objectContaining({ kind: "steer", from: "a", to: "b", body: "urgent" }));
+    expect(events).toContainEqual(expect.objectContaining({ kind: "agent_activity", agent: "b", activity: "working" }));
+
+    fake.prompts[0].resolve({});
+    await Promise.resolve();
+    expect(events).toContainEqual(expect.objectContaining({ kind: "agent_activity", agent: "b", activity: "idle" }));
   } finally {
     await rm(root, { recursive: true, force: true });
   }

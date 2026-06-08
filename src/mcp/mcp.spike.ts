@@ -22,6 +22,8 @@ const mcp = createMeshServicesServer({
       return `mesh ok; you are ${ctx.agentId} (${ctx.role})`;
     },
     sendMail: () => "not implemented in spike",
+    steerMail: () => "not implemented in spike",
+    steerTargets: () => [],
     checkMail: () => "no mail",
     interrupt: () => "not implemented in spike",
   },

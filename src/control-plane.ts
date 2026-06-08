@@ -165,6 +165,8 @@ export class ControlPlane {
       handlers: {
         meshStatus: (ctx) => this.meshStatusText(ctx.agentId),
         sendMail: (ctx, to, body) => this.handleSendMail(ctx, to, body),
+        steerMail: (ctx, to, body) => this.handleSteerMail(ctx, to, body),
+        steerTargets: (ctx) => this.steerTargets(ctx.agentId),
         checkMail: (ctx) => this.handleCheckMail(ctx),
         interrupt: (ctx, target, reason) => this.handleInterrupt(ctx, target, reason),
       },
@@ -265,6 +267,10 @@ export class ControlPlane {
     return `Mesh "${this.mesh.name}" — router is ${this.mesh.router.id}.\n${lines.join("\n")}`;
   }
 
+  private steerTargets(from: AgentId): AgentId[] {
+    return this.mesh.agents.filter((agent) => agent.id !== from && this.mesh.canSteer(from, agent.id)).map((agent) => agent.id);
+  }
+
   private activityOf(id: AgentId): AgentActivity {
     if (this.mesh.status(id) === "dead") return "idle";
     return (this.turnCounts.get(id) ?? 0) > 0 ? "working" : "idle";
@@ -320,6 +326,34 @@ export class ControlPlane {
     this.trackTurn(to, () => conn.prompt(prompt)).catch((err) => this.log(`wake(${to}) failed: ${String(err)}`));
   }
 
+  private async handleSteerMail(ctx: MeshToolContext, to: AgentId, body: string): Promise<string> {
+    if (!this.mesh.agent(to)) return `error: no such agent "${to}" in this mesh; use send_mail for ordinary delivery`;
+    if (to === ctx.agentId) return `error: cannot steer yourself; use send_mail for ordinary delivery`;
+    if (!this.mesh.canMail(ctx.agentId, to)) {
+      return `error: you (${ctx.agentId}) are not allowed to mail ${to}; use send_mail only for permitted ordinary delivery`;
+    }
+    if (!this.mesh.canSteer(ctx.agentId, to)) {
+      const detail = to === this.mesh.router.id ? `cannot steer the router ${to}` : `steer is not enabled from ${ctx.agentId} to ${to}`;
+      return `error: ${detail}; use send_mail for ordinary queued delivery`;
+    }
+    await sendMail({ mailboxPath: this.mailboxPath, mesh: this.mesh.name, from: ctx.agentId, to, body });
+    this.emit({ kind: "steer", from: ctx.agentId, to, body, ts: now() });
+    this.steerWake(to, ctx.agentId, body);
+    return `steered to ${to}`;
+  }
+
+  private steerWake(to: AgentId, from: AgentId | "operator", body: string, images: PromptImageRef[] = []): void {
+    const conn = this.conns.get(to);
+    if (!conn) return;
+    const mail =
+      `[STEER from ${from}]: ${body}\n\n` +
+      `This interrupted your current turn and was placed ahead of ordinary queued mail. ` +
+      `Read it and adjust course appropriately.`;
+    const prompt = this.compose(to, mail);
+    const promptImages = images.map((i) => this.resolveImagePath(i));
+    this.trackTurn(to, () => conn.steerPrompt(prompt, promptImages)).catch((err) => this.log(`steerWake(${to}) failed: ${String(err)}`));
+  }
+
   private resolveImagePath(image: PromptImageRef): PromptImageRef {
     if (image.path || !this.uploadRoot || !image.bucket) return image;
     return { ...image, path: join(this.uploadRoot, image.bucket, image.id) };
@@ -342,7 +376,7 @@ export class ControlPlane {
   }
 
   // ---- permission escalation ----
-  private static readonly MESH_TOOLS = new Set(["send_mail", "check_mail", "interrupt", "mesh_status"]);
+  private static readonly MESH_TOOLS = new Set(["send_mail", "steer_mail", "check_mail", "interrupt", "mesh_status"]);
 
   /**
    * Is this permission request for one of OUR injected mesh tools? Match the

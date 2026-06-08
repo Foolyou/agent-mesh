@@ -16,6 +16,8 @@ export interface MeshToolContext {
 export interface MeshServicesHandlers {
   meshStatus(ctx: MeshToolContext): Promise<string> | string;
   sendMail(ctx: MeshToolContext, to: string, body: string): Promise<string> | string;
+  steerMail(ctx: MeshToolContext, to: string, body: string): Promise<string> | string;
+  steerTargets(ctx: MeshToolContext): Promise<string[]> | string[];
   checkMail(ctx: MeshToolContext): Promise<string> | string;
   interrupt(ctx: MeshToolContext, target: string, reason?: string): Promise<string> | string;
 }
@@ -73,6 +75,22 @@ export function createMeshServicesServer(opts: {
         },
       },
       async ({ to, body }) => text(await opts.handlers.sendMail(ctx, to, body)),
+    );
+
+    const steerTargets = await opts.handlers.steerTargets(ctx);
+    server.registerTool(
+      "steer_mail",
+      {
+        description:
+          steerTargets.length > 0
+            ? `Interrupt and steer one of these permitted recipients: ${steerTargets.join(", ")}. Use send_mail instead for ordinary queued delivery.`
+            : "Interrupt and steer another agent. Current mesh policy gives you no permitted steer targets; use send_mail for ordinary queued delivery.",
+        inputSchema: {
+          to: z.string().describe("recipient agent id"),
+          body: z.string().describe("message body"),
+        },
+      },
+      async ({ to, body }) => text(await opts.handlers.steerMail(ctx, to, body)),
     );
 
     server.registerTool(
