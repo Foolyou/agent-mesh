@@ -73,11 +73,8 @@ const TOOL_ICONS: Record<string, string> = {
 function ToolCard({ item }: { item: Extract<TranscriptItem, { kind: "tool_call" }> }) {
   const { t } = useI18n();
   const hasDetail = !!(item.output || item.input || item.locations?.length);
-  // Default to OPEN whenever the card carries detail, so a turn's tool calls show what they did
-  // without a click each. `override` (null until the user clicks) lets manual collapse/expand win
-  // and survives later prop updates that flip hasDetail.
   const [override, setOverride] = useState<boolean | null>(null);
-  const open = override ?? hasDetail;
+  const open = override ?? false;
   return (
     <div className="tool">
       <div className="thead" onClick={() => hasDetail && setOverride(!open)} style={{ cursor: hasDetail ? "pointer" : "default" }}>
