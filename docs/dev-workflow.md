@@ -45,6 +45,19 @@ They share nothing: separate **roots**, **ports**, and **sockets**.
   response) needs that mesh restarted — pick the moment, and rely on agents committing
   often so a restart costs context, not work.
 
+## Session resume notes
+
+- Cold-start resume uses ACP `session/load` and the underlying CLI's own session
+  store (`~/.codex`, `~/.claude`, `~/.kimi-code`, opencode's local db). Agent Mesh
+  persists only session identity/config in `<root>/.agent-mesh/run/<mesh>.sessions.json`;
+  it does not persist transcripts or reconstruct in-flight tool calls.
+- Keep each mesh worktree path stable. The saved `cwd` is part of session identity
+  for the underlying harnesses, so moving a mesh project/worktree can make resume
+  fall back to a fresh `session/new`.
+- A deliberate mesh stop or idle lease clears `meshExpectedAlive`; daemon restart will
+  not auto-resurrect that mesh. Sending a prompt/wake/steer to the stopped agent is an
+  explicit start intent and creates a fresh session.
+
 ## Service control — built into the binary
 
 The binary manages the backend service itself (no wrapper script). Scoped by base dir

@@ -234,6 +234,17 @@ export class MeshHostClient {
     if (pid && !this.exited) {
       killTree(pid);
       if (this.child) await Promise.race([this.child.exited, Bun.sleep(3000)]);
+      else {
+        const deadline = Date.now() + 3000;
+        while (Date.now() < deadline) {
+          try {
+            process.kill(pid, 0);
+          } catch {
+            break;
+          }
+          await Bun.sleep(50);
+        }
+      }
     }
     this.conn?.destroy();
     this.conn = undefined;

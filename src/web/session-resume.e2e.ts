@@ -1,0 +1,166 @@
+// Session-resume e2e over the real backend + mesh-host + ACP client, with a
+// deterministic fake codex-acp executable injected through PATH.
+// Run: E2E_PORT=10020 E2E_ROOT=~/.agent-mesh-dev bun run src/web/session-resume.e2e.ts
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+
+const PORT = Number(process.env.E2E_PORT) || 10020;
+const BASE = `http://localhost:${PORT}`;
+const ROOT = process.env.E2E_ROOT?.replace(/^~/, homedir()) ?? join(homedir(), ".agent-mesh-dev");
+const REPO = resolve(import.meta.dir, "..", "..");
+const mesh = `resume-e2e-${process.pid}`;
+const work = await mkdtemp(join(tmpdir(), "mesh-resume-e2e-"));
+const fakeStore = join(work, "fake-store");
+const effects = join(work, "effects.log");
+const bin = join(work, "bin");
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+let pass = 0;
+const fails: string[] = [];
+async function step(name: string, fn: () => Promise<void>) {
+  try {
+    await fn();
+    pass++;
+    console.log(`  ✓ ${name}`);
+  } catch (e: any) {
+    fails.push(name);
+    console.log(`  ✗ ${name} — ${String(e?.message ?? e).split("\n")[0]}`);
+  }
+}
+
+async function waitReady(): Promise<void> {
+  for (let i = 0; i < 80; i++) {
+    try {
+      if ((await fetch(`${BASE}/api/state`)).ok) return;
+    } catch {}
+    await sleep(250);
+  }
+  throw new Error("backend never became ready");
+}
+
+const state = async () => (await fetch(`${BASE}/api/state`)).json();
+const post = (p: string, body?: unknown) =>
+  fetch(`${BASE}${p}`, { method: "POST", headers: { "content-type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
+const del = (p: string) => fetch(`${BASE}${p}`, { method: "DELETE" });
+const recPath = () => join(ROOT, ".agent-mesh", "run", `${mesh}.json`);
+const sessionsPath = () => join(ROOT, ".agent-mesh", "run", `${mesh}.sessions.json`);
+
+async function daemonPid(): Promise<number> {
+  const rec = JSON.parse(await readFile(recPath(), "utf8"));
+  if (!rec.pid) throw new Error("missing daemon pid");
+  return rec.pid;
+}
+
+async function waitFor(cond: () => Promise<boolean> | boolean, timeoutMs = 8000): Promise<void> {
+  const end = Date.now() + timeoutMs;
+  while (Date.now() < end) {
+    if (await cond()) return;
+    await sleep(250);
+  }
+  throw new Error("condition not met before timeout");
+}
+
+async function transcriptText(): Promise<string> {
+  const s = await state();
+  return JSON.stringify(s.perMesh?.[mesh]?.transcripts?.r ?? []);
+}
+
+await mkdir(bin, { recursive: true });
+const shim = join(bin, "codex-acp");
+await writeFile(shim, `#!/usr/bin/env bash\nexec bun ${JSON.stringify(resolve(REPO, "src", "fixtures", "resume-acp.ts"))}\n`, "utf8");
+await chmod(shim, 0o700);
+
+let backend = Bun.spawn(["bun", "run", "src/main.ts", "backend", "--no-master", "--port", String(PORT), "--root", ROOT], {
+  cwd: REPO,
+  env: {
+    ...process.env,
+    PATH: `${bin}:${process.env.PATH ?? ""}`,
+    FAKE_ACP_STORE: fakeStore,
+    FAKE_ACP_EFFECTS: effects,
+    MESH_API_PORT: "",
+  },
+  stdout: "pipe",
+  stderr: "pipe",
+});
+
+try {
+  await waitReady();
+  const config = { name: mesh, agents: [{ id: "r", harness: "codex", project: ".", role: "router" }], edges: [] };
+
+  let firstPid = 0;
+  const sentinel = `SENTINEL-${process.pid}`;
+  await step("define + start mesh, establish sentinel and one side effect", async () => {
+    if (!(await post("/api/meshes", config)).ok) throw new Error("define failed");
+    if (!(await post(`/api/meshes/${mesh}/start`)).ok) throw new Error("start failed");
+    await waitFor(async () => (await daemonPid()) > 0);
+    firstPid = await daemonPid();
+    await post(`/api/meshes/${mesh}/agents/r/prompt`, { text: `remember sentinel ${sentinel}` });
+    await waitFor(async () => (await transcriptText()).includes(`remembered ${sentinel}`));
+    const lines = (await readFile(effects, "utf8")).trim().split("\n").filter(Boolean);
+    if (lines.length !== 1 || lines[0] !== sentinel) throw new Error(`unexpected effects: ${JSON.stringify(lines)}`);
+  });
+
+  await step("kill -9 mesh daemon, restart mesh, session/load recalls sentinel without duplicate side effect", async () => {
+    process.kill(firstPid, "SIGKILL");
+    await sleep(600);
+    if (!(await post(`/api/meshes/${mesh}/start`)).ok) throw new Error("restart failed");
+    await waitFor(async () => {
+      try {
+        return (await daemonPid()) !== firstPid;
+      } catch {
+        return false;
+      }
+    });
+    await post(`/api/meshes/${mesh}/agents/r/prompt`, { text: "what is the sentinel?" });
+    await waitFor(async () => (await transcriptText()).includes(sentinel));
+    const lines = (await readFile(effects, "utf8")).trim().split("\n").filter(Boolean);
+    if (lines.length !== 1) throw new Error(`side effect duplicated: ${JSON.stringify(lines)}`);
+  });
+
+  await step("deliberate stop does not auto-resurrect on daemon restart", async () => {
+    if (!(await post(`/api/meshes/${mesh}/stop`)).ok) throw new Error("stop failed");
+    await waitFor(async () => {
+      try {
+        process.kill(await daemonPid(), 0);
+        return false;
+      } catch {
+        return true;
+      }
+    });
+    const saved = JSON.parse(await readFile(sessionsPath(), "utf8"));
+    if (saved.meshExpectedAlive !== false) throw new Error("meshExpectedAlive was not false after stop");
+    if (!(await post(`/api/meshes/${mesh}/start`)).ok) throw new Error("restart after stop failed");
+    await waitFor(async () => {
+      const s = await state();
+      return s.meshes.some((m: any) => m.name === mesh && m.agents?.[0]?.status === "dead");
+    });
+  });
+
+  await step("prompt to stopped agent fresh-starts and sets meshExpectedAlive true", async () => {
+    await post(`/api/meshes/${mesh}/agents/r/prompt`, { text: "fresh hello after stop" });
+    await waitFor(async () => (await transcriptText()).includes("echo fresh hello after stop"));
+    await waitFor(async () => {
+      const saved = JSON.parse(await readFile(sessionsPath(), "utf8"));
+      return saved.meshExpectedAlive === true;
+    });
+  });
+
+  console.log(`\n  ${pass} passed, ${fails.length} failed`);
+  if (fails.length) {
+    console.log("  FAILED:", fails.join(", "));
+    process.exitCode = 1;
+  } else {
+    console.log("  SESSION-RESUME E2E OK");
+  }
+} finally {
+  try { await post(`/api/meshes/${mesh}/stop`); } catch {}
+  try { await del(`/api/meshes/${mesh}`); } catch {}
+  try { await rm(sessionsPath(), { force: true }); } catch {}
+  backend.kill("SIGKILL");
+  try {
+    const pid = await daemonPid();
+    process.kill(pid, "SIGKILL");
+  } catch {}
+  await rm(work, { recursive: true, force: true });
+}
