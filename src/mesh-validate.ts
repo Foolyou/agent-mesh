@@ -2,7 +2,7 @@
 // Deterministic validation of a mesh topology. The control plane runs this over
 // every (possibly LLM-generated) MeshConfig before defining/persisting it.
 import { isAbsolute } from "node:path";
-import { HARNESSES } from "./harness";
+import { HARNESSES, HARNESS_MODES, UNSAFE_MODES } from "./harness";
 import type { MeshConfig } from "./acp/types";
 
 export function validateMeshConfig(config: MeshConfig): void {
@@ -33,10 +33,18 @@ export function validateMeshConfig(config: MeshConfig): void {
     if (a.effort !== undefined && !["minimal", "low", "medium", "high"].includes(a.effort)) {
       throw new Error(`agent "${a.id}" has invalid effort "${a.effort}" (use minimal|low|medium|high)`);
     }
-    // mode is the agent's authority at runtime; only sanity-check the shape here (lenient, since
-    // the advertised mode ids vary by harness/version and the agent rejects unknown ones).
-    if (a.mode !== undefined && (typeof a.mode !== "string" || !a.mode.trim())) {
-      throw new Error(`agent "${a.id}" mode must be a non-empty string`);
+    // A configured initial mode must be a known mode id for the harness (no arbitrary strings),
+    // and a permission-bypassing mode may only be PRE-ARMED at create time with an explicit opt-in
+    // (the operator can still switch to it deliberately at runtime). This blocks an LLM-generated
+    // or API config from silently launching an agent into a no-prompt, auto-approve state.
+    if (a.mode !== undefined) {
+      if (typeof a.mode !== "string" || !a.mode.trim()) throw new Error(`agent "${a.id}" mode must be a non-empty string`);
+      if (!(HARNESS_MODES[a.harness] ?? []).includes(a.mode)) {
+        throw new Error(`agent "${a.id}" mode "${a.mode}" is not a known ${a.harness} mode`);
+      }
+      if (UNSAFE_MODES.has(a.mode) && !process.env.ALLOW_UNSAFE_MESH_MODES) {
+        throw new Error(`agent "${a.id}" mode "${a.mode}" disables permission prompts; set ALLOW_UNSAFE_MESH_MODES=1 to pre-arm it (or switch to it at runtime)`);
+      }
     }
   }
 

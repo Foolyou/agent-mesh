@@ -3,7 +3,7 @@
 import { useState } from "react";
 import type { Store } from "./store";
 import type { HarnessId, AgentRole, MeshConfig, ThinkingEffort } from "../types";
-import { HARNESS_MODES } from "../../harness";
+import { builderModesFor } from "../../harness";
 import { Btn } from "./ui";
 import { useI18n } from "./i18n";
 
@@ -153,7 +153,7 @@ export function MeshBuilder({
                     onChange={(e) => setAgent(i, { mode: e.target.value || undefined })}
                   >
                     <option value="">{t("mode.default")}</option>
-                    {HARNESS_MODES[a.harness].map((mo) => (
+                    {builderModesFor(a.harness).map((mo) => (
                       <option key={mo} value={mo}>
                         {mo}
                       </option>

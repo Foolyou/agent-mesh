@@ -321,7 +321,10 @@ try {
     // set the (claude) agent's thinking effort + initial permission mode in the builder
     const adv = page.locator(".modal .agrow-adv .adv-sel");
     await adv.nth(0).selectOption("high"); // effort
-    await adv.nth(1).selectOption("plan"); // mode
+    // the no-prompt modes must NOT be advertised in the builder (can't pre-arm a bypass session)
+    const modeOpts = await adv.nth(1).locator("option").allTextContents();
+    if (modeOpts.some((o) => /bypassPermissions|full-access/.test(o))) throw new Error(`unsafe mode advertised in builder: ${modeOpts.join(",")}`);
+    await adv.nth(1).selectOption("plan"); // mode (safe)
     await page.screenshot({ path: `${SHOTS}/03-builder.png`, fullPage: true });
     await page.locator('.modal .btn:has-text("define mesh")').click();
     await page.waitForSelector('.mrow:has-text("squad-x")', { timeout: 6000 });

@@ -18,14 +18,26 @@ export function resolveHarness(id: HarnessId): HarnessSpec {
   return spec;
 }
 
-// Permission/session modes each harness advertises, used to offer a create-time choice in the
-// builder (the agent re-advertises the authoritative list at runtime). An empty list = the
-// harness exposes no selectable modes. These are applied best-effort via setSessionMode at start.
+// Permission/session modes each harness advertises (the full known set, used as the create-time
+// validation allowlist; the agent re-advertises the authoritative list at runtime). An empty list
+// = no selectable modes. Applied best-effort via setSessionMode at start.
 export const HARNESS_MODES: Record<HarnessId, string[]> = {
   claude: ["default", "acceptEdits", "plan", "bypassPermissions"],
   codex: ["read-only", "default", "full-access"],
   opencode: [],
 };
+
+// Modes that DISABLE permission prompts — i.e. the agent auto-runs every tool call (edits,
+// shell) with no human approval. These are NOT offered in the builder (so a no-prompt session
+// can't be pre-armed with one click, incl. via an LLM-generated config) and are rejected at
+// create time unless the operator explicitly opts in with ALLOW_UNSAFE_MESH_MODES=1. The
+// operator can still switch to them deliberately at runtime via the panel mode picker.
+export const UNSAFE_MODES = new Set<string>(["bypassPermissions", "full-access"]);
+
+/** Modes safe to advertise in the create/edit builder (prompts preserved). */
+export function builderModesFor(id: HarnessId): string[] {
+  return HARNESS_MODES[id].filter((m) => !UNSAFE_MODES.has(m));
+}
 
 // claude reads MAX_THINKING_TOKENS at session start; map the effort levels to token budgets.
 const CLAUDE_THINK_TOKENS: Record<ThinkingEffort, number> = {
