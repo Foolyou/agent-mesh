@@ -148,6 +148,8 @@ export class ControlPlane {
   /** Operator-initiated interrupt: cancel an agent's current turn and record it.
    *  (The router can also interrupt via its mesh tool; this is the human path.) */
   async interrupt(id: AgentId, by: AgentId = "operator"): Promise<void> {
+    // TODO: cancelling while a permission request is pending can leave that request visible;
+    // this is pre-existing interrupt behavior and should be cleaned up with a permission-state pass.
     this.emit({ kind: "interrupt", from: by, target: id, reason: "operator interrupt", ts: now() });
     await this.agent(id).cancel();
   }

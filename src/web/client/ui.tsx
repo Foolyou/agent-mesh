@@ -11,6 +11,7 @@ import {
   type DragEvent,
 } from "react";
 import type { AgentStatus, MeshStatus, PromptImageRef } from "../types";
+import { useI18n } from "./i18n";
 
 export function Dot({ status }: { status: AgentStatus | MeshStatus | string }) {
   return <span className={`dot ${status}`} title={status} />;
@@ -84,6 +85,7 @@ export const Composer = forwardRef<HTMLTextAreaElement, {
   imageEnabled?: boolean;
   imageDisabledReason?: string;
 }>(function Composer({ onSend, onInterrupt, onUploadImages, placeholder, disabled, working, steerEnabled, imageEnabled, imageDisabledReason }, ref) {
+  const { t } = useI18n();
   const [v, setV] = useState("");
   const [pending, setPending] = useState<{ file: File; url: string }[]>([]);
   const [err, setErr] = useState("");
@@ -218,11 +220,11 @@ export const Composer = forwardRef<HTMLTextAreaElement, {
             className="compose-interrupt"
             type="button"
             disabled={disabled || sending}
-            title="interrupt current Agent"
-            aria-label="interrupt current Agent"
+            title={t("interrupt.current")}
+            aria-label={t("interrupt.current")}
             onClick={() => void onInterrupt?.()}
           >
-            <span className="compose-interrupt-text">interrupt</span>
+            <span className="compose-interrupt-text">{t("interrupt")}</span>
             <span className="compose-interrupt-icon" aria-hidden="true">
               ⏹
             </span>

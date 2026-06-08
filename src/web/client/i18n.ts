@@ -71,6 +71,7 @@ const DICT: Record<string, Entry> = {
   "canvas.title": ["Canvas", "画板"],
   "router chat": ["router chat", "router 对话"],
   interrupt: ["interrupt", "中断"],
+  "interrupt.current": ["interrupt current agent", "中断当前 agent 回合"],
   full: ["full", "全屏"],
   exit: ["exit", "退出"],
   "router.placeholder": ["talk to the router… (Enter send)", "与 router 对话…(Enter 发送)"],
