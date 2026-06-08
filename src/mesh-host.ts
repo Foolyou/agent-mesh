@@ -129,7 +129,7 @@ export class MeshHostDaemon {
         // replay everything the parent hasn't seen, then acknowledge with run state.
         const replay = this.ring.filter((e) => e.seq > msg.resumeFrom);
         if (replay.length) this.write(sock, { t: "replay", events: replay });
-        for (const event of this.cp.snapshotEvents()) this.onEvent(event);
+        this.write(sock, { t: "snapshot", events: this.cp.snapshotEvents() });
         this.write(sock, { t: "ack", proto: PROTO_VERSION, running: this.ready, seq: this.seq });
         break;
       }

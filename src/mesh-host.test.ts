@@ -5,8 +5,9 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MeshHostDaemon, type BridgeControlPlane } from "./mesh-host";
+import { MeshHostClient } from "./mesh-host-client";
 import { LineBuffer, encodeFrame, PROTO_VERSION } from "./protocol";
-import type { MeshEvent } from "./acp/types";
+import type { MeshConfig, MeshEvent } from "./acp/types";
 
 let dir: string;
 let daemon: MeshHostDaemon | undefined;
@@ -121,11 +122,45 @@ test("hello backfills current agent state after ring replay", async () => {
 
   const replay = got.find((m) => m.t === "replay");
   expect(replay.events.map((e: any) => e.event.kind)).toEqual(["log"]);
-  const events = got.filter((m) => m.t === "event").map((m) => m.event);
+  expect(replay.events.map((e: any) => e.seq)).toEqual([2]);
+  const snapshot = got.find((m) => m.t === "snapshot");
+  expect(snapshot).toBeTruthy();
+  const events = snapshot.events;
   expect(events).toContainEqual(expect.objectContaining({ kind: "agent_status", agent: "router", status: "ready" }));
   expect(events).toContainEqual(expect.objectContaining({ kind: "agent_activity", agent: "router", activity: "idle" }));
   expect(events).toContainEqual(expect.objectContaining({ kind: "agent_capabilities", agent: "router", image: true }));
   expect(events).toContainEqual(expect.objectContaining({ kind: "agent_modes", agent: "router", current: "default" }));
+  expect(got.filter((m) => m.t === "event")).toHaveLength(0);
+  expect(got.find((m) => m.t === "ack")?.seq).toBe(2);
+});
+
+test("mesh host client applies snapshot without advancing last seq", async () => {
+  const sock = join(dir, "client-snapshot.sock");
+  const { cp, emit } = fakeCp();
+  (cp as any).snapshotEvents = () => [
+    { kind: "agent_status", agent: "router", status: "ready", ts: "snap" },
+    { kind: "agent_capabilities", agent: "router", image: true, ts: "snap" },
+  ];
+  daemon = new MeshHostDaemon(cp, { socketPath: sock, ringCap: 1 });
+  await daemon.listen();
+  daemon.markReady();
+  emit({ kind: "agent_status", agent: "router", status: "spawning", ts: "old" });
+  emit({ kind: "log", text: "later event", ts: "newer" });
+
+  const config: MeshConfig = {
+    name: "snapshot-client",
+    agents: [{ id: "router", harness: "claude", project: ".", role: "router" }],
+    edges: [],
+  };
+  const events: MeshEvent[] = [];
+  const client = new MeshHostClient({ name: config.name, config, socketPath: sock, onEvent: (e) => events.push(e) });
+  await client.attach({ pid: process.pid }, 0);
+
+  expect(events).toContainEqual(expect.objectContaining({ kind: "log", text: "later event" }));
+  expect(events).toContainEqual(expect.objectContaining({ kind: "agent_status", agent: "router", status: "ready" }));
+  expect(events).toContainEqual(expect.objectContaining({ kind: "agent_capabilities", agent: "router", image: true }));
+  expect(client.seq).toBe(2);
+  client.disconnect();
 });
 
 test("a second client takes over; the first is dropped", async () => {
