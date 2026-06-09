@@ -67,6 +67,18 @@ export function buildMeshBriefing(mesh: Mesh, agentId: AgentId): string {
     "Prefer using these tools to collaborate rather than assuming you must do everything yourself.",
   );
 
+  lines.push("");
+  lines.push("Writing file references in Markdown:");
+  lines.push(
+    "When you mention a file you have written, attach it as a Markdown link or image whose " +
+      "target is the file path RELATIVE TO YOUR CWD — the web console resolves the path against " +
+      "your CWD to render it inline. Bare filenames only work if the file sits at the cwd root; " +
+      "absolute paths (/home/...) are stripped for security and will not load.",
+  );
+  lines.push("  good:  [analysis](docs/analysis.md)        # file at <cwd>/docs/analysis.md");
+  lines.push("  good:  ![](screenshots/diagram.png)        # file at <cwd>/screenshots/diagram.png");
+  lines.push("  bad:   [analysis](analysis.md)             # broken unless file is at <cwd>/analysis.md");
+
   const charter = mesh.charter;
   if (charter) {
     lines.push("");
