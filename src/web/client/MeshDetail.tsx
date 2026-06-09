@@ -101,7 +101,7 @@ function ModeControl({ mesh, agent, store, modes }: { mesh: string; agent: strin
         {t("mode")}
       </span>
       <select
-        className="mode-sel"
+        className="mode-sel select-control"
         value={modes.current}
         aria-label={t("mode")}
         title={desc ?? t("mode.hint")}
@@ -127,7 +127,7 @@ function ModelControl({ mesh, agent, store, models }: { mesh: string; agent: str
         {t("model")}
       </span>
       <select
-        className="model-sel"
+        className="model-sel select-control"
         value={models.current}
         aria-label={t("model")}
         title={t("model.hint")}
@@ -160,7 +160,7 @@ function EffortControl({ m, agent, store }: { m: MeshSummary; agent: string; sto
         {t("effort")}
       </span>
       <select
-        className="effort-sel"
+        className="effort-sel select-control"
         value={a.effort ?? ""}
         disabled={live}
         aria-label={t("effort")}
@@ -517,7 +517,7 @@ export function MeshDetail({
   const agentAddControl = live ? (
     <span className="row agent-add" style={{ gap: 5 }}>
       <input className="inp compact" value={agentId} aria-label={t("agent.id")} onChange={(e) => setAgentId(e.target.value)} />
-      <select className="mode-sel" value={agentHarness} aria-label={t("agent.harness")} onChange={(e) => setAgentHarness(e.target.value as HarnessId)}>
+      <select className="mode-sel select-control" value={agentHarness} aria-label={t("agent.harness")} onChange={(e) => setAgentHarness(e.target.value as HarnessId)}>
         <option value="codex">codex</option>
         <option value="claude">claude</option>
         <option value="kimi">kimi</option>
@@ -531,7 +531,7 @@ export function MeshDetail({
   const edgeAddControl =
     live && agentIds.length >= 2 ? (
       <span className="row edge-add" style={{ gap: 5 }}>
-        <select className="mode-sel" value={edgeFrom} aria-label={t("edge.from")} onChange={(e) => setEdgeFrom(e.target.value)}>
+        <select className="mode-sel select-control" value={edgeFrom} aria-label={t("edge.from")} onChange={(e) => setEdgeFrom(e.target.value)}>
           {agentIds.map((id) => (
             <option key={id} value={id}>
               {id}
@@ -539,7 +539,7 @@ export function MeshDetail({
           ))}
         </select>
         <span className="sub">→</span>
-        <select className="mode-sel" value={edgeTo} aria-label={t("edge.to")} onChange={(e) => setEdgeTo(e.target.value)}>
+        <select className="mode-sel select-control" value={edgeTo} aria-label={t("edge.to")} onChange={(e) => setEdgeTo(e.target.value)}>
           {agentIds.map((id) => (
             <option key={id} value={id}>
               {id}

@@ -47,7 +47,7 @@ export function ThemeControls() {
 
   return (
     <span className="theme-controls">
-      <select className="theme-sel" value={active} onChange={(e) => pick(e.target.value)} title={t("theme")}>
+      <select className="theme-sel select-control" value={active} onChange={(e) => pick(e.target.value)} title={t("theme")}>
         {BUILTIN_THEMES.map((th) => (
           <option key={th.name} value={th.name}>
             {th.label}

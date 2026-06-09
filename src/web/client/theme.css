@@ -1942,6 +1942,7 @@ select.inp {
   .topbar .theme-sel {
     width: 72px;
     padding: 5px 4px;
+    padding-right: 24px;
     font-size: 11px;
   }
   .body {
@@ -2018,6 +2019,7 @@ select.inp {
     min-width: 0;
     max-width: min(104px, 27vw);
     padding: 2px 5px;
+    padding-right: 24px;
   }
   .empty {
     padding: 8px;
@@ -2138,6 +2140,12 @@ select.inp {
 .effort-sel:hover {
   color: var(--fg);
   border-color: var(--fg-faint);
+}
+.select-control {
+  min-width: 0;
+  padding-right: 24px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .theme-grid {
   display: grid;

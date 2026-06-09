@@ -241,7 +241,7 @@ export function MeshBuilder({
                 <div className="agent-block" key={i}>
                   <div className="agrow">
                     <input className="inp" value={a.id} placeholder="id" onChange={(e) => setAgent(i, { id: e.target.value })} />
-                    <select className="inp" value={a.harness} onChange={(e) => setAgent(i, { harness: e.target.value as HarnessId })}>
+                    <select className="inp select-control" value={a.harness} onChange={(e) => setAgent(i, { harness: e.target.value as HarnessId })}>
                       {HARNESSES.map((h) => (
                         <option key={h} value={h}>
                           {h}
@@ -249,7 +249,7 @@ export function MeshBuilder({
                       ))}
                     </select>
                     <select
-                      className="inp"
+                      className="inp select-control"
                       value={a.role}
                       onChange={(e) => {
                         const role = e.target.value as AgentRole;
@@ -267,7 +267,7 @@ export function MeshBuilder({
                   <div className="agrow-adv">
                     <span className="adv-label">{t("effort")}</span>
                     <select
-                      className="inp adv-sel"
+                      className="inp adv-sel select-control"
                       value={a.effort ?? ""}
                       title={t("effort.hint")}
                       onChange={(e) => setAgent(i, { effort: (e.target.value || undefined) as ThinkingEffort | undefined })}
@@ -326,7 +326,7 @@ export function MeshBuilder({
               <label>{t("build.edges")}</label>
               {edges.map((edge, i) => (
                 <div className="row" key={i}>
-                  <select className="inp" value={edge.from} onChange={(e) => setEdge(i, 0, e.target.value)}>
+                  <select className="inp select-control" value={edge.from} onChange={(e) => setEdge(i, 0, e.target.value)}>
                     {ids.map((id) => (
                       <option key={id} value={id}>
                         {id}
@@ -334,7 +334,7 @@ export function MeshBuilder({
                     ))}
                   </select>
                   <span className="sub">→</span>
-                  <select className="inp" value={edge.to} onChange={(e) => setEdge(i, 1, e.target.value)}>
+                  <select className="inp select-control" value={edge.to} onChange={(e) => setEdge(i, 1, e.target.value)}>
                     {ids.map((id) => (
                       <option key={id} value={id}>
                         {id}

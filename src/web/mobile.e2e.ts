@@ -64,6 +64,12 @@ try {
     await page.waitForSelector(".theme-sel", { timeout: 4000 });
     const sel = page.locator(".theme-sel");
     if (!(await sel.isVisible())) throw new Error("theme select is hidden");
+    const selectStyle = await sel.evaluate((el) => {
+      const cs = getComputedStyle(el);
+      return { paddingRight: parseFloat(cs.paddingRight), textOverflow: cs.textOverflow };
+    });
+    if (selectStyle.paddingRight < 24) throw new Error(`theme select right padding too small: ${selectStyle.paddingRight}`);
+    if (selectStyle.textOverflow !== "ellipsis") throw new Error(`theme select text-overflow=${selectStyle.textOverflow}`);
     await sel.selectOption("paper");
     await sleep(150);
     const bg = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--bg").trim());
