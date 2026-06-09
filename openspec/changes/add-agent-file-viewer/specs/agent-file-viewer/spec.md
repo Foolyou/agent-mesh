@@ -76,6 +76,44 @@ The system SHALL NOT include `.svg` in the whitelist. SVG served as `image/svg+x
 - **WHEN** an authenticated client requests `/api/agents/codex/files/server.ts` and the file exists
 - **THEN** the server responds `200` with `Content-Type: text/plain; charset=utf-8`
 
+### Requirement: Bare-basename fallback inside cwd
+
+LLM agents frequently emit `[name](name)` even when the file actually lives at `<cwd>/<subdir>/name`, because they drop the relative-path prefix when writing markdown. To make the viewer robust against this common mistake, when an exact-path resolution fails with `enotfound` AND the requested path is a bare basename (no `/` after URL decoding), the system SHALL perform a bounded breadth-first search inside the cwd for a file matching that basename.
+
+The search SHALL:
+
+- Be breadth-first so a shallower match wins over a deeper one.
+- Cap traversal at depth 4 and at 2000 directory entries scanned per request.
+- Skip noisy or sensitive directories that would never legitimately hold agent-surfaced content (`.git`, `node_modules`, `dist`, `.worktrees`, `.cache`, `target`, `.next`, `.turbo`) and any directory whose name begins with `.`.
+- On a match, re-enter the regular resolution pipeline (extension whitelist, traversal check, lstat symlink rejection, oversize refusal, image magic-byte verification). The fallback MUST NOT bypass any security or whitelist gate.
+
+If the search yields no match or the matched candidate fails any gate, the response is `404` exactly as before.
+
+#### Scenario: Bare basename resolves to a subdirectory match
+
+- **WHEN** an agent's cwd contains `works/report.md` and a client requests `/api/agents/codex/files/report.md`
+- **THEN** the server responds `200` with the bytes of `works/report.md`
+
+#### Scenario: Fallback does not surface non-whitelisted files
+
+- **WHEN** an agent's cwd contains `deep/secret.exe` (extension not in the whitelist) and a client requests `/api/agents/codex/files/secret.exe`
+- **THEN** the server responds `404`
+
+#### Scenario: Fallback does not follow symlinks
+
+- **WHEN** an agent's cwd contains `real/alias.md` where `alias.md` is a symbolic link and a client requests `/api/agents/codex/files/alias.md`
+- **THEN** the server responds `404` (the symlink is discovered but the safety gate refuses it)
+
+#### Scenario: Fallback skips `.git`, `node_modules`, and similar noisy trees
+
+- **WHEN** a client requests `/api/agents/codex/files/hidden.md` and the only candidate is at `.git/hidden.md` or `node_modules/hidden.md`
+- **THEN** the server responds `404`
+
+#### Scenario: Specific subpath is not silently corrected
+
+- **WHEN** a client requests `/api/agents/codex/files/wrong/path/note.md` and `note.md` exists at a different location inside the cwd
+- **THEN** the server responds `404`. The fallback applies only to bare basenames; a request that explicitly names a subdirectory is taken literally.
+
 ### Requirement: File size limit
 
 The system SHALL refuse to serve files larger than 5 MB.

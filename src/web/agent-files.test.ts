@@ -124,3 +124,61 @@ test("D3 extension allowlist serves expected types and hides misses", async () =
     await expectCode(root, "bad.svg", "enotfound");
   });
 });
+
+test("bare basename falls back to a bounded search inside the cwd", async () => {
+  await withRoot(async (root) => {
+    // file lives in a subdir, agent emits a bare basename (the realistic LLM error)
+    await mkdir(join(root, "works"), { recursive: true });
+    await writeFile(join(root, "works", "report.md"), "# inside works\n");
+    const ok = await resolveAgentFile(root, "report.md");
+    expect(ok.path).toBe(join(root, "works", "report.md"));
+    expect(ok.contentType).toBe("text/markdown; charset=utf-8");
+  });
+});
+
+test("fuzzy fallback respects extension whitelist and traversal/symlink/oversize gates", async () => {
+  await withRoot(async (root) => {
+    // a non-whitelisted file in a subdir must NOT be discovered by fallback
+    await mkdir(join(root, "deep"), { recursive: true });
+    await writeFile(join(root, "deep", "secret.exe"), "exists");
+    await expectCode(root, "secret.exe", "enotfound");
+
+    // a symlinked basename in a subdir must NOT be served by fallback
+    await mkdir(join(root, "real"), { recursive: true });
+    await writeFile(join(root, "real", "target.md"), "ok\n");
+    await symlink(join(root, "real", "target.md"), join(root, "real", "alias.md"));
+    await expectCode(root, "alias.md", "enotfound");
+
+    // oversize file inside a subdir is still refused
+    await mkdir(join(root, "big"), { recursive: true });
+    await writeFile(join(root, "big", "huge.log"), new Uint8Array(5 * 1024 * 1024 + 1));
+    await expectCode(root, "huge.log", "toobig");
+  });
+});
+
+test("fuzzy fallback skips noisy dirs (.git, node_modules, dist, .worktrees) and hidden dirs", async () => {
+  await withRoot(async (root) => {
+    for (const noisy of [".git", "node_modules", "dist", ".worktrees", ".cache"]) {
+      await mkdir(join(root, noisy), { recursive: true });
+      await writeFile(join(root, noisy, "hidden.md"), "ignore me\n");
+    }
+    await expectCode(root, "hidden.md", "enotfound");
+
+    // visible dir works as usual
+    await mkdir(join(root, "docs"), { recursive: true });
+    await writeFile(join(root, "docs", "visible.md"), "ok\n");
+    const ok = await resolveAgentFile(root, "visible.md");
+    expect(ok.path).toBe(join(root, "docs", "visible.md"));
+  });
+});
+
+test("fuzzy fallback only triggers on bare basenames, not paths containing /", async () => {
+  await withRoot(async (root) => {
+    await mkdir(join(root, "actual"), { recursive: true });
+    await writeFile(join(root, "actual", "note.md"), "real\n");
+    // bare basename → fallback finds it
+    expect((await resolveAgentFile(root, "note.md")).path).toBe(join(root, "actual", "note.md"));
+    // a wrong specific path must NOT be silently corrected
+    await expectCode(root, "wrong/path/note.md", "enotfound");
+  });
+});
