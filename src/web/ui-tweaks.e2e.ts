@@ -71,15 +71,13 @@ try {
     if (align !== "left" && align !== "start") throw new Error(`user message text-align is ${align}`);
   });
 
-  await step("topology expand → modal with zoom controls", async () => {
-    await page.locator('.panel:has(.head:has-text("topology")) .btn:has-text("⤢")').first().click();
-    await page.waitForSelector(".topo-modal .topo svg .node", { timeout: 4000 });
-    const before = await page.locator(".topo-modal .mhead .sub").first().textContent();
-    await page.locator('.topo-modal .mhead .btn:has-text("+")').click();
-    const after = await page.locator(".topo-modal .mhead .sub").first().textContent();
-    if (before === after) throw new Error(`zoom % did not change (${before})`);
-    await page.locator('.topo-modal .mhead .btn:has-text("esc")').click();
-    await page.waitForSelector(".topo-modal", { state: "detached", timeout: 4000 });
+  await step("topology expand → canvas overlay", async () => {
+    const topologyPanel = page.locator(".drail .panel", { has: page.locator('.head .ttl:text-is("topology")') }).first();
+    await topologyPanel.locator('.btn[title="expand topology"]').click();
+    await page.waitForSelector(".mesh-canvas .canvas-window", { timeout: 4000 });
+    await page.locator('.mesh-canvas .canvas-window:has-text("router")').waitFor({ timeout: 4000 });
+    await page.locator(".mesh-canvas .canvas-close").click();
+    await page.waitForSelector(".mesh-canvas", { state: "detached", timeout: 4000 });
   });
 
   await step("mesh list caps at 4 with a pager; › goes to the next page", async () => {
