@@ -2,16 +2,16 @@
 // AcpAgentConnection per agent), runs the Mesh Services MCP server, owns the
 // mailbox + event bus, and arbitrates permission escalations.
 import { join, resolve } from "node:path";
-import { mkdir } from "node:fs/promises";
+import { mkdir, stat } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { AcpAgentConnection, type AcpConnectionOptions, type PermissionDecision } from "./acp/client";
 import { spawnConfigFor } from "./harness";
 import { Mesh } from "./mesh";
 import { buildMeshBriefing } from "./mesh-briefing";
 import { createMeshServicesServer, type MeshServicesHandlers, type MeshServicesServer, type MeshToolContext } from "./mcp/mesh-services";
-import { sendMail, readMailFor } from "./mailbox";
+import { compactMailbox, sendMail, readMailFor, readMailboxEvents } from "./mailbox";
 import { validateAddAgent, validateAddEdge } from "./mesh-validate";
-import { readSessionState, setMeshExpectedAlive, updateAgentSession, clearAgentSession, type MeshSessionState } from "./session-storage";
+import { readSessionState, setMeshExpectedAlive, updateAgentMailCursor, updateAgentSession, clearAgentSession, type MeshSessionState } from "./session-storage";
 import { now, type AgentActivity, type AgentConfig, type AgentId, type MeshConfig, type MeshEdge, type MeshEvent, type PromptImageRef, type SessionMode, type SessionModel } from "./acp/types";
 
 interface PendingDecision {
@@ -34,6 +34,8 @@ export interface ControlPlaneOptions {
   meshServicesFactory?: (handlers: MeshServicesHandlers) => MeshServicesServer;
   /** lazy agent spawn must either finish or fail within this window */
   spawnTimeoutMs?: number;
+  mailboxCompactThresholdEvents?: number;
+  mailboxCompactThresholdBytes?: number;
 }
 
 export class ControlPlane {
@@ -51,6 +53,8 @@ export class ControlPlane {
   private connectionFactory: (opts: AcpConnectionOptions) => AcpAgentConnection;
   private meshServicesFactory: (handlers: MeshServicesHandlers) => MeshServicesServer;
   private spawnTimeoutMs: number;
+  private mailboxCompactThresholdEvents: number;
+  private mailboxCompactThresholdBytes: number;
   private spawning = new Map<AgentId, Promise<AcpAgentConnection>>();
   private spawnFails = new Map<AgentId, number>();
   private dynamicEdges = new Set<string>();
@@ -81,6 +85,8 @@ export class ControlPlane {
     this.connectionFactory = opts.connectionFactory ?? ((connOpts) => new AcpAgentConnection(connOpts));
     this.meshServicesFactory = opts.meshServicesFactory ?? ((handlers) => createMeshServicesServer({ handlers }));
     this.spawnTimeoutMs = opts.spawnTimeoutMs ?? 60_000;
+    this.mailboxCompactThresholdEvents = opts.mailboxCompactThresholdEvents ?? 1_000;
+    this.mailboxCompactThresholdBytes = opts.mailboxCompactThresholdBytes ?? 1_000_000;
   }
 
   // ---- event bus ----
@@ -183,10 +189,11 @@ export class ControlPlane {
     if (!a) throw new Error(`no such agent "${id}"`);
     const status = this.mesh.status(id);
     const live = this.conns.has(id) && status !== "dead" && status !== "cold";
+    if (this.sessionRunDir) {
+      this.sessionState = await clearAgentSession(this.sessionRunDir, this.mesh.name, id);
+    }
     if (live) {
       await this.ensureSpawned(id, { manual: true, forceFresh: true, drainPendingMail: false });
-    } else if (this.sessionRunDir) {
-      this.sessionState = await clearAgentSession(this.sessionRunDir, this.mesh.name, id);
     }
     this.emit({ kind: "update", agent: id, update: { sessionUpdate: "__session_reset__" }, ts: now() });
   }
@@ -215,6 +222,11 @@ export class ControlPlane {
     this.sessionState = this.sessionRunDir
       ? await readSessionState(this.sessionRunDir, this.mesh.name)
       : { meshExpectedAlive: true, agents: {} };
+    this.mailCursors.clear();
+    for (const [agentId, record] of Object.entries(this.sessionState.agents)) {
+      if (record.mailCursor) this.mailCursors.set(agentId, record.mailCursor);
+    }
+    this.compactMailboxSoon();
 
     this.mcp = this.meshServicesFactory({
       meshStatus: (ctx) => this.meshStatusText(ctx.agentId),
@@ -652,11 +664,43 @@ export class ControlPlane {
   }
 
   private async handleCheckMail(ctx: MeshToolContext): Promise<string> {
-    const cursor = this.mailCursors.get(ctx.agentId);
+    const cursor = this.mailCursors.get(ctx.agentId) ?? this.sessionState.agents[ctx.agentId]?.mailCursor;
     const mail = await readMailFor(ctx.agentId, { mailboxPath: this.mailboxPath, sinceId: cursor });
     if (mail.length === 0) return "no new mail";
-    this.mailCursors.set(ctx.agentId, mail[mail.length - 1]!.id);
+    const nextCursor = mail[mail.length - 1]!.id;
+    if (this.sessionRunDir) {
+      // Crash safety is at-least-once: if the daemon is killed before this
+      // atomic cursor write, this same returned batch can be delivered again.
+      this.sessionState = await updateAgentMailCursor(this.sessionRunDir, this.mesh.name, ctx.agentId, nextCursor);
+    }
+    this.mailCursors.set(ctx.agentId, nextCursor);
+    this.compactMailboxIfOverThreshold();
     return mail.map((m) => `from ${(m.meta as any)?.from ?? m.from}: ${m.body}`).join("\n");
+  }
+
+  private compactMailboxSoon(): void {
+    const cursors: Record<string, string | undefined> = {};
+    for (const a of this.mesh.agents) {
+      cursors[a.id] = this.mailCursors.get(a.id) ?? this.sessionState.agents[a.id]?.mailCursor;
+    }
+    void compactMailbox({ mailboxPath: this.mailboxPath, cursors }).catch((err) => this.log(`compact mailbox failed: ${String(err)}`));
+  }
+
+  private compactMailboxIfOverThreshold(): void {
+    void this.shouldCompactMailbox()
+      .then((shouldCompact) => {
+        if (shouldCompact) this.compactMailboxSoon();
+      })
+      .catch((err) => this.log(`check mailbox compact threshold failed: ${String(err)}`));
+  }
+
+  private async shouldCompactMailbox(): Promise<boolean> {
+    const size = await stat(this.mailboxPath).then((s) => s.size, () => 0);
+    if (size >= this.mailboxCompactThresholdBytes) return true;
+    if (this.mailboxCompactThresholdEvents === Number.POSITIVE_INFINITY) return false;
+    if (this.mailboxCompactThresholdEvents <= 0) return true;
+    const events = await readMailboxEvents(this.mailboxPath);
+    return events.length >= this.mailboxCompactThresholdEvents;
   }
 
   private async handleInterrupt(ctx: MeshToolContext, target: AgentId, reason?: string): Promise<string> {
