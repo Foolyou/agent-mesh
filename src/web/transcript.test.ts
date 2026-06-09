@@ -82,6 +82,41 @@ test("user echo update appends a completed user message", () => {
   expect(items[0]).toMatchObject({ kind: "message", role: "user", text: "hi router", complete: true });
 });
 
+test("Image content blocks become Markdown images", () => {
+  const items = fold([
+    {
+      sessionUpdate: "agent_message_chunk",
+      content: { type: "Image", path: "diagram.png", alt: "topology" },
+    },
+  ]);
+  expect(items[0]).toMatchObject({ kind: "message", role: "agent", text: "![topology](diagram.png)" });
+});
+
+test("ResourceLink content blocks become Markdown links with title", () => {
+  const items = fold([
+    {
+      sessionUpdate: "agent_message_chunk",
+      content: { type: "ResourceLink", uri: "spec.md", name: "Specification", title: "v1 spec" },
+    },
+  ]);
+  expect(items[0]).toMatchObject({ kind: "message", role: "agent", text: '[Specification](spec.md "v1 spec")' });
+});
+
+test("mixed text, Image, and ResourceLink blocks preserve order", () => {
+  const items = fold([
+    {
+      sessionUpdate: "agent_message_chunk",
+      content: [
+        { type: "text", text: "See " },
+        { type: "ResourceLink", uri: "report.md", name: "report" },
+        { type: "text", text: " and " },
+        { type: "Image", uri: "chart.png", alt: "chart" },
+      ],
+    },
+  ]);
+  expect(items[0]).toMatchObject({ kind: "message", role: "agent", text: "See [report](report.md) and ![chart](chart.png)" });
+});
+
 test("ops report upsert for new item and patch for appended text", () => {
   const first = reduceTranscript([], { sessionUpdate: "agent_message_chunk", content: { text: "a" } }, T);
   expect(first.ops[0].op).toBe("upsert");

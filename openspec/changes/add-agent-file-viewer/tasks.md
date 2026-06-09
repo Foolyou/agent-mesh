@@ -12,8 +12,8 @@
 
 ## 3. Transcript: preserve ACP Image / ResourceLink blocks
 
-- [ ] 3.1 Extend `src/web/transcript.ts` `textOf()` (or its callers) so `Image` content blocks emit `![alt](path-or-uri)` and `ResourceLink` blocks emit `[name](uri)`; round-trip alt/name/uri without loss
-- [ ] 3.2 Update `src/web/transcript.test.ts` (or add `src/web/transcript-content-blocks.test.ts`) with fixtures for Image-only, ResourceLink-only, and mixed text+blocks updates
+- [x] 3.1 Extend `src/web/transcript.ts` `textOf()` (or its callers) so `Image` content blocks emit `![alt](path-or-uri)` and `ResourceLink` blocks emit `[name](uri)`; round-trip alt/name/uri without loss
+- [x] 3.2 Update `src/web/transcript.test.ts` (or add `src/web/transcript-content-blocks.test.ts`) with fixtures for Image-only, ResourceLink-only, and mixed text+blocks updates
 
 ## 4. Frontend AuthorContext + Markdown rewriting
 

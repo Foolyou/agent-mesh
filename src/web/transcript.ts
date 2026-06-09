@@ -13,10 +13,47 @@ function nid(now: string): string {
 function textOf(content: any): string {
   if (content == null) return "";
   if (typeof content === "string") return content;
+  const type = typeof content.type === "string" ? content.type.toLowerCase() : "";
+  if (type === "image") return imageMarkdown(content);
+  if (type === "resourcelink" || type === "resource_link") return resourceLinkMarkdown(content);
   if (typeof content.text === "string") return content.text;
   if (Array.isArray(content)) return content.map(textOf).join("");
   if (content.content) return textOf(content.content);
   return "";
+}
+
+function imageMarkdown(block: any): string {
+  const src = linkTargetOf(block);
+  if (!src) return "";
+  const alt = markdownLabel(String(block.alt ?? block.name ?? ""));
+  return `![${alt}](${markdownDestination(src, block.title)})`;
+}
+
+function resourceLinkMarkdown(block: any): string {
+  const uri = linkTargetOf(block);
+  if (!uri) return "";
+  const label = markdownLabel(String(block.name ?? block.title ?? uri));
+  return `[${label}](${markdownDestination(uri, block.title)})`;
+}
+
+function linkTargetOf(block: any): string {
+  for (const key of ["uri", "path", "url", "src"] as const) {
+    if (typeof block[key] === "string" && block[key]) return block[key];
+  }
+  if (typeof block.data === "string" && typeof block.mimeType === "string") {
+    return `data:${block.mimeType};base64,${block.data}`;
+  }
+  return "";
+}
+
+function markdownLabel(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/\]/g, "\\]");
+}
+
+function markdownDestination(value: string, title?: unknown): string {
+  const destination = /^[^\s()<>"']+$/.test(value) ? value : `<${value.replace(/\\/g, "\\\\").replace(/>/g, "\\>")}>`;
+  if (typeof title !== "string" || !title) return destination;
+  return `${destination} "${title.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
 
 /** Collapse tool-call output (ToolCallContent[] and/or rawOutput) into readable text. */
