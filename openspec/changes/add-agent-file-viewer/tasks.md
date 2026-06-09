@@ -17,10 +17,10 @@
 
 ## 4. Frontend AuthorContext + Markdown rewriting
 
-- [ ] 4.1 Create `src/web/client/AuthorContext.tsx` exporting `AuthorContext` (`{agent, meshId}`) and `useAuthor()` hook
-- [ ] 4.2 Add `isRelativeRef()` helper + `Anchor` / `Image` rewriting in `src/web/client/Markdown.tsx`: when `useAuthor()` returns a value and the URL is a non-HTTP relative reference, rewrite to viewer route (anchor) or API URL (image); preserve current strip behaviour when context is absent
-- [ ] 4.3 Wrap `Msg`, `MailBubble`, and any other transcript bubble using `<Markdown>` in `src/web/client/Transcript.tsx` with `<AuthorContext.Provider value={…}>`; mail uses `MailEntry.from` as agent
-- [ ] 4.4 Add `src/web/client/markdown-rewrite.test.ts` covering: http href untouched, relative href + context → viewer route, relative href no context → no href, relative img src + context → API URL, encoded paths preserved
+- [x] 4.1 Create `src/web/client/AuthorContext.tsx` exporting `AuthorContext` (`{agent, meshId}`) and `useAuthor()` hook
+- [x] 4.2 Add `isRelativeRef()` helper + `Anchor` / `Image` rewriting in `src/web/client/Markdown.tsx`: when `useAuthor()` returns a value and the URL is a non-HTTP relative reference, rewrite to viewer route (anchor) or API URL (image); preserve current strip behaviour when context is absent
+- [x] 4.3 Wrap `Msg`, `MailBubble`, and any other transcript bubble using `<Markdown>` in `src/web/client/Transcript.tsx` with `<AuthorContext.Provider value={…}>`; mail uses `MailEntry.from` as agent
+- [x] 4.4 Add `src/web/client/markdown-rewrite.test.ts` covering: http href untouched, relative href + context → viewer route, relative href no context → no href, relative img src + context → API URL, encoded paths preserved
 
 ## 5. File viewer SPA route
 

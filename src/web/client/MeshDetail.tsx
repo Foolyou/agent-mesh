@@ -295,6 +295,7 @@ function ConversationPanel({
         </div>
         <ChatPane
           items={pm.transcripts[activeId] ?? []}
+          author={{ meshId: m.name, agent: activeId }}
           placeholder={isRouter ? t("router.placeholder") : t("agent.placeholder", { id: activeId })}
           imageEnabled={!!pm.capabilities?.[cur.id]?.image}
           imageDisabledReason="This agent does not advertise image input support"

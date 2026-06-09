@@ -2,14 +2,22 @@ import type { ComponentProps } from "react";
 import { Streamdown, defaultRehypePlugins, type UrlTransform, type Components } from "streamdown";
 import rehypeSanitize from "rehype-sanitize";
 import { defaultSchema } from "hast-util-sanitize";
+import { useAuthor, type AuthorRef } from "./AuthorContext";
 
 function isHttpUrl(value: string): boolean {
   try {
-    const url = new URL(value, window.location.href);
+    const url = new URL(value);
     return url.protocol === "http:" || url.protocol === "https:";
   } catch {
     return false;
   }
+}
+
+export function isRelativeRef(value: string): boolean {
+  const v = value.trim();
+  if (!v || v.startsWith("/") || v.startsWith("#") || v.startsWith("?")) return false;
+  if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(v)) return false;
+  return true;
 }
 
 function isImageSrc(value: string): boolean {
@@ -18,8 +26,8 @@ function isImageSrc(value: string): boolean {
 }
 
 const urlTransform: UrlTransform = (url, key) => {
-  if (key === "href") return isHttpUrl(url) ? url : null;
-  if (key === "src") return isImageSrc(url) ? url : null;
+  if (key === "href") return isHttpUrl(url) || isRelativeRef(url) ? url : null;
+  if (key === "src") return isImageSrc(url) || isRelativeRef(url) ? url : null;
   return null;
 };
 
@@ -61,16 +69,19 @@ const rehypePlugins = [
 ] as unknown as typeof defaultRehypePlugins[];
 
 function Anchor(props: ComponentProps<"a">) {
-  const href = typeof props.href === "string" && isHttpUrl(props.href) ? props.href : undefined;
+  const author = useAuthor();
+  const href = typeof props.href === "string" ? rewriteAgentHref(props.href, author) : undefined;
+  const external = !!href && isHttpUrl(href);
   return (
-    <a {...props} href={href} target="_blank" rel="noopener noreferrer">
+    <a {...props} href={href} target={external ? "_blank" : undefined} rel={external ? "noopener noreferrer" : undefined}>
       {props.children}
     </a>
   );
 }
 
 function Image(props: ComponentProps<"img">) {
-  const src = typeof props.src === "string" && isImageSrc(props.src) ? props.src : undefined;
+  const author = useAuthor();
+  const src = typeof props.src === "string" ? rewriteAgentImageSrc(props.src, author) : undefined;
   if (!src) return null;
   return <img {...props} src={src} referrerPolicy="no-referrer" loading="lazy" />;
 }
@@ -93,4 +104,39 @@ export function Markdown({ text }: { text: string }) {
       {text}
     </Streamdown>
   );
+}
+
+export function rewriteAgentHref(href: string, author: AuthorRef | undefined): string | undefined {
+  if (isHttpUrl(href)) return href;
+  if (!isRelativeRef(href) || !author) return undefined;
+  return `/mesh/${encodeURIComponent(author.meshId)}/agent/${encodeURIComponent(author.agent)}/file/${encodeRelPath(href)}`;
+}
+
+export function rewriteAgentImageSrc(src: string, author: AuthorRef | undefined): string | undefined {
+  if (isImageSrc(src)) return src;
+  if (!isRelativeRef(src) || !author) return undefined;
+  return `/api/agents/${encodeURIComponent(author.agent)}/files/${encodeRelPath(src)}`;
+}
+
+function encodeRelPath(value: string): string {
+  const suffixAt = firstSuffixIndex(value);
+  const path = suffixAt >= 0 ? value.slice(0, suffixAt) : value;
+  const suffix = suffixAt >= 0 ? value.slice(suffixAt) : "";
+  return path.split("/").map(encodeSegmentPreservingExistingEscapes).join("/") + suffix;
+}
+
+function firstSuffixIndex(value: string): number {
+  const q = value.indexOf("?");
+  const h = value.indexOf("#");
+  if (q < 0) return h;
+  if (h < 0) return q;
+  return Math.min(q, h);
+}
+
+function encodeSegmentPreservingExistingEscapes(segment: string): string {
+  try {
+    return encodeURIComponent(decodeURIComponent(segment));
+  } catch {
+    return encodeURIComponent(segment);
+  }
 }

@@ -6,17 +6,25 @@ import type { TranscriptItem } from "../types";
 import { Empty, fmtTime } from "./ui";
 import { useI18n } from "./i18n";
 import { Markdown } from "./Markdown";
+import { AuthorContext, type AuthorRef } from "./AuthorContext";
 
-function Msg({ item }: { item: Extract<TranscriptItem, { kind: "message" }> }) {
+function Msg({ item, author }: { item: Extract<TranscriptItem, { kind: "message" }>; author?: AuthorRef }) {
   const { t } = useI18n();
   const [lightbox, setLightbox] = useState<{ url: string; name: string } | null>(null);
+  const markdown = item.role === "agent" ? (
+    <AuthorContext.Provider value={author}>
+      <Markdown text={item.text} />
+    </AuthorContext.Provider>
+  ) : (
+    item.text
+  );
   return (
     <div className={`msg ${item.role}`}>
       <div className="who">
         {item.role === "user" ? t("you") : t("agent")} <span className="t">{fmtTime(item.ts)}</span>
       </div>
       <div className="bubble">
-        {item.role === "agent" ? <Markdown text={item.text} /> : item.text}
+        {markdown}
         {item.images?.length ? (
           <div className="sent-images">
             {item.images.map((img) => (
@@ -39,7 +47,7 @@ function Msg({ item }: { item: Extract<TranscriptItem, { kind: "message" }> }) {
   );
 }
 
-function Thought({ item }: { item: Extract<TranscriptItem, { kind: "thought" }> }) {
+function Thought({ item, author }: { item: Extract<TranscriptItem, { kind: "thought" }>; author?: AuthorRef }) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
   return (
@@ -50,7 +58,9 @@ function Thought({ item }: { item: Extract<TranscriptItem, { kind: "thought" }> 
       </span>
       {open ? (
         <div className="txt">
-          <Markdown text={item.text} />
+          <AuthorContext.Provider value={author}>
+            <Markdown text={item.text} />
+          </AuthorContext.Provider>
         </div>
       ) : null}
     </div>
@@ -130,21 +140,24 @@ function PlanCard({ item }: { item: Extract<TranscriptItem, { kind: "plan" }> })
   );
 }
 
-function MailBubble({ item }: { item: Extract<TranscriptItem, { kind: "mail" }> }) {
+function MailBubble({ item, meshId }: { item: Extract<TranscriptItem, { kind: "mail" }>; meshId?: string }) {
   const { t } = useI18n();
+  const author = meshId ? { meshId, agent: item.from } : undefined;
   return (
     <div className="msg mail">
       <div className="who">
         ✉ {t("mail.from", { from: item.from })} <span className="t">{fmtTime(item.ts)}</span>
       </div>
       <div className="bubble">
-        <Markdown text={item.body} />
+        <AuthorContext.Provider value={author}>
+          <Markdown text={item.body} />
+        </AuthorContext.Provider>
       </div>
     </div>
   );
 }
 
-export function Transcript({ items }: { items: TranscriptItem[] }) {
+export function Transcript({ items, author }: { items: TranscriptItem[]; author?: AuthorRef }) {
   const { t } = useI18n();
   const endRef = useRef<HTMLDivElement>(null);
   // autoscroll to bottom when content changes, unless the user scrolled up
@@ -177,13 +190,13 @@ export function Transcript({ items }: { items: TranscriptItem[] }) {
     <div className="stream" ref={wrapRef} onScroll={onScroll}>
       {items.map((it) =>
         it.kind === "message" ? (
-          <Msg key={it.id} item={it} />
+          <Msg key={it.id} item={it} author={author} />
         ) : it.kind === "thought" ? (
-          <Thought key={it.id} item={it} />
+          <Thought key={it.id} item={it} author={author} />
         ) : it.kind === "tool_call" ? (
           <ToolCard key={it.id} item={it} />
         ) : it.kind === "mail" ? (
-          <MailBubble key={it.id} item={it} />
+          <MailBubble key={it.id} item={it} meshId={author?.meshId} />
         ) : (
           <PlanCard key={it.id} item={it} />
         ),

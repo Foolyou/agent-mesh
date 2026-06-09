@@ -6,6 +6,7 @@ import type { MouseEvent } from "react";
 import type { PromptImageRef, TranscriptItem } from "../types";
 import { Composer } from "./ui";
 import { Transcript } from "./Transcript";
+import type { AuthorRef } from "./AuthorContext";
 
 const INTERACTIVE = "button, a, input, textarea, select, .thought .label, .tool .thead";
 
@@ -20,6 +21,7 @@ export function ChatPane({
   steerEnabled,
   imageEnabled,
   imageDisabledReason,
+  author,
 }: {
   items: TranscriptItem[];
   onSend: (text: string, images?: PromptImageRef[], opts?: { steer?: boolean }) => void | Promise<void>;
@@ -31,6 +33,7 @@ export function ChatPane({
   steerEnabled?: boolean;
   imageEnabled?: boolean;
   imageDisabledReason?: string;
+  author?: AuthorRef;
 }) {
   const taRef = useRef<HTMLTextAreaElement>(null);
 
@@ -45,7 +48,7 @@ export function ChatPane({
 
   return (
     <div className="chat" onClick={focusOnClick}>
-      <Transcript items={items} />
+      <Transcript items={items} author={author} />
       <Composer
         ref={taRef}
         onSend={onSend}
