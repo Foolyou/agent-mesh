@@ -12,6 +12,7 @@ if (!store) {
 }
 
 type SessionData = { sessionId: string; cwd: string; sentinel?: string };
+const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4DwQACfsD/aDefpkAAAAASUVErkJggg==";
 
 const enc = (id: string) => id.replace(/[^A-Za-z0-9._-]/g, "_");
 const sessionPath = (id: string) => join(store, `${enc(id)}.json`);
@@ -88,6 +89,19 @@ for await (const chunk of Bun.stdin.stream()) {
       } else if (method === "session/load") {
         const data = await readSession(String(params?.sessionId ?? ""));
         result(id, setup(data.sessionId));
+        if (process.env.FAKE_ACP_REPLAY_IMAGE === "1") {
+          send({
+            jsonrpc: "2.0",
+            method: "session/update",
+            params: {
+              sessionId: data.sessionId,
+              update: {
+                sessionUpdate: "user_message_chunk",
+                content: { type: "image", data: PNG, mimeType: "image/png" },
+              },
+            },
+          });
+        }
       } else if (method === "session/prompt") {
         const sessionId = String(params?.sessionId ?? "");
         const data = await readSession(sessionId);
