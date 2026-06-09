@@ -3,10 +3,21 @@ import { test, expect } from "bun:test";
 
 const css = readFileSync(new URL("./theme.css", import.meta.url), "utf8");
 
-function blockFor(selector: string): string {
+function blockFor(selector: string, source = css): string {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const match = css.match(new RegExp(`${escaped}\\s*\\{([^}]*)\\}`, "m"));
+  const match = source.match(new RegExp(`${escaped}\\s*\\{([^}]*)\\}`, "m"));
   return match?.[1] ?? "";
+}
+
+function exactBlockFor(selector: string): string {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = css.match(new RegExp(`(?:^|\\n)${escaped}\\s*\\{([^}]*)\\}`, "m"));
+  return match?.[1] ?? "";
+}
+
+function blocksFor(selector: string): string[] {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return Array.from(css.matchAll(new RegExp(`(?:^|\\n)${escaped}\\s*\\{([^}]*)\\}`, "gm")), (m) => m[1]);
 }
 
 test("select controls reserve space for the native disclosure arrow", () => {
@@ -20,4 +31,29 @@ test("select controls reserve space for the native disclosure arrow", () => {
   expect(mobileConversation).toContain("padding-right: 24px");
   expect(css.indexOf(".select-control {")).toBeGreaterThan(css.indexOf(".theme-sel {"));
   expect(css.indexOf(".select-control {")).toBeGreaterThan(css.indexOf(".mode-sel,"));
+});
+
+test("selected mesh row buttons keep a visible selection-colored border", () => {
+  const selectedButton = blocksFor(".mrow.sel .btn").join("\n");
+  const selectedButtonHover = exactBlockFor(".mrow.sel .btn:hover");
+
+  expect(selectedButton).toContain("color: var(--sel-fg)");
+  expect(selectedButton).toContain("border-color: var(--sel-fg)");
+  expect(selectedButton).not.toContain("border-color: transparent");
+  expect(selectedButtonHover).toContain("border-color: var(--sel-fg)");
+});
+
+test("narrow detail layout collapses secondary actions instead of overflowing", () => {
+  const responsive = css.slice(css.lastIndexOf("@media (max-width: 1100px)"));
+  const detailSecondary = blockFor(".detail-secondary-actions", responsive);
+  const detailOverflow = blockFor(".detail-overflow", responsive);
+  const topologyInline = blockFor(".topology-inline-controls", responsive);
+  const topologyToggle = blockFor(".topology-manage-toggle", responsive);
+  const conversation = blockFor(".conv-control", responsive);
+
+  expect(detailSecondary).toContain("display: none");
+  expect(detailOverflow).toContain("display: inline-flex");
+  expect(topologyInline).toContain("display: none");
+  expect(topologyToggle).toContain("display: inline-flex");
+  expect(conversation).toContain("flex-wrap: wrap");
 });

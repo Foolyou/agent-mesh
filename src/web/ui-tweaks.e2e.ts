@@ -80,6 +80,29 @@ try {
     await page.waitForSelector(".mesh-canvas", { state: "detached", timeout: 4000 });
   });
 
+  await step("narrow desktop collapses secondary actions without horizontal overflow", async () => {
+    await page.setViewportSize({ width: 900, height: 720 });
+    const noHScroll = async () =>
+      page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1 && document.body.scrollWidth <= window.innerWidth + 1);
+
+    await page.waitForSelector(".detail-overflow .btn", { timeout: 4000 });
+    if (await page.locator('.detail-secondary-actions button:has-text("new sessions")').isVisible()) {
+      throw new Error("secondary header action stayed inline at narrow width");
+    }
+    await page.locator('.detail-overflow .btn[aria-label="actions"]').click();
+    await page.waitForSelector('.detail-overflow-menu button:has-text("new sessions")', { timeout: 4000 });
+
+    const topologyPanel = page.locator(".drail .panel", { has: page.locator('.head .ttl:text-is("topology")') }).first();
+    if (await topologyPanel.locator(".topology-inline-controls .edge-add").isVisible()) {
+      throw new Error("topology edit controls stayed inline at narrow width");
+    }
+    await topologyPanel.locator('.topology-manage-toggle .btn[aria-label="manage topology"]').click();
+    await topologyPanel.locator(".topology-controls.open .edge-add select").first().waitFor({ timeout: 4000 });
+    if (!(await noHScroll())) throw new Error("horizontal overflow at 900px detail layout");
+
+    await page.setViewportSize({ width: 1440, height: 880 });
+  });
+
   await step("mesh list caps at 4 with a pager; › goes to the next page", async () => {
     // define enough meshes to exceed one page
     await page.evaluate(async () => {

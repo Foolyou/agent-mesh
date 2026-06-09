@@ -13,7 +13,54 @@ import { useI18n, tStatus } from "./i18n";
 function Header({ m, store, onDeleted, onEdit }: { m: MeshSummary; store: Store; onDeleted: () => void; onEdit: () => void }) {
   const { t } = useI18n();
   const [sessionStrategy, setSessionStrategy] = useState<StartSessionStrategy>("resume");
+  const [actionsOpen, setActionsOpen] = useState(false);
+  const actionsRef = useRef<HTMLSpanElement | null>(null);
   const live = m.status === "running" || m.status === "starting";
+
+  useEffect(() => {
+    if (!actionsOpen) return;
+    const onDoc = (e: MouseEvent) => {
+      if (!actionsRef.current?.contains(e.target as Node)) setActionsOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setActionsOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [actionsOpen]);
+
+  const renderNewSessionsAction = () => (
+    <ConfirmButton
+      kind="ghost"
+      confirmLabel={t("new sessions all.confirm")}
+      title={t("new sessions all.hint")}
+      onConfirm={() => void store.newAllSessions(m.name)}
+    >
+      {t("new sessions all")}
+    </ConfirmButton>
+  );
+  const renderEditAction = () => (
+    <Btn kind="ghost" title={t("edit")} onClick={onEdit}>
+      {t("edit")}
+    </Btn>
+  );
+  const renderDeleteAction = () => (
+    <ConfirmButton
+      kind="stop"
+      confirmLabel={t("del.confirm")}
+      title={t("del")}
+      onConfirm={() => {
+        void store.deleteMesh(m.name).then(onDeleted, () => {});
+      }}
+    >
+      {t("del")}
+    </ConfirmButton>
+  );
+
   return (
     <div className="detail-head">
       <span className="mtitle">{m.name}</span>
@@ -23,23 +70,22 @@ function Header({ m, store, onDeleted, onEdit }: { m: MeshSummary; store: Store;
       </span>
       <span className="meta">{t("router")} = {m.router}</span>
       <span className="meta">{t("agents", { n: m.agents.length })}</span>
-      <span style={{ flex: 1 }} />
+      <span className="detail-spacer" />
       {live ? (
-        <>
-          <ConfirmButton
-            kind="ghost"
-            confirmLabel={t("new sessions all.confirm")}
-            title={t("new sessions all.hint")}
-            onConfirm={() => void store.newAllSessions(m.name)}
-          >
-            {t("new sessions all")}
-          </ConfirmButton>
+        <span className="detail-actions">
+          <span className="detail-secondary-actions">{renderNewSessionsAction()}</span>
           <Btn kind="stop" onClick={() => void store.stopMesh(m.name)}>
             {t("stop mesh")}
           </Btn>
-        </>
+          <span className="detail-overflow" ref={actionsRef}>
+            <Btn kind="ghost" title={t("actions")} ariaLabel={t("actions")} onClick={() => setActionsOpen((o) => !o)}>
+              ⋯
+            </Btn>
+            {actionsOpen ? <span className="detail-overflow-menu">{renderNewSessionsAction()}</span> : null}
+          </span>
+        </span>
       ) : (
-        <>
+        <span className="detail-actions">
           <span className="row start-strategy" title={t("start.strategy.hint")}>
             <span className="sub">{t("start.strategy")}</span>
             <select
@@ -55,20 +101,22 @@ function Header({ m, store, onDeleted, onEdit }: { m: MeshSummary; store: Store;
           <Btn kind="go" onClick={() => void store.startMesh(m.name, sessionStrategy)}>
             {t("start mesh")}
           </Btn>
-          <Btn kind="ghost" title={t("edit")} onClick={onEdit}>
-            {t("edit")}
-          </Btn>
-          <ConfirmButton
-            kind="stop"
-            confirmLabel={t("del.confirm")}
-            title={t("del")}
-            onConfirm={() => {
-              void store.deleteMesh(m.name).then(onDeleted, () => {});
-            }}
-          >
-            {t("del")}
-          </ConfirmButton>
-        </>
+          <span className="detail-secondary-actions">
+            {renderEditAction()}
+            {renderDeleteAction()}
+          </span>
+          <span className="detail-overflow" ref={actionsRef}>
+            <Btn kind="ghost" title={t("actions")} ariaLabel={t("actions")} onClick={() => setActionsOpen((o) => !o)}>
+              ⋯
+            </Btn>
+            {actionsOpen ? (
+              <span className="detail-overflow-menu">
+                {renderEditAction()}
+                {renderDeleteAction()}
+              </span>
+            ) : null}
+          </span>
+        </span>
       )}
     </div>
   );
@@ -297,7 +345,7 @@ function ConversationPanel({
       <div className="scroll-pane">
         <div className="row conv-control">
           <span className="sub">{cur.harness}</span>
-          <span style={{ flex: 1 }} />
+          <span className="control-spacer" />
           <EffortControl m={m} agent={cur.id} store={store} />
           {live ? (
             <ModeControl mesh={m.name} agent={cur.id} store={store} modes={pm.modes?.[cur.id]} />
@@ -480,6 +528,7 @@ export function MeshDetail({
   const [flashId, setFlashId] = useState<string | null>(null);
   const [seg, setSeg] = useState<"chat" | "map" | "log">("chat");
   const [topoOpen, setTopoOpen] = useState(false);
+  const [topologyManageOpen, setTopologyManageOpen] = useState(false);
   const [edgeFrom, setEdgeFrom] = useState("");
   const [edgeTo, setEdgeTo] = useState("");
   const [agentId, setAgentId] = useState("");
@@ -564,6 +613,18 @@ export function MeshDetail({
         </Btn>
       </span>
     ) : null;
+  const hasTopologyControls = !!agentAddControl || !!edgeAddControl;
+  const topologyManageButton = hasTopologyControls ? (
+    <Btn small kind="ghost" title={t("topology.manage")} ariaLabel={t("topology.manage")} onClick={() => setTopologyManageOpen((o) => !o)}>
+      {topologyManageOpen ? "−" : "+"} {t("manage")}
+    </Btn>
+  ) : null;
+  const topologyControls = hasTopologyControls ? (
+    <div className={`topology-controls ${topologyManageOpen ? "open" : ""}`}>
+      {agentAddControl}
+      {edgeAddControl}
+    </div>
+  ) : null;
   const conversationPanel = (
     <ConversationPanel
       m={m}
@@ -581,8 +642,11 @@ export function MeshDetail({
       <div className="head">
         <span className="ttl">{t("topology")}</span>
         <span className="right">
-          {agentAddControl}
-          {edgeAddControl}
+          <span className="topology-inline-controls">
+            {agentAddControl}
+            {edgeAddControl}
+          </span>
+          <span className="topology-manage-toggle">{topologyManageButton}</span>
           <InfoIcon text={t("topology.sub")} />
           <Btn small kind="ghost" title={t("topology")} onClick={() => setTopoOpen(true)}>
             ⤢
@@ -590,6 +654,7 @@ export function MeshDetail({
         </span>
       </div>
       <div className="body-scroll">
+        {topologyControls}
         <Topology summary={m} selectedAgent={activeAgent} onSelect={onSelectAgent} flashId={flashId} />
       </div>
     </div>
@@ -676,14 +741,18 @@ export function MeshDetail({
         <span className="ttl">topology</span>
         <span className="sub">agents · mail edges</span>
         <span className="right">
-          {agentAddControl}
-          {edgeAddControl}
+          <span className="topology-inline-controls">
+            {agentAddControl}
+            {edgeAddControl}
+          </span>
+          <span className="topology-manage-toggle">{topologyManageButton}</span>
           <Btn small kind="ghost" title="expand topology" onClick={() => setTopoOpen(true)}>
             ⤢
           </Btn>
         </span>
       </div>
       <div className="body-scroll">
+        {topologyControls}
         <Topology summary={m} selectedAgent={activeAgent} onSelect={onSelectAgent} flashId={flashId} maxHeight={230} />
       </div>
     </div>

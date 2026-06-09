@@ -340,16 +340,16 @@ body::after {
 .mrow.sel .mname {
   color: var(--sel-fg);
 }
-/* The selected row inverts to a light (sel-bg) surface, so EVERY descendant must
+/* The selected row inverts to the selection surface, so EVERY descendant must
    switch to sel-fg — otherwise controls keep their dark-surface color (--fg-dim,
-   --ok) and become near-invisible on the light fill (the start-button bug). */
+   --ok) and become near-invisible on the selected fill (the start-button bug). */
 .mrow.sel .caret,
 .mrow.sel .mstatus,
 .mrow.sel .btn {
   color: var(--sel-fg);
 }
 .mrow.sel .btn {
-  border-color: transparent;
+  border-color: var(--sel-fg);
 }
 .mrow.sel .btn:hover {
   background: var(--sel-fg);
@@ -1303,6 +1303,9 @@ body::after {
   min-height: 36px;
   gap: 7px;
 }
+.control-spacer {
+  flex: 1 1 auto;
+}
 
 /* ── modal ─────────────────────────────────────────────────────────────── */
 .scrim {
@@ -1723,6 +1726,38 @@ select.inp {
   gap: 12px;
   flex-wrap: wrap;
 }
+.detail-spacer {
+  flex: 1 1 auto;
+}
+.detail-actions,
+.detail-secondary-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.detail-overflow {
+  display: none;
+  position: relative;
+}
+.detail-overflow-menu {
+  position: absolute;
+  top: calc(100% + 5px);
+  right: 0;
+  z-index: 35;
+  min-width: 180px;
+  border: 1px solid var(--line-bright);
+  background: var(--bg-inset);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45);
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.detail-overflow-menu .btn {
+  justify-content: flex-start;
+  width: 100%;
+}
 .detail-head .mtitle {
   font-size: 15px;
   font-weight: 600;
@@ -1813,6 +1848,24 @@ select.inp {
 .dchat > .panel {
   flex: 1;
 }
+.topology-inline-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.topology-manage-toggle {
+  display: none;
+}
+.topology-controls {
+  display: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 0 0 8px;
+  margin: 0 0 8px;
+  border-bottom: 1px solid var(--line);
+}
 /* segmented header (rail logs: activity / mail / history) */
 .seg-tabs {
   display: flex;
@@ -1841,6 +1894,38 @@ select.inp {
 @media (max-width: 1000px) and (min-width: 761px) {
   .dmain {
     grid-template-columns: minmax(0, 1fr) 300px;
+  }
+}
+@media (max-width: 1100px) {
+  .detail-head {
+    gap: 8px;
+  }
+  .detail-actions {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+  .detail-secondary-actions {
+    display: none;
+  }
+  .detail-overflow {
+    display: inline-flex;
+  }
+  .topology-inline-controls {
+    display: none;
+  }
+  .topology-manage-toggle {
+    display: inline-flex;
+  }
+  .topology-controls.open {
+    display: flex;
+  }
+  .conv-control {
+    flex-wrap: wrap;
+    align-content: center;
+    overflow: visible;
+  }
+  .conv-control > .control-spacer {
+    display: none;
   }
 }
 
