@@ -1,4 +1,4 @@
-import type { ComponentProps } from "react";
+import type { ComponentProps, MouseEvent } from "react";
 import { Streamdown, defaultRehypePlugins, type UrlTransform, type Components } from "streamdown";
 import rehypeSanitize from "rehype-sanitize";
 import { defaultSchema } from "hast-util-sanitize";
@@ -72,8 +72,15 @@ function Anchor(props: ComponentProps<"a">) {
   const author = useAuthor();
   const href = typeof props.href === "string" ? rewriteAgentHref(props.href, author) : undefined;
   const external = !!href && isHttpUrl(href);
+  const onClick = (e: MouseEvent<HTMLAnchorElement>) => {
+    props.onClick?.(e);
+    if (e.defaultPrevented || external || !href?.startsWith("/mesh/") || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    e.preventDefault();
+    history.pushState(null, "", href);
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  };
   return (
-    <a {...props} href={href} target={external ? "_blank" : undefined} rel={external ? "noopener noreferrer" : undefined}>
+    <a {...props} href={href} target={external ? "_blank" : undefined} rel={external ? "noopener noreferrer" : undefined} onClick={onClick}>
       {props.children}
     </a>
   );

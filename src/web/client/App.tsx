@@ -10,6 +10,7 @@ import { useIsMobile } from "./useMedia";
 import { ThemeControls } from "./Theme";
 import { I18nContext, loadLang, saveLang, translate, tStatus, type Lang } from "./i18n";
 import { Dot, Btn, InfoIcon } from "./ui";
+import { FileViewer, parseFileRoute, type FileRoute } from "./FileViewer";
 
 const SEL_KEY = "mesh.selected";
 type FullView = "agent" | "master" | null;
@@ -58,6 +59,13 @@ export function App() {
   const [fullView, setFullView] = useState<FullView>(null);
   const [newMeshOpen, setNewMeshOpen] = useState(false);
   const [editInitial, setEditInitial] = useState<import("../types").MeshConfig | null>(null);
+  const [fileRoute, setFileRoute] = useState<FileRoute | undefined>(() => parseFileRoute(window.location.pathname));
+
+  useEffect(() => {
+    const onRoute = () => setFileRoute(parseFileRoute(window.location.pathname));
+    window.addEventListener("popstate", onRoute);
+    return () => window.removeEventListener("popstate", onRoute);
+  }, []);
 
   async function openEditor(name: string) {
     try {
@@ -178,6 +186,9 @@ export function App() {
 
   return (
     <I18nContext.Provider value={{ lang, t }}>
+    {fileRoute ? (
+      <FileViewer route={fileRoute} />
+    ) : (
     <div className={`app ${mobile ? "mobile" : ""}`}>
       <div className="topbar">
         {mobile && inDetail ? (
@@ -254,6 +265,7 @@ export function App() {
 
       <Toaster store={store} />
     </div>
+    )}
     </I18nContext.Provider>
   );
 }

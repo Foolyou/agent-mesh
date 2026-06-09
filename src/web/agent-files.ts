@@ -15,7 +15,7 @@ const CODE = new Set([".ts", ".tsx", ".js", ".jsx", ".py", ".go", ".rs", ".java"
 export const extensionWhitelist = new Set([...MARKDOWN, ...RASTER_IMAGES, ...TEXT, ...CODE]);
 
 export class AgentFileError extends Error {
-  constructor(public code: "enotfound" | "traversal" | "symlink" | "toobig", message = code) {
+  constructor(public code: "enotfound" | "traversal" | "symlink" | "toobig", message: string = code) {
     super(message);
     this.name = "AgentFileError";
   }

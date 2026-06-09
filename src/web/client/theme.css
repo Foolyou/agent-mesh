@@ -907,6 +907,118 @@ body::after {
   color: var(--fg);
   cursor: pointer;
 }
+
+.file-viewer-shell {
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--fg);
+  display: flex;
+  flex-direction: column;
+  overflow-x: hidden;
+}
+.file-viewer-head {
+  min-height: 58px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px max(12px, env(safe-area-inset-right)) 8px max(12px, env(safe-area-inset-left));
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-raise);
+}
+.file-viewer-back {
+  flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--bg-inset);
+  color: var(--fg);
+  font-size: 24px;
+  line-height: 1;
+  cursor: pointer;
+}
+.file-viewer-title {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.file-viewer-path {
+  color: var(--fg);
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+.file-viewer-body {
+  width: min(1080px, 100%);
+  margin: 0 auto;
+  padding: 18px 16px 28px;
+  box-sizing: border-box;
+  min-width: 0;
+}
+.file-viewer-body > .md {
+  font-size: 14px;
+  line-height: 1.55;
+}
+.file-viewer-body > .md h1 {
+  font-size: 22px;
+}
+.file-viewer-body > .md h2 {
+  font-size: 18px;
+}
+.file-viewer-image {
+  display: block;
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--bg-inset);
+  padding: 10px;
+  cursor: zoom-in;
+}
+.file-viewer-image img {
+  display: block;
+  max-width: 100%;
+  max-height: calc(100vh - 130px);
+  margin: 0 auto;
+  object-fit: contain;
+}
+.file-code {
+  margin: 0;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--bg-inset);
+  color: var(--fg-dim);
+  overflow: auto;
+  white-space: pre;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+.file-code code {
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.55;
+}
+.tok-keyword {
+  color: var(--info);
+  font-weight: 700;
+}
+.tok-string {
+  color: var(--good);
+}
+.tok-comment {
+  color: var(--fg-faint);
+  font-style: italic;
+}
+.file-viewer-error {
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--bg-inset);
+  padding: 16px;
+}
+.file-viewer-error .ttl {
+  font-weight: 700;
+  margin-bottom: 4px;
+}
 .composer textarea::placeholder {
   color: var(--fg-faint);
 }

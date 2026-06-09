@@ -24,9 +24,9 @@
 
 ## 5. File viewer SPA route
 
-- [ ] 5.1 Create `src/web/client/FileViewer.tsx` that reads route params, fetches `/api/agents/:agentName/files/:path`, and picks renderer by extension: Markdown → `<Markdown>` (wrapped in `<AuthorContext.Provider>` so nested links resolve), image → `<img>` + lightbox reused from `sent-images`, code/text → `<pre>` with Shiki highlighting
-- [ ] 5.2 Add the `/mesh/:meshId/agent/:agentName/file/*path` route to the SPA router entrypoint (`src/web/client/app.tsx` or equivalent); ensure browser back returns to the prior history entry
-- [ ] 5.3 Add styles to `src/web/client/theme.css`: viewer container, back-affordance ≥44×44 px, mobile-friendly padding, Shiki theme tokens aligned with existing dark/light palettes
+- [x] 5.1 Create `src/web/client/FileViewer.tsx` that reads route params, fetches `/api/agents/:agentName/files/:path`, and picks renderer by extension: Markdown → `<Markdown>` (wrapped in `<AuthorContext.Provider>` so nested links resolve), image → `<img>` + lightbox reused from `sent-images`, code/text → `<pre>` with Shiki highlighting
+- [x] 5.2 Add the `/mesh/:meshId/agent/:agentName/file/*path` route to the SPA router entrypoint (`src/web/client/app.tsx` or equivalent); ensure browser back returns to the prior history entry
+- [x] 5.3 Add styles to `src/web/client/theme.css`: viewer container, back-affordance ≥44×44 px, mobile-friendly padding, Shiki theme tokens aligned with existing dark/light palettes
 
 ## 6. End-to-end coverage (Playwright)
 

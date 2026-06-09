@@ -43,7 +43,7 @@ export function startWebServer(opts: WebServerOptions = {}): WebServerHandle {
     port: opts.port ?? 7317,
     hostname,
     development: dev ? { hmr: true, console: false } : false,
-    routes: { "/": index },
+    routes: { "/": index, "/mesh/*": index },
     async fetch(req, srv) {
       const url = new URL(req.url);
 
