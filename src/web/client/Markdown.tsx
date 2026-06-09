@@ -1,5 +1,5 @@
 import type { ComponentProps, MouseEvent } from "react";
-import { Streamdown, defaultRehypePlugins, type UrlTransform, type Components } from "streamdown";
+import { Streamdown, type UrlTransform, type Components } from "streamdown";
 import rehypeSanitize from "rehype-sanitize";
 import { defaultSchema } from "hast-util-sanitize";
 import { useAuthor, type AuthorRef } from "./AuthorContext";
@@ -32,10 +32,9 @@ const urlTransform: UrlTransform = (url, key) => {
 };
 
 // Sanitize with the GitHub default schema, but additionally permit `data:` on <img src> so the
-// base64 image scheme the spec allows survives sanitize (the default schema only allows http/https,
-// which silently stripped every data: image before harden could act). harden + urlTransform + the
-// <Image> component below still constrain data: URIs to safe raster types (png/jpeg/gif/webp; no
-// svg/html). `tel:` href and code `metastring` are preserved to match streamdown's own schema.
+// base64 image scheme the spec allows survives sanitize. urlTransform + the <Image> component below
+// still constrain data: URIs to safe raster types (png/jpeg/gif/webp; no svg/html). `tel:` href and
+// code `metastring` are preserved to match streamdown's own schema.
 const sanitizeSchema = {
   ...defaultSchema,
   protocols: {
@@ -49,24 +48,10 @@ const sanitizeSchema = {
   },
 };
 
-const harden = defaultRehypePlugins.harden as unknown as [unknown, Record<string, unknown>];
 // Deliberately NO rehype-raw: per the design's "no raw HTML passthrough" decision, agent-authored
 // raw HTML must not be parsed into live elements. Omitting raw lets streamdown's default html->text
-// fallback (and the skipHtml prop) strip it; sanitize + harden remain as defense-in-depth.
-const rehypePlugins = [
-  [rehypeSanitize, sanitizeSchema],
-  [
-    harden[0],
-    {
-      allowedImagePrefixes: ["*"],
-      allowedLinkPrefixes: ["*"],
-      allowedProtocols: ["http:", "https:"],
-      allowDataImages: true,
-      imageBlockPolicy: "remove",
-      linkBlockPolicy: "text-only",
-    },
-  ],
-] as unknown as typeof defaultRehypePlugins[];
+// fallback (and the skipHtml prop) strip it; sanitize remains as defense-in-depth.
+const rehypePlugins = [[rehypeSanitize, sanitizeSchema]];
 
 function Anchor(props: ComponentProps<"a">) {
   const author = useAuthor();

@@ -17,6 +17,12 @@ test("relative href without context has no href", () => {
   expect(rewriteAgentHref("report.md", undefined)).toBeUndefined();
 });
 
+test("unsafe href schemes are not rewritten", () => {
+  expect(isRelativeRef("javascript:alert(1)")).toBe(false);
+  expect(rewriteAgentHref("javascript:alert(1)", author)).toBeUndefined();
+  expect(rewriteAgentImageSrc("data:text/html,<script>alert(1)</script>", author)).toBeUndefined();
+});
+
 test("relative image src with context rewrites to the API route", () => {
   expect(rewriteAgentImageSrc("diagram.png", author)).toBe("/api/agents/codex-1/files/diagram.png");
 });

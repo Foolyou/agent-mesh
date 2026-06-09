@@ -30,10 +30,10 @@
 
 ## 6. End-to-end coverage (Playwright)
 
-- [ ] 6.1 Create `src/web/file-viewer.e2e.ts` using existing `fake.ts` patterns; fixture a mesh with an agent whose CWD contains `report.md`, `diagram.png`, `server.ts`, plus a symlinked decoy and a non-whitelisted `secret.exe`
-- [ ] 6.2 Desktop pass: tap `[report.md](report.md)` in an injected agent message → viewer renders Markdown; inline `![](diagram.png)` shows in-bubble; tap `[server.ts](server.ts)` → highlighted code; tap a missing path → 404 viewer with working back
-- [ ] 6.3 Mobile pass (`viewport: 375×812`): same assertions plus `page.scrollWidth <= 375` and back-affordance tap target measured via bounding box
-- [ ] 6.4 Negative pass: request `../../etc/passwd` via direct API call → expect `400`; request `secret.exe` → expect `404`; request symlinked file → expect `400`
+- [x] 6.1 Create `src/web/file-viewer.e2e.ts` using existing `fake.ts` patterns; fixture a mesh with an agent whose CWD contains `report.md`, `diagram.png`, `server.ts`, plus a symlinked decoy and a non-whitelisted `secret.exe`
+- [x] 6.2 Desktop pass: tap `[report.md](report.md)` in an injected agent message → viewer renders Markdown; inline `![](diagram.png)` shows in-bubble; tap `[server.ts](server.ts)` → highlighted code; tap a missing path → 404 viewer with working back
+- [x] 6.3 Mobile pass (`viewport: 375×812`): same assertions plus `page.scrollWidth <= 375` and back-affordance tap target measured via bounding box
+- [x] 6.4 Negative pass: request `../../etc/passwd` via direct API call → expect `400`; request `secret.exe` → expect `404`; request symlinked file → expect `400`
 
 ## 7. Manual verification on dev instance
 
