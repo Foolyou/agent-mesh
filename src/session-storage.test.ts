@@ -3,7 +3,7 @@ import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { listLiveRecords, readRecord, writeRecord } from "./mesh-registry";
-import { readSessionState, sessionStatePath, updateAgentSession, writeSessionState } from "./session-storage";
+import { clearAgentSession, clearAllAgentSessions, readSessionState, sessionStatePath, updateAgentSession, writeSessionState } from "./session-storage";
 
 let dir: string;
 beforeEach(async () => {
@@ -94,6 +94,41 @@ test("sanitizes session state to identity fields only and ignores old malformed 
       },
     },
   });
+});
+
+test("clearAgentSession blanks only the target's sessionId, keeps other fields", async () => {
+  await writeSessionState(dir, "m", {
+    meshExpectedAlive: true,
+    agents: {
+      a: { sessionId: "sid-a", cwd: "/x", harness: "codex", mode: "build", model: "kimi-k2", effort: "high" },
+      b: { sessionId: "sid-b", cwd: "/y", harness: "claude" },
+    },
+  });
+  const state = await clearAgentSession(dir, "m", "a");
+  expect(state.agents.a).toEqual({ sessionId: "", cwd: "/x", harness: "codex", mode: "build", model: "kimi-k2", effort: "high" });
+  expect(state.agents.b.sessionId).toBe("sid-b");
+  expect(state.meshExpectedAlive).toBe(true);
+  expect((await readSessionState(dir, "m")).agents.a.sessionId).toBe("");
+});
+
+test("clearAgentSession is a no-op when the agent has no record", async () => {
+  await writeSessionState(dir, "m", { meshExpectedAlive: true, agents: {} });
+  const state = await clearAgentSession(dir, "m", "ghost");
+  expect(state.agents.ghost).toBeUndefined();
+});
+
+test("clearAllAgentSessions blanks every sessionId, preserves meshExpectedAlive", async () => {
+  await writeSessionState(dir, "m", {
+    meshExpectedAlive: false,
+    agents: {
+      a: { sessionId: "sid-a", cwd: "/x", harness: "codex" },
+      b: { sessionId: "sid-b", cwd: "/y", harness: "claude" },
+    },
+  });
+  const state = await clearAllAgentSessions(dir, "m");
+  expect(state.agents.a.sessionId).toBe("");
+  expect(state.agents.b.sessionId).toBe("");
+  expect(state.meshExpectedAlive).toBe(false);
 });
 
 test("first agent update defaults meshExpectedAlive to true", async () => {

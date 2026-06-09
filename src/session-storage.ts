@@ -93,3 +93,22 @@ export async function setMeshExpectedAlive(runDir: string, meshName: string, exp
   await writeSessionState(runDir, meshName, state);
   return state;
 }
+
+/** Invalidate one agent's persisted ACP session id (keeps cwd/harness/model/mode/effort)
+ *  so the agent's NEXT spawn starts a fresh session instead of resuming. No-op if absent.
+ *  Does NOT touch meshExpectedAlive — clearing a session must never resurrect a stopped mesh. */
+export async function clearAgentSession(runDir: string, meshName: string, agentId: AgentId): Promise<MeshSessionState> {
+  const state = await readSessionState(runDir, meshName);
+  const rec = state.agents[agentId];
+  if (rec) rec.sessionId = "";
+  await writeSessionState(runDir, meshName, state);
+  return state;
+}
+
+/** Invalidate every agent's persisted session id (mesh-wide fresh start). */
+export async function clearAllAgentSessions(runDir: string, meshName: string): Promise<MeshSessionState> {
+  const state = await readSessionState(runDir, meshName);
+  for (const rec of Object.values(state.agents)) rec.sessionId = "";
+  await writeSessionState(runDir, meshName, state);
+  return state;
+}
