@@ -35,7 +35,7 @@ export function createMeshServicesServer(opts: {
   handlers: MeshServicesHandlers;
 }): MeshServicesServer {
   const host = opts.host ?? "127.0.0.1";
-  const entries = new Map<AgentId, { transport: WebStandardStreamableHTTPServerTransport }>();
+  const entries = new Map<AgentId, { server: McpServer; transport: WebStandardStreamableHTTPServerTransport }>();
 
   const httpServer = Bun.serve({
     port: opts.port ?? 0,
@@ -55,6 +55,15 @@ export function createMeshServicesServer(opts: {
   const text = (t: string) => ({ content: [{ type: "text" as const, text: t }] });
 
   async function register(agentId: AgentId, role: AgentRole): Promise<void> {
+    // A re-register happens on every agent respawn; tear down the prior transport
+    // so its bound MCP session is released and we don't leak one server per respawn.
+    const prev = entries.get(agentId);
+    if (prev) {
+      entries.delete(agentId);
+      await prev.server.close().catch(() => {});
+      await prev.transport.close().catch(() => {});
+    }
+
     const server = new McpServer({ name: "mesh-services", version: "0.1.0" });
     const ctx: MeshToolContext = { agentId, role };
 
@@ -120,7 +129,7 @@ export function createMeshServicesServer(opts: {
       enableJsonResponse: true,
     });
     await server.connect(transport);
-    entries.set(agentId, { transport });
+    entries.set(agentId, { server, transport });
   }
 
   return {

@@ -8,7 +8,7 @@ import { AcpAgentConnection, type AcpConnectionOptions, type PermissionDecision 
 import { spawnConfigFor } from "./harness";
 import { Mesh } from "./mesh";
 import { buildMeshBriefing } from "./mesh-briefing";
-import { createMeshServicesServer, type MeshServicesServer, type MeshToolContext } from "./mcp/mesh-services";
+import { createMeshServicesServer, type MeshServicesHandlers, type MeshServicesServer, type MeshToolContext } from "./mcp/mesh-services";
 import { sendMail, readMailFor } from "./mailbox";
 import { validateAddAgent, validateAddEdge } from "./mesh-validate";
 import { readSessionState, setMeshExpectedAlive, updateAgentSession, clearAgentSession, type MeshSessionState } from "./session-storage";
@@ -30,6 +30,8 @@ export interface ControlPlaneOptions {
   /** ${root}/run directory for durable per-mesh ACP session identity. */
   sessionRunDir?: string;
   connectionFactory?: (opts: AcpConnectionOptions) => AcpAgentConnection;
+  /** test seam: override how the injected mesh-services MCP server is built */
+  meshServicesFactory?: (handlers: MeshServicesHandlers) => MeshServicesServer;
   /** lazy agent spawn must either finish or fail within this window */
   spawnTimeoutMs?: number;
 }
@@ -47,9 +49,9 @@ export class ControlPlane {
   private uploadRoot?: string;
   private sessionRunDir?: string;
   private connectionFactory: (opts: AcpConnectionOptions) => AcpAgentConnection;
+  private meshServicesFactory: (handlers: MeshServicesHandlers) => MeshServicesServer;
   private spawnTimeoutMs: number;
   private spawning = new Map<AgentId, Promise<AcpAgentConnection>>();
-  private registeredAgents = new Set<AgentId>();
   private spawnFails = new Map<AgentId, number>();
   private dynamicEdges = new Set<string>();
   /** Per-agent advertised image-input capability (promptCapabilities.image). */
@@ -77,6 +79,7 @@ export class ControlPlane {
     this.uploadRoot = opts.uploadRoot;
     this.sessionRunDir = opts.sessionRunDir;
     this.connectionFactory = opts.connectionFactory ?? ((connOpts) => new AcpAgentConnection(connOpts));
+    this.meshServicesFactory = opts.meshServicesFactory ?? ((handlers) => createMeshServicesServer({ handlers }));
     this.spawnTimeoutMs = opts.spawnTimeoutMs ?? 60_000;
   }
 
@@ -213,15 +216,13 @@ export class ControlPlane {
       ? await readSessionState(this.sessionRunDir, this.mesh.name)
       : { meshExpectedAlive: true, agents: {} };
 
-    this.mcp = createMeshServicesServer({
-      handlers: {
-        meshStatus: (ctx) => this.meshStatusText(ctx.agentId),
-        sendMail: (ctx, to, body) => this.handleSendMail(ctx, to, body),
-        steerMail: (ctx, to, body) => this.handleSteerMail(ctx, to, body),
-        steerTargets: (ctx) => this.steerTargets(ctx.agentId),
-        checkMail: (ctx) => this.handleCheckMail(ctx),
-        interrupt: (ctx, target, reason) => this.handleInterrupt(ctx, target, reason),
-      },
+    this.mcp = this.meshServicesFactory({
+      meshStatus: (ctx) => this.meshStatusText(ctx.agentId),
+      sendMail: (ctx, to, body) => this.handleSendMail(ctx, to, body),
+      steerMail: (ctx, to, body) => this.handleSteerMail(ctx, to, body),
+      steerTargets: (ctx) => this.steerTargets(ctx.agentId),
+      checkMail: (ctx) => this.handleCheckMail(ctx),
+      interrupt: (ctx, target, reason) => this.handleInterrupt(ctx, target, reason),
     });
 
     if (!this.sessionState.meshExpectedAlive) {
@@ -251,16 +252,17 @@ export class ControlPlane {
     for (const p of this.pending.values()) clearTimeout(p.timer);
     this.pending.clear();
     this.spawning.clear();
-    this.registeredAgents.clear();
     this.loadedSessions.clear();
     this.resumePendingValidation.clear();
   }
 
+  // Re-register on EVERY (re)spawn. The per-agent MCP transport binds a single
+  // session on first `initialize`; reusing it across a respawn makes the new
+  // agent process's handshake fail with "Server already initialized", so it comes
+  // back without mesh tools. Registering afresh each spawn rebuilds the transport.
   private async ensureMcpRegistered(agent: AgentConfig): Promise<void> {
     if (!this.mcp) throw new Error("control plane not started");
-    if (this.registeredAgents.has(agent.id)) return;
     await this.mcp.register(agent.id, agent.role);
-    this.registeredAgents.add(agent.id);
   }
 
   private async spawnAgent(a: AgentConfig, opts: { drainPendingMail: boolean; forceFresh?: boolean }): Promise<AcpAgentConnection> {
