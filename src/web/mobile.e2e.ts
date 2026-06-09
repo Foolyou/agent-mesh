@@ -60,6 +60,17 @@ try {
     if (!(await noHScroll())) throw new Error("horizontal overflow on overview");
   });
 
+  await step("theme switcher is visible and usable on mobile", async () => {
+    await page.waitForSelector(".theme-sel", { timeout: 4000 });
+    const sel = page.locator(".theme-sel");
+    if (!(await sel.isVisible())) throw new Error("theme select is hidden");
+    await sel.selectOption("paper");
+    await sleep(150);
+    const bg = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--bg").trim());
+    if (bg !== "#f4f2ec") throw new Error(`theme did not apply, bg=${bg}`);
+    if (!(await noHScroll())) throw new Error("horizontal overflow after showing theme switcher");
+  });
+
   await page.screenshot({ path: `${SHOTS}/m-01-overview.png` });
 
   await step("tap a mesh → detail screen with back button", async () => {

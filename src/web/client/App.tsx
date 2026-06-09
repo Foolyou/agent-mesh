@@ -214,7 +214,7 @@ export function App() {
         </span>
         <span className="spacer" />
         {!mobile ? <InfoIcon text={t("hints.all")} /> : null}
-        {!mobile ? <ThemeControls /> : null}
+        <ThemeControls />
         <Btn
           small
           kind="ghost"

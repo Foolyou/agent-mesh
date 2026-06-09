@@ -1849,6 +1849,17 @@ select.inp {
   .topbar .brand {
     font-size: 13px;
   }
+  .topbar .theme-controls {
+    gap: 2px;
+  }
+  .topbar .theme-controls .btn {
+    display: none;
+  }
+  .topbar .theme-sel {
+    width: 72px;
+    padding: 5px 4px;
+    font-size: 11px;
+  }
   .body {
     grid-template-columns: 1fr;
   }
