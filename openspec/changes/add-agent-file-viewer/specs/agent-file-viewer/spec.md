@@ -4,28 +4,23 @@
 
 The system SHALL expose `GET /api/agents/:name/files/*path` that resolves `:name` against the current mesh's running agents, looks up that agent's working directory through the existing control plane, and serves the file at `*path` interpreted relative to that working directory.
 
-The route SHALL require the same session authentication as other `/api/*` endpoints and SHALL respond `401` when the caller has no valid mesh session.
+The route SHALL inherit the same exposure model as the existing `GET /api/uploads/:bucket/:id` route: no application-layer authentication, trust delegated to the transport layer (loopback / Tailscale). Adding an authentication layer is explicitly out of scope for this change.
 
 The route SHALL set `X-Content-Type-Options: nosniff`, `Content-Security-Policy: default-src 'none'`, and `Cache-Control: private, max-age=60` on every successful response.
 
 #### Scenario: Successful Markdown fetch
 
-- **WHEN** an authenticated client requests `/api/agents/codex/files/report.md` and the file exists at `<codex.cwd>/report.md`
+- **WHEN** a client requests `/api/agents/codex/files/report.md` and the file exists at `<codex.cwd>/report.md`
 - **THEN** the server responds `200` with `Content-Type: text/markdown; charset=utf-8` and the raw file bytes
 
 #### Scenario: Successful image fetch
 
-- **WHEN** an authenticated client requests `/api/agents/codex/files/diagram.png` and the file exists, the extension matches the image whitelist, and the first bytes match the PNG magic number
+- **WHEN** a client requests `/api/agents/codex/files/diagram.png` and the file exists, the extension matches the image whitelist, and the first bytes match the PNG magic number
 - **THEN** the server responds `200` with `Content-Type: image/png` and the raw file bytes
-
-#### Scenario: Unauthenticated request rejected
-
-- **WHEN** an unauthenticated client requests any path under `/api/agents/*/files/*`
-- **THEN** the server responds `401` and SHALL NOT touch the filesystem
 
 #### Scenario: Unknown agent
 
-- **WHEN** an authenticated client requests `/api/agents/ghost/files/anything` and no agent named `ghost` is registered in the current mesh
+- **WHEN** a client requests `/api/agents/ghost/files/anything` and no agent named `ghost` is registered in the current mesh
 - **THEN** the server responds `404` and SHALL NOT touch the filesystem
 
 ### Requirement: Path traversal and symlink protection

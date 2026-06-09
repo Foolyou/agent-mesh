@@ -8,7 +8,7 @@
 
 - [ ] 2.1 Add `serveAgentFile(agentName, relPath)` on `src/web/gateway.ts` mirroring `serveUpload`; resolve agent → cwd through the existing control plane lookup; refuse unknown agents with `404`
 - [ ] 2.2 Add `GET /api/agents/:name/files/*path` in `src/web/api.ts`; set `X-Content-Type-Options: nosniff`, `Content-Security-Policy: default-src 'none'`, `Cache-Control: private, max-age=60` on success; map module errors (`enotfound`/`traversal`/`symlink`/`toobig`) to HTTP codes (404/400/400/413)
-- [ ] 2.3 Add gateway-level test that asserts auth gating (401 for unauthenticated) and headers on a successful response
+- [ ] 2.3 Add gateway-level test asserting the success headers (`X-Content-Type-Options: nosniff`, `Content-Security-Policy: default-src 'none'`, `Cache-Control: private, max-age=60`) and the error → HTTP code mapping (`enotfound` → 404, `traversal` → 400, `symlink` → 400, `toobig` → 413, unknown agent → 404). No auth assertion — the route inherits the existing `/api/uploads` exposure model (transport-layer trust); see spec §"HTTP route for per-agent file serving"
 
 ## 3. Transcript: preserve ACP Image / ResourceLink blocks
 
