@@ -80,6 +80,22 @@ try {
     await page.waitForSelector(".mesh-canvas", { state: "detached", timeout: 4000 });
   });
 
+  await step("topology management stays out of the rail header on wide desktop", async () => {
+    await page.setViewportSize({ width: 1440, height: 880 });
+    const topologyPanel = page.locator(".drail .panel", { has: page.locator('.head .ttl:text-is("topology")') }).first();
+    const noHScroll = async () =>
+      page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1 && document.body.scrollWidth <= window.innerWidth + 1);
+
+    if (await topologyPanel.locator(".topology-inline-controls .edge-add").isVisible()) {
+      throw new Error("topology edit controls are inline in the narrow rail header");
+    }
+    await topologyPanel.locator('.topology-manage-toggle .btn[aria-label="manage topology"]').click();
+    await topologyPanel.locator(".topology-controls.open .edge-add select").first().waitFor({ timeout: 4000 });
+    if (!(await noHScroll())) throw new Error("horizontal overflow after opening topology management on wide desktop");
+    await topologyPanel.locator('.topology-manage-toggle .btn[aria-label="manage topology"]').click();
+    await topologyPanel.locator(".topology-controls.open").waitFor({ state: "detached", timeout: 4000 });
+  });
+
   await step("narrow desktop collapses secondary actions without horizontal overflow", async () => {
     await page.setViewportSize({ width: 900, height: 720 });
     const noHScroll = async () =>

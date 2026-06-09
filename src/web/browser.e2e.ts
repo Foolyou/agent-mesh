@@ -116,8 +116,10 @@ try {
   });
 
   await step("running topology can add a mail edge", async () => {
-    await page.waitForSelector(".edge-add select", { timeout: 5000 });
-    const edgeAdd = page.locator(".edge-add").first();
+    const topologyPanel = page.locator(".drail .panel", { has: page.locator('.head .ttl:text-is("topology")') }).first();
+    await topologyPanel.locator('.topology-manage-toggle .btn[aria-label="manage topology"]').click();
+    await topologyPanel.locator(".topology-controls.open .edge-add select").first().waitFor({ timeout: 5000 });
+    const edgeAdd = topologyPanel.locator(".topology-controls.open .edge-add").first();
     await edgeAdd.locator("select").nth(0).selectOption("codex-1");
     await edgeAdd.locator("select").nth(1).selectOption("router");
     await edgeAdd.locator('.btn:has-text("+ edge")').click();
@@ -125,8 +127,9 @@ try {
   });
 
   await step("running topology can add a cold lazy agent", async () => {
-    await page.waitForSelector(".agent-add input", { timeout: 5000 });
-    const add = page.locator(".agent-add").first();
+    const topologyPanel = page.locator(".drail .panel", { has: page.locator('.head .ttl:text-is("topology")') }).first();
+    await topologyPanel.locator(".topology-controls.open .agent-add input").waitFor({ timeout: 5000 });
+    const add = topologyPanel.locator(".topology-controls.open .agent-add").first();
     await add.locator("input").fill("newbie");
     await add.locator("select").selectOption("codex");
     await add.locator('.btn:has-text("+ agent")').click();

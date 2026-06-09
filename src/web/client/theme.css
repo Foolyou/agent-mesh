@@ -1849,13 +1849,13 @@ select.inp {
   flex: 1;
 }
 .topology-inline-controls {
-  display: inline-flex;
+  display: none;
   align-items: center;
   gap: 6px;
   min-width: 0;
 }
 .topology-manage-toggle {
-  display: none;
+  display: inline-flex;
 }
 .topology-controls {
   display: none;
@@ -1865,6 +1865,9 @@ select.inp {
   padding: 0 0 8px;
   margin: 0 0 8px;
   border-bottom: 1px solid var(--line);
+}
+.topology-controls.open {
+  display: flex;
 }
 /* segmented header (rail logs: activity / mail / history) */
 .seg-tabs {
@@ -1909,15 +1912,6 @@ select.inp {
   }
   .detail-overflow {
     display: inline-flex;
-  }
-  .topology-inline-controls {
-    display: none;
-  }
-  .topology-manage-toggle {
-    display: inline-flex;
-  }
-  .topology-controls.open {
-    display: flex;
   }
   .conv-control {
     flex-wrap: wrap;

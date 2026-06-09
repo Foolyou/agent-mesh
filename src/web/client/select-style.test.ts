@@ -47,13 +47,19 @@ test("narrow detail layout collapses secondary actions instead of overflowing", 
   const responsive = css.slice(css.lastIndexOf("@media (max-width: 1100px)"));
   const detailSecondary = blockFor(".detail-secondary-actions", responsive);
   const detailOverflow = blockFor(".detail-overflow", responsive);
-  const topologyInline = blockFor(".topology-inline-controls", responsive);
-  const topologyToggle = blockFor(".topology-manage-toggle", responsive);
   const conversation = blockFor(".conv-control", responsive);
 
   expect(detailSecondary).toContain("display: none");
   expect(detailOverflow).toContain("display: inline-flex");
-  expect(topologyInline).toContain("display: none");
-  expect(topologyToggle).toContain("display: inline-flex");
   expect(conversation).toContain("flex-wrap: wrap");
+});
+
+test("topology edit controls live in the expandable manage area", () => {
+  const inline = blockFor(".topology-inline-controls");
+  const toggle = blockFor(".topology-manage-toggle");
+  const openControls = blockFor(".topology-controls.open");
+
+  expect(inline).toContain("display: none");
+  expect(toggle).toContain("display: inline-flex");
+  expect(openControls).toContain("display: flex");
 });
