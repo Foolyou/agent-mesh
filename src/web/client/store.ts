@@ -3,7 +3,7 @@
 // the client. createStore() owns the socket + REST command helpers; useStore wires it
 // into React via useSyncExternalStore.
 import { useSyncExternalStore } from "react";
-import type { AgentConfig, GatewayState, ServerMsg, PerMeshState, TranscriptItem, ConvRef, MeshConfig, MeshEdge, PromptImageRef, ThinkingEffort } from "../types";
+import type { AgentConfig, GatewayState, ServerMsg, PerMeshState, TranscriptItem, ConvRef, MeshConfig, MeshEdge, PromptImageRef, ThinkingEffort, StartSessionStrategy } from "../types";
 
 const CAP = 500;
 function cap<T>(a: T[], n: number): T[] {
@@ -121,7 +121,7 @@ export interface Store {
   getToasts(): Toast[];
   apply(msg: ServerMsg): void;
   dismissToast(id: number): void;
-  startMesh(name: string): Promise<any>;
+  startMesh(name: string, sessionStrategy?: StartSessionStrategy): Promise<any>;
   stopMesh(name: string): Promise<any>;
   reload(): Promise<any>;
   defineMesh(config: MeshConfig): Promise<any>;
@@ -249,7 +249,7 @@ export function createStore(): Store {
     },
     // fire-and-forget commands surface failures as toasts; defineMesh stays raw so
     // the builder can show its validation error inline.
-    startMesh: (n) => guard(post(`/api/meshes/${enc(n)}/start`), `start ${n}`),
+    startMesh: (n, sessionStrategy) => guard(post(`/api/meshes/${enc(n)}/start`, sessionStrategy === "fresh" ? { sessionStrategy } : undefined), `start ${n}`),
     stopMesh: (n) => guard(post(`/api/meshes/${enc(n)}/stop`), `stop ${n}`),
     reload: () => guard(post(`/api/meshes/reload`), "reload"),
     defineMesh: (c) => post(`/api/meshes`, c),

@@ -89,6 +89,22 @@ test("newAgentSession on a stopped mesh blanks one agent's id on disk", async ()
   expect((await readSessionState(runDir, "echo")).agents.r.sessionId).toBe("");
 });
 
+test("startMesh with fresh session strategy blanks persisted session ids before daemon start", async () => {
+  await mgr.defineMesh(cfg);
+  const runDir = join(dir, "run");
+  await writeSessionState(runDir, "echo", {
+    meshExpectedAlive: false,
+    agents: { r: { sessionId: "sid", cwd: ".", harness: "claude", mode: "build", mailCursor: "mail-r" } },
+  });
+
+  await mgr.startMesh("echo", { sessionStrategy: "fresh" });
+
+  const rec = (await readSessionState(runDir, "echo")).agents.r;
+  expect(rec.sessionId).toBe("");
+  expect(rec.mode).toBe("build");
+  expect(rec.mailCursor).toBe("mail-r");
+});
+
 test("newAgentSession on an unknown agent throws", async () => {
   await mgr.defineMesh(cfg);
   await expect(mgr.newAgentSession("echo", "nope")).rejects.toThrow(/no agent/i);

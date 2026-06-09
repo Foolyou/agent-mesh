@@ -84,6 +84,10 @@ try {
     await page.waitForSelector(".mdetail", { timeout: 6000 });
     await page.waitForSelector('.topbar .btn:has-text("back")', { timeout: 4000 });
     await page.waitForSelector(".mtabs", { timeout: 4000 });
+    const startStrategy = page.locator(".start-session-sel");
+    await startStrategy.waitFor({ timeout: 4000 });
+    await startStrategy.selectOption("fresh");
+    if ((await startStrategy.inputValue()) !== "fresh") throw new Error("fresh start strategy was not selectable");
     if (!(await noHScroll())) throw new Error("horizontal overflow on detail");
   });
 

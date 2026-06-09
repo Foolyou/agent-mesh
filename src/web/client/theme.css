@@ -1732,6 +1732,16 @@ select.inp {
   color: var(--fg-faint);
   font-size: 12px;
 }
+.start-strategy {
+  gap: 5px;
+}
+.start-strategy .sub {
+  color: var(--fg-faint);
+  font-size: 10px;
+}
+.start-session-sel {
+  max-width: 158px;
+}
 .split {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -1984,6 +1994,12 @@ select.inp {
   }
   .detail-head .meta:nth-of-type(n + 2) {
     display: none;
+  }
+  .start-strategy .sub {
+    display: none;
+  }
+  .start-session-sel {
+    max-width: min(150px, 38vw);
   }
   .detail-head .btn {
     min-height: 34px;

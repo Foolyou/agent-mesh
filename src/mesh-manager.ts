@@ -16,6 +16,11 @@ import { deleteUploadBucket } from "./web/uploads";
 import { clearAgentSession, clearAllAgentSessions, setMeshExpectedAlive } from "./session-storage";
 
 export type MeshStatus = "stopped" | "starting" | "running" | "dead";
+export type StartSessionStrategy = "resume" | "fresh";
+
+export interface StartMeshOptions {
+  sessionStrategy?: StartSessionStrategy;
+}
 
 export interface MeshManagerOptions {
   /** Data root (default ~/.agent-mesh). meshesDir/runDir derive from it unless given. */
@@ -148,12 +153,15 @@ export class MeshManager {
     void rm(join(this.runDir, `${name}.sock`), { force: true }).catch(() => {});
   }
 
-  async startMesh(name: string): Promise<void> {
+  async startMesh(name: string, opts: StartMeshOptions = {}): Promise<void> {
     const entry = this.require(name);
     if (entry.status === "running" || entry.status === "starting") {
       throw new Error(`mesh "${name}" is already running`);
     }
     entry.status = "starting";
+    if (opts.sessionStrategy === "fresh") {
+      await clearAllAgentSessions(this.runDir, name);
+    }
     await setMeshExpectedAlive(this.runDir, name, true);
     const client = this.buildClient(name, entry);
     entry.client = client;

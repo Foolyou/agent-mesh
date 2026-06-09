@@ -32,8 +32,8 @@ function fakeManager(config: MeshConfig = CFG) {
     routerOf() {
       return config.agents.find((a) => a.role === "router")?.id ?? "router";
     },
-    async startMesh(n: string) {
-      calls.push(["start", n]);
+    async startMesh(n: string, opts?: any) {
+      calls.push(["start", n, opts]);
     },
     async stopMesh(n: string) {
       calls.push(["stop", n]);
@@ -99,7 +99,15 @@ test("POST /api/meshes/demo/start delegates to startMesh", async () => {
   const gw = new WebGateway(m as any);
   const r = await handleApi(gw, "POST", "/api/meshes/demo/start", {});
   expect(r.status).toBe(200);
-  expect(m.calls).toContainEqual(["start", "demo"]);
+  expect(m.calls).toContainEqual(["start", "demo", undefined]);
+});
+
+test("POST /api/meshes/demo/start can request a fresh session strategy", async () => {
+  const m = fakeManager();
+  const gw = new WebGateway(m as any);
+  const r = await handleApi(gw, "POST", "/api/meshes/demo/start", { sessionStrategy: "fresh" });
+  expect(r.status).toBe(200);
+  expect(m.calls).toContainEqual(["start", "demo", { sessionStrategy: "fresh" }]);
 });
 
 test("POST /api/meshes/demo/prompt delegates to promptRouter", async () => {

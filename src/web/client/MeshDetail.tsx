@@ -3,7 +3,7 @@
 // permission-history timelines for the selected mesh.
 import { useEffect, useRef, useState } from "react";
 import type { Store } from "./store";
-import type { GatewayState, MeshSummary, PerMeshState, ActivityEntry, MailEntry, ResolvedPermission, PermissionReq, AgentModes, AgentModels, ThinkingEffort, HarnessId } from "../types";
+import type { GatewayState, MeshSummary, PerMeshState, ActivityEntry, MailEntry, ResolvedPermission, PermissionReq, AgentModes, AgentModels, ThinkingEffort, HarnessId, StartSessionStrategy } from "../types";
 import { Dot, Btn, Empty, ConfirmButton, InfoIcon, fmtTime } from "./ui";
 import { ChatPane } from "./ChatPane";
 import { MeshCanvas } from "./MeshCanvas";
@@ -12,6 +12,7 @@ import { useI18n, tStatus } from "./i18n";
 
 function Header({ m, store, onDeleted, onEdit }: { m: MeshSummary; store: Store; onDeleted: () => void; onEdit: () => void }) {
   const { t } = useI18n();
+  const [sessionStrategy, setSessionStrategy] = useState<StartSessionStrategy>("resume");
   const live = m.status === "running" || m.status === "starting";
   return (
     <div className="detail-head">
@@ -39,7 +40,19 @@ function Header({ m, store, onDeleted, onEdit }: { m: MeshSummary; store: Store;
         </>
       ) : (
         <>
-          <Btn kind="go" onClick={() => void store.startMesh(m.name)}>
+          <span className="row start-strategy" title={t("start.strategy.hint")}>
+            <span className="sub">{t("start.strategy")}</span>
+            <select
+              className="mode-sel select-control start-session-sel"
+              value={sessionStrategy}
+              aria-label={t("start.strategy")}
+              onChange={(e) => setSessionStrategy(e.target.value as StartSessionStrategy)}
+            >
+              <option value="resume">{t("start.strategy.resume")}</option>
+              <option value="fresh">{t("start.strategy.fresh")}</option>
+            </select>
+          </span>
+          <Btn kind="go" onClick={() => void store.startMesh(m.name, sessionStrategy)}>
             {t("start mesh")}
           </Btn>
           <Btn kind="ghost" title={t("edit")} onClick={onEdit}>

@@ -6,6 +6,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { randomUUID } from "node:crypto";
 import type { MeshManager } from "../mesh-manager";
+import type { StartSessionStrategy } from "../mesh-manager";
 import { normalizeMeshEdges, type MeshConfig, type HarnessId } from "../acp/types";
 import { HARNESSES } from "../harness";
 
@@ -16,7 +17,7 @@ export interface MeshControlHandlers {
   updateMesh(spec: MeshConfig): Promise<string>;
   deleteMesh(name: string): Promise<string>;
   getMesh(name: string): string;
-  startMesh(name: string): Promise<string>;
+  startMesh(name: string, sessionStrategy?: StartSessionStrategy): Promise<string>;
   stopMesh(name: string): Promise<string>;
   listMeshes(): string;
 }
@@ -40,8 +41,8 @@ export function createMeshControlHandlers(manager: MeshManager): MeshControlHand
       try { return JSON.stringify(manager.configOf(name), null, 2); }
       catch (e) { return err(e); }
     },
-    async startMesh(name) {
-      try { await manager.startMesh(name); return `started "${name}"`; }
+    async startMesh(name, sessionStrategy) {
+      try { await manager.startMesh(name, sessionStrategy === "fresh" ? { sessionStrategy } : undefined); return `started "${name}"${sessionStrategy === "fresh" ? " with fresh sessions" : ""}`; }
       catch (e) { return err(e); }
     },
     async stopMesh(name) {
@@ -115,8 +116,8 @@ export async function createMeshControlServer(opts: {
     { description: "Delete a mesh definition permanently. The mesh must be stopped first.", inputSchema: { name: z.string() } },
     async ({ name }) => text(await opts.handlers.deleteMesh(name)));
   server.registerTool("start_mesh",
-    { description: "Start a defined mesh (spawns its agents).", inputSchema: { name: z.string() } },
-    async ({ name }) => text(await opts.handlers.startMesh(name)));
+    { description: "Start a defined mesh (spawns its agents). Use sessionStrategy=fresh to avoid inheriting saved agent sessions.", inputSchema: { name: z.string(), sessionStrategy: z.enum(["resume", "fresh"]).optional() } },
+    async ({ name, sessionStrategy }) => text(await opts.handlers.startMesh(name, sessionStrategy)));
   server.registerTool("stop_mesh",
     { description: "Stop a running mesh (terminates its agents).", inputSchema: { name: z.string() } },
     async ({ name }) => text(await opts.handlers.stopMesh(name)));

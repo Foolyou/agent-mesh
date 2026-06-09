@@ -6,6 +6,7 @@ import { reduceTranscript } from "./transcript";
 import { now } from "../acp/types";
 import { resolve } from "node:path";
 import type { AgentConfig, MeshConfig, MeshEdge, MeshEvent, AgentId, AgentStatus, AgentActivity, PromptImageRef, ThinkingEffort } from "../acp/types";
+import type { StartMeshOptions } from "../mesh-manager";
 import { readUpload, storeUploads, uploadPath, type UploadFileLike } from "./uploads";
 import { AgentFileError, resolveAgentFile } from "./agent-files";
 import type {
@@ -30,7 +31,7 @@ export interface ManagerLike {
   listMeshes(): { name: string; defined: boolean; status: MeshStatus }[];
   configOf(name: string): MeshConfig;
   routerOf(name: string): string;
-  startMesh(name: string): Promise<void>;
+  startMesh(name: string, opts?: StartMeshOptions): Promise<void>;
   stopMesh(name: string): Promise<void>;
   promptRouter(name: string, text: string, images?: PromptImageRef[]): Promise<void>;
   promptAgent(name: string, agentId: string, text: string, images?: PromptImageRef[]): void;
@@ -335,8 +336,8 @@ export class WebGateway {
   }
 
   // ── Commands (delegate to manager / master; echo user turns) ───────────────────
-  async startMesh(name: string): Promise<void> {
-    await this.manager.startMesh(name);
+  async startMesh(name: string, opts?: StartMeshOptions): Promise<void> {
+    await this.manager.startMesh(name, opts);
     this.refreshMeshes();
   }
   async stopMesh(name: string): Promise<void> {

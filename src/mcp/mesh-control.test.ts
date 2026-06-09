@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MeshManager } from "../mesh-manager";
 import { createMeshControlHandlers } from "./mesh-control";
+import { readSessionState, writeSessionState } from "../session-storage";
 import type { MeshConfig } from "../acp/types";
 
 const cfg: MeshConfig = {
@@ -28,6 +29,21 @@ test("create -> start -> list -> stop via handlers", async () => {
   expect(await h.startMesh("echo")).toMatch(/started/i);
   expect(h.listMeshes()).toMatch(/echo.*running/i);
   expect(await h.stopMesh("echo")).toMatch(/stopped/i);
+});
+
+test("startMesh can request fresh sessions via handlers", async () => {
+  const h = createMeshControlHandlers(mgr);
+  await h.createMesh(cfg);
+  await writeSessionState(join(dir, "run"), "echo", {
+    meshExpectedAlive: false,
+    agents: { r: { sessionId: "old", cwd: ".", harness: "claude", mailCursor: "mail-r" } },
+  });
+
+  expect(await h.startMesh("echo", "fresh")).toMatch(/fresh sessions/i);
+
+  const rec = (await readSessionState(join(dir, "run"), "echo")).agents.r;
+  expect(rec.sessionId).toBe("");
+  expect(rec.mailCursor).toBe("mail-r");
 });
 
 test("createMesh returns the validation error as text (no throw)", async () => {

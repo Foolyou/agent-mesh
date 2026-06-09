@@ -4,6 +4,7 @@
 import { validateMeshConfig } from "../mesh-validate";
 import type { WebGateway } from "./gateway";
 import type { AgentConfig, MeshConfig, MeshEdge, PromptImageRef } from "../acp/types";
+import type { StartMeshOptions } from "../mesh-manager";
 import type { UploadFileLike } from "./uploads";
 import { AgentFileError } from "./agent-files";
 
@@ -121,7 +122,8 @@ export async function handleApi(
       // POST /api/meshes/:name/(start|stop|prompt)
       if (method === "POST" && p.length === 3) {
         if (p[2] === "start") {
-          await gw.startMesh(name);
+          const opts: StartMeshOptions | undefined = body?.sessionStrategy === "fresh" ? { sessionStrategy: "fresh" } : undefined;
+          await gw.startMesh(name, opts);
           return ok();
         }
         if (p[2] === "stop") {

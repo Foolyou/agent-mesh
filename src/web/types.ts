@@ -7,6 +7,7 @@ export type { SessionModel };
 export type { PromptImageRef };
 export type { ThinkingEffort };
 export type { AgentConfig };
+export type StartSessionStrategy = "resume" | "fresh";
 
 /** The session modes an agent advertises plus which one is active. */
 export interface AgentModes {

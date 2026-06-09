@@ -62,6 +62,10 @@ const DICT: Record<string, Entry> = {
   "del.confirm": ["delete?", "确认删除?"],
   "start mesh": ["start mesh", "启动 mesh"],
   "stop mesh": ["stop mesh", "停止 mesh"],
+  "start.strategy": ["start plan", "启动方案"],
+  "start.strategy.hint": ["choose whether agents resume saved sessions or start fresh", "选择 agent 是继承旧 session 还是全新启动"],
+  "start.strategy.resume": ["inherit session", "继承旧 session"],
+  "start.strategy.fresh": ["fresh session", "全新 session"],
   router: ["router", "router"],
   agents: ["{n} agents", "{n} 个 agent"],
 
