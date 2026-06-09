@@ -83,7 +83,6 @@ test("D3 extension allowlist serves expected types and hides misses", async () =
     const allowed = [
       ["a.md", "text/markdown; charset=utf-8"],
       ["a.markdown", "text/markdown; charset=utf-8"],
-      ["a.svg", "image/svg+xml"],
       ["a.txt", "text/plain; charset=utf-8"],
       ["a.log", "text/plain; charset=utf-8"],
       ["a.json", "text/plain; charset=utf-8"],
@@ -109,12 +108,19 @@ test("D3 extension allowlist serves expected types and hides misses", async () =
       ["a.sql", "text/plain; charset=utf-8"],
     ] as const;
     for (const [name, type] of allowed) {
-      await writeFile(join(root, name), name.endsWith(".svg") ? "<svg></svg>" : "ok");
+      await writeFile(join(root, name), "ok");
       expect(extensionWhitelist.has(name.slice(name.lastIndexOf(".")).toLowerCase())).toBe(true);
       expect((await resolveAgentFile(root, name)).contentType).toBe(type);
     }
 
     await writeFile(join(root, "secret.exe"), "exists");
     await expectCode(root, "secret.exe", "enotfound");
+
+    // SVG is intentionally outside the whitelist: serving image/svg+xml on the
+    // app origin would let embedded <script> execute (XSS). Matches the
+    // precedent set by src/web/uploads.ts which also rejects SVG.
+    await writeFile(join(root, "bad.svg"), "<svg></svg>");
+    expect(extensionWhitelist.has(".svg")).toBe(false);
+    await expectCode(root, "bad.svg", "enotfound");
   });
 });

@@ -9,7 +9,10 @@ const RASTER_IMAGES = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp"]);
 const TEXT = new Set([".txt", ".log", ".json", ".csv", ".yaml", ".yml", ".toml"]);
 const CODE = new Set([".ts", ".tsx", ".js", ".jsx", ".py", ".go", ".rs", ".java", ".c", ".cpp", ".h", ".hpp", ".html", ".css", ".sh", ".sql"]);
 
-export const extensionWhitelist = new Set([...MARKDOWN, ...RASTER_IMAGES, ".svg", ...TEXT, ...CODE]);
+// SVG is intentionally excluded: serving image/svg+xml on the app origin allows
+// embedded <script> to execute in our origin context (XSS) and the existing
+// uploads pipeline already rejects SVG (src/web/uploads.ts:66). Match precedent.
+export const extensionWhitelist = new Set([...MARKDOWN, ...RASTER_IMAGES, ...TEXT, ...CODE]);
 
 export class AgentFileError extends Error {
   constructor(public code: "enotfound" | "traversal" | "symlink" | "toobig", message = code) {
@@ -31,7 +34,6 @@ export function pickContentType(ext: string): string | undefined {
   if (e === ".jpg" || e === ".jpeg") return "image/jpeg";
   if (e === ".gif") return "image/gif";
   if (e === ".webp") return "image/webp";
-  if (e === ".svg") return "image/svg+xml";
   if (TEXT.has(e) || CODE.has(e)) return "text/plain; charset=utf-8";
   return undefined;
 }

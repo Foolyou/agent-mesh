@@ -54,11 +54,12 @@ The whitelist SHALL include at minimum:
 
 - `.md`, `.markdown` served as `text/markdown; charset=utf-8`
 - `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp` served as the corresponding `image/*` type after magic-byte verification
-- `.svg` served as `image/svg+xml`
 - `.txt`, `.log`, `.json`, `.csv`, `.yaml`, `.yml`, `.toml` served as `text/plain; charset=utf-8`
 - Code extensions `.ts`, `.tsx`, `.js`, `.jsx`, `.py`, `.go`, `.rs`, `.java`, `.c`, `.cpp`, `.h`, `.hpp`, `.html`, `.css`, `.sh`, `.sql` served as `text/plain; charset=utf-8`
 
 The system SHALL NOT serve any file as `text/html` regardless of extension.
+
+The system SHALL NOT include `.svg` in the whitelist. SVG served as `image/svg+xml` on the application origin allows embedded `<script>` to execute with full access to the page origin (XSS); the existing upload pipeline at `src/web/uploads.ts` already rejects SVG for the same reason. Re-introducing SVG support would require both `Content-Disposition: attachment` and a per-response `Content-Security-Policy: sandbox` and is out of scope for this change.
 
 #### Scenario: Non-whitelisted extension returns 404
 
