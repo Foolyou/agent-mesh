@@ -168,6 +168,12 @@ export class FakeManager {
   interruptAgent(name: string, agentId: string): void {
     this.emit(name, { kind: "interrupt", from: "operator", target: agentId, reason: "operator interrupt", ts: now() });
   }
+  async newAgentSession(name: string, agentId: string): Promise<void> {
+    this.update(name, agentId, { sessionUpdate: "__session_reset__" });
+  }
+  async newAllSessions(name: string): Promise<void> {
+    for (const a of this.require(name).config.agents) this.update(name, a.id, { sessionUpdate: "__session_reset__" });
+  }
   async setAgentEffort(name: string, agentId: string, effort?: any): Promise<void> {
     const e = this.require(name);
     e.config = { ...e.config, agents: e.config.agents.map((a) => (a.id === agentId ? { ...a, effort } : a)) };
