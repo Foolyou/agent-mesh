@@ -51,6 +51,8 @@ const sanitizeSchema = {
 // Deliberately NO rehype-raw: per the design's "no raw HTML passthrough" decision, agent-authored
 // raw HTML must not be parsed into live elements. Omitting raw lets streamdown's default html->text
 // fallback (and the skipHtml prop) strip it; sanitize remains as defense-in-depth.
+// Deliberately NO rehype-harden either: it blocks bare relative refs like `report.md` before our
+// React Anchor/Image components can rewrite them through AuthorContext.
 const rehypePlugins = [[rehypeSanitize, sanitizeSchema]];
 
 function Anchor(props: ComponentProps<"a">) {
