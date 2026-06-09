@@ -20,7 +20,7 @@ follow inter-agent mail and activity in real time.
    Bun web server (src/web/server.ts)  ── WebGateway (authoritative state,
         │                                   aggregated transcripts, fan-out)
         │                                        │
-        │                                 MeshManager  ←→  optional MasterAgent (claude ACP)
+        │                                 MeshManager  ←→  optional MasterAgent (configurable ACP harness)
         │                                    │   │            └─ mesh-control MCP server
         │                                    │   │               (create/get/update/delete/start/stop/list_meshes)
         │                                    │   │
@@ -42,8 +42,8 @@ The web server runs **in the parent process** (it's the new face of the same
 parent that owns `MeshManager`); the subprocess-per-mesh model is unchanged.
 
 **Parent process** owns `MeshManager` (deterministic lifecycle: validate, persist,
-spawn, supervise, aggregate events), an optional `MasterAgent` (a claude ACP agent
-with `create_mesh` / `get_mesh` / `update_mesh` / `delete_mesh` / `start_mesh` /
+spawn, supervise, aggregate events), an optional `MasterAgent` (an ACP agent,
+defaulting to `codex`, with `create_mesh` / `get_mesh` / `update_mesh` / `delete_mesh` / `start_mesh` /
 `stop_mesh` / `list_meshes` MCP tools — full lifecycle in natural language), and the
 **web server** (`src/web/`). A testable `WebGateway` folds the manager + master
 event streams into authoritative state — including **aggregated transcripts** (raw
@@ -86,6 +86,7 @@ ChatGPT, opencode via its provider, claude via the Claude Agent SDK).
 bun run mesh          # → opens http://localhost:7317
 # bun run mesh --port 8080      # custom port (or MESH_WEB_PORT=8080)
 # bun run mesh --no-master      # skip the master agent
+# bun run mesh --master-harness claude   # Mesh Assistant harness: codex(default)|claude|opencode|kimi
 # bun run mesh --fake           # self-contained scripted demo (no real agents)
 # bun run mesh --root ~/work/mesh   # data root (default ~/.agent-mesh; or MESH_ROOT)
 ```

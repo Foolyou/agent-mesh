@@ -3,7 +3,8 @@
 //   mesh backend [--port] headless control plane: REST API + WS only
 //   mesh web [--port] [--backend URL]   SPA + reverse-proxy /api + /ws to a backend
 //
-// Flags: --fake (scripted demo, no real agents), --no-master (skip the master agent).
+// Flags: --fake (scripted demo, no real agents), --no-master (skip the master agent),
+//        --master-harness <codex|claude|opencode|kimi> (Mesh Assistant harness).
 // The subprocess-per-mesh model is unchanged; the backend (or combined) process owns
 // MeshManager and reaps the whole mesh-host subprocess tree on exit.
 import { MeshManager } from "./mesh-manager";
@@ -15,7 +16,9 @@ import { FakeManager, FakeMaster } from "./web/fake";
 import { runMeshHost } from "./mesh-host";
 import { resolveRoot, expandHome } from "./root";
 import { uploadRoot } from "./web/uploads";
+import { masterHarnessPassthrough, parseMasterHarness } from "./cli-options";
 import { homedir } from "node:os";
+import { join } from "node:path";
 import * as service from "./service";
 
 // Single-binary support: when this binary is re-execed as a mesh-host subprocess
@@ -37,6 +40,7 @@ const sub = process.argv[2];
 const cmd = sub && !sub.startsWith("-") ? sub : "all";
 const fake = has("--fake");
 const noMaster = has("--no-master");
+const masterHarness = parseMasterHarness(process.argv);
 
 const root = resolveRoot();
 // the base dir we'd pass back as --root so a re-spawned backend resolves to the same root
@@ -55,7 +59,7 @@ async function buildGateway() {
     ? new FakeMaster()
     : noMaster
       ? undefined
-      : new MasterAgent(manager, { uploadRoot: uploadRoot(root), onCapabilities: (caps) => gateway?.setMasterCapabilities(caps) });
+      : new MasterAgent(manager, { cwd: join(root, "assistant"), harness: masterHarness, uploadRoot: uploadRoot(root), onCapabilities: (caps) => gateway?.setMasterCapabilities(caps) });
   gateway = new WebGateway(manager, master, { root });
   if (!fake) {
     // Reconnect to any mesh daemons that outlived a previous backend (the whole point of
@@ -95,7 +99,7 @@ function reapOnExit(stop: () => Promise<void> | void) {
 const svcPort = Number(process.env.MESH_PORT) || Number(argVal("--port")) || 10010;
 const svcCold = has("--cold");
 // flags forwarded to the spawned backend (so `mesh up --fake --no-master` works)
-const svcPass = [...(fake ? ["--fake"] : []), ...(noMaster ? ["--no-master"] : [])];
+const svcPass = [...(fake ? ["--fake"] : []), ...(noMaster ? ["--no-master"] : []), ...masterHarnessPassthrough(masterHarness)];
 if (cmd === "up" || cmd === "start") {
   await service.up(base, root, svcPort, { cold: svcCold, passthrough: svcPass });
 } else if (cmd === "down" || cmd === "stop") {

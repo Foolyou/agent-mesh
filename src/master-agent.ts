@@ -1,9 +1,10 @@
 // src/master-agent.ts
-// Optional LLM control layer: a claude ACP agent whose only tools are the
+// Optional LLM control layer: a configurable ACP agent whose only tools are the
 // mesh-control lifecycle tools. The system runs fully without it.
+import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import { AcpAgentConnection, type AcpConnectionOptions } from "./acp/client";
-import type { PromptImageRef } from "./acp/types";
+import type { HarnessId, PromptImageRef } from "./acp/types";
 import { resolveHarness } from "./harness";
 import { createMeshControlHandlers, createMeshControlServer, type MeshControlServer } from "./mcp/mesh-control";
 import type { MeshManager } from "./mesh-manager";
@@ -20,10 +21,12 @@ export class MasterAgent {
     private manager: MeshManager,
     private opts: {
       project?: string;
+      cwd?: string;
       onUpdate?: (u: any) => void;
       debug?: boolean;
       uploadRoot?: string;
       onCapabilities?: (caps: { image: boolean }) => void;
+      harness?: HarnessId;
       connectionFactory?: (opts: AcpConnectionOptions) => AcpAgentConnection;
     } = {},
   ) {}
@@ -42,8 +45,13 @@ export class MasterAgent {
   async start(): Promise<void> {
     this.mcp = await createMeshControlServer({ handlers: createMeshControlHandlers(this.manager) });
     try {
-      const spec = resolveHarness("claude");
-      const cwd = resolve(process.cwd(), this.opts.project ?? ".");
+      const spec = resolveHarness(this.opts.harness ?? "codex");
+      const cwd = this.opts.cwd
+        ? resolve(this.opts.cwd)
+        : this.opts.project
+          ? resolve(process.cwd(), this.opts.project)
+          : resolve(process.cwd(), ".");
+      if (this.opts.cwd) await mkdir(cwd, { recursive: true });
       const connectionFactory = this.opts.connectionFactory ?? ((connOpts: AcpConnectionOptions) => new AcpAgentConnection(connOpts));
       this.conn = connectionFactory({
         id: "master",
