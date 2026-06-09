@@ -16,7 +16,7 @@ function Msg({ item, author }: { item: Extract<TranscriptItem, { kind: "message"
       <Markdown text={item.text} />
     </AuthorContext.Provider>
   ) : (
-    item.text
+    <Markdown text={item.text} />
   );
   return (
     <div className={`msg ${item.role}`}>

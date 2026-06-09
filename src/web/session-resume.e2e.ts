@@ -4,6 +4,7 @@
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { chromium, type Browser, type Page } from "playwright";
 
 const PORT = Number(process.env.E2E_PORT) || 10020;
 const BASE = `http://localhost:${PORT}`;
@@ -18,6 +19,8 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 let pass = 0;
 const fails: string[] = [];
+let browser: Browser | undefined;
+let page: Page | undefined;
 async function step(name: string, fn: () => Promise<void>) {
   try {
     await fn();
@@ -71,13 +74,14 @@ const shim = join(bin, "codex-acp");
 await writeFile(shim, `#!/usr/bin/env bash\nexec bun ${JSON.stringify(resolve(REPO, "src", "fixtures", "resume-acp.ts"))}\n`, "utf8");
 await chmod(shim, 0o700);
 
-let backend = Bun.spawn(["bun", "run", "src/main.ts", "backend", "--no-master", "--port", String(PORT), "--root", ROOT], {
+let backend = Bun.spawn(["bun", "run", "src/main.ts", "--no-master", "--port", String(PORT), "--root", ROOT], {
   cwd: REPO,
   env: {
     ...process.env,
     PATH: `${bin}:${process.env.PATH ?? ""}`,
     FAKE_ACP_STORE: fakeStore,
     FAKE_ACP_EFFECTS: effects,
+    FAKE_ACP_REPLAY_IMAGE: "1",
     MESH_API_PORT: "",
   },
   stdout: "pipe",
@@ -86,6 +90,8 @@ let backend = Bun.spawn(["bun", "run", "src/main.ts", "backend", "--no-master", 
 
 try {
   await waitReady();
+  browser = await chromium.launch({ headless: true });
+  page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   const config = { name: mesh, agents: [{ id: "r", harness: "codex", project: ".", role: "router" }], edges: [] };
 
   let firstPid = 0;
@@ -116,6 +122,25 @@ try {
     await waitFor(async () => (await transcriptText()).includes(sentinel));
     const lines = (await readFile(effects, "utf8")).trim().split("\n").filter(Boolean);
     if (lines.length !== 1) throw new Error(`side effect duplicated: ${JSON.stringify(lines)}`);
+  });
+
+  await step("browser renders resumed user image markdown as an image", async () => {
+    if (!page) throw new Error("missing browser page");
+    await page.addInitScript((selected) => {
+      localStorage.setItem("mesh.lang", "en");
+      localStorage.setItem("mesh.selected", selected);
+    }, mesh);
+    await page.goto(BASE, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector(".brand", { timeout: 8000 });
+    await page.waitForSelector(`.detail-head:has-text("${mesh}")`, { timeout: 8000 }).catch(async (error) => {
+      const rows = await page!.locator(".mrow .mname").allTextContents().catch(() => []);
+      const detail = await page!.locator(".detail-head").textContent().catch(() => "");
+      throw new Error(`${String(error).split("\n")[0]} rows=${JSON.stringify(rows.slice(0, 8))} detail=${JSON.stringify(detail)}`);
+    });
+    const panel = page.locator(".conv-panel").first();
+    await panel.locator('.msg.user .bubble img[src^="data:image/png"]').first().waitFor({ timeout: 8000 });
+    const visibleBase64 = await panel.locator(".msg.user .bubble", { hasText: "iVBORw0KGgo" }).count();
+    if (visibleBase64) throw new Error("resumed user image is still visible as base64 text");
   });
 
   await step("deliberate stop does not auto-resurrect on daemon restart", async () => {
@@ -154,6 +179,7 @@ try {
     console.log("  SESSION-RESUME E2E OK");
   }
 } finally {
+  await browser?.close();
   try { await post(`/api/meshes/${mesh}/stop`); } catch {}
   try { await del(`/api/meshes/${mesh}`); } catch {}
   try { await rm(sessionsPath(), { force: true }); } catch {}
