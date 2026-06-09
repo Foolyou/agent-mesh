@@ -140,6 +140,15 @@ function PlanCard({ item }: { item: Extract<TranscriptItem, { kind: "plan" }> })
   );
 }
 
+function Divider() {
+  const { t } = useI18n();
+  return (
+    <div className="session-divider" role="separator">
+      <span>{t("session.reset.divider")}</span>
+    </div>
+  );
+}
+
 function MailBubble({ item, meshId }: { item: Extract<TranscriptItem, { kind: "mail" }>; meshId?: string }) {
   const { t } = useI18n();
   const author = meshId ? { meshId, agent: item.from } : undefined;
@@ -197,6 +206,8 @@ export function Transcript({ items, author }: { items: TranscriptItem[]; author?
           <ToolCard key={it.id} item={it} />
         ) : it.kind === "mail" ? (
           <MailBubble key={it.id} item={it} meshId={author?.meshId} />
+        ) : it.kind === "divider" ? (
+          <Divider key={it.id} />
         ) : (
           <PlanCard key={it.id} item={it} />
         ),

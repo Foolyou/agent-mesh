@@ -9,6 +9,18 @@ function fold(updates: any[]): TranscriptItem[] {
   return items;
 }
 
+test("__session_reset__ folds into a divider item and seals open messages", () => {
+  const items = fold([
+    { sessionUpdate: "agent_message_chunk", content: { text: "hi" } },
+    { sessionUpdate: "__session_reset__" },
+  ]);
+  const divider = items.find((it) => it.kind === "divider");
+  expect(divider).toBeTruthy();
+  expect((divider as any).label).toBe("new session");
+  const msg = items.find((it) => it.kind === "message");
+  expect((msg as any).complete).toBe(true);
+});
+
 test("coalesces consecutive agent_message_chunk into one message", () => {
   const items = fold([
     { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Hel" } },

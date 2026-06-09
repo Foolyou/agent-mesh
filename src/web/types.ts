@@ -53,7 +53,8 @@ export type TranscriptItem =
       updatedTs: string;
     }
   | { id: string; kind: "plan"; entries: PlanEntry[]; ts: string; updatedTs: string }
-  | { id: string; kind: "mail"; from: AgentId; to: AgentId; body: string; ts: string };
+  | { id: string; kind: "mail"; from: AgentId; to: AgentId; body: string; ts: string }
+  | { id: string; kind: "divider"; label: string; ts: string };
 
 export type TranscriptOp =
   | { op: "upsert"; item: TranscriptItem }

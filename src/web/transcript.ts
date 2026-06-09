@@ -330,6 +330,16 @@ export function reduceTranscript(
     return { items: next, ops };
   }
 
+  // Synthetic "context was reset" marker emitted by control-plane.newSession.
+  if (k === "__session_reset__") {
+    closeOpen();
+    const id = nid(now);
+    const item: TranscriptItem = { id, kind: "divider", label: String(update.label ?? "new session"), ts: now };
+    next = [...next, item];
+    ops.push({ op: "upsert", item });
+    return { items: next, ops };
+  }
+
   // plan / available_commands_update / current_mode_update and anything unknown:
   // not part of the conversation transcript.
   return { items: next, ops: [] };

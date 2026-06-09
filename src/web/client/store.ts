@@ -139,6 +139,8 @@ export interface Store {
   addAgent(name: string, agent: AgentConfig, edges?: MeshEdge[]): Promise<any>;
   interruptAgent(name: string, agentId: string): Promise<any>;
   wakeAgent(name: string, agentId: string): Promise<any>;
+  newAgentSession(name: string, agentId: string): Promise<any>;
+  newAllSessions(name: string): Promise<any>;
   interruptMaster(): Promise<any>;
 }
 
@@ -266,6 +268,8 @@ export function createStore(): Store {
     addAgent: (n, agent, edges = []) => guard(post(`/api/meshes/${enc(n)}/agents`, { agent, edges }), `add agent ${agent.id}`),
     interruptAgent: (n, a) => guard(post(`/api/meshes/${enc(n)}/agents/${enc(a)}/interrupt`), `interrupt ${a}`),
     wakeAgent: (n, a) => guard(post(`/api/meshes/${enc(n)}/agents/${enc(a)}/wake`), `wake ${a}`),
+    newAgentSession: (n, a) => guard(post(`/api/meshes/${enc(n)}/agents/${enc(a)}/session`), `new session ${a}`),
+    newAllSessions: (n) => guard(post(`/api/meshes/${enc(n)}/session`), `new sessions ${n}`),
   };
 }
 

@@ -24,9 +24,19 @@ function Header({ m, store, onDeleted, onEdit }: { m: MeshSummary; store: Store;
       <span className="meta">{t("agents", { n: m.agents.length })}</span>
       <span style={{ flex: 1 }} />
       {live ? (
-        <Btn kind="stop" onClick={() => void store.stopMesh(m.name)}>
-          {t("stop mesh")}
-        </Btn>
+        <>
+          <ConfirmButton
+            kind="ghost"
+            confirmLabel={t("new sessions all.confirm")}
+            title={t("new sessions all.hint")}
+            onConfirm={() => void store.newAllSessions(m.name)}
+          >
+            {t("new sessions all")}
+          </ConfirmButton>
+          <Btn kind="stop" onClick={() => void store.stopMesh(m.name)}>
+            {t("stop mesh")}
+          </Btn>
+        </>
       ) : (
         <>
           <Btn kind="go" onClick={() => void store.startMesh(m.name)}>
@@ -286,6 +296,17 @@ function ConversationPanel({
             <Btn small kind="go" onClick={() => void store.wakeAgent(m.name, cur.id)} title={t("wake.hint")}>
               {t("wake")}
             </Btn>
+          ) : null}
+          {live ? (
+            <ConfirmButton
+              small
+              kind="ghost"
+              confirmLabel={t("new session.confirm")}
+              title={t("new session.hint")}
+              onConfirm={() => void store.newAgentSession(m.name, cur.id)}
+            >
+              {t("new session")}
+            </ConfirmButton>
           ) : null}
           {!mobile ? (
             <Btn small kind="ghost" onClick={onToggleFull} title={fullscreen ? t("exit") : t("full")} ariaLabel={`${fullscreen ? t("exit") : t("full")} ${t("conversation")}`} >
