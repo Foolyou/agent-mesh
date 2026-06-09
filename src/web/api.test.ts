@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { handleApi } from "./api";
@@ -16,7 +16,7 @@ const CFG: MeshConfig = {
 };
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]);
 
-function fakeManager() {
+function fakeManager(config: MeshConfig = CFG) {
   const calls: any[] = [];
   return {
     calls,
@@ -27,10 +27,10 @@ function fakeManager() {
       return [{ name: "demo", defined: true, status: "running" as const }];
     },
     configOf() {
-      return CFG;
+      return config;
     },
     routerOf() {
-      return "router";
+      return config.agents.find((a) => a.role === "router")?.id ?? "router";
     },
     async startMesh(n: string) {
       calls.push(["start", n]);
@@ -267,6 +267,46 @@ test("POST /api/uploads rejects unknown buckets and bad content", async () => {
     expect(unknown.status).toBe(400);
     const bad = await handleApi(gw, "POST", "/api/uploads", { files: [new File(["<svg></svg>"], "bad.png", { type: "image/png" })] }, new URLSearchParams("bucket=demo"));
     expect(bad.status).toBe(400);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("GET /api/agents/:name/files serves agent files with security headers and mapped errors", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mesh-api-agent-files-"));
+  try {
+    await writeFile(join(root, "report.md"), "# Report\n");
+    await writeFile(join(root, "secret.exe"), "exists");
+    await writeFile(join(root, "bad.png"), "not a png");
+    await writeFile(join(root, "big.log"), new Uint8Array(5 * 1024 * 1024 + 1));
+    await symlink(join(root, "report.md"), join(root, "link.md"));
+    const cfg: MeshConfig = {
+      name: "demo",
+      agents: [
+        { id: "router", harness: "claude", project: root, role: "router" },
+        { id: "codex-1", harness: "codex", project: root, role: "member" },
+      ],
+      edges: [{ from: "router", to: "codex-1" }],
+    };
+    const gw = new WebGateway(fakeManager(cfg) as any);
+
+    const ok = await handleApi(gw, "GET", "/api/agents/codex-1/files/report.md", undefined);
+    expect(ok.status).toBe(200);
+    const resp = ok.body as Response;
+    expect(resp).toBeInstanceOf(Response);
+    expect(resp.headers.get("content-type")).toBe("text/markdown; charset=utf-8");
+    expect(resp.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(resp.headers.get("content-security-policy")).toBe("default-src 'none'");
+    expect(resp.headers.get("cache-control")).toBe("private, max-age=60");
+    expect(await resp.text()).toBe("# Report\n");
+
+    expect((await handleApi(gw, "GET", "/api/agents/ghost/files/report.md", undefined)).status).toBe(404);
+    expect((await handleApi(gw, "GET", "/api/agents/codex-1/files/missing.md", undefined)).status).toBe(404);
+    expect((await handleApi(gw, "GET", "/api/agents/codex-1/files/secret.exe", undefined)).status).toBe(404);
+    expect((await handleApi(gw, "GET", "/api/agents/codex-1/files/bad.png", undefined)).status).toBe(404);
+    expect((await handleApi(gw, "GET", "/api/agents/codex-1/files/..%2F..%2Fetc%2Fpasswd", undefined)).status).toBe(400);
+    expect((await handleApi(gw, "GET", "/api/agents/codex-1/files/link.md", undefined)).status).toBe(400);
+    expect((await handleApi(gw, "GET", "/api/agents/codex-1/files/big.log", undefined)).status).toBe(413);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

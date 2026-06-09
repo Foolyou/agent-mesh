@@ -4,8 +4,10 @@
 // It has no HTTP/WS dependency: server.ts adapts it to Bun.serve, tests drive it directly.
 import { reduceTranscript } from "./transcript";
 import { now } from "../acp/types";
+import { resolve } from "node:path";
 import type { AgentConfig, MeshConfig, MeshEdge, MeshEvent, AgentId, AgentStatus, AgentActivity, PromptImageRef, ThinkingEffort } from "../acp/types";
 import { readUpload, storeUploads, uploadPath, type UploadFileLike } from "./uploads";
+import { AgentFileError, resolveAgentFile } from "./agent-files";
 import type {
   GatewayState,
   ServerMsg,
@@ -459,6 +461,39 @@ export class WebGateway {
         "content-disposition": `inline; filename="${file.name.replace(/"/g, "")}"`,
       },
     });
+  }
+
+  async serveAgentFile(agentName: string, relPath: string): Promise<Response> {
+    const agent = this.findRunningAgent(agentName);
+    if (!agent) throw new AgentFileError("enotfound", "agent file not found");
+    const cwd = resolve(process.cwd(), agent.project);
+    const file = await resolveAgentFile(cwd, relPath);
+    const body = new Uint8Array(file.bytes.byteLength);
+    body.set(file.bytes);
+    return new Response(body, {
+      headers: {
+        "content-type": file.contentType,
+        "x-content-type-options": "nosniff",
+        "content-security-policy": "default-src 'none'",
+        "cache-control": "private, max-age=60",
+        "content-disposition": `inline; filename="${relPath.split("/").pop()?.replace(/"/g, "") || "file"}"`,
+      },
+    });
+  }
+
+  private findRunningAgent(agentName: string): AgentConfig | undefined {
+    for (const m of this.manager.listMeshes()) {
+      if (m.status !== "running" && m.status !== "starting") continue;
+      let config: MeshConfig;
+      try {
+        config = this.manager.configOf(m.name);
+      } catch {
+        continue;
+      }
+      const agent = config.agents.find((a) => a.id === agentName);
+      if (agent) return agent;
+    }
+    return undefined;
   }
 
   private validateBucket(bucket: string): void {

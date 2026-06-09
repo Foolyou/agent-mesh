@@ -5,6 +5,7 @@ import { validateMeshConfig } from "../mesh-validate";
 import type { WebGateway } from "./gateway";
 import type { AgentConfig, MeshConfig, MeshEdge, PromptImageRef } from "../acp/types";
 import type { UploadFileLike } from "./uploads";
+import { AgentFileError } from "./agent-files";
 
 export interface ApiResult {
   status: number;
@@ -41,6 +42,19 @@ export async function handleApi(
       }
       if (method === "GET" && p.length === 3) {
         return { status: 200, body: await gw.serveUpload(str(p[1]), str(p[2])) };
+      }
+    }
+
+    if (p[0] === "agents" && method === "GET" && p.length >= 4 && p[2] === "files") {
+      const agentName = str(p[1]);
+      const relPath = p.slice(3).join("/");
+      try {
+        return { status: 200, body: await gw.serveAgentFile(agentName, relPath) };
+      } catch (err: any) {
+        if (err instanceof AgentFileError || typeof err?.code === "string") {
+          return fail(agentFileStatus(err.code), "agent file not found");
+        }
+        throw err;
       }
     }
 
@@ -162,6 +176,12 @@ export async function handleApi(
   } catch (e: any) {
     return fail(400, str(e?.message ?? e));
   }
+}
+
+function agentFileStatus(code: string): number {
+  if (code === "traversal" || code === "symlink") return 400;
+  if (code === "toobig") return 413;
+  return 404;
 }
 
 function imagesOf(body: any): PromptImageRef[] {
