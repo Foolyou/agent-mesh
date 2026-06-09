@@ -44,6 +44,71 @@ export async function readRecord(runDir: string, name: string): Promise<MeshHost
   }
 }
 
+export interface ReapResult {
+  /** hosts that had a live pid and are now confirmed dead */
+  killed: number;
+  /** records/sockets removed from the run dir */
+  cleaned: number;
+  /** names whose pid outlived even SIGKILL — their record is KEPT so a later reap retries */
+  survived: string[];
+}
+
+async function waitAllGone(pids: number[], ms: number): Promise<void> {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    if (pids.every((p) => !pidAlive(p))) return;
+    await Bun.sleep(100);
+  }
+}
+
+/**
+ * Tear down EVERY mesh-host under runDir — the `--cold` sweep. It scans the data dir for
+ * all historical host pidfiles (`<name>.json`) AND sockets (`<name>.sock`), not just the
+ * currently-tracked ones, then escalates SIGTERM→SIGKILL and only forgets a host (deletes
+ * its record + socket) once its pid is CONFIRMED dead. This closes the leak where a single
+ * SIGTERM was sent and the record deleted immediately: a host that traps SIGTERM survived
+ * but lost its record, becoming alive-but-invisible to every future reap. Orphaned `.sock`
+ * files with no record are swept too. `.sessions.json` (resume state) is left untouched.
+ */
+export async function reapAllHosts(runDir: string, opts: { termWaitMs?: number; killWaitMs?: number } = {}): Promise<ReapResult> {
+  let entries: string[];
+  try {
+    entries = await readdir(runDir);
+  } catch {
+    return { killed: 0, cleaned: 0, survived: [] };
+  }
+  const recordNames = entries.filter((f) => f.endsWith(".json") && !f.endsWith(".sessions.json")).map((f) => f.slice(0, -5));
+  const sockNames = entries.filter((f) => f.endsWith(".sock")).map((f) => f.slice(0, -5));
+  const names = [...new Set([...recordNames, ...sockNames])];
+
+  interface Host { name: string; pid?: number; sockPath: string; }
+  const hosts: Host[] = [];
+  for (const name of names) {
+    const rec = await readRecord(runDir, name);
+    hosts.push({ name, pid: rec?.pid, sockPath: rec?.socketPath ?? join(runDir, `${name}.sock`) });
+  }
+
+  // Escalate in one batch: SIGTERM every live host, wait, then SIGKILL the survivors.
+  const liveBefore = hosts.filter((h): h is Host & { pid: number } => h.pid !== undefined && pidAlive(h.pid));
+  for (const h of liveBefore) try { process.kill(h.pid, "SIGTERM"); } catch { /* raced */ }
+  await waitAllGone(liveBefore.map((h) => h.pid), opts.termWaitMs ?? 4000);
+  const survivors = liveBefore.filter((h) => pidAlive(h.pid));
+  for (const h of survivors) try { process.kill(h.pid, "SIGKILL"); } catch { /* raced */ }
+  await waitAllGone(survivors.map((h) => h.pid), opts.killWaitMs ?? 2000);
+
+  // Forget every host whose pid is now dead; keep (retry later) any that outlived SIGKILL.
+  let killed = 0, cleaned = 0;
+  const survived: string[] = [];
+  for (const h of hosts) {
+    if (h.pid !== undefined && pidAlive(h.pid)) { survived.push(h.name); continue; }
+    if (liveBefore.some((l) => l.name === h.name)) killed++;
+    await removeRecord(runDir, h.name);
+    await rm(h.sockPath, { force: true }).catch(() => {});
+    cleaned++;
+  }
+  return { killed, cleaned, survived };
+}
+
 /** All records whose daemon is still alive; deletes (prunes) any whose pid is dead. */
 export async function listLiveRecords(runDir: string): Promise<MeshHostRecord[]> {
   let files: string[];

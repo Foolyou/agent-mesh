@@ -7,7 +7,7 @@
 import { join, resolve } from "node:path";
 import { openSync, existsSync } from "node:fs";
 import { readFile, writeFile, rm, mkdir } from "node:fs/promises";
-import { listLiveRecords, removeRecord, pidAlive } from "./mesh-registry";
+import { listLiveRecords, reapAllHosts, pidAlive } from "./mesh-registry";
 
 /** How to re-exec ourselves: the compiled binary runs itself; dev runs the source script. */
 function selfCmd(...args: string[]): string[] {
@@ -77,19 +77,13 @@ function cleanEnv(): Record<string, string> {
   return out;
 }
 
-/** SIGTERM every live mesh daemon under this root (cold stop), removing their records. */
+/** Cold stop: SIGTERM→SIGKILL every mesh daemon under this root, only forgetting each
+ *  (record + socket) once its pid is confirmed dead, and sweeping orphaned sockets. */
 async function reapDaemons(root: string): Promise<number> {
-  let n = 0;
-  for (const rec of await listLiveRecords(runDir(root))) {
-    try {
-      process.kill(rec.pid, "SIGTERM");
-      n++;
-    } catch {
-      /* already gone */
-    }
-    await removeRecord(runDir(root), rec.name);
-  }
-  return n;
+  const r = await reapAllHosts(runDir(root));
+  if (r.cleaned > r.killed) console.log(`swept ${r.cleaned - r.killed} stale daemon artifact(s)`);
+  if (r.survived.length) console.error(`warning: ${r.survived.length} daemon(s) survived SIGKILL: ${r.survived.join(", ")}`);
+  return r.killed;
 }
 
 async function waitGone(pid: number, ms: number): Promise<void> {
