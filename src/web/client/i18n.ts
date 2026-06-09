@@ -158,13 +158,16 @@ const DICT: Record<string, Entry> = {
   "theme.applyJson": ["↥ apply JSON", "↥ 应用 JSON"],
   "theme.save": ["save as custom", "保存为自定义"],
   cancel: ["cancel", "取消"],
+  apply: ["apply", "应用"],
   esc: ["esc", "退出"],
+  expand: ["expand", "展开"],
   reset: ["reset", "重置"],
   language: ["language", "语言"],
 
   // ── mesh builder ──
   "build.define": ["define mesh", "定义 mesh"],
   "build.edit": ['edit mesh "{name}"', '编辑 mesh「{name}」'],
+  "build.basic": ["basic", "基础信息"],
   "build.name": ["mesh name", "mesh 名称"],
   "build.name.locked": ["mesh name (locked)", "mesh 名称(锁定)"],
   "build.agents": ["agents — exactly one router", "agents —— 恰好一个 router"],

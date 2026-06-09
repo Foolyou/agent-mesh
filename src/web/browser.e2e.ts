@@ -472,16 +472,16 @@ try {
     await page.locator('.mrow:has-text("demo")').click();
   });
 
-  await step("router chat: send prompt → user bubble", async () => {
+  await step("router chat: send prompt → user bubble renders markdown", async () => {
     await page.locator(".conv-router-tab").click();
     const panel = page.locator(".conv-panel").first();
     const input = panel.locator(".composer textarea");
     await input.fill("status **please**");
     await input.press("Enter");
     await panel.locator(".msg.user").last().waitFor({ timeout: 6000 });
-    const user = panel.locator(".msg.user .bubble", { hasText: "**please**" }).last();
+    const user = panel.locator(".msg.user .bubble", { hasText: "status please" }).last();
     await user.waitFor({ timeout: 4000 });
-    if ((await user.locator("strong").count()) !== 0) throw new Error("user message rendered markdown");
+    if ((await user.locator("strong").count()) < 1) throw new Error("user message did not render markdown");
   });
 
   await step("unclosed fence streams without breaking and resolves when closed", async () => {
@@ -876,12 +876,55 @@ try {
   await step("edit a mesh prefills the builder with its config (name locked)", async () => {
     await page.locator('.detail-head .btn:has-text("edit")').click();
     await page.waitForSelector('.modal .mhead:has-text("edit mesh")', { timeout: 4000 });
+    const sections = await page.locator(".modal .builder-section").count();
+    if (sections < 4) throw new Error(`builder sections missing or unclear: ${sections}`);
     const val = await page.locator('.modal .field:has(label:has-text("mesh name")) input').inputValue();
     if (val !== "squad-x") throw new Error(`edit prefill wrong name: "${val}"`);
     const charterVal = await page.locator('.modal .field:has(label:has-text("team charter")) textarea').inputValue();
     if (!charterVal.includes("build a tiny CLI")) throw new Error(`charter not prefilled: "${charterVal}"`);
     const instructionsVal = await page.locator(".modal .agent-instructions").first().inputValue();
     if (!instructionsVal.includes("coordinate handoffs")) throw new Error(`instructions not prefilled: "${instructionsVal}"`);
+    const longInstructions = "Router should coordinate handoffs and keep tasks scoped.\n\n" + "Escalate ambiguity with a concise note.\n".repeat(18);
+    const firstExpand = page.locator(".modal .agent-block").first().locator('.btn:has-text("expand")');
+    await firstExpand.click();
+    await page.waitForSelector('.text-editor-dialog:has-text("role-specific instructions") textarea', { timeout: 4000 });
+    const focused = await page.locator(".text-editor-dialog textarea").evaluate((el) => el === document.activeElement);
+    if (!focused) throw new Error("expanded instructions editor did not focus its textarea");
+    await page.keyboard.press("Shift+Tab");
+    const stillInDialogAfterShiftTab = await page.locator(".text-editor-dialog").evaluate((dialog) => dialog.contains(document.activeElement));
+    if (!stillInDialogAfterShiftTab) throw new Error("Shift+Tab escaped the expanded text editor dialog");
+    await page.keyboard.press("Tab");
+    await page.keyboard.press("Tab");
+    await page.keyboard.press("Tab");
+    await page.keyboard.press("Tab");
+    const stillInDialogAfterTab = await page.locator(".text-editor-dialog").evaluate((dialog) => dialog.contains(document.activeElement));
+    if (!stillInDialogAfterTab) throw new Error("Tab escaped the expanded text editor dialog");
+    await page.locator(".text-editor-dialog textarea").fill("discard me");
+    await page.keyboard.press("Escape");
+    await page.waitForSelector(".text-editor-dialog", { state: "detached", timeout: 4000 });
+    await page.waitForSelector('.modal .mhead:has-text("edit mesh")', { timeout: 4000 });
+    const focusReturned = await firstExpand.evaluate((el) => el === document.activeElement);
+    if (!focusReturned) throw new Error("expanded instructions editor did not restore focus to its trigger");
+    if ((await page.locator(".modal .agent-instructions").first().inputValue()) !== instructionsVal) {
+      throw new Error("Escape from expanded instructions editor should cancel without changing the field");
+    }
+    await firstExpand.click();
+    await page.waitForSelector('.text-editor-dialog:has-text("role-specific instructions") textarea', { timeout: 4000 });
+    await page.locator(".text-editor-dialog textarea").fill(longInstructions);
+    await page.locator('.text-editor-dialog .btn:has-text("apply")').click();
+    await page.waitForSelector(".text-editor-dialog", { state: "detached", timeout: 4000 });
+    if ((await page.locator(".modal .agent-instructions").first().inputValue()) !== longInstructions) {
+      throw new Error("expanded instructions editor did not save back to the agent field");
+    }
+    const longCharter = "Goal: build a tiny CLI.\n\n" + "Norm: keep handoffs explicit and include verification evidence.\n".repeat(16);
+    await page.locator('.modal .field:has(label:has-text("team charter")) .btn:has-text("expand")').click();
+    await page.waitForSelector('.text-editor-dialog:has-text("team charter") textarea', { timeout: 4000 });
+    await page.locator(".text-editor-dialog textarea").fill(longCharter);
+    await page.locator('.text-editor-dialog .btn:has-text("apply")').click();
+    await page.waitForSelector(".text-editor-dialog", { state: "detached", timeout: 4000 });
+    if ((await page.locator('.modal .field:has(label:has-text("team charter")) textarea').inputValue()) !== longCharter) {
+      throw new Error("expanded charter editor did not save back to the charter field");
+    }
     // effort round-trips from the saved config; mode/model are not editable in the builder.
     const adv2 = page.locator(".modal .agrow-adv .adv-sel");
     if ((await adv2.count()) !== 2) throw new Error("edit builder should render one effort selector per agent and no mode/model selectors");
