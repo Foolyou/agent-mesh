@@ -9,6 +9,7 @@ export interface AgentSessionRecord {
   model?: string;
   mode?: string;
   effort?: ThinkingEffort;
+  mailCursor?: string;
 }
 
 export interface MeshSessionState {
@@ -34,6 +35,7 @@ function sanitizeAgentRecord(input: unknown): AgentSessionRecord | undefined {
   if (typeof raw.model === "string") record.model = raw.model;
   if (typeof raw.mode === "string") record.mode = raw.mode;
   if (typeof raw.effort === "string") record.effort = raw.effort as ThinkingEffort;
+  if (typeof raw.mailCursor === "string") record.mailCursor = raw.mailCursor;
   return record;
 }
 
@@ -82,7 +84,22 @@ export async function updateAgentSession(
   state.meshExpectedAlive = true;
   const sanitized = sanitizeAgentRecord(record);
   if (!sanitized) throw new Error(`invalid session record for ${agentId}`);
+  const existingCursor = state.agents[agentId]?.mailCursor;
+  if (existingCursor && !sanitized.mailCursor) sanitized.mailCursor = existingCursor;
   state.agents[agentId] = sanitized;
+  await writeSessionState(runDir, meshName, state);
+  return state;
+}
+
+export async function updateAgentMailCursor(
+  runDir: string,
+  meshName: string,
+  agentId: AgentId,
+  mailCursor: string,
+): Promise<MeshSessionState> {
+  const state = await readSessionState(runDir, meshName);
+  const rec = state.agents[agentId];
+  if (rec) rec.mailCursor = mailCursor;
   await writeSessionState(runDir, meshName, state);
   return state;
 }
@@ -96,6 +113,7 @@ export async function setMeshExpectedAlive(runDir: string, meshName: string, exp
 
 /** Invalidate one agent's persisted ACP session id (keeps cwd/harness/model/mode/effort)
  *  so the agent's NEXT spawn starts a fresh session instead of resuming. No-op if absent.
+ *  Keeps mailCursor because mailbox read state is independent of ACP session identity.
  *  Does NOT touch meshExpectedAlive — clearing a session must never resurrect a stopped mesh. */
 export async function clearAgentSession(runDir: string, meshName: string, agentId: AgentId): Promise<MeshSessionState> {
   const state = await readSessionState(runDir, meshName);

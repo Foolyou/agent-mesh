@@ -134,6 +134,7 @@ test("first mail to a lazy agent triggers one spawn and one check_mail drain pro
 
     const mail = await readMailFor("lazy-1", { mailboxPath: join(root, "mailbox.ndjson") });
     expect(mail.map((m) => m.body)).toEqual(["hello"]);
+    expect(await (cp as any).handleCheckMail({ agentId: "lazy-1", role: "member" })).toBe("from router: hello");
   } finally {
     await cp.stop();
     await rm(root, { recursive: true, force: true });

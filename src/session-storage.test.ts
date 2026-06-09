@@ -3,7 +3,7 @@ import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { listLiveRecords, readRecord, writeRecord } from "./mesh-registry";
-import { clearAgentSession, clearAllAgentSessions, readSessionState, sessionStatePath, updateAgentSession, writeSessionState } from "./session-storage";
+import { clearAgentSession, clearAllAgentSessions, readSessionState, sessionStatePath, updateAgentMailCursor, updateAgentSession, writeSessionState } from "./session-storage";
 
 let dir: string;
 beforeEach(async () => {
@@ -24,6 +24,7 @@ test("writes sessions atomically with private run directory and file permissions
         model: "gpt-5.3-codex",
         mode: "default",
         effort: "medium",
+        mailCursor: "mail-1",
       },
     },
   });
@@ -40,6 +41,7 @@ test("writes sessions atomically with private run directory and file permissions
         model: "gpt-5.3-codex",
         mode: "default",
         effort: "medium",
+        mailCursor: "mail-1",
       },
     },
   });
@@ -72,6 +74,7 @@ test("sanitizes session state to identity fields only and ignores old malformed 
           model: "deepseek/deepseek-chat",
           mode: "build",
           effort: "high",
+          mailCursor: "mail-42",
           transcript: "secret transcript",
           permissionToken: "token",
           toolOutput: "raw output",
@@ -91,24 +94,27 @@ test("sanitizes session state to identity fields only and ignores old malformed 
         model: "deepseek/deepseek-chat",
         mode: "build",
         effort: "high",
+        mailCursor: "mail-42",
       },
     },
   });
 });
 
-test("clearAgentSession blanks only the target's sessionId, keeps other fields", async () => {
+test("clearAgentSession blanks only the target's sessionId, keeps other fields and mail cursor", async () => {
   await writeSessionState(dir, "m", {
     meshExpectedAlive: true,
     agents: {
-      a: { sessionId: "sid-a", cwd: "/x", harness: "codex", mode: "build", model: "kimi-k2", effort: "high" },
-      b: { sessionId: "sid-b", cwd: "/y", harness: "claude" },
+      a: { sessionId: "sid-a", cwd: "/x", harness: "codex", mode: "build", model: "kimi-k2", effort: "high", mailCursor: "mail-a" },
+      b: { sessionId: "sid-b", cwd: "/y", harness: "claude", mailCursor: "mail-b" },
     },
   });
   const state = await clearAgentSession(dir, "m", "a");
-  expect(state.agents.a).toEqual({ sessionId: "", cwd: "/x", harness: "codex", mode: "build", model: "kimi-k2", effort: "high" });
+  expect(state.agents.a).toEqual({ sessionId: "", cwd: "/x", harness: "codex", mode: "build", model: "kimi-k2", effort: "high", mailCursor: "mail-a" });
   expect(state.agents.b.sessionId).toBe("sid-b");
+  expect(state.agents.b.mailCursor).toBe("mail-b");
   expect(state.meshExpectedAlive).toBe(true);
   expect((await readSessionState(dir, "m")).agents.a.sessionId).toBe("");
+  expect((await readSessionState(dir, "m")).agents.a.mailCursor).toBe("mail-a");
 });
 
 test("clearAgentSession is a no-op when the agent has no record", async () => {
@@ -117,18 +123,36 @@ test("clearAgentSession is a no-op when the agent has no record", async () => {
   expect(state.agents.ghost).toBeUndefined();
 });
 
-test("clearAllAgentSessions blanks every sessionId, preserves meshExpectedAlive", async () => {
+test("clearAllAgentSessions blanks every sessionId, preserves meshExpectedAlive and mail cursors", async () => {
   await writeSessionState(dir, "m", {
     meshExpectedAlive: false,
     agents: {
-      a: { sessionId: "sid-a", cwd: "/x", harness: "codex" },
-      b: { sessionId: "sid-b", cwd: "/y", harness: "claude" },
+      a: { sessionId: "sid-a", cwd: "/x", harness: "codex", mailCursor: "mail-a" },
+      b: { sessionId: "sid-b", cwd: "/y", harness: "claude", mailCursor: "mail-b" },
     },
   });
   const state = await clearAllAgentSessions(dir, "m");
   expect(state.agents.a.sessionId).toBe("");
   expect(state.agents.b.sessionId).toBe("");
+  expect(state.agents.a.mailCursor).toBe("mail-a");
+  expect(state.agents.b.mailCursor).toBe("mail-b");
   expect(state.meshExpectedAlive).toBe(false);
+});
+
+test("updates only an agent mail cursor without changing its ACP session metadata", async () => {
+  await writeSessionState(dir, "m", {
+    meshExpectedAlive: true,
+    agents: {
+      a: { sessionId: "sid-a", cwd: "/x", harness: "codex", model: "kimi-k2", mode: "build", effort: "high" },
+      b: { sessionId: "sid-b", cwd: "/y", harness: "claude", mailCursor: "old-b" },
+    },
+  });
+
+  const state = await updateAgentMailCursor(dir, "m", "a", "mail-a");
+
+  expect(state.agents.a).toEqual({ sessionId: "sid-a", cwd: "/x", harness: "codex", model: "kimi-k2", mode: "build", effort: "high", mailCursor: "mail-a" });
+  expect(state.agents.b.mailCursor).toBe("old-b");
+  expect((await readSessionState(dir, "m")).agents.a.mailCursor).toBe("mail-a");
 });
 
 test("first agent update defaults meshExpectedAlive to true", async () => {
