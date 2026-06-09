@@ -566,8 +566,12 @@ body::after {
   border-radius: var(--r);
   color: var(--fg-dim);
   max-height: 200px;
-  overflow: auto;
+  overflow-x: auto;
+  overflow-y: auto;
   white-space: pre;
+  overflow-wrap: normal;
+  word-break: normal;
+  tab-size: 2;
 }
 .md pre code {
   display: block;
@@ -575,7 +579,9 @@ body::after {
   border: none;
   background: transparent;
   color: inherit;
-  white-space: pre;
+  white-space: inherit;
+  overflow-wrap: inherit;
+  word-break: inherit;
 }
 .md blockquote {
   margin: 7px 0;
