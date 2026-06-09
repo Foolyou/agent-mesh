@@ -94,7 +94,7 @@ for await (const chunk of Bun.stdin.stream()) {
         result(id, setup(sessionId));
       } else if (method === "session/prompt") {
         const sessionId = String(params?.sessionId ?? "");
-        const st = sessions.get(sessionId) ?? { tools: [], err: "no session state" };
+        const st: McpState = sessions.get(sessionId) ?? { tools: [], statusOk: false, statusLen: 0, err: "no session state" };
         const text = textOf(params?.prompt ?? []);
         // Echo the prompt's nonce so the e2e can correlate this answer with the
         // turn it just sent (transcripts reset on new-session, so we can't count).
