@@ -55,33 +55,42 @@ const sanitizeSchema = {
 // React Anchor/Image components can rewrite them through AuthorContext.
 const rehypePlugins = [[rehypeSanitize, sanitizeSchema]];
 
-function Anchor(props: ComponentProps<"a">) {
+// Streamdown is invoked with `passNode: true`, so every custom component receives a hast
+// AST `node` prop. Destructure it off before spreading the rest onto a DOM element — a
+// straight `{...props}` serialises that object into `node="[object Object]"`.
+type WithNode<P> = P & { node?: unknown };
+
+function Anchor({ node: _node, href: rawHref, children, onClick, ...rest }: WithNode<ComponentProps<"a">>) {
   const author = useAuthor();
-  const href = typeof props.href === "string" ? rewriteAgentHref(props.href, author) : undefined;
-  const external = !!href && isHttpUrl(href);
-  const onClick = (e: MouseEvent<HTMLAnchorElement>) => {
-    props.onClick?.(e);
-    if (e.defaultPrevented || external || !href?.startsWith("/mesh/") || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+  const href = typeof rawHref === "string" ? rewriteAgentHref(rawHref, author) : undefined;
+  // No usable href (urlTransform stripped it, or no AuthorContext for a relative ref):
+  // render the link text as plain content instead of a dead `<a>` that invites clicks
+  // going nowhere.
+  if (!href) return <>{children}</>;
+  const external = isHttpUrl(href);
+  const handleClick = (e: MouseEvent<HTMLAnchorElement>) => {
+    onClick?.(e);
+    if (e.defaultPrevented || external || !href.startsWith("/mesh/") || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
     e.preventDefault();
     history.pushState(null, "", href);
     window.dispatchEvent(new PopStateEvent("popstate"));
   };
   return (
-    <a {...props} href={href} target={external ? "_blank" : undefined} rel={external ? "noopener noreferrer" : undefined} onClick={onClick}>
-      {props.children}
+    <a {...rest} href={href} target={external ? "_blank" : undefined} rel={external ? "noopener noreferrer" : undefined} onClick={handleClick}>
+      {children}
     </a>
   );
 }
 
-function Image(props: ComponentProps<"img">) {
+function Image({ node: _node, src: rawSrc, ...rest }: WithNode<ComponentProps<"img">>) {
   const author = useAuthor();
-  const src = typeof props.src === "string" ? rewriteAgentImageSrc(props.src, author) : undefined;
+  const src = typeof rawSrc === "string" ? rewriteAgentImageSrc(rawSrc, author) : undefined;
   if (!src) return null;
-  return <img {...props} src={src} referrerPolicy="no-referrer" loading="lazy" />;
+  return <img {...rest} src={src} referrerPolicy="no-referrer" loading="lazy" />;
 }
 
-function Strong(props: ComponentProps<"strong">) {
-  return <strong {...props}>{props.children}</strong>;
+function Strong({ node: _node, children, ...rest }: WithNode<ComponentProps<"strong">>) {
+  return <strong {...rest}>{children}</strong>;
 }
 
 export function Markdown({ text }: { text: string }) {
