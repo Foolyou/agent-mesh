@@ -259,10 +259,12 @@ try {
     await bubble.locator("strong", { hasText: "codex-1" }).waitFor({ timeout: 4000 });
     await bubble.locator("ul li", { hasText: "implement core" }).waitFor({ timeout: 4000 });
     await bubble.locator("pre code", { hasText: "export const add" }).waitFor({ timeout: 4000 });
-    const link = bubble.locator('a[href="https://example.com/"]').first();
+    const link = bubble.locator('a[href^="https://example.com"]').first();
     await link.waitFor({ timeout: 4000 });
+    const href = await link.getAttribute("href");
     const target = await link.getAttribute("target");
     const rel = await link.getAttribute("rel");
+    if (href !== "https://example.com" && href !== "https://example.com/") throw new Error(`safe link href was ${href}`);
     if (target !== "_blank") throw new Error(`safe link target was ${target}`);
     if (rel !== "noopener noreferrer") throw new Error(`safe link rel was ${rel}`);
     const badLinks = await bubble.locator('a[href^="javascript:"]').count();
@@ -273,7 +275,7 @@ try {
     if ((await img.getAttribute("loading")) !== "lazy") throw new Error("image loading not lazy");
     const badImages = await bubble.locator('img[src^="javascript:"]').count();
     if (badImages) throw new Error("javascript image src rendered");
-    // data:image/png is a spec-allowed scheme and must survive sanitize + harden …
+    // data:image/png is a spec-allowed scheme and must survive sanitize …
     const dataImg = bubble.locator('img[src^="data:image/png"]');
     if ((await dataImg.count()) < 1) throw new Error("data:image/png did not render (sanitize stripped it)");
     // … but data:image/svg+xml (can carry script) must be blocked …
