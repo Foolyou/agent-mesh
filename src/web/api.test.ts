@@ -68,6 +68,12 @@ function fakeManager(config: MeshConfig = CFG) {
     interruptAgent(n: string, a: string) {
       calls.push(["interrupt", n, a]);
     },
+    async newAgentSession(n: string, a: string) {
+      calls.push(["newAgentSession", n, a]);
+    },
+    async newAllSessions(n: string) {
+      calls.push(["newAllSessions", n]);
+    },
     async defineMesh(c: MeshConfig) {
       calls.push(["define", c.name]);
     },
@@ -174,6 +180,22 @@ test("POST /api/meshes/demo/agents/codex-1/interrupt delegates to interruptAgent
   const r = await handleApi(gw, "POST", "/api/meshes/demo/agents/codex-1/interrupt", {});
   expect(r.status).toBe(200);
   expect(m.calls).toContainEqual(["interrupt", "demo", "codex-1"]);
+});
+
+test("POST /api/meshes/demo/agents/codex-1/session delegates to newAgentSession", async () => {
+  const m = fakeManager();
+  const gw = new WebGateway(m as any);
+  const r = await handleApi(gw, "POST", "/api/meshes/demo/agents/codex-1/session", {});
+  expect(r.status).toBe(200);
+  expect(m.calls).toContainEqual(["newAgentSession", "demo", "codex-1"]);
+});
+
+test("POST /api/meshes/demo/session delegates to newAllSessions", async () => {
+  const m = fakeManager();
+  const gw = new WebGateway(m as any);
+  const r = await handleApi(gw, "POST", "/api/meshes/demo/session", {});
+  expect(r.status).toBe(200);
+  expect(m.calls).toContainEqual(["newAllSessions", "demo"]);
 });
 
 test("POST /api/meshes/demo/permissions/r1/resolve delegates to resolvePermission", async () => {

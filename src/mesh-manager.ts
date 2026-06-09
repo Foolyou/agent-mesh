@@ -13,6 +13,7 @@ import { now } from "./acp/types";
 import type { AgentConfig, AgentStatus, MeshConfig, MeshEdge, MeshEvent, ThinkingEffort } from "./acp/types";
 import type { PromptImageRef } from "./acp/types";
 import { deleteUploadBucket } from "./web/uploads";
+import { clearAgentSession, clearAllAgentSessions } from "./session-storage";
 
 export type MeshStatus = "stopped" | "starting" | "running" | "dead";
 
@@ -334,6 +335,22 @@ export class MeshManager {
     const entry = this.require(name);
     if (entry.status !== "running" || !entry.client) throw new Error(`mesh "${name}" is not running`);
     entry.client.interrupt(agentId);
+  }
+
+  /** Switch one agent to a fresh session. Running mesh → tell the daemon; otherwise
+   *  invalidate the persisted id on disk so the next start spawns fresh. */
+  async newAgentSession(name: string, agentId: string): Promise<void> {
+    const entry = this.require(name);
+    if (!entry.config.agents.some((a) => a.id === agentId)) throw new Error(`no agent "${agentId}" in mesh "${name}"`);
+    if (entry.status === "running" && entry.client) entry.client.newSession(agentId);
+    else await clearAgentSession(this.runDir, name, agentId);
+  }
+
+  /** One-click: switch every agent in the mesh to a fresh session. */
+  async newAllSessions(name: string): Promise<void> {
+    const entry = this.require(name);
+    if (entry.status === "running" && entry.client) entry.client.newAllSessions();
+    else await clearAllAgentSessions(this.runDir, name);
   }
 
   wakeAgent(name: string, agentId: string): void {

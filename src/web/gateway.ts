@@ -43,6 +43,8 @@ export interface ManagerLike {
   addAgent(name: string, agent: AgentConfig, edges?: MeshEdge[]): Promise<void>;
   interruptAgent(name: string, agentId: string): void;
   wakeAgent(name: string, agentId: string): void;
+  newAgentSession(name: string, agentId: string): Promise<void>;
+  newAllSessions(name: string): Promise<void>;
   defineMesh(config: MeshConfig): Promise<void>;
   deleteMesh(name: string): Promise<void>;
   loadDefinitions(): Promise<void>;
@@ -411,6 +413,14 @@ export class WebGateway {
   }
   wakeAgent(name: string, agentId: string): void {
     this.manager.wakeAgent(name, agentId);
+  }
+  async newAgentSession(name: string, agentId: string): Promise<void> {
+    await this.manager.newAgentSession(name, agentId);
+    this.refreshMeshes();
+  }
+  async newAllSessions(name: string): Promise<void> {
+    await this.manager.newAllSessions(name);
+    this.refreshMeshes();
   }
   async promptMaster(text: string, images: PromptImageRef[] = []): Promise<void> {
     if (!this.master) throw new Error("master agent is not configured");

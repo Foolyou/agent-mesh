@@ -26,6 +26,8 @@ function fakeCp() {
     async setMode(target, modeId) { calls.push(`setMode:${target}:${modeId}`); },
     async setModel(target, modelId) { calls.push(`setModel:${target}:${modelId}`); },
     async interrupt(target) { calls.push(`interrupt:${target}`); },
+    async newSession(target) { calls.push(`newSession:${target}`); },
+    async newAllSessions() { calls.push("newAllSessions"); },
     async wakeAgent(target) { calls.push(`wake:${target}`); },
     addEdge(edge) { calls.push(`addEdge:${edge.from}:${edge.to}:${edge.steer === true}`); },
     addAgent(agent, edges = []) { calls.push(`addAgent:${agent.id}:${edges.map((e) => `${e.from}->${e.to}`).join(",")}`); },
@@ -70,6 +72,8 @@ test("hello → ack(running, proto, seq); prompt relays a seq'd event; commands 
   send({ t: "setMode", target: "codex-1", modeId: "read-only" });
   send({ t: "setModel", target: "codex-1", modelId: "kimi-k2" });
   send({ t: "interrupt", target: "codex-1" });
+  send({ t: "newSession", target: "codex-1" });
+  send({ t: "newAllSessions" });
   send({ t: "wake", target: "codex-1" });
   send({ t: "addEdge", edge: { from: "router", to: "codex-1", steer: true } });
   send({ t: "addAgent", agent: { id: "newbie", harness: "codex", project: ".", role: "member", lazy: true }, edges: [{ from: "router", to: "newbie" }] });
@@ -77,6 +81,8 @@ test("hello → ack(running, proto, seq); prompt relays a seq'd event; commands 
   expect(calls).toContain("setMode:codex-1:read-only");
   expect(calls).toContain("setModel:codex-1:kimi-k2");
   expect(calls).toContain("interrupt:codex-1");
+  expect(calls).toContain("newSession:codex-1");
+  expect(calls).toContain("newAllSessions");
   expect(calls).toContain("wake:codex-1");
   expect(calls).toContain("addEdge:router:codex-1:true");
   expect(calls).toContain("addAgent:newbie:router->newbie");

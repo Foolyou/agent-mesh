@@ -21,6 +21,8 @@ const cp = {
   async setModel() {},
   async steer() {},
   async interrupt() {},
+  async newSession() {},
+  async newAllSessions() {},
   async wakeAgent() {},
   addEdge() {},
   addAgent() {},

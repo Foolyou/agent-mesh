@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MeshManager } from "./mesh-manager";
+import { readSessionState, writeSessionState } from "./session-storage";
 import type { MeshConfig, MeshEvent } from "./acp/types";
 
 const cfg: MeshConfig = {
@@ -64,6 +65,33 @@ test("setAgentEffort persists the effort and reloads from disk (no restart)", as
 test("setAgentEffort on an unknown agent throws", async () => {
   await mgr.defineMesh(cfg);
   await expect(mgr.setAgentEffort("echo", "nope", "low")).rejects.toThrow(/no agent/i);
+});
+
+test("newAllSessions on a stopped mesh blanks persisted session ids on disk", async () => {
+  await mgr.defineMesh(cfg);
+  const runDir = join(dir, "run");
+  await writeSessionState(runDir, "echo", {
+    meshExpectedAlive: true,
+    agents: { r: { sessionId: "sid", cwd: ".", harness: "claude" } },
+  });
+  await mgr.newAllSessions("echo"); // mesh is stopped → writes disk directly
+  expect((await readSessionState(runDir, "echo")).agents.r.sessionId).toBe("");
+});
+
+test("newAgentSession on a stopped mesh blanks one agent's id on disk", async () => {
+  await mgr.defineMesh(cfg);
+  const runDir = join(dir, "run");
+  await writeSessionState(runDir, "echo", {
+    meshExpectedAlive: true,
+    agents: { r: { sessionId: "sid", cwd: ".", harness: "claude" } },
+  });
+  await mgr.newAgentSession("echo", "r");
+  expect((await readSessionState(runDir, "echo")).agents.r.sessionId).toBe("");
+});
+
+test("newAgentSession on an unknown agent throws", async () => {
+  await mgr.defineMesh(cfg);
+  await expect(mgr.newAgentSession("echo", "nope")).rejects.toThrow(/no agent/i);
 });
 
 test("setMode and setModel persist runtime selections and reload from disk", async () => {

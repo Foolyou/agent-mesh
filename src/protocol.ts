@@ -12,7 +12,7 @@ import type { PromptImageRef } from "./acp/types";
 
 /** Bumped when the wire protocol changes incompatibly; a reconnecting parent that
  *  speaks a different version refuses to attach to an old daemon. */
-export const PROTO_VERSION = 7;
+export const PROTO_VERSION = 8;
 
 export interface SeqEvent {
   seq: number;
@@ -37,6 +37,8 @@ export type ParentMsg =
   | { t: "setMode"; target: string; modeId: string }
   | { t: "setModel"; target: string; modelId: string }
   | { t: "interrupt"; target: string }
+  | { t: "newSession"; target: string }
+  | { t: "newAllSessions" }
   | { t: "wake"; target: string }
   | { t: "addEdge"; edge: MeshEdge }
   | { t: "addAgent"; agent: AgentConfig; edges?: MeshEdge[] }

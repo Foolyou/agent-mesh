@@ -132,6 +132,10 @@ export async function handleApi(
           await gw.promptRouter(name, str(body?.text), imagesOf(body));
           return ok();
         }
+        if (p[2] === "session") {
+          await gw.newAllSessions(name);
+          return ok();
+        }
       }
       // POST /api/meshes/:name/permissions/:rid/resolve
       if (method === "POST" && p.length === 5 && p[2] === "permissions" && p[4] === "resolve") {
@@ -167,6 +171,10 @@ export async function handleApi(
         }
         if (p[4] === "wake") {
           gw.wakeAgent(name, agentId);
+          return ok();
+        }
+        if (p[4] === "session") {
+          await gw.newAgentSession(name, agentId);
           return ok();
         }
       }

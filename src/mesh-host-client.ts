@@ -210,6 +210,8 @@ export class MeshHostClient {
   setMode(target: string, modeId: string): void { this.send({ t: "setMode", target, modeId }); }
   setModel(target: string, modelId: string): void { this.send({ t: "setModel", target, modelId }); }
   interrupt(target: string): void { this.send({ t: "interrupt", target }); }
+  newSession(target: string): void { this.send({ t: "newSession", target }); }
+  newAllSessions(): void { this.send({ t: "newAllSessions" }); }
   wakeAgent(target: string): void { this.send({ t: "wake", target }); }
   addEdge(edge: MeshEdge): void { this.send({ t: "addEdge", edge }); }
   addAgent(agent: AgentConfig, edges: MeshEdge[] = []): void { this.send({ t: "addAgent", agent, edges }); }

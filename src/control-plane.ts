@@ -11,7 +11,7 @@ import { buildMeshBriefing } from "./mesh-briefing";
 import { createMeshServicesServer, type MeshServicesServer, type MeshToolContext } from "./mcp/mesh-services";
 import { sendMail, readMailFor } from "./mailbox";
 import { validateAddAgent, validateAddEdge } from "./mesh-validate";
-import { readSessionState, setMeshExpectedAlive, updateAgentSession, type MeshSessionState } from "./session-storage";
+import { readSessionState, setMeshExpectedAlive, updateAgentSession, clearAgentSession, type MeshSessionState } from "./session-storage";
 import { now, type AgentActivity, type AgentConfig, type AgentId, type MeshConfig, type MeshEdge, type MeshEvent, type PromptImageRef, type SessionMode, type SessionModel } from "./acp/types";
 
 interface PendingDecision {
@@ -169,6 +169,30 @@ export class ControlPlane {
     // this is pre-existing interrupt behavior and should be cleaned up with a permission-state pass.
     this.emit({ kind: "interrupt", from: by, target: id, reason: "operator interrupt", ts: now() });
     await this.agent(id).cancel();
+  }
+
+  /** Operator-initiated "switch to a fresh ACP session" for one agent.
+   *  Running agents respawn fresh (forceFresh => kill + session/new + persist new id).
+   *  Not-running agents (dead/cold/lazy) are NEVER spawned here — only their persisted
+   *  session id is invalidated so their NEXT wake starts fresh. */
+  async newSession(id: AgentId): Promise<void> {
+    const a = this.mesh.agent(id);
+    if (!a) throw new Error(`no such agent "${id}"`);
+    const status = this.mesh.status(id);
+    const live = this.conns.has(id) && status !== "dead" && status !== "cold";
+    if (live) {
+      await this.ensureSpawned(id, { manual: true, forceFresh: true, drainPendingMail: false });
+    } else if (this.sessionRunDir) {
+      this.sessionState = await clearAgentSession(this.sessionRunDir, this.mesh.name, id);
+    }
+    this.emit({ kind: "update", agent: id, update: { sessionUpdate: "__session_reset__" }, ts: now() });
+  }
+
+  /** One-click: switch every agent in the mesh to a fresh session. */
+  async newAllSessions(): Promise<void> {
+    for (const a of this.mesh.agents) {
+      await this.newSession(a.id).catch((err) => this.log(`newSession(${a.id}) failed: ${String(err)}`));
+    }
   }
 
   /** Operator-initiated steer: priority-inject a human message without edge checks. */

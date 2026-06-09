@@ -39,6 +39,12 @@ const cp = {
     listener?.({ kind: "steer", from: "operator", to: _target, body: text, ts: "t" });
   },
   async interrupt() {},
+  async newSession(target: string) {
+    listener?.({ kind: "update", agent: target, update: { sessionUpdate: "__session_reset__" }, ts: "t" });
+  },
+  async newAllSessions() {
+    listener?.({ kind: "log", text: "newAllSessions", ts: "t" });
+  },
   async wakeAgent(target: string) {
     listener?.({ kind: "log", text: `wake:${target}`, ts: "t" });
   },
