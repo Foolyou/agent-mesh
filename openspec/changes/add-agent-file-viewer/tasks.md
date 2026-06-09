@@ -1,8 +1,8 @@
 ## 1. Backend file-serving module
 
-- [ ] 1.1 Create `src/web/agent-files.ts` exporting `resolveAgentFile(cwd, relPath)`, `extensionWhitelist`, and a `pickContentType(ext)` helper; share traversal/lstat logic style with `src/web/uploads.ts`
-- [ ] 1.2 Write `src/web/agent-files.test.ts` covering: ok paths, `../` traversal, percent-encoded traversal, NUL byte rejection, absolute path passed as relpath, symlink-final and symlink-mid, oversize (>5 MB) refusal, magic-byte verification for images, extension allowlist hit/miss matrix (D3 set)
-- [ ] 1.3 Make `bun test agent-files.test.ts` green before wiring the route
+- [x] 1.1 Create `src/web/agent-files.ts` exporting `resolveAgentFile(cwd, relPath)`, `extensionWhitelist`, and a `pickContentType(ext)` helper; share traversal/lstat logic style with `src/web/uploads.ts`
+- [x] 1.2 Write `src/web/agent-files.test.ts` covering: ok paths, `../` traversal, percent-encoded traversal, NUL byte rejection, absolute path passed as relpath, symlink-final and symlink-mid, oversize (>5 MB) refusal, magic-byte verification for images, extension allowlist hit/miss matrix (D3 set)
+- [x] 1.3 Make `bun test agent-files.test.ts` green before wiring the route
 
 ## 2. Gateway + HTTP route
 
