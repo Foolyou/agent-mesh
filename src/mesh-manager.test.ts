@@ -340,6 +340,19 @@ test("start -> running -> promptRouter relays events -> stop -> stopped, no orph
   await waitForPidExit(pid);
 });
 
+test("explicit start flips meshExpectedAlive back to true", async () => {
+  await mgr.defineMesh(cfg);
+  const runDir = join(dir, "run");
+  await writeSessionState(runDir, "echo", {
+    meshExpectedAlive: false,
+    agents: { r: { sessionId: "sid", cwd: "test_mesh_0", harness: "claude" } },
+  });
+
+  await mgr.startMesh("echo");
+
+  expect((await readSessionState(runDir, "echo")).meshExpectedAlive).toBe(true);
+});
+
 test("startMesh twice errors", async () => {
   await mgr.defineMesh(cfg);
   await mgr.startMesh("echo");

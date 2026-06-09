@@ -47,6 +47,7 @@ Because the underlying stores key on cwd, loading with a different cwd would mis
 **D4 — Mesh-level `meshExpectedAlive` flag drives auto-respawn.**
 The sessions file carries a `meshExpectedAlive` boolean (mesh-level, not per-agent). State transitions:
 - daemon reaches ready → `meshExpectedAlive = true`
+- explicit mesh start (`start_mesh`, UI start button, or `POST /start`) → `meshExpectedAlive = true` before the daemon starts
 - deliberate mesh stop (user kill) → `meshExpectedAlive = false`
 - idle-lease expiry stop → `meshExpectedAlive = false`
 - crash / cold restart / hot restart of the daemon → flag is **left as-is**
@@ -54,7 +55,7 @@ On daemon start, if `meshExpectedAlive` is true, auto-respawn ALL configured age
 
 Rationale: current code has no per-agent stop/start API — all lifecycle is mesh-level (daemon stop, idle lease, mesh kill). A mesh-level flag matches the real lifecycle. Per-agent granularity (with an unreachable "false" state) would mislead readers into expecting per-agent resume control that doesn't exist. When per-agent kill/start is added later, this can migrate to per-agent fields without breaking the sessions file format.
 
-Skipped-agent behavior (when `meshExpectedAlive = false`): prompting a dead agent implicitly starts it with a fresh `session/new` and sets `meshExpectedAlive = true`. This is an explicit engagement (resurrection intent), not an auto-respawn — the caller is actively choosing to use the agent.
+Skipped-agent behavior (when `meshExpectedAlive = false`): explicit operator engagement overrides the auto-respawn guard. Starting the mesh flips `meshExpectedAlive = true` before daemon launch, so configured non-lazy agents start normally and resume if they have saved sessions. Prompting a dead agent implicitly starts that agent with a fresh `session/new` and sets `meshExpectedAlive = true`. Both paths are explicit resurrection intent, not background auto-respawn.
 
 **D5 — Separate storage file, not the daemon liveness registry.**
 Resume metadata SHALL live in a **separate file** from the daemon liveness registry (`<root>/run/<mesh>.json`). The liveness registry is pruned on dead-pid detection, which is the exact cold-restart scenario resume needs to survive.

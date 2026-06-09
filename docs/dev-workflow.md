@@ -54,9 +54,11 @@ They share nothing: separate **roots**, **ports**, and **sockets**.
 - Keep each mesh worktree path stable. The saved `cwd` is part of session identity
   for the underlying harnesses, so moving a mesh project/worktree can make resume
   fall back to a fresh `session/new`.
-- A deliberate mesh stop or idle lease clears `meshExpectedAlive`; daemon restart will
-  not auto-resurrect that mesh. Sending a prompt/wake/steer to the stopped agent is an
-  explicit start intent and creates a fresh session.
+- A deliberate mesh stop or idle lease clears `meshExpectedAlive`; background daemon
+  restart will not auto-resurrect that mesh. Explicitly starting the mesh flips the
+  flag back to true and starts configured non-lazy agents, resuming saved sessions
+  when possible. Sending a prompt/wake/steer to a stopped agent is also explicit
+  start intent, but starts that agent fresh.
 
 ## Service control — built into the binary
 

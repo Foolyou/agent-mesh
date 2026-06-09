@@ -83,22 +83,28 @@ When an agent session is restored via `session/load`, the control plane SHALL NO
 
 ### Requirement: Auto-respawn respects kill intent
 
-The control plane SHALL auto-respawn all configured agents on daemon start if and only if a mesh-level `meshExpectedAlive` flag is true. When the user deliberately stops the mesh or the mesh is reaped by idle-lease expiry, `meshExpectedAlive` SHALL be cleared to false, and no agents SHALL be auto-respawned on the next daemon start. The flag SHALL be left unchanged on crash, cold restart, and hot restart. State transitions SHALL be enumerated deterministically for all lifecycle paths.
+The control plane SHALL auto-respawn all configured agents on daemon start if and only if a mesh-level `meshExpectedAlive` flag is true. When the user deliberately stops the mesh or the mesh is reaped by idle-lease expiry, `meshExpectedAlive` SHALL be cleared to false, and no agents SHALL be auto-respawned by a background daemon restart or backend reattach. A user-explicit mesh start SHALL set `meshExpectedAlive` to true before launching the daemon, so configured non-lazy agents start normally. The flag SHALL be left unchanged on crash, cold restart, and hot restart. State transitions SHALL be enumerated deterministically for all lifecycle paths.
 
 #### Scenario: Crash or cold restart resurrects
 
 - **WHEN** the daemon dies via crash or cold restart while `meshExpectedAlive` is true
 - **THEN** on the next start all configured agents are auto-respawned and resumed (subject to harness capability)
 
-#### Scenario: Deliberate mesh stop does not resurrect
+#### Scenario: Deliberate mesh stop does not auto-resurrect
 
 - **WHEN** the user deliberately stops the mesh (`meshExpectedAlive` set to false)
-- **THEN** no agents are auto-respawned on a subsequent daemon start
+- **THEN** no agents are auto-respawned by a background daemon restart or backend reattach
+
+#### Scenario: Explicit mesh start after stop resurrects
+
+- **WHEN** the user explicitly starts a mesh after a deliberate stop
+- **THEN** `meshExpectedAlive` is set to true before daemon launch
+- **AND** configured non-lazy agents are started normally and resumed when saved sessions are available
 
 #### Scenario: Idle-lease expiry does not resurrect
 
 - **WHEN** a mesh is reaped due to idle-lease expiry (`meshExpectedAlive` set to false)
-- **THEN** no agents are auto-respawned on a subsequent daemon start
+- **THEN** no agents are auto-respawned by a background daemon restart or backend reattach
 
 ### Requirement: Prompting a stopped agent starts it fresh
 

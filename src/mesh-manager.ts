@@ -13,7 +13,7 @@ import { now } from "./acp/types";
 import type { AgentConfig, AgentStatus, MeshConfig, MeshEdge, MeshEvent, ThinkingEffort } from "./acp/types";
 import type { PromptImageRef } from "./acp/types";
 import { deleteUploadBucket } from "./web/uploads";
-import { clearAgentSession, clearAllAgentSessions } from "./session-storage";
+import { clearAgentSession, clearAllAgentSessions, setMeshExpectedAlive } from "./session-storage";
 
 export type MeshStatus = "stopped" | "starting" | "running" | "dead";
 
@@ -154,6 +154,7 @@ export class MeshManager {
       throw new Error(`mesh "${name}" is already running`);
     }
     entry.status = "starting";
+    await setMeshExpectedAlive(this.runDir, name, true);
     const client = this.buildClient(name, entry);
     entry.client = client;
     try {

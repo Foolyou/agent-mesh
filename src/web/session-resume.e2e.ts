@@ -143,7 +143,7 @@ try {
     if (visibleBase64) throw new Error("resumed user image is still visible as base64 text");
   });
 
-  await step("deliberate stop does not auto-resurrect on daemon restart", async () => {
+  await step("deliberate stop clears auto-respawn flag; explicit start resurrects", async () => {
     if (!(await post(`/api/meshes/${mesh}/stop`)).ok) throw new Error("stop failed");
     await waitFor(async () => {
       try {
@@ -158,17 +158,19 @@ try {
     if (!(await post(`/api/meshes/${mesh}/start`)).ok) throw new Error("restart after stop failed");
     await waitFor(async () => {
       const s = await state();
-      return s.meshes.some((m: any) => m.name === mesh && m.agents?.[0]?.status === "dead");
+      return s.meshes.some((m: any) => m.name === mesh && m.agents?.[0]?.status === "ready");
+    });
+    await waitFor(async () => {
+      const current = JSON.parse(await readFile(sessionsPath(), "utf8"));
+      return current.meshExpectedAlive === true;
     });
   });
 
-  await step("prompt to stopped agent fresh-starts and sets meshExpectedAlive true", async () => {
-    await post(`/api/meshes/${mesh}/agents/r/prompt`, { text: "fresh hello after stop" });
-    await waitFor(async () => (await transcriptText()).includes("echo fresh hello after stop"));
-    await waitFor(async () => {
-      const saved = JSON.parse(await readFile(sessionsPath(), "utf8"));
-      return saved.meshExpectedAlive === true;
-    });
+  await step("explicit restart resumes saved session", async () => {
+    await post(`/api/meshes/${mesh}/agents/r/prompt`, { text: "what is the sentinel?" });
+    await waitFor(async () => (await transcriptText()).includes(sentinel));
+    const lines = (await readFile(effects, "utf8")).trim().split("\n").filter(Boolean);
+    if (lines.length !== 1) throw new Error(`side effect duplicated: ${JSON.stringify(lines)}`);
   });
 
   console.log(`\n  ${pass} passed, ${fails.length} failed`);
