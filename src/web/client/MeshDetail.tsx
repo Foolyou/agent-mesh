@@ -74,9 +74,14 @@ function Header({ m, store, onDeleted, onEdit }: { m: MeshSummary; store: Store;
       {live ? (
         <span className="detail-actions">
           <span className="detail-secondary-actions">{renderNewSessionsAction()}</span>
-          <Btn kind="stop" onClick={() => void store.stopMesh(m.name)}>
+          <ConfirmButton
+            kind="stop"
+            confirmLabel={t("stop.confirm")}
+            ariaLabel={t("stop mesh")}
+            onConfirm={() => void store.stopMesh(m.name)}
+          >
             {t("stop mesh")}
-          </Btn>
+          </ConfirmButton>
           <span className="detail-overflow" ref={actionsRef}>
             <Btn kind="ghost" title={t("actions")} ariaLabel={t("actions")} onClick={() => setActionsOpen((o) => !o)}>
               ⋯

@@ -9,7 +9,7 @@ import { useKeyboard } from "./useKeyboard";
 import { useIsMobile } from "./useMedia";
 import { ThemeControls } from "./Theme";
 import { I18nContext, loadLang, saveLang, translate, tStatus, type Lang } from "./i18n";
-import { Dot, Btn, InfoIcon } from "./ui";
+import { Dot, Btn, ConfirmButton, InfoIcon } from "./ui";
 import { FileViewer, parseFileRoute, type FileRoute } from "./FileViewer";
 
 const SEL_KEY = "mesh.selected";
@@ -223,9 +223,15 @@ export function App() {
         >
           {lang === "en" ? "中" : "EN"}
         </Btn>
-        <Btn kind="ghost" onClick={() => void store.reload()} title={t("reload")}>
+        <ConfirmButton
+          kind="ghost"
+          confirmLabel={t("reload.confirm")}
+          ariaLabel={t("reload")}
+          onConfirm={() => void store.reload()}
+          title={t("reload")}
+        >
           {mobile ? "↻" : `↻ ${t("reload")}`}
-        </Btn>
+        </ConfirmButton>
       </div>
 
       <div className="body">

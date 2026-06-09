@@ -284,6 +284,7 @@ export function ConfirmButton({
   kind,
   small,
   title,
+  ariaLabel,
 }: {
   children: ReactNode;
   confirmLabel?: string;
@@ -291,6 +292,7 @@ export function ConfirmButton({
   kind?: "go" | "stop" | "ghost";
   small?: boolean;
   title?: string;
+  ariaLabel?: string;
 }) {
   const [armed, setArmed] = useState(false);
   useEffect(() => {
@@ -302,6 +304,8 @@ export function ConfirmButton({
     <button
       className={`btn ${armed ? "stop" : kind ?? ""} ${small ? "sm" : ""}`}
       title={title}
+      aria-label={armed ? confirmLabel ?? "confirm?" : ariaLabel}
+      aria-live="polite"
       onClick={() => {
         if (armed) {
           onConfirm();

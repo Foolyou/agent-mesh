@@ -27,6 +27,7 @@ const DICT: Record<string, Entry> = {
   "hint.full": ["full", "全屏"],
   "hint.new": ["new", "新建"],
   "hint.reload": ["reload", "重载"],
+  "reload.confirm": ["reload?", "确认重载?"],
   "hint.permit": ["permit", "批准"],
   "hint.back": ["back", "返回"],
   "hints.all": [
@@ -57,6 +58,7 @@ const DICT: Record<string, Entry> = {
   ],
   start: ["start", "启动"],
   stop: ["stop", "停止"],
+  "stop.confirm": ["stop?", "确认停止?"],
   edit: ["edit", "编辑"],
   del: ["delete", "删除"],
   "del.confirm": ["delete?", "确认删除?"],

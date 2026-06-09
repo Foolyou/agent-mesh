@@ -952,6 +952,7 @@ try {
     await page.locator('.conv-control .btn:has-text("start")').click();
     await page.locator('.conv-member-tab:has-text("worker") .dot.ready').waitFor({ timeout: 5000 });
     await page.locator('.detail-head .btn:has-text("stop mesh")').click();
+    await page.locator('.detail-head .btn:has-text("stop?")').click();
     await page.waitForSelector('.detail-head .btn:has-text("start mesh")', { timeout: 5000 });
   });
 

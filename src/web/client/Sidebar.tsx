@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import type { Store } from "./store";
 import type { GatewayState, MeshSummary } from "../types";
-import { Dot, Btn, Empty, InfoIcon } from "./ui";
+import { Dot, Btn, Empty, ConfirmButton, InfoIcon } from "./ui";
 import { ChatPane } from "./ChatPane";
 import { useI18n, tStatus } from "./i18n";
 
@@ -28,15 +28,17 @@ function MeshRow({
       <span className="mname">{m.name}</span>
       <span className="mstatus">{tStatus(t, m.status)}</span>
       {live ? (
-        <Btn
+        <ConfirmButton
           small
           kind="stop"
-          onClick={() => {
+          confirmLabel={t("stop.confirm")}
+          ariaLabel={t("stop")}
+          onConfirm={() => {
             void store.stopMesh(m.name);
           }}
         >
           {t("stop")}
-        </Btn>
+        </ConfirmButton>
       ) : (
         <Btn
           small
@@ -90,9 +92,16 @@ function MeshList({
           <Btn small onClick={onNewMesh} title={t("build.define")}>
             + {t("new")}
           </Btn>
-          <Btn small kind="ghost" onClick={() => void store.reload()} title={t("reload")}>
+          <ConfirmButton
+            small
+            kind="ghost"
+            confirmLabel={t("reload.confirm")}
+            ariaLabel={t("reload")}
+            onConfirm={() => void store.reload()}
+            title={t("reload")}
+          >
             ↻
-          </Btn>
+          </ConfirmButton>
         </span>
       </div>
       <div className="mlist">
