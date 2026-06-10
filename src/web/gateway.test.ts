@@ -210,6 +210,101 @@ test("turn queued updates queue summary and turn started folds into transcript",
   expect(s.perMesh.demo.transcripts["codex-1"].some((i: any) => i.kind === "message" && i.role === "user" && i.text === "please review **this**")).toBe(true);
 });
 
+test("queue summary includes browsable items with source metadata in queue order", () => {
+  const m = fakeManager();
+  const gw = new WebGateway(m as any);
+  const got: any[] = [];
+  gw.subscribe((msg) => got.push(msg));
+
+  m.emit("demo", {
+    kind: "agent_turn",
+    phase: "queued",
+    turn: { id: "turn-1", agent: "codex-1", source: "operator", from: "operator", to: "codex-1", text: "first", preview: "you: first", ts: "T1", images: [{ id: "img", mimeType: "image/png", name: "x.png", path: "/secret" }] },
+    ts: "T1",
+  } as any);
+  m.emit("demo", {
+    kind: "agent_turn",
+    phase: "queued",
+    turn: { id: "turn-2", agent: "codex-1", source: "mail", from: "router", to: "codex-1", text: "second", preview: "router: second", ts: "T2", mailId: "mail-2" },
+    ts: "T2",
+  } as any);
+
+  const q = gw.snapshot().perMesh.demo.queues["codex-1"];
+  expect(q.count).toBe(2);
+  expect(q.latestId).toBe("turn-2");
+  expect(q.latestPreview).toBe("router: second");
+  expect(q.items).toEqual([
+    { id: "turn-1", source: "operator", from: "operator", to: "codex-1", preview: "you: first", ts: "T1" },
+    { id: "turn-2", source: "mail", from: "router", to: "codex-1", preview: "router: second", ts: "T2" },
+  ]);
+  expect("text" in q.items![0]).toBe(false);
+  expect("images" in q.items![0]).toBe(false);
+  expect("mailId" in q.items![1]).toBe(false);
+  expect(got.filter((x) => x.t === "agent.queue").at(-1).summary.items).toEqual(q.items);
+});
+
+test("queue summary mirrors steer priority and caps item payload", () => {
+  const m = fakeManager();
+  const gw = new WebGateway(m as any);
+
+  m.emit("demo", {
+    kind: "agent_turn",
+    phase: "queued",
+    turn: { id: "normal-1", agent: "codex-1", source: "operator", from: "operator", to: "codex-1", text: "normal", preview: "you: normal", ts: "T1" },
+    ts: "T1",
+  } as any);
+  m.emit("demo", {
+    kind: "agent_turn",
+    phase: "queued",
+    turn: { id: "steer-1", agent: "codex-1", source: "steer", from: "operator", to: "codex-1", text: "urgent", preview: "you: urgent", ts: "T2" },
+    ts: "T2",
+  } as any);
+  let q = gw.snapshot().perMesh.demo.queues["codex-1"];
+  expect(q.items?.map((item) => item.id)).toEqual(["steer-1", "normal-1"]);
+  expect(q.latestId).toBe("steer-1");
+  expect(q.latestPreview).toBe("you: urgent");
+
+  for (let i = 0; i < 55; i++) {
+    m.emit("demo", {
+      kind: "agent_turn",
+      phase: "queued",
+      turn: { id: `normal-${i + 2}`, agent: "codex-1", source: "operator", from: "operator", to: "codex-1", text: `normal ${i}`, preview: `you: normal ${i}`, ts: `T${i + 3}` },
+      ts: `T${i + 3}`,
+    } as any);
+  }
+
+  q = gw.snapshot().perMesh.demo.queues["codex-1"];
+  expect(q.count).toBe(57);
+  expect(q.items).toHaveLength(50);
+  expect(q.items?.at(-1)?.id).toBe("normal-56");
+});
+
+test("queue summary cap keeps a latest steer even when it is outside the tail window", () => {
+  const m = fakeManager();
+  const gw = new WebGateway(m as any);
+
+  for (let i = 0; i < 55; i++) {
+    m.emit("demo", {
+      kind: "agent_turn",
+      phase: "queued",
+      turn: { id: `normal-${i}`, agent: "codex-1", source: "operator", from: "operator", to: "codex-1", text: `normal ${i}`, preview: `you: normal ${i}`, ts: `T${String(i).padStart(2, "0")}` },
+      ts: `T${String(i).padStart(2, "0")}`,
+    } as any);
+  }
+  m.emit("demo", {
+    kind: "agent_turn",
+    phase: "queued",
+    turn: { id: "latest-steer", agent: "codex-1", source: "steer", from: "operator", to: "codex-1", text: "urgent", preview: "you: urgent", ts: "T99" },
+    ts: "T99",
+  } as any);
+
+  const q = gw.snapshot().perMesh.demo.queues["codex-1"];
+  expect(q.count).toBe(56);
+  expect(q.latestId).toBe("latest-steer");
+  expect(q.items).toHaveLength(50);
+  expect(q.items?.[0]).toMatchObject({ id: "latest-steer", source: "steer" });
+});
+
 test("dead agent status clears its queue summary", () => {
   const m = fakeManager();
   const gw = new WebGateway(m as any);

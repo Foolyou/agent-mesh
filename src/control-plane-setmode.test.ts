@@ -37,6 +37,14 @@ class FakeAcpConnection {
   kill(): void {}
 }
 
+test("image-only operator and steer turns use a readable preview placeholder", () => {
+  const cp = new ControlPlane(DEMO_MESH);
+  const image = { id: "img-1", mimeType: "image/png", name: "shot.png", url: "/uploads/shot.png" };
+
+  expect((cp as any).operatorTurn("router", "", [image]).preview).toBe("you: [image]");
+  expect((cp as any).steerTurn("router", "operator", "", [image]).preview).toBe("you: [image]");
+});
+
 class ConfigOptionsConnection {
   setModes: string[] = [];
   setModels: string[] = [];

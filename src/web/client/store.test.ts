@@ -116,9 +116,25 @@ test("agent.queue updates the per-agent queue summary", () => {
     t: "agent.queue",
     name: "demo",
     agent: "codex-1",
-    summary: { count: 2, latestPreview: "you: review this" },
+    summary: {
+      count: 2,
+      latestId: "q2",
+      latestPreview: "mail: latest",
+      items: [
+        { id: "q1", source: "operator", from: "operator", to: "codex-1", preview: "you: review this", ts: "T1" },
+        { id: "q2", source: "mail", from: "router", to: "codex-1", preview: "mail: latest", ts: "T2" },
+      ],
+    },
   });
-  expect(s.perMesh.demo.queues["codex-1"]).toEqual({ count: 2, latestPreview: "you: review this" });
+  expect(s.perMesh.demo.queues["codex-1"]).toEqual({
+    count: 2,
+    latestId: "q2",
+    latestPreview: "mail: latest",
+    items: [
+      { id: "q1", source: "operator", from: "operator", to: "codex-1", preview: "you: review this", ts: "T1" },
+      { id: "q2", source: "mail", from: "router", to: "codex-1", preview: "mail: latest", ts: "T2" },
+    ],
+  });
 });
 
 test("permission add then remove updates pending + history", () => {

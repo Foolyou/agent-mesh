@@ -21,6 +21,7 @@ import type {
   MailEntry,
   MasterStatus,
   PerMeshState,
+  QueueItem,
   QueueSummary,
   TranscriptItem,
   TranscriptOp,
@@ -63,6 +64,7 @@ export interface MasterLike {
 
 const CAP = 500; // ring-buffer cap for activity / mail / history
 const TR_CAP = 1000; // per-conversation transcript cap
+const QUEUE_ITEM_CAP = 50; // keep queue WS payload bounded; count remains authoritative
 
 function cap<T>(arr: T[], n: number): T[] {
   return arr.length > n ? arr.slice(arr.length - n) : arr;
@@ -205,8 +207,28 @@ export class WebGateway {
   }
   private queueSummary(name: string, agent: AgentId): QueueSummary {
     const q = this.queueFor(name, agent);
-    const latest = q[q.length - 1];
-    return { count: q.length, latestPreview: latest?.preview };
+    const latest = q.reduce<AgentTurn | undefined>((acc, turn) => (!acc || turn.ts >= acc.ts ? turn : acc), undefined);
+    const tail = q.length > QUEUE_ITEM_CAP ? q.slice(q.length - QUEUE_ITEM_CAP) : q;
+    const visible = latest && !tail.some((turn) => turn.id === latest.id) ? [latest, ...tail.slice(1)] : tail;
+    const items: QueueItem[] = visible.map((turn) => ({
+      id: turn.id,
+      source: turn.source,
+      preview: turn.preview,
+      ts: turn.ts,
+      from: turn.from,
+      to: turn.to,
+    }));
+    return { count: q.length, latestId: latest?.id, latestPreview: latest?.preview, items };
+  }
+  private addQueuedTurn(q: AgentTurn[], turn: AgentTurn): void {
+    if (q.some((queued) => queued.id === turn.id)) return;
+    if (turn.source !== "steer") {
+      q.push(turn);
+      return;
+    }
+    const insertAt = q.findIndex((queued) => queued.source !== "steer");
+    if (insertAt >= 0) q.splice(insertAt, 0, turn);
+    else q.push(turn);
   }
   private publishQueue(name: string, agent: AgentId): void {
     const pm = this.ensureMesh(name);
@@ -313,7 +335,7 @@ export class WebGateway {
       case "agent_turn": {
         const q = this.queueFor(name, e.turn.agent);
         if (e.phase === "queued") {
-          if (!q.some((turn) => turn.id === e.turn.id)) q.push(e.turn);
+          this.addQueuedTurn(q, e.turn);
           this.publishQueue(name, e.turn.agent);
         } else {
           const idx = q.findIndex((turn) => turn.id === e.turn.id);

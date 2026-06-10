@@ -23,6 +23,11 @@ function compactPreview(text: string): string {
   return text.replace(/\s+/g, " ").trim().slice(0, 160);
 }
 
+function turnPreview(label: string, text: string, images: PromptImageRef[] = []): string {
+  const preview = compactPreview(text);
+  return `${label}: ${preview || (images.length ? "[image]" : "")}`;
+}
+
 function publicImageRef(i: PromptImageRef): PromptImageRef {
   return { id: i.id, mimeType: i.mimeType, name: i.name, url: i.url };
 }
@@ -228,7 +233,7 @@ export class ControlPlane {
       from: "operator",
       to: id,
       text,
-      preview: `you: ${compactPreview(text)}`,
+      preview: turnPreview("you", text, images),
       images: images.map(publicImageRef),
       ts: now(),
     };
@@ -256,7 +261,7 @@ export class ControlPlane {
       from,
       to,
       text: body,
-      preview: `${from === "operator" ? "you" : from}: ${compactPreview(body)}`,
+      preview: turnPreview(from === "operator" ? "you" : from, body, images),
       images: images.map(publicImageRef),
       ts: now(),
     };
