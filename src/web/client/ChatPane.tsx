@@ -4,9 +4,11 @@
 import { useRef } from "react";
 import type { MouseEvent } from "react";
 import type { PromptImageRef, TranscriptItem } from "../types";
+import type { QueueSummary } from "../types";
 import { Composer } from "./ui";
 import { Transcript } from "./Transcript";
 import type { AuthorRef } from "./AuthorContext";
+import { useI18n } from "./i18n";
 
 const INTERACTIVE = "button, a, input, textarea, select, .thought .label, .tool .thead";
 
@@ -21,6 +23,7 @@ export function ChatPane({
   steerEnabled,
   imageEnabled,
   imageDisabledReason,
+  queue,
   author,
 }: {
   items: TranscriptItem[];
@@ -33,8 +36,10 @@ export function ChatPane({
   steerEnabled?: boolean;
   imageEnabled?: boolean;
   imageDisabledReason?: string;
+  queue?: QueueSummary;
   author?: AuthorRef;
 }) {
+  const { t } = useI18n();
   const taRef = useRef<HTMLTextAreaElement>(null);
 
   function focusOnClick(e: MouseEvent<HTMLDivElement>) {
@@ -49,6 +54,12 @@ export function ChatPane({
   return (
     <div className="chat" onClick={focusOnClick}>
       <Transcript items={items} author={author} />
+      {queue?.count ? (
+        <div className="queue-box" title={queue.latestPreview}>
+          <span className="queue-count">{t("queue.count", { count: queue.count })}</span>
+          {queue.latestPreview ? <span className="queue-preview">{queue.latestPreview}</span> : null}
+        </div>
+      ) : null}
       <Composer
         ref={taRef}
         onSend={onSend}

@@ -188,6 +188,34 @@ try {
     await assertSelectedTab(".conv-router-tab.sel", "router tab");
   });
 
+  await step("conversation queue box shows count and latest preview above composer", async () => {
+    await page.evaluate(() => {
+      (window as any).__meshStore.apply({
+        t: "agent.queue",
+        name: "demo",
+        agent: "router",
+        summary: { count: 2, latestPreview: "you: queued preview should stay on one line" },
+      });
+    });
+    const panel = page.locator(".conv-panel").first();
+    const box = panel.locator(".queue-box");
+    await box.waitFor({ timeout: 4000 });
+    await box.locator(".queue-count", { hasText: "queued: 2" }).waitFor({ timeout: 4000 });
+    await box.locator(".queue-preview", { hasText: "you: queued preview should stay on one line" }).waitFor({ timeout: 4000 });
+    const queueBox = await box.boundingBox();
+    const composerBox = await panel.locator(".composer").boundingBox();
+    if (!queueBox || !composerBox || queueBox.y >= composerBox.y) throw new Error("queue box is not above composer");
+    await page.evaluate(() => {
+      (window as any).__meshStore.apply({
+        t: "agent.queue",
+        name: "demo",
+        agent: "router",
+        summary: { count: 0 },
+      });
+    });
+    await box.waitFor({ state: "detached", timeout: 4000 });
+  });
+
   await step("conversation member strip scrolls without visible scrollbar and overflow menu jumps", async () => {
     await page.evaluate(() => {
       const store = (window as any).__meshStore;

@@ -5,7 +5,7 @@
 import { reduceTranscript } from "./transcript";
 import { now } from "../acp/types";
 import { resolve } from "node:path";
-import type { AgentConfig, MeshConfig, MeshEdge, MeshEvent, AgentId, AgentStatus, AgentActivity, PromptImageRef, ThinkingEffort } from "../acp/types";
+import type { AgentConfig, MeshConfig, MeshEdge, MeshEvent, AgentId, AgentStatus, AgentActivity, AgentTurn, PromptImageRef, ThinkingEffort } from "../acp/types";
 import type { StartMeshOptions } from "../mesh-manager";
 import { readUpload, storeUploads, uploadPath, type UploadFileLike } from "./uploads";
 import { AgentFileError, resolveAgentFile } from "./agent-files";
@@ -21,6 +21,7 @@ import type {
   MailEntry,
   MasterStatus,
   PerMeshState,
+  QueueSummary,
   TranscriptItem,
   TranscriptOp,
 } from "./types";
@@ -79,6 +80,7 @@ export class WebGateway {
   private listeners = new Set<(m: ServerMsg) => void>();
   private agStatus = new Map<string, Map<AgentId, AgentStatus>>();
   private agActivity = new Map<string, Map<AgentId, AgentActivity>>();
+  private queues = new Map<string, Map<AgentId, AgentTurn[]>>();
   private uidc = 0;
   private unsubMgr?: () => void;
   private unsubMaster?: () => void;
@@ -186,10 +188,31 @@ export class WebGateway {
       } catch {
         config = { name, agents: [], edges: [] };
       }
-      pm = { config, transcripts: {}, activity: [], mail: [], pending: [], history: [], modes: {}, models: {}, capabilities: {} };
+      pm = { config, transcripts: {}, activity: [], mail: [], pending: [], history: [], modes: {}, models: {}, capabilities: {}, queues: {} };
       this.state.perMesh[name] = pm;
     }
     return pm;
+  }
+  private queueFor(name: string, agent: AgentId): AgentTurn[] {
+    let perMesh = this.queues.get(name);
+    if (!perMesh) {
+      perMesh = new Map();
+      this.queues.set(name, perMesh);
+    }
+    const q = perMesh.get(agent) ?? [];
+    perMesh.set(agent, q);
+    return q;
+  }
+  private queueSummary(name: string, agent: AgentId): QueueSummary {
+    const q = this.queueFor(name, agent);
+    const latest = q[q.length - 1];
+    return { count: q.length, latestPreview: latest?.preview };
+  }
+  private publishQueue(name: string, agent: AgentId): void {
+    const pm = this.ensureMesh(name);
+    const summary = this.queueSummary(name, agent);
+    pm.queues = { ...pm.queues, [agent]: summary };
+    this.broadcast({ t: "agent.queue", name, agent, summary });
   }
   private act(kind: ActivityEntry["kind"], text: string, ts: string): ActivityEntry {
     return { id: this.uid(), ts, kind, text };
@@ -206,6 +229,14 @@ export class WebGateway {
     const r = reduceTranscript(items, update, ts);
     pm.transcripts[conv.agent] = cap(r.items, TR_CAP);
     for (const op of r.ops) this.broadcastOp(conv, op);
+  }
+  private foldStartedTurn(name: string, turn: AgentTurn, ts: string): void {
+    const conv = { scope: "agent" as const, mesh: name, agent: turn.agent };
+    if (turn.source === "mail" || (turn.source === "steer" && turn.from && turn.from !== "operator")) {
+      this.foldConv(conv, { sessionUpdate: "__mail__", from: turn.from ?? "unknown", to: turn.to ?? turn.agent, body: turn.text }, ts);
+      return;
+    }
+    this.foldConv(conv, { sessionUpdate: "user_message_chunk", content: { text: turn.text }, images: turn.images }, ts);
   }
 
   // ── Event ingestion ──────────────────────────────────────────────────────────
@@ -279,8 +310,23 @@ export class WebGateway {
         this.broadcast({ t: "activity", name, entry });
         break;
       }
+      case "agent_turn": {
+        const q = this.queueFor(name, e.turn.agent);
+        if (e.phase === "queued") {
+          if (!q.some((turn) => turn.id === e.turn.id)) q.push(e.turn);
+          this.publishQueue(name, e.turn.agent);
+        } else {
+          const idx = q.findIndex((turn) => turn.id === e.turn.id);
+          if (idx >= 0) q.splice(idx, 1);
+          this.publishQueue(name, e.turn.agent);
+          this.foldStartedTurn(name, e.turn, e.ts || now());
+        }
+        break;
+      }
       case "mail": {
-        const mailEntry: MailEntry = { id: this.uid(), ts: e.ts, from: e.from, to: e.to, body: e.body };
+        // Durable-id mail can be replayed by snapshot on every reattach; ingest it once.
+        if (e.id && pm.mail.some((entry) => entry.id === e.id)) break;
+        const mailEntry: MailEntry = { id: e.id ?? this.uid(), ts: e.ts, from: e.from, to: e.to, body: e.body };
         pm.mail.push(mailEntry);
         pm.mail = cap(pm.mail, CAP);
         const entry = this.act("mail", `${e.from} → ${e.to}: ${e.body.slice(0, 80)}`, e.ts);
@@ -288,9 +334,6 @@ export class WebGateway {
         pm.activity = cap(pm.activity, CAP);
         this.broadcast({ t: "mail", name, entry: mailEntry });
         this.broadcast({ t: "activity", name, entry });
-        // Also surface the mail inline in the RECIPIENT's conversation, labeled with the sender,
-        // so it's visible where the operator reads that agent (not only in the side mailbox rail).
-        this.foldConv({ scope: "agent", mesh: name, agent: e.to }, { sessionUpdate: "__mail__", from: e.from, to: e.to, body: e.body }, e.ts || now());
         break;
       }
       case "interrupt": {
@@ -314,6 +357,11 @@ export class WebGateway {
           this.agStatus.set(name, s);
         }
         s.set(e.agent, e.status);
+        if (e.status === "dead") {
+          const q = this.queueFor(name, e.agent);
+          q.splice(0);
+          this.publishQueue(name, e.agent);
+        }
         this.broadcast({ t: "agent.status", name, agent: e.agent, status: e.status, detail: e.detail });
         break;
       }
@@ -344,6 +392,9 @@ export class WebGateway {
     await this.manager.stopMesh(name);
     this.agStatus.delete(name);
     this.agActivity.delete(name);
+    this.queues.delete(name);
+    const pm = this.state.perMesh[name];
+    if (pm) pm.queues = {};
     this.refreshMeshes();
   }
   async reload(): Promise<void> {
@@ -359,6 +410,7 @@ export class WebGateway {
     delete this.state.perMesh[name];
     this.agStatus.delete(name);
     this.agActivity.delete(name);
+    this.queues.delete(name);
     this.refreshMeshes();
   }
   private routerId(name: string): string {
@@ -370,17 +422,14 @@ export class WebGateway {
   }
   async promptRouter(name: string, text: string, images: PromptImageRef[] = []): Promise<void> {
     const refs = images.map((i) => this.withBucket(name, i));
-    this.foldConv({ scope: "agent", mesh: name, agent: this.routerId(name) }, { sessionUpdate: "user_message_chunk", content: { text }, images: refs.map(publicImageRef) }, now());
     await this.manager.promptRouter(name, text, refs);
   }
   promptAgent(name: string, agentId: string, text: string, images: PromptImageRef[] = []): void {
     const refs = images.map((i) => this.withBucket(name, i));
-    this.foldConv({ scope: "agent", mesh: name, agent: agentId }, { sessionUpdate: "user_message_chunk", content: { text }, images: refs.map(publicImageRef) }, now());
     this.manager.promptAgent(name, agentId, text, refs);
   }
   steerAgent(name: string, agentId: string, text: string, images: PromptImageRef[] = []): void {
     const refs = images.map((i) => this.withBucket(name, i));
-    this.foldConv({ scope: "agent", mesh: name, agent: agentId }, { sessionUpdate: "user_message_chunk", content: { text }, images: refs.map(publicImageRef) }, now());
     this.manager.steerAgent(name, agentId, text, refs);
   }
   configOf(name: string): MeshConfig {

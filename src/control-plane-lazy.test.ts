@@ -34,13 +34,24 @@ class RecordingConnection {
   async newSession(): Promise<unknown> {
     return {};
   }
-  async prompt(text: string): Promise<unknown> {
+  async prompt(text: string, _images?: unknown, turn?: any): Promise<unknown> {
     this.prompts.push(text);
+    if (turn) {
+      this.opts.onPromptQueued?.(turn);
+      this.opts.onPromptStarted?.(turn);
+    }
     return {};
   }
-  async steerPrompt(text: string): Promise<unknown> {
+  async steerPrompt(text: string, _images?: unknown, turn?: any): Promise<unknown> {
     this.prompts.push(text);
+    if (turn) {
+      this.opts.onPromptQueued?.(turn);
+      this.opts.onPromptStarted?.(turn);
+    }
     return {};
+  }
+  removeQueued(): unknown[] {
+    return [];
   }
   async setMode(): Promise<void> {}
   async setModel(): Promise<void> {}
@@ -109,7 +120,7 @@ test("lazy agents start cold without a connection while eager agents become read
   }
 });
 
-test("first mail to a lazy agent triggers one spawn and one check_mail drain prompt", async () => {
+test("first mail to a lazy agent triggers one spawn and one visible mail turn", async () => {
   const root = await mkdtemp(join(tmpdir(), "mesh-lazy-mail-"));
   const created: Record<string, RecordingConnection> = {};
   const cp = new ControlPlane(lazyConfig, {
@@ -120,6 +131,8 @@ test("first mail to a lazy agent triggers one spawn and one check_mail drain pro
       return conn as unknown as AcpAgentConnection;
     },
   });
+  const events: any[] = [];
+  cp.on((event) => events.push(event));
 
   try {
     await cp.start();
@@ -129,8 +142,14 @@ test("first mail to a lazy agent triggers one spawn and one check_mail drain pro
 
     expect(created["lazy-1"].starts).toBe(1);
     expect((cp as any).mesh.status("lazy-1")).toBe("ready");
-    expect(created["lazy-1"].prompts[0]).toContain("call check_mail");
-    expect(created["lazy-1"].prompts[0]).not.toContain("[MAIL from router]: hello");
+    expect(created["lazy-1"].prompts[0]).toContain("[MAIL from router]: hello");
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        kind: "agent_turn",
+        phase: "started",
+        turn: expect.objectContaining({ agent: "lazy-1", source: "mail", from: "router", text: "hello" }),
+      }),
+    );
 
     const mail = await readMailFor("lazy-1", { mailboxPath: join(root, "mailbox.ndjson") });
     expect(mail.map((m) => m.body)).toEqual(["hello"]);
@@ -141,7 +160,7 @@ test("first mail to a lazy agent triggers one spawn and one check_mail drain pro
   }
 });
 
-test("concurrent first mails share one spawn and drain once", async () => {
+test("concurrent first mails share one spawn and deliver both visible mail turns", async () => {
   const root = await mkdtemp(join(tmpdir(), "mesh-lazy-concurrent-"));
   const created: Record<string, DeferredStartConnection> = {};
   let lazyCreations = 0;
@@ -163,11 +182,13 @@ test("concurrent first mails share one spawn and drain once", async () => {
     ]);
     await waitUntil(() => lazyCreations === 1);
     created["lazy-1"].startResolve();
-    await waitUntil(() => created["lazy-1"].prompts.length === 1);
+    await waitUntil(() => created["lazy-1"].prompts.length === 2);
 
     expect(lazyCreations).toBe(1);
     expect(created["lazy-1"].starts).toBe(1);
-    expect(created["lazy-1"].prompts).toHaveLength(1);
+    expect(created["lazy-1"].prompts).toHaveLength(2);
+    expect(created["lazy-1"].prompts.join("\n")).toContain("[MAIL from router]: one");
+    expect(created["lazy-1"].prompts.join("\n")).toContain("[MAIL from router]: two");
     const mail = await readMailFor("lazy-1", { mailboxPath: join(root, "mailbox.ndjson") });
     expect(mail.map((m) => m.body).sort()).toEqual(["one", "two"]);
   } finally {
@@ -405,7 +426,7 @@ test("control-plane addAgent creates a cold lazy member and optional edges can w
     expect(res).toContain("may have been added after your session started");
     await waitUntil(() => created.c?.prompts.length === 1);
     expect((cp as any).mesh.status("c")).toBe("ready");
-    expect(created.c.prompts[0]).toContain("call check_mail");
+    expect(created.c.prompts[0]).toContain("[MAIL from a]: hello new peer");
   } finally {
     await cp.stop();
     await rm(root, { recursive: true, force: true });

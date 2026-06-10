@@ -99,13 +99,15 @@ export async function sendMail(input: {
   from: string;
   to: string;
   body: string;
+  /** Marks steer deliveries so durable mail history can distinguish them. */
+  steer?: boolean;
 }): Promise<MailboxEvent> {
   return sendMailboxEvent({
     mailboxPath: input.mailboxPath,
     from: input.from,
     type: "handoff",
     body: input.body,
-    meta: { to: input.to, mesh: input.mesh },
+    meta: { to: input.to, mesh: input.mesh, ...(input.steer ? { steer: true } : {}) },
   });
 }
 
@@ -124,6 +126,26 @@ export async function readMailFor(
     if (index >= 0) mail = mail.slice(index + 1);
   }
   return mail;
+}
+
+/** Recent addressed (agent-to-agent) mail across the live mailbox AND its compaction
+ *  archive, oldest first, capped to the most recent `cap`. Compaction moves consumed
+ *  mail to the archive, so the live file alone under-reports history. */
+export async function readRecentAddressedMail(
+  options: { mailboxPath?: string; cap?: number } = {},
+): Promise<MailboxEvent[]> {
+  const mailboxPath = resolveMailboxPath(options.mailboxPath);
+  const archived = await readMailboxEvents(defaultArchivePath(mailboxPath));
+  const live = await readMailboxEvents(mailboxPath);
+  const seen = new Set<string>();
+  const mail = [...archived, ...live].filter((event) => {
+    const meta = event.meta as { to?: string; steer?: boolean } | undefined;
+    if (!meta?.to || meta.steer || seen.has(event.id)) return false;
+    seen.add(event.id);
+    return true;
+  });
+  const cap = options.cap ?? 200;
+  return mail.length > cap ? mail.slice(mail.length - cap) : mail;
 }
 
 export async function readMailboxEvents(

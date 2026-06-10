@@ -382,6 +382,7 @@ function ConversationPanel({
         </div>
         <ChatPane
           items={pm.transcripts[activeId] ?? []}
+          queue={pm.queues?.[activeId]}
           author={{ meshId: m.name, agent: activeId }}
           placeholder={isRouter ? t("router.placeholder") : t("agent.placeholder", { id: activeId })}
           imageEnabled={!!pm.capabilities?.[cur.id]?.image}
@@ -527,6 +528,7 @@ export function MeshDetail({
       modes: {},
       models: {},
       capabilities: {},
+      queues: {},
     };
   // interrupt flash: highlight a node briefly when a new interrupt activity arrives
   const { t } = useI18n();

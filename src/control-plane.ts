@@ -9,14 +9,22 @@ import { spawnConfigFor } from "./harness";
 import { Mesh } from "./mesh";
 import { buildMeshBriefing } from "./mesh-briefing";
 import { createMeshServicesServer, type MeshServicesHandlers, type MeshServicesServer, type MeshToolContext } from "./mcp/mesh-services";
-import { compactMailbox, sendMail, readMailFor, readMailboxEvents } from "./mailbox";
+import { compactMailbox, sendMail, readMailFor, readMailboxEvents, readRecentAddressedMail } from "./mailbox";
 import { validateAddAgent, validateAddEdge } from "./mesh-validate";
 import { readSessionState, setMeshExpectedAlive, updateAgentMailCursor, updateAgentSession, clearAgentSession, type MeshSessionState } from "./session-storage";
-import { now, type AgentActivity, type AgentConfig, type AgentId, type MeshConfig, type MeshEdge, type MeshEvent, type PromptImageRef, type SessionMode, type SessionModel } from "./acp/types";
+import { now, type AgentActivity, type AgentConfig, type AgentId, type AgentTurn, type MeshConfig, type MeshEdge, type MeshEvent, type PromptImageRef, type SessionMode, type SessionModel } from "./acp/types";
 
 interface PendingDecision {
   resolve: (decision: PermissionDecision) => void;
   timer: ReturnType<typeof setTimeout>;
+}
+
+function compactPreview(text: string): string {
+  return text.replace(/\s+/g, " ").trim().slice(0, 160);
+}
+
+function publicImageRef(i: PromptImageRef): PromptImageRef {
+  return { id: i.id, mimeType: i.mimeType, name: i.name, url: i.url };
 }
 
 export type ControlPlaneStopReason = "explicit" | "idle" | "shutdown";
@@ -36,6 +44,10 @@ export interface ControlPlaneOptions {
   spawnTimeoutMs?: number;
   mailboxCompactThresholdEvents?: number;
   mailboxCompactThresholdBytes?: number;
+  /** Max mails returned per check_mail call (cursor only advances past returned mail). */
+  checkMailMaxCount?: number;
+  /** Max total body bytes per check_mail call; at least one mail is always returned. */
+  checkMailMaxBytes?: number;
 }
 
 export class ControlPlane {
@@ -55,6 +67,8 @@ export class ControlPlane {
   private spawnTimeoutMs: number;
   private mailboxCompactThresholdEvents: number;
   private mailboxCompactThresholdBytes: number;
+  private checkMailMaxCount: number;
+  private checkMailMaxBytes: number;
   private spawning = new Map<AgentId, Promise<AcpAgentConnection>>();
   private spawnFails = new Map<AgentId, number>();
   private dynamicEdges = new Set<string>();
@@ -72,6 +86,13 @@ export class ControlPlane {
   private resumePendingValidation = new Set<AgentId>();
   /** Per-agent in-flight prompt turns. count > 0 means working unless the agent is dead. */
   private turnCounts = new Map<AgentId, number>();
+  private queuedTurns = new Map<AgentId, AgentTurn[]>();
+  /** Mail ids each agent has already read via check_mail; a late wake for one of
+   *  these is dropped instead of queueing a duplicate prompt turn. */
+  private consumedMailIds = new Map<AgentId, Set<string>>();
+  /** Recent durable mail, replayed via snapshotEvents() so reconnecting clients
+   *  see mail history instead of only live deliveries. */
+  private recentMail: { id: string; from: AgentId; to: AgentId; body: string; ts: string }[] = [];
   private activityStates = new Map<AgentId, AgentActivity>();
   private sessionState: MeshSessionState = { meshExpectedAlive: true, agents: {} };
 
@@ -87,6 +108,8 @@ export class ControlPlane {
     this.spawnTimeoutMs = opts.spawnTimeoutMs ?? 60_000;
     this.mailboxCompactThresholdEvents = opts.mailboxCompactThresholdEvents ?? 1_000;
     this.mailboxCompactThresholdBytes = opts.mailboxCompactThresholdBytes ?? 1_000_000;
+    this.checkMailMaxCount = opts.checkMailMaxCount ?? 20;
+    this.checkMailMaxBytes = opts.checkMailMaxBytes ?? 64_000;
   }
 
   // ---- event bus ----
@@ -125,8 +148,65 @@ export class ControlPlane {
       if (models) {
         events.push({ kind: "agent_models", agent: a.id, current: models.current, available: models.available, ts });
       }
+      for (const turn of this.queuedTurns.get(a.id) ?? []) {
+        events.push({ kind: "agent_turn", phase: "queued", turn, ts });
+      }
+    }
+    for (const m of this.recentMail) {
+      events.push({ kind: "mail", id: m.id, from: m.from, to: m.to, body: m.body, ts: m.ts });
     }
     return events;
+  }
+
+  private pushRecentMail(entry: { id: string; from: AgentId; to: AgentId; body: string; ts: string }): void {
+    this.recentMail.push(entry);
+    if (this.recentMail.length > 200) this.recentMail.splice(0, this.recentMail.length - 200);
+  }
+
+  private noteTurnQueued(turn: AgentTurn): void {
+    const q = this.queuedTurns.get(turn.agent) ?? [];
+    if (!q.some((queued) => queued.id === turn.id)) q.push(turn);
+    this.queuedTurns.set(turn.agent, q);
+    this.emit({ kind: "agent_turn", phase: "queued", turn, ts: now() });
+  }
+
+  private noteTurnStarted(turn: AgentTurn): void {
+    const q = this.queuedTurns.get(turn.agent) ?? [];
+    const idx = q.findIndex((queued) => queued.id === turn.id);
+    if (idx >= 0) q.splice(idx, 1);
+    if (q.length) this.queuedTurns.set(turn.agent, q);
+    else this.queuedTurns.delete(turn.agent);
+    this.emit({ kind: "agent_turn", phase: "started", turn, ts: now() });
+  }
+
+  private clearQueuedTurns(id: AgentId): void {
+    this.queuedTurns.delete(id);
+  }
+
+  private noteTurnConsumed(turn: AgentTurn): void {
+    const q = this.queuedTurns.get(turn.agent) ?? [];
+    const idx = q.findIndex((queued) => queued.id === turn.id);
+    if (idx >= 0) q.splice(idx, 1);
+    if (q.length) this.queuedTurns.set(turn.agent, q);
+    else this.queuedTurns.delete(turn.agent);
+    this.emit({ kind: "agent_turn", phase: "consumed", turn, ts: now() });
+  }
+
+  private rememberConsumedMail(agent: AgentId, mailIds: Iterable<string>): void {
+    let set = this.consumedMailIds.get(agent);
+    if (!set) {
+      set = new Set();
+      this.consumedMailIds.set(agent, set);
+    }
+    for (const id of mailIds) set.add(id);
+    while (set.size > 500) set.delete(set.values().next().value!);
+  }
+
+  private async persistRuntimeSessionFields(id: AgentId, fields: { mode?: string; model?: string }): Promise<void> {
+    if (!this.sessionRunDir) return;
+    const current = this.sessionState.agents[id];
+    if (!current) return;
+    this.sessionState = await updateAgentSession(this.sessionRunDir, this.mesh.name, id, { ...current, ...fields });
   }
 
   /** Prepend the one-time mesh briefing to an agent's very first prompt, so it knows
@@ -140,13 +220,55 @@ export class ControlPlane {
     return `${briefing}\n\n---\n\nYour first task / message follows:\n\n${text}`;
   }
 
+  private operatorTurn(id: AgentId, text: string, images: PromptImageRef[] = []): AgentTurn {
+    return {
+      id: randomUUID(),
+      agent: id,
+      source: "operator",
+      from: "operator",
+      to: id,
+      text,
+      preview: `you: ${compactPreview(text)}`,
+      images: images.map(publicImageRef),
+      ts: now(),
+    };
+  }
+
+  private mailTurn(to: AgentId, from: AgentId, body: string, mailId?: string): AgentTurn {
+    return {
+      id: randomUUID(),
+      agent: to,
+      source: "mail",
+      from,
+      to,
+      text: body,
+      preview: `${from}: ${compactPreview(body)}`,
+      ts: now(),
+      mailId,
+    };
+  }
+
+  private steerTurn(to: AgentId, from: AgentId | "operator", body: string, images: PromptImageRef[] = []): AgentTurn {
+    return {
+      id: randomUUID(),
+      agent: to,
+      source: "steer",
+      from,
+      to,
+      text: body,
+      preview: `${from === "operator" ? "you" : from}: ${compactPreview(body)}`,
+      images: images.map(publicImageRef),
+      ts: now(),
+    };
+  }
+
   /** Public: send a prompt turn to an agent (the control plane is the sole driver). Image
    *  blocks are dropped for agents that did not advertise image input, so a non-image agent
    *  still gets the text turn instead of rejecting the whole prompt. */
-  async prompt(id: AgentId, text: string, images: PromptImageRef[] = []) {
+  async prompt(id: AgentId, text: string, images: PromptImageRef[] = [], turn?: AgentTurn) {
     const imgs = this.imageCaps.get(id) ? images : [];
     const promptImages = imgs.map((i) => this.resolveImagePath(i));
-    return this.promptWithResumeFallback(id, text, promptImages, false);
+    return this.promptWithResumeFallback(id, text, promptImages, false, turn ?? this.operatorTurn(id, text, imgs));
   }
 
   /** Switch an agent's permission/approval mode (delegates to its connection). */
@@ -154,6 +276,7 @@ export class ControlPlane {
     await this.agent(id).setMode(modeId);
     const modes = this.sessionModes.get(id);
     if (modes) this.sessionModes.set(id, { ...modes, current: modeId });
+    await this.persistRuntimeSessionFields(id, { mode: modeId });
     // Some agents (e.g. claude) don't emit a current_mode_update after setSessionMode, so the
     // operator's picker would snap back to the old mode. Echo the change ourselves so the UI
     // reflects the switch immediately (the gateway folds current_mode_update into pm.modes).
@@ -169,6 +292,7 @@ export class ControlPlane {
       this.sessionModels.set(id, next);
       this.emit({ kind: "agent_models", agent: id, current: next.current, available: next.available, ts: now() });
     }
+    await this.persistRuntimeSessionFields(id, { model: modelId });
   }
 
   /** Operator-initiated interrupt: cancel an agent's current turn and record it.
@@ -227,6 +351,13 @@ export class ControlPlane {
       if (record.mailCursor) this.mailCursors.set(agentId, record.mailCursor);
     }
     this.compactMailboxSoon();
+    this.recentMail = (await readRecentAddressedMail({ mailboxPath: this.mailboxPath })).map((event) => ({
+      id: event.id,
+      from: event.from,
+      to: (event.meta as { to?: string }).to!,
+      body: event.body,
+      ts: event.ts,
+    }));
 
     this.mcp = this.meshServicesFactory({
       meshStatus: (ctx) => this.meshStatusText(ctx.agentId),
@@ -298,12 +429,23 @@ export class ControlPlane {
       cwd,
       extraEnv: env,
       debug: this.debug,
-      onUpdate: (u) => this.emit({ kind: "update", agent: a.id, update: u, ts: now() }),
+      onUpdate: (u) => {
+        if (u && (u as any).sessionUpdate === "current_mode_update" && typeof (u as any).currentModeId === "string") {
+          const modeId = (u as any).currentModeId;
+          const modes = this.sessionModes.get(a.id);
+          if (modes) this.sessionModes.set(a.id, { ...modes, current: modeId });
+          this.persistRuntimeSessionFields(a.id, { mode: modeId }).catch((err) => this.log(`persist mode ${a.id}=${modeId} failed: ${String(err)}`));
+        }
+        this.emit({ kind: "update", agent: a.id, update: u, ts: now() });
+      },
       onPermission: (req) => this.handlePermission(a.id, req),
+      onPromptQueued: (turn) => this.noteTurnQueued(turn),
+      onPromptStarted: (turn) => this.noteTurnStarted(turn),
       onExit: (code) => {
         if (this.conns.get(a.id) !== conn) return;
         this.mesh.setStatus(a.id, "dead");
         this.turnCounts.set(a.id, 0);
+        this.clearQueuedTurns(a.id);
         this.emitActivityIfChanged(a.id);
         this.emit({ kind: "agent_status", agent: a.id, status: "dead", detail: `exit ${code}`, ts: now() });
       },
@@ -414,6 +556,7 @@ export class ControlPlane {
       }
       this.mesh.setStatus(a.id, "dead");
       this.conns.delete(a.id);
+      this.clearQueuedTurns(a.id);
       conn.kill();
       this.emitActivityIfChanged(a.id);
       this.emit({ kind: "agent_status", agent: a.id, status: "dead", detail: String(err), ts: now() });
@@ -447,6 +590,7 @@ export class ControlPlane {
         this.conns.get(id)?.kill();
         this.conns.delete(id);
         this.mesh.setStatus(id, "dead");
+        this.clearQueuedTurns(id);
         this.emitActivityIfChanged(id);
         this.emit({ kind: "agent_status", agent: id, status: "dead", detail: `spawn timed out after ${this.spawnTimeoutMs}ms`, ts: now() });
         reject(new Error(`spawn for ${id} timed out after ${this.spawnTimeoutMs}ms`));
@@ -478,13 +622,14 @@ export class ControlPlane {
     text: string,
     images: PromptImageRef[],
     steer: boolean,
+    turn?: AgentTurn,
   ): Promise<unknown> {
     const existing = this.conns.get(id);
     if (existing && this.mesh.status(id) !== "dead" && this.mesh.status(id) !== "cold") {
-      return this.sendPromptWithResumeFallback(id, text, images, steer, existing);
+      return this.sendPromptWithResumeFallback(id, text, images, steer, existing, turn);
     }
     return this.ensureSpawned(id, { manual: true, forceFresh: this.shouldForceFreshForEngagement(id), drainPendingMail: false })
-      .then((conn) => this.sendPromptWithResumeFallback(id, text, images, steer, conn));
+      .then((conn) => this.sendPromptWithResumeFallback(id, text, images, steer, conn, turn));
   }
 
   private async sendPromptWithResumeFallback(
@@ -493,12 +638,13 @@ export class ControlPlane {
     images: PromptImageRef[],
     steer: boolean,
     conn: AcpAgentConnection,
+    turn?: AgentTurn,
   ): Promise<unknown> {
     const prompt = this.compose(id, text);
     try {
       const result = await this.trackTurn(
         id,
-        () => steer ? conn.steerPrompt(prompt, images) : conn.prompt(prompt, images),
+        () => steer ? conn.steerPrompt(prompt, images, turn) : conn.prompt(prompt, images, turn),
       );
       this.resumePendingValidation.delete(id);
       return result;
@@ -595,42 +741,47 @@ export class ControlPlane {
     if (!this.mesh.canMail(ctx.agentId, to)) {
       return `error: you (${ctx.agentId}) are not allowed to mail ${to}`;
     }
-    await sendMail({ mailboxPath: this.mailboxPath, mesh: this.mesh.name, from: ctx.agentId, to, body });
-    this.emit({ kind: "mail", from: ctx.agentId, to, body, ts: now() });
+    const event = await sendMail({ mailboxPath: this.mailboxPath, mesh: this.mesh.name, from: ctx.agentId, to, body });
+    this.pushRecentMail({ id: event.id, from: ctx.agentId, to, body, ts: event.ts });
+    this.emit({ kind: "mail", id: event.id, from: ctx.agentId, to, body, ts: event.ts });
     // Wake the recipient asynchronously (fire-and-forget; sender's tool returns now).
     const target = this.mesh.agent(to);
-    if (target?.lazy && this.mesh.status(to) !== "ready") this.wakeLazy(to, ctx.agentId);
-    else this.wake(to, ctx.agentId, body);
+    if (target?.lazy && this.mesh.status(to) !== "ready") this.wakeLazy(to, ctx.agentId, body, event.id);
+    else this.wake(to, ctx.agentId, body, event.id);
     const note = this.dynamicEdges.has(edgeKey(ctx.agentId, to))
       ? `\nnote: ${to} may have been added after your session started; current status is ${this.mesh.status(to) ?? "unknown"}.`
       : "";
     return `delivered to ${to}${note}`;
   }
 
-  private wakeLazy(to: AgentId, from: AgentId): void {
+  private wakeLazy(to: AgentId, from: AgentId, body: string, mailId?: string): void {
     if ((this.spawnFails.get(to) ?? 0) >= 3) {
       this.sendSpawnFailedReceipt(to, from, "spawn fuse is locked after 3 consecutive failures; use manual wake to retry");
       return;
     }
-    this.ensureSpawned(to, { forceFresh: this.shouldForceFreshForEngagement(to) }).catch((err) => this.sendSpawnFailedReceipt(to, from, String(err)));
+    this.ensureSpawned(to, { forceFresh: this.shouldForceFreshForEngagement(to), drainPendingMail: false })
+      .then(() => this.wake(to, from, body, mailId))
+      .catch((err) => this.sendSpawnFailedReceipt(to, from, String(err)));
   }
 
   private sendSpawnFailedReceipt(to: AgentId, from: AgentId, detail: string): void {
     const body = `[SPAWN FAILED] ${to} could not be started. ${detail}`;
     void sendMail({ mailboxPath: this.mailboxPath, mesh: this.mesh.name, from: to, to: from, body })
-      .then(() => {
-        this.emit({ kind: "mail", from: to, to: from, body, ts: now() });
-        this.wake(from, to, body);
+      .then((event) => {
+        this.pushRecentMail({ id: event.id, from: to, to: from, body, ts: event.ts });
+        this.emit({ kind: "mail", id: event.id, from: to, to: from, body, ts: event.ts });
+        this.wake(from, to, body, event.id);
       })
       .catch((err) => this.log(`spawn failed receipt ${to}->${from} failed: ${String(err)}`));
   }
 
-  private wake(to: AgentId, from: AgentId, body: string): void {
+  private wake(to: AgentId, from: AgentId, body: string, mailId?: string): void {
+    if (mailId && this.consumedMailIds.get(to)?.has(mailId)) return;
     const mail =
       `[MAIL from ${from}]: ${body}\n\n` +
       `This arrived in your mesh mailbox. Read it and respond appropriately; ` +
       `you may reply with the send_mail tool (to: "${from}").`;
-    this.prompt(to, mail).catch((err) => this.log(`wake(${to}) failed: ${String(err)}`));
+    this.prompt(to, mail, [], this.mailTurn(to, from, body, mailId)).catch((err) => this.log(`wake(${to}) failed: ${String(err)}`));
   }
 
   private async handleSteerMail(ctx: MeshToolContext, to: AgentId, body: string): Promise<string> {
@@ -643,7 +794,7 @@ export class ControlPlane {
       const detail = to === this.mesh.router.id ? `cannot steer the router ${to}` : `steer is not enabled from ${ctx.agentId} to ${to}`;
       return `error: ${detail}; use send_mail for ordinary queued delivery`;
     }
-    await sendMail({ mailboxPath: this.mailboxPath, mesh: this.mesh.name, from: ctx.agentId, to, body });
+    await sendMail({ mailboxPath: this.mailboxPath, mesh: this.mesh.name, from: ctx.agentId, to, body, steer: true });
     this.emit({ kind: "steer", from: ctx.agentId, to, body, ts: now() });
     this.steerWake(to, ctx.agentId, body);
     return `steered to ${to}`;
@@ -655,7 +806,8 @@ export class ControlPlane {
       `This interrupted your current turn and was placed ahead of ordinary queued mail. ` +
       `Read it and adjust course appropriately.`;
     const promptImages = images.map((i) => this.resolveImagePath(i));
-    await this.promptWithResumeFallback(to, mail, promptImages, true).catch((err) => this.log(`steerWake(${to}) failed: ${String(err)}`));
+    const turn = this.steerTurn(to, from, body, images);
+    await this.promptWithResumeFallback(to, mail, promptImages, true, turn).catch((err) => this.log(`steerWake(${to}) failed: ${String(err)}`));
   }
 
   private resolveImagePath(image: PromptImageRef): PromptImageRef {
@@ -665,8 +817,19 @@ export class ControlPlane {
 
   private async handleCheckMail(ctx: MeshToolContext): Promise<string> {
     const cursor = this.mailCursors.get(ctx.agentId) ?? this.sessionState.agents[ctx.agentId]?.mailCursor;
-    const mail = await readMailFor(ctx.agentId, { mailboxPath: this.mailboxPath, sinceId: cursor });
-    if (mail.length === 0) return "no new mail";
+    const unread = await readMailFor(ctx.agentId, { mailboxPath: this.mailboxPath, sinceId: cursor });
+    if (unread.length === 0) return "no new mail";
+    // Cap the batch so one call can't blow up the tool result; the cursor only
+    // advances past what is actually returned, so the rest stays unread.
+    const mail: typeof unread = [];
+    let bytes = 0;
+    for (const m of unread) {
+      const size = Buffer.byteLength(m.body, "utf8");
+      if (mail.length > 0 && (mail.length >= this.checkMailMaxCount || bytes + size > this.checkMailMaxBytes)) break;
+      mail.push(m);
+      bytes += size;
+    }
+    const remaining = unread.length - mail.length;
     const nextCursor = mail[mail.length - 1]!.id;
     if (this.sessionRunDir) {
       // Crash safety is at-least-once: if the daemon is killed before this
@@ -674,8 +837,21 @@ export class ControlPlane {
       this.sessionState = await updateAgentMailCursor(this.sessionRunDir, this.mesh.name, ctx.agentId, nextCursor);
     }
     this.mailCursors.set(ctx.agentId, nextCursor);
+    const readIds = new Set(mail.map((m) => m.id));
+    this.rememberConsumedMail(ctx.agentId, readIds);
+    // The agent has now read these mails inside its current turn; cancel their
+    // still-queued wake turns so they neither linger in the UI queue nor start
+    // a duplicate ACP turn later.
+    const conn = this.conns.get(ctx.agentId);
+    if (conn) {
+      for (const turn of conn.removeQueued((t) => t.source === "mail" && !!t.mailId && readIds.has(t.mailId))) {
+        this.noteTurnConsumed(turn);
+      }
+    }
     this.compactMailboxIfOverThreshold();
-    return mail.map((m) => `from ${(m.meta as any)?.from ?? m.from}: ${m.body}`).join("\n");
+    const lines = mail.map((m) => `from ${(m.meta as any)?.from ?? m.from}: ${m.body}`);
+    if (remaining > 0) lines.push(`[${remaining} more message${remaining === 1 ? "" : "s"} pending; call check_mail again to continue]`);
+    return lines.join("\n");
   }
 
   private compactMailboxSoon(): void {

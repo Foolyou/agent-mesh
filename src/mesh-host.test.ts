@@ -93,6 +93,36 @@ test("hello → ack(running, proto, seq); prompt relays a seq'd event; commands 
   expect(got.some((m) => m.t === "stopped")).toBe(true);
 });
 
+test("state-changing commands are applied in socket order", async () => {
+  const sock = join(dir, "ordered.sock");
+  const { cp, calls } = fakeCp();
+  let releaseMode!: () => void;
+  (cp as any).setMode = async (target: string, modeId: string) => {
+    calls.push(`setMode:start:${target}:${modeId}`);
+    await new Promise<void>((resolve) => {
+      releaseMode = resolve;
+    });
+    calls.push(`setMode:done:${target}:${modeId}`);
+  };
+  (cp as any).newSession = async (target: string) => {
+    calls.push(`newSession:${target}`);
+  };
+  daemon = new MeshHostDaemon(cp, { socketPath: sock });
+  await daemon.listen();
+  daemon.markReady();
+
+  const { send } = await connect(sock);
+  send({ t: "hello", proto: PROTO_VERSION, resumeFrom: 0 });
+  send({ t: "setMode", target: "codex-1", modeId: "plan" });
+  send({ t: "newSession", target: "codex-1" });
+  await Bun.sleep(50);
+  expect(calls).toEqual(["setMode:start:codex-1:plan"]);
+
+  releaseMode();
+  await Bun.sleep(50);
+  expect(calls).toEqual(["setMode:start:codex-1:plan", "setMode:done:codex-1:plan", "newSession:codex-1"]);
+});
+
 test("events emitted before connect are replayed on hello(resumeFrom)", async () => {
   const sock = join(dir, "replay.sock");
   const { cp, emit } = fakeCp();

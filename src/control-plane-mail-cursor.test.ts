@@ -45,6 +45,9 @@ class CursorConnection {
   async steerPrompt(text: string): Promise<unknown> {
     return this.prompt(text);
   }
+  removeQueued(): unknown[] {
+    return [];
+  }
   async setMode(): Promise<void> {}
   async setModel(): Promise<void> {}
   async cancel(): Promise<void> {}
@@ -83,6 +86,98 @@ test("check_mail persists a recipient cursor and cold restart returns only later
     expect(await (second as any).handleCheckMail({ agentId: "member", role: "member" })).toBe("from router: new");
     await second.stop();
   } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("snapshotEvents replays recent durable mail (with stable ids) across a control-plane restart", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mesh-mail-snapshot-"));
+  const mailboxPath = join(root, "mailbox.ndjson");
+  const runDir = join(root, "run");
+  const makePlane = () =>
+    new ControlPlane(config, {
+      mailboxPath,
+      sessionRunDir: runDir,
+      connectionFactory: (opts) => new CursorConnection(opts) as unknown as AcpAgentConnection,
+    });
+
+  try {
+    const first = makePlane();
+    const liveEvents: any[] = [];
+    first.on((e) => liveEvents.push(e));
+    await first.start();
+    await (first as any).handleSendMail({ agentId: "router", role: "router" }, "member", "hello there");
+    const liveMail = liveEvents.find((e) => e.kind === "mail");
+    expect(liveMail.id).toBeString();
+    expect(first.snapshotEvents()).toContainEqual(
+      expect.objectContaining({ kind: "mail", id: liveMail.id, from: "router", to: "member", body: "hello there" }),
+    );
+    await first.stop();
+
+    const second = makePlane();
+    await second.start();
+    expect(second.snapshotEvents()).toContainEqual(
+      expect.objectContaining({ kind: "mail", id: liveMail.id, from: "router", to: "member", body: "hello there" }),
+    );
+    await second.stop();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("check_mail caps a batch by count, advances cursor only past returned mail, and reports the remainder", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mesh-mail-batch-count-"));
+  const cp = new ControlPlane(config, {
+    mailboxPath: join(root, "mailbox.ndjson"),
+    sessionRunDir: join(root, "run"),
+    checkMailMaxCount: 2,
+    connectionFactory: (opts) => new CursorConnection(opts) as unknown as AcpAgentConnection,
+  });
+
+  try {
+    await cp.start();
+    for (const body of ["one", "two", "three"]) {
+      await (cp as any).handleSendMail({ agentId: "router", role: "router" }, "member", body);
+    }
+    const first = await (cp as any).handleCheckMail({ agentId: "member", role: "member" });
+    expect(first).toContain("from router: one");
+    expect(first).toContain("from router: two");
+    expect(first).not.toContain("from router: three");
+    expect(first).toContain("1 more message");
+
+    const second = await (cp as any).handleCheckMail({ agentId: "member", role: "member" });
+    expect(second).toBe("from router: three");
+    expect(await (cp as any).handleCheckMail({ agentId: "member", role: "member" })).toBe("no new mail");
+  } finally {
+    await cp.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("check_mail caps a batch by bytes but always returns at least one mail", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mesh-mail-batch-bytes-"));
+  const cp = new ControlPlane(config, {
+    mailboxPath: join(root, "mailbox.ndjson"),
+    sessionRunDir: join(root, "run"),
+    checkMailMaxBytes: 64,
+    connectionFactory: (opts) => new CursorConnection(opts) as unknown as AcpAgentConnection,
+  });
+
+  try {
+    await cp.start();
+    const big = "x".repeat(100);
+    await (cp as any).handleSendMail({ agentId: "router", role: "router" }, "member", big);
+    await (cp as any).handleSendMail({ agentId: "router", role: "router" }, "member", "small");
+
+    const first = await (cp as any).handleCheckMail({ agentId: "member", role: "member" });
+    expect(first).toContain(big);
+    expect(first).not.toContain("from router: small");
+    expect(first).toContain("1 more message");
+
+    const second = await (cp as any).handleCheckMail({ agentId: "member", role: "member" });
+    expect(second).toBe("from router: small");
+  } finally {
+    await cp.stop();
     await rm(root, { recursive: true, force: true });
   }
 });

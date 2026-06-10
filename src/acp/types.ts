@@ -84,6 +84,23 @@ export interface PromptImageRef {
   path?: string;
 }
 
+export type AgentTurnSource = "operator" | "mail" | "steer";
+
+export interface AgentTurn {
+  id: string;
+  agent: AgentId;
+  source: AgentTurnSource;
+  text: string;
+  preview: string;
+  ts: string;
+  images?: PromptImageRef[];
+  from?: AgentId | "operator";
+  to?: AgentId;
+  /** Durable mailbox event id for mail-wake turns; lets check_mail cancel the
+   *  still-queued wake once the mail has been read inside another turn. */
+  mailId?: string;
+}
+
 export type MeshEvent =
   | { kind: "agent_status"; agent: AgentId; status: AgentStatus; detail?: string; ts: string }
   | { kind: "agent_activity"; agent: AgentId; activity: AgentActivity; ts: string }
@@ -91,7 +108,8 @@ export type MeshEvent =
   | { kind: "agent_modes"; agent: AgentId; current: string; available: SessionMode[]; ts: string }
   | { kind: "agent_models"; agent: AgentId; current: string; available: SessionModel[]; ts: string }
   | { kind: "agent_capabilities"; agent: AgentId; image: boolean; ts: string }
-  | { kind: "mail"; from: AgentId; to: AgentId; body: string; ts: string }
+  | { kind: "agent_turn"; phase: "queued" | "started" | "consumed"; turn: AgentTurn; ts: string }
+  | { kind: "mail"; from: AgentId; to: AgentId; body: string; ts: string; id?: string }
   | { kind: "steer"; from: AgentId | "operator"; to: AgentId; body: string; ts: string }
   | {
       kind: "permission";

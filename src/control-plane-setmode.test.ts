@@ -135,8 +135,12 @@ class ResumeConnection {
     this.loadCalls.push({ sessionId, cwd, mcpServers });
     return sessionSetup(sessionId);
   }
-  async prompt(text: string): Promise<unknown> {
+  async prompt(text: string, _images?: unknown, turn?: any): Promise<unknown> {
     this.prompts.push(text);
+    if (turn) {
+      this.opts.onPromptQueued?.(turn);
+      this.opts.onPromptStarted?.(turn);
+    }
     if (this.promptFailuresRemaining > 0) {
       this.promptFailuresRemaining--;
       throw new Error("prompt failed");
@@ -437,6 +441,21 @@ test("snapshotEvents backfills current status, activity, capabilities, and modes
         { id: "plan", name: "Plan", description: undefined },
       ],
     }));
+    (cp as any).noteTurnQueued({
+      id: "queued-turn",
+      agent: "router",
+      source: "operator",
+      from: "operator",
+      to: "router",
+      text: "queued work",
+      preview: "you: queued work",
+      ts: "T",
+    });
+    expect(cp.snapshotEvents()).toContainEqual(expect.objectContaining({
+      kind: "agent_turn",
+      phase: "queued",
+      turn: expect.objectContaining({ id: "queued-turn", agent: "router", preview: "you: queued work" }),
+    }));
 
     (cp as any).mesh.setStatus("router", "dead");
     expect(cp.snapshotEvents()).toContainEqual(expect.objectContaining({ kind: "agent_status", agent: "router", status: "dead" }));
@@ -572,6 +591,43 @@ test("start loads a saved session when supported and skips mesh briefing", async
   }
 });
 
+test("runtime mode selection is persisted for fresh and loaded replacement sessions", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mesh-control-plane-runtime-mode-"));
+  const runDir = join(root, "run");
+  const config: MeshConfig = {
+    name: "runtime-mode",
+    agents: [{ id: "router", harness: "codex", project: root, role: "router", mode: "build", effort: "medium" }],
+    edges: [],
+  };
+  const created: ResumeConnection[] = [];
+  const cp = new ControlPlane(config, {
+    mailboxPath: join(root, "mailbox.ndjson"),
+    sessionRunDir: runDir,
+    connectionFactory: (opts) => {
+      const conn = new ResumeConnection(opts, { supportsLoadSession: true });
+      created.push(conn);
+      return conn as unknown as AcpAgentConnection;
+    },
+  });
+
+  try {
+    await cp.start();
+    expect(created[0].setModes).toEqual(["build"]);
+
+    await cp.setMode("router", "plan");
+    expect((await readSessionState(runDir, config.name)).agents.router.mode).toBe("plan");
+
+    await cp.newSession("router");
+    expect(created).toHaveLength(2);
+    expect(created[1].newSessionCount).toBe(1);
+    expect(created[1].setModes).toEqual(["plan"]);
+    expect((await readSessionState(runDir, config.name)).agents.router.mode).toBe("plan");
+  } finally {
+    await cp.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("load error falls back to a fresh session that receives briefing", async () => {
   const root = await mkdtemp(join(tmpdir(), "mesh-control-plane-load-error-"));
   const runDir = join(root, "run");
@@ -632,12 +688,63 @@ test("first prompt after load failure fresh-starts and retries the same prompt o
 
   try {
     await cp.start();
+    const events: any[] = [];
+    cp.on((event) => events.push(event));
     await cp.prompt("router", "do not lose this");
     expect(created).toHaveLength(2);
     expect(created[0].prompts).toEqual(["do not lose this"]);
     expect(created[1].newSessionCount).toBe(1);
     expect(created[1].prompts[0]).toContain("[MESH BRIEFING]");
     expect(created[1].prompts[0]).toContain("do not lose this");
+    expect(events.filter((e) => e.kind === "agent_turn" && e.phase === "started" && e.turn.agent === "router")).toHaveLength(1);
+  } finally {
+    await cp.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("agent exit clears queued turns from snapshots", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mesh-control-plane-exit-queue-"));
+  let routerOpts: AcpConnectionOptions | undefined;
+  const config: MeshConfig = {
+    name: "exit-queue",
+    agents: [{ id: "router", harness: "codex", project: root, role: "router" }],
+    edges: [],
+  };
+  const cp = new ControlPlane(config, {
+    mailboxPath: join(root, "mailbox.ndjson"),
+    connectionFactory: (opts) => {
+      routerOpts = opts;
+      return new FakeAcpConnection(opts) as unknown as AcpAgentConnection;
+    },
+  });
+
+  try {
+    await cp.start();
+    routerOpts!.onPromptQueued?.({
+      id: "queued-before-exit",
+      agent: "router",
+      source: "operator",
+      text: "will never start",
+      preview: "you: will never start",
+      ts: "T",
+    });
+    expect(cp.snapshotEvents()).toContainEqual(
+      expect.objectContaining({
+        kind: "agent_turn",
+        phase: "queued",
+        turn: expect.objectContaining({ id: "queued-before-exit" }),
+      }),
+    );
+
+    routerOpts!.onExit?.(9);
+    expect(cp.snapshotEvents()).not.toContainEqual(
+      expect.objectContaining({
+        kind: "agent_turn",
+        phase: "queued",
+        turn: expect.objectContaining({ id: "queued-before-exit" }),
+      }),
+    );
   } finally {
     await cp.stop();
     await rm(root, { recursive: true, force: true });

@@ -19,7 +19,7 @@ function seed(): GatewayState {
     ],
     master: { status: "ready", transcript: [] },
     perMesh: {
-      demo: { config: { name: "demo", agents: [], edges: [] }, transcripts: {}, activity: [], mail: [], pending: [], history: [], modes: {}, models: {}, capabilities: {} },
+      demo: { config: { name: "demo", agents: [], edges: [] }, transcripts: {}, activity: [], mail: [], pending: [], history: [], modes: {}, models: {}, capabilities: {}, queues: {} },
     },
   };
 }
@@ -109,6 +109,16 @@ test("activity and mail append to lists", () => {
   expect(s.perMesh.demo.activity).toHaveLength(1);
   s = applyMsg(s, { t: "mail", name: "demo", entry: { id: "ml1", ts: "T", from: "router", to: "codex-1", body: "x" } });
   expect(s.perMesh.demo.mail).toHaveLength(1);
+});
+
+test("agent.queue updates the per-agent queue summary", () => {
+  const s = applyMsg(seed(), {
+    t: "agent.queue",
+    name: "demo",
+    agent: "codex-1",
+    summary: { count: 2, latestPreview: "you: review this" },
+  });
+  expect(s.perMesh.demo.queues["codex-1"]).toEqual({ count: 2, latestPreview: "you: review this" });
 });
 
 test("permission add then remove updates pending + history", () => {

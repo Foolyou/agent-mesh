@@ -42,6 +42,7 @@ const FAKE_MODELS = [
 export class FakeManager {
   private listeners = new Set<(name: string, e: MeshEvent) => void>();
   private meshes = new Map<string, Entry>();
+  private turnSeq = 0;
   /** current mode per `${mesh}:${agent}` so setMode reflects back into the picker */
   private modeOf = new Map<string, string>();
   /** current model per `${mesh}:${agent}` so setModel reflects back into the picker */
@@ -60,6 +61,14 @@ export class FakeManager {
   }
   private update(name: string, agent: AgentId, update: unknown): void {
     this.emit(name, { kind: "update", agent, update, ts: now() });
+  }
+  private preview(who: string, text: string): string {
+    return `${who}: ${text.replace(/\s+/g, " ").trim().slice(0, 160)}`;
+  }
+  private startTurn(name: string, agent: AgentId, turn: Record<string, unknown>): void {
+    const payload = { id: `fake-turn-${++this.turnSeq}`, agent, ts: now(), ...turn } as any;
+    this.emit(name, { kind: "agent_turn", phase: "queued", turn: payload, ts: now() });
+    this.emit(name, { kind: "agent_turn", phase: "started", turn: payload, ts: now() });
   }
   private require(name: string): Entry {
     const e = this.meshes.get(name);
@@ -141,13 +150,16 @@ export class FakeManager {
   }
 
   async promptRouter(name: string, text: string, _images = []): Promise<void> {
+    this.startTurn(name, "router", { source: "operator", from: "operator", to: "router", text, preview: this.preview("you", text) });
     void this.reply(name, "router", `Understood — "${text}". Coordinating the members now.`);
   }
   promptAgent(name: string, agentId: string, text: string, _images = []): void {
+    this.startTurn(name, agentId, { source: "operator", from: "operator", to: agentId, text, preview: this.preview("you", text) });
     void this.reply(name, agentId, `[${agentId}] working on: ${text}`);
   }
   steerAgent(name: string, agentId: string, text: string, _images = []): void {
     this.emit(name, { kind: "steer", from: "operator", to: agentId, body: text, ts: now() });
+    this.startTurn(name, agentId, { source: "steer", from: "operator", to: agentId, text, preview: this.preview("you", text) });
     void this.reply(name, agentId, `[${agentId}] steering to: ${text}`);
   }
   resolvePermission(name: string, requestId: string, optionId: string): void {
@@ -278,6 +290,13 @@ export class FakeManager {
     // inter-agent mail
     await sleep(300);
     this.emit(name, { kind: "mail", from: "codex-1", to: "opencode-1", body: "core implemented — please review src/calc.ts", ts: now() });
+    this.startTurn(name, "opencode-1", {
+      source: "mail",
+      from: "codex-1",
+      to: "opencode-1",
+      text: "core implemented — please review src/calc.ts",
+      preview: this.preview("codex-1", "core implemented — please review src/calc.ts"),
+    });
     await this.reply(name, "opencode-1", "Reviewing the diff for codex-1 now…");
 
     // a permission escalation (resolve from the UI to continue)

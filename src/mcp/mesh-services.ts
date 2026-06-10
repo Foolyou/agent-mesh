@@ -5,7 +5,6 @@
 import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
-import { randomUUID } from "node:crypto";
 import type { AgentId, AgentRole } from "../acp/types";
 
 export interface MeshToolContext {
@@ -29,13 +28,36 @@ export interface MeshServicesServer {
   close(): void;
 }
 
+export interface MeshToolLogEntry {
+  event: "tool_start" | "tool_end";
+  agent: AgentId;
+  tool: string;
+  requestId: string;
+  ts: string;
+  durationMs?: number;
+  ok?: boolean;
+  error?: string;
+}
+
 export function createMeshServicesServer(opts: {
   port?: number;
   host?: string;
   handlers: MeshServicesHandlers;
+  /** Structured per-tool-call log sink; defaults to a JSON line on stderr. */
+  log?: (entry: MeshToolLogEntry) => void;
+  /** A tool handler exceeding this returns an explicit error instead of pending forever. */
+  toolTimeoutMs?: number;
 }): MeshServicesServer {
   const host = opts.host ?? "127.0.0.1";
-  const entries = new Map<AgentId, { server: McpServer; transport: WebStandardStreamableHTTPServerTransport }>();
+  const log = opts.log ?? ((entry: MeshToolLogEntry) => console.error(`[mesh-services] ${JSON.stringify(entry)}`));
+  const toolTimeoutMs = opts.toolTimeoutMs ?? 10_000;
+  let requestSeq = 0;
+  // Registration only records who may connect; servers are built per request.
+  // Harnesses open MULTIPLE MCP sessions per agent process (claude runs an internal
+  // probe session before the real one, plus reconnects/respawns), so the tool server
+  // must be stateless: a single stateful transport rejects every initialize after the
+  // first with "Server already initialized", silently stripping the agent's mesh tools.
+  const entries = new Map<AgentId, { role: AgentRole; steerTargets: string[] }>();
 
   const httpServer = Bun.serve({
     port: opts.port ?? 0,
@@ -48,29 +70,68 @@ export function createMeshServicesServer(opts: {
       const agentId = decodeURIComponent(match[1]);
       const entry = entries.get(agentId);
       if (!entry) return new Response("unknown agent", { status: 404 });
-      return entry.transport.handleRequest(req);
+      // Stateless mode requires a fresh transport (and thus server) per request.
+      const server = buildServer(agentId, entry);
+      const transport = new WebStandardStreamableHTTPServerTransport({
+        sessionIdGenerator: undefined,
+        enableJsonResponse: true,
+      });
+      await server.connect(transport);
+      try {
+        return await transport.handleRequest(req);
+      } finally {
+        queueMicrotask(() => {
+          void server.close().catch(() => {});
+          void transport.close().catch(() => {});
+        });
+      }
     },
   });
 
   const text = (t: string) => ({ content: [{ type: "text" as const, text: t }] });
 
-  async function register(agentId: AgentId, role: AgentRole): Promise<void> {
-    // A re-register happens on every agent respawn; tear down the prior transport
-    // so its bound MCP session is released and we don't leak one server per respawn.
-    const prev = entries.get(agentId);
-    if (prev) {
-      entries.delete(agentId);
-      await prev.server.close().catch(() => {});
-      await prev.transport.close().catch(() => {});
+  /** Run a tool handler with structured start/end logging and a local timeout, so a
+   *  stuck control plane surfaces as a fast explicit error instead of a hung MCP call. */
+  async function guarded(agentId: AgentId, tool: string, run: () => Promise<string> | string) {
+    const requestId = `${agentId}-${tool}-${++requestSeq}`;
+    const startedAt = Date.now();
+    log({ event: "tool_start", agent: agentId, tool, requestId, ts: new Date().toISOString() });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const result = await Promise.race([
+        Promise.resolve().then(run),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error(`${tool} timed out after ${toolTimeoutMs}ms`)), toolTimeoutMs);
+        }),
+      ]);
+      log({ event: "tool_end", agent: agentId, tool, requestId, ts: new Date().toISOString(), durationMs: Date.now() - startedAt, ok: true });
+      return text(result);
+    } catch (err) {
+      log({
+        event: "tool_end",
+        agent: agentId,
+        tool,
+        requestId,
+        ts: new Date().toISOString(),
+        durationMs: Date.now() - startedAt,
+        ok: false,
+        error: String(err),
+      });
+      return text(`error: ${String(err instanceof Error ? err.message : err)}`);
+    } finally {
+      clearTimeout(timer);
     }
+  }
 
+  function buildServer(agentId: AgentId, entry: { role: AgentRole; steerTargets: string[] }): McpServer {
+    const { role, steerTargets } = entry;
     const server = new McpServer({ name: "mesh-services", version: "0.1.0" });
     const ctx: MeshToolContext = { agentId, role };
 
     server.registerTool(
       "mesh_status",
       { description: "Report the current state of the mesh you belong to, including each peer's busy/idle activity." },
-      async () => text(await opts.handlers.meshStatus(ctx)),
+      () => guarded(agentId, "mesh_status", () => opts.handlers.meshStatus(ctx)),
     );
 
     server.registerTool(
@@ -83,10 +144,9 @@ export function createMeshServicesServer(opts: {
           body: z.string().describe("message body"),
         },
       },
-      async ({ to, body }) => text(await opts.handlers.sendMail(ctx, to, body)),
+      ({ to, body }) => guarded(agentId, "send_mail", () => opts.handlers.sendMail(ctx, to, body)),
     );
 
-    const steerTargets = await opts.handlers.steerTargets(ctx);
     server.registerTool(
       "steer_mail",
       {
@@ -99,13 +159,13 @@ export function createMeshServicesServer(opts: {
           body: z.string().describe("message body"),
         },
       },
-      async ({ to, body }) => text(await opts.handlers.steerMail(ctx, to, body)),
+      ({ to, body }) => guarded(agentId, "steer_mail", () => opts.handlers.steerMail(ctx, to, body)),
     );
 
     server.registerTool(
       "check_mail",
       { description: "Read messages other agents have sent you since you last checked." },
-      async () => text(await opts.handlers.checkMail(ctx)),
+      () => guarded(agentId, "check_mail", () => opts.handlers.checkMail(ctx)),
     );
 
     // Router-only: interrupting another agent's run.
@@ -120,16 +180,17 @@ export function createMeshServicesServer(opts: {
             reason: z.string().optional().describe("why"),
           },
         },
-        async ({ target, reason }) => text(await opts.handlers.interrupt(ctx, target, reason)),
+        ({ target, reason }) => guarded(agentId, "interrupt", () => opts.handlers.interrupt(ctx, target, reason)),
       );
     }
 
-    const transport = new WebStandardStreamableHTTPServerTransport({
-      sessionIdGenerator: () => randomUUID(),
-      enableJsonResponse: true,
-    });
-    await server.connect(transport);
-    entries.set(agentId, { server, transport });
+    return server;
+  }
+
+  // Re-registering (every respawn does) refreshes the steer-target snapshot.
+  async function register(agentId: AgentId, role: AgentRole): Promise<void> {
+    const steerTargets = await opts.handlers.steerTargets({ agentId, role });
+    entries.set(agentId, { role, steerTargets });
   }
 
   return {

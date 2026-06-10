@@ -109,6 +109,11 @@ export interface MailEntry {
   body: string;
 }
 
+export interface QueueSummary {
+  count: number;
+  latestPreview?: string;
+}
+
 export interface PerMeshState {
   config: MeshConfig;
   transcripts: Record<AgentId, TranscriptItem[]>;
@@ -122,6 +127,7 @@ export interface PerMeshState {
   models: Record<AgentId, AgentModels>;
   /** Per-agent prompt capabilities, populated while the mesh runs. */
   capabilities: Record<AgentId, AgentCapabilities>;
+  queues: Record<AgentId, QueueSummary>;
 }
 
 export type MasterStatus = "absent" | "starting" | "ready" | "stopped";
@@ -141,6 +147,7 @@ export type ServerMsg =
   | { t: "agent.modes"; name: string; agent: AgentId; current: string; available: SessionMode[] }
   | { t: "agent.models"; name: string; agent: AgentId; current: string; available: SessionModel[] }
   | { t: "agent.capabilities"; name: string; agent: AgentId; image: boolean }
+  | { t: "agent.queue"; name: string; agent: AgentId; summary: QueueSummary }
   | { t: "master.capabilities"; image: boolean }
   | { t: "transcript.upsert"; conv: ConvRef; item: TranscriptItem }
   | { t: "transcript.patch"; conv: ConvRef; id: string; patch: Partial<TranscriptItem> }

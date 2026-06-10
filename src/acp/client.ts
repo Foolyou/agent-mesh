@@ -9,7 +9,7 @@ import {
   PROTOCOL_VERSION,
   type Client,
 } from "@zed-industries/agent-client-protocol";
-import type { PromptImageRef } from "./types";
+import type { AgentTurn, PromptImageRef } from "./types";
 
 export type PermissionDecision = { optionId: string } | "cancel";
 
@@ -89,6 +89,8 @@ export interface AcpConnectionOptions {
   debug?: boolean;
   /** extra env layered on top of the stripped host env (e.g. MAX_THINKING_TOKENS for claude) */
   extraEnv?: Record<string, string>;
+  onPromptQueued?: (turn: AgentTurn) => void;
+  onPromptStarted?: (turn: AgentTurn) => void;
 }
 
 type PromptPlacement = "back" | "front";
@@ -96,6 +98,7 @@ type QueuedPrompt = {
   text: string;
   images: PromptImageRef[];
   priority: "normal" | "steer";
+  turn?: AgentTurn;
   resolve: (r: any) => void;
   reject: (e: any) => void;
 };
@@ -222,8 +225,8 @@ export class AcpAgentConnection {
    * (e.g. the agent was woken by mail while still working), the new prompt is
    * queued rather than sent concurrently (ACP allows one prompt turn at a time).
    */
-  prompt(text: string, images: PromptImageRef[] = []): Promise<any> {
-    return this.enqueuePrompt(text, images, "back");
+  prompt(text: string, images: PromptImageRef[] = [], turn?: AgentTurn): Promise<any> {
+    return this.enqueuePrompt(text, images, "back", turn);
   }
 
   /**
@@ -232,21 +235,21 @@ export class AcpAgentConnection {
    * in-flight turn settles and pump() runs, steer is already at the head. ACP
    * writes cancel before the later prompt; if no turn is in flight, cancel is a no-op.
    */
-  steerPrompt(text: string, images: PromptImageRef[] = []): Promise<any> {
+  steerPrompt(text: string, images: PromptImageRef[] = [], turn?: AgentTurn): Promise<any> {
     const wasBusy = this.busy;
-    const turn = this.enqueuePrompt(text, images, "front");
+    const queued = this.enqueuePrompt(text, images, "front", turn);
     if (wasBusy) {
       this.cancel().catch((err) => {
         console.warn(`${this.id}: steer cancel failed: ${String(err)}`);
       });
     }
-    return turn;
+    return queued;
   }
 
-  private enqueuePrompt(text: string, images: PromptImageRef[], placement: PromptPlacement): Promise<any> {
+  private enqueuePrompt(text: string, images: PromptImageRef[], placement: PromptPlacement, turn?: AgentTurn): Promise<any> {
     if (!this.sessionId) throw new Error(`${this.id}: no session`);
     return new Promise((resolve, reject) => {
-      const job: QueuedPrompt = { text, images, priority: placement === "front" ? "steer" : "normal", resolve, reject };
+      const job: QueuedPrompt = { text, images, priority: placement === "front" ? "steer" : "normal", turn, resolve, reject };
       if (placement === "front") {
         const firstNormal = this.queue.findIndex((queued) => queued.priority !== "steer");
         if (firstNormal === -1) this.queue.push(job);
@@ -254,8 +257,23 @@ export class AcpAgentConnection {
       } else {
         this.queue.push(job);
       }
+      if (turn) this.opts.onPromptQueued?.(turn);
       void this.pump();
     });
+  }
+
+  /** Drop queued (not yet started) prompt turns matching `predicate`. Each removed
+   *  job's promise resolves with `{ stopReason: "superseded" }` so fire-and-forget
+   *  callers settle cleanly. The in-flight turn is never touched. */
+  removeQueued(predicate: (turn: AgentTurn) => boolean): AgentTurn[] {
+    const removed: AgentTurn[] = [];
+    this.queue = this.queue.filter((job) => {
+      if (!job.turn || !predicate(job.turn)) return true;
+      removed.push(job.turn);
+      job.resolve({ stopReason: "superseded" });
+      return false;
+    });
+    return removed;
   }
 
   private async pump(): Promise<void> {
@@ -263,6 +281,7 @@ export class AcpAgentConnection {
     const job = this.queue.shift();
     if (!job) return;
     this.busy = true;
+    if (job.turn) this.opts.onPromptStarted?.(job.turn);
     try {
       const prompt: any[] = [{ type: "text", text: job.text }];
       for (const image of job.images) {

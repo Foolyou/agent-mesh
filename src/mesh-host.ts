@@ -56,6 +56,7 @@ export class MeshHostDaemon {
   private readonly ringCap: number;
   private readonly leaseMs: number;
   private readonly startupGraceMs: number;
+  private commandQueue: Promise<void> = Promise.resolve();
 
   constructor(
     private cp: BridgeControlPlane,
@@ -101,6 +102,11 @@ export class MeshHostDaemon {
     } catch {
       /* client went away mid-write */
     }
+  }
+
+  private enqueue(action: () => Promise<void> | void): void {
+    const run = this.commandQueue.then(() => action());
+    this.commandQueue = run.catch(() => {});
   }
 
   private attach(sock: net.Socket): void {
@@ -150,19 +156,19 @@ export class MeshHostDaemon {
         this.cp.resolveDecision(msg.requestId, msg.optionId, "human");
         break;
       case "setMode":
-        this.cp.setMode(msg.target, msg.modeId).catch(() => {});
+        this.enqueue(() => this.cp.setMode(msg.target, msg.modeId));
         break;
       case "setModel":
-        this.cp.setModel(msg.target, msg.modelId).catch(() => {});
+        this.enqueue(() => this.cp.setModel(msg.target, msg.modelId));
         break;
       case "interrupt":
         this.cp.interrupt(msg.target).catch(() => {});
         break;
       case "newSession":
-        this.cp.newSession(msg.target).catch(() => {});
+        this.enqueue(() => this.cp.newSession(msg.target));
         break;
       case "newAllSessions":
-        this.cp.newAllSessions().catch(() => {});
+        this.enqueue(() => this.cp.newAllSessions());
         break;
       case "wake":
         this.cp.wakeAgent(msg.target).catch(() => {});

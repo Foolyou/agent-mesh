@@ -202,3 +202,67 @@ test("consecutive steerPrompt jobs stay FIFO and ahead of normal queued prompts"
   await a;
   await b;
 });
+
+test("removeQueued drops matching queued jobs without touching the in-flight turn", async () => {
+  const sent: string[] = [];
+  const turns = [deferred<any>(), deferred<any>()];
+  const c = Object.create(AcpAgentConnection.prototype) as AcpAgentConnection;
+  (c as any).id = "a";
+  (c as any).sessionId = "s";
+  (c as any).busy = false;
+  (c as any).queue = [];
+  (c as any).opts = {};
+  (c as any).conn = {
+    prompt: ({ prompt }: any) => {
+      sent.push(prompt[0].text);
+      return turns[sent.length - 1]!.promise;
+    },
+  };
+
+  const a = c.prompt("A", [], { id: "a-turn", source: "mail", mailId: "m-a" } as any);
+  const b = c.prompt("B", [], { id: "b-turn", source: "mail", mailId: "m-b" } as any);
+  const d = c.prompt("C", [], { id: "c-turn", source: "operator" } as any);
+  await waitFor(() => sent.length === 1);
+
+  const removed = c.removeQueued((turn) => turn.source === "mail");
+  expect(removed.map((t) => t.id)).toEqual(["b-turn"]);
+  expect(await b).toEqual({ stopReason: "superseded" });
+
+  turns[0]!.resolve({ stopReason: "end_turn" });
+  await a;
+  await waitFor(() => sent.length === 2);
+  expect(sent).toEqual(["A", "C"]);
+  turns[1]!.resolve({ stopReason: "end_turn" });
+  await d;
+});
+
+test("prompt queue emits queued immediately and started when a job reaches pump", async () => {
+  const events: string[] = [];
+  const turns = [deferred<any>(), deferred<any>()];
+  const c = Object.create(AcpAgentConnection.prototype) as AcpAgentConnection;
+  (c as any).id = "a";
+  (c as any).sessionId = "s";
+  (c as any).busy = false;
+  (c as any).queue = [];
+  (c as any).opts = {
+    onPromptQueued: (meta: any) => events.push(`queued:${meta.id}`),
+    onPromptStarted: (meta: any) => events.push(`started:${meta.id}`),
+  };
+  (c as any).conn = {
+    prompt: () => turns[events.filter((e) => e.startsWith("started:")).length - 1]!.promise,
+  };
+
+  const a = c.prompt("A", [], { id: "a-turn" } as any);
+  const b = c.prompt("B", [], { id: "b-turn" } as any);
+
+  await waitFor(() => events.includes("started:a-turn"));
+  expect(events).toEqual(["queued:a-turn", "started:a-turn", "queued:b-turn"]);
+
+  turns[0]!.resolve({ stopReason: "end_turn" });
+  await a;
+  await waitFor(() => events.includes("started:b-turn"));
+  expect(events).toEqual(["queued:a-turn", "started:a-turn", "queued:b-turn", "started:b-turn"]);
+
+  turns[1]!.resolve({ stopReason: "end_turn" });
+  await b;
+});

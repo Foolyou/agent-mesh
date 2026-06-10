@@ -487,6 +487,7 @@ export function MeshCanvas({
               <div className="canvas-window-body">
                 <ChatPane
                   items={pm.transcripts[agent.id] ?? []}
+                  queue={pm.queues?.[agent.id]}
                   author={{ meshId: m.name, agent: agent.id }}
                   placeholder={isRouter ? t("router.placeholder") : t("agent.placeholder", { id: agent.id })}
                   imageEnabled={!!pm.capabilities?.[agent.id]?.image}

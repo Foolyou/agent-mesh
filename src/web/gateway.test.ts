@@ -135,7 +135,7 @@ test("permission add then resolved updates pending + history + activity", () => 
   expect(s.perMesh.demo.activity.some((a) => a.kind === "permission_resolved")).toBe(true);
 });
 
-test("mail event emits both activity and mail entries", () => {
+test("mail event emits both activity and mail entries without folding into transcript yet", () => {
   const m = fakeManager();
   const gw = new WebGateway(m as any);
   const got: any[] = [];
@@ -146,9 +146,22 @@ test("mail event emits both activity and mail entries", () => {
   expect(s.perMesh.demo.activity.some((a) => a.kind === "mail")).toBe(true);
   expect(got.some((x) => x.t === "mail")).toBe(true);
   expect(got.some((x) => x.t === "activity")).toBe(true);
-  // mail is ALSO folded inline into the recipient's conversation, labeled with the sender
-  expect(got.some((x) => x.t === "transcript.upsert" && x.conv.scope === "agent" && x.conv.agent === "codex-1" && x.item.kind === "mail" && x.item.from === "router")).toBe(true);
-  expect((s.perMesh.demo.transcripts["codex-1"] ?? []).some((i: any) => i.kind === "mail" && i.from === "router")).toBe(true);
+  expect(got.some((x) => x.t === "transcript.upsert" && x.conv.scope === "agent" && x.conv.agent === "codex-1" && x.item.kind === "mail")).toBe(false);
+  expect((s.perMesh.demo.transcripts["codex-1"] ?? []).some((i: any) => i.kind === "mail" && i.from === "router")).toBe(false);
+});
+
+test("mail events carrying a durable id are deduplicated across snapshot replays", () => {
+  const m = fakeManager();
+  const gw = new WebGateway(m as any);
+  const got: any[] = [];
+  gw.subscribe((msg) => got.push(msg));
+  m.emit("demo", { kind: "mail", id: "durable-1", from: "router", to: "codex-1", body: "ping", ts: "T" } as any);
+  m.emit("demo", { kind: "mail", id: "durable-1", from: "router", to: "codex-1", body: "ping", ts: "T" } as any);
+  const s = gw.snapshot();
+  expect(s.perMesh.demo.mail).toHaveLength(1);
+  expect(s.perMesh.demo.mail[0].id).toBe("durable-1");
+  expect(got.filter((x) => x.t === "mail").length).toBe(1);
+  expect(s.perMesh.demo.activity.filter((a) => a.kind === "mail")).toHaveLength(1);
 });
 
 test("steer event emits a visible activity entry", () => {
@@ -162,12 +175,93 @@ test("steer event emits a visible activity entry", () => {
   expect(got.some((x) => x.t === "activity" && x.entry.kind === "steer")).toBe(true);
 });
 
-test("steerAgent echoes a user message and delegates to the manager", () => {
+test("steerAgent delegates to the manager without immediate transcript echo", () => {
   const m = fakeManager();
   const gw = new WebGateway(m as any);
   gw.steerAgent("demo", "codex-1", "urgent");
   expect(m.calls).toContainEqual(["steerAgent", "demo", "codex-1", "urgent", []]);
-  expect(gw.snapshot().perMesh.demo.transcripts["codex-1"].some((i: any) => i.kind === "message" && i.role === "user" && i.text === "urgent")).toBe(true);
+  expect(gw.snapshot().perMesh.demo.transcripts["codex-1"] ?? []).toHaveLength(0);
+});
+
+test("turn queued updates queue summary and turn started folds into transcript", () => {
+  const m = fakeManager();
+  const gw = new WebGateway(m as any);
+  const got: any[] = [];
+  gw.subscribe((msg) => got.push(msg));
+  m.emit("demo", {
+    kind: "agent_turn",
+    phase: "queued",
+    turn: { id: "turn-1", agent: "codex-1", source: "operator", text: "please review **this**", preview: "you: please review this", ts: "T" },
+    ts: "T",
+  } as any);
+  let s = gw.snapshot();
+  expect(s.perMesh.demo.queues["codex-1"]).toMatchObject({ count: 1, latestPreview: "you: please review this" });
+  expect(s.perMesh.demo.transcripts["codex-1"] ?? []).toHaveLength(0);
+  expect(got.some((x) => x.t === "agent.queue" && x.agent === "codex-1" && x.summary.count === 1)).toBe(true);
+
+  m.emit("demo", {
+    kind: "agent_turn",
+    phase: "started",
+    turn: { id: "turn-1", agent: "codex-1", source: "operator", text: "please review **this**", preview: "you: please review this", ts: "T" },
+    ts: "T2",
+  } as any);
+  s = gw.snapshot();
+  expect(s.perMesh.demo.queues["codex-1"]?.count ?? 0).toBe(0);
+  expect(s.perMesh.demo.transcripts["codex-1"].some((i: any) => i.kind === "message" && i.role === "user" && i.text === "please review **this**")).toBe(true);
+});
+
+test("dead agent status clears its queue summary", () => {
+  const m = fakeManager();
+  const gw = new WebGateway(m as any);
+  const got: any[] = [];
+  gw.subscribe((msg) => got.push(msg));
+  m.emit("demo", {
+    kind: "agent_turn",
+    phase: "queued",
+    turn: { id: "turn-1", agent: "codex-1", source: "operator", text: "queued work", preview: "you: queued work", ts: "T" },
+    ts: "T",
+  } as any);
+  expect(gw.snapshot().perMesh.demo.queues["codex-1"]).toMatchObject({ count: 1, latestPreview: "you: queued work" });
+
+  m.emit("demo", { kind: "agent_status", agent: "codex-1", status: "dead", detail: "exit 9", ts: "T2" });
+
+  expect(gw.snapshot().perMesh.demo.queues["codex-1"]).toMatchObject({ count: 0, latestPreview: undefined });
+  expect(got.some((x) => x.t === "agent.queue" && x.agent === "codex-1" && x.summary.count === 0)).toBe(true);
+});
+
+test("mail turn started folds a sender-labeled mail item", () => {
+  const m = fakeManager();
+  const gw = new WebGateway(m as any);
+  m.emit("demo", {
+    kind: "agent_turn",
+    phase: "queued",
+    turn: { id: "mail-1", agent: "codex-1", source: "mail", from: "router", to: "codex-1", text: "ping", preview: "router: ping", ts: "T" },
+    ts: "T",
+  } as any);
+  m.emit("demo", {
+    kind: "agent_turn",
+    phase: "started",
+    turn: { id: "mail-1", agent: "codex-1", source: "mail", from: "router", to: "codex-1", text: "ping", preview: "router: ping", ts: "T" },
+    ts: "T2",
+  } as any);
+  expect(gw.snapshot().perMesh.demo.transcripts["codex-1"].some((i: any) => i.kind === "mail" && i.from === "router" && i.body === "ping")).toBe(true);
+});
+
+test("mail turn consumed clears the queue and folds the mail as read context", () => {
+  const m = fakeManager();
+  const gw = new WebGateway(m as any);
+  const got: any[] = [];
+  gw.subscribe((msg) => got.push(msg));
+  const turn = { id: "mail-1", agent: "codex-1", source: "mail", from: "router", to: "codex-1", text: "ping", preview: "router: ping", ts: "T", mailId: "m-1" };
+  m.emit("demo", { kind: "agent_turn", phase: "queued", turn, ts: "T" } as any);
+  expect(gw.snapshot().perMesh.demo.queues["codex-1"]).toMatchObject({ count: 1 });
+
+  m.emit("demo", { kind: "agent_turn", phase: "consumed", turn, ts: "T2" } as any);
+  const s = gw.snapshot();
+  expect(s.perMesh.demo.queues["codex-1"]?.count ?? 0).toBe(0);
+  expect(got.some((x) => x.t === "agent.queue" && x.agent === "codex-1" && x.summary.count === 0)).toBe(true);
+  // The mail entered the agent's context via check_mail, so it must appear in the transcript exactly once.
+  expect(s.perMesh.demo.transcripts["codex-1"].filter((i: any) => i.kind === "mail" && i.from === "router" && i.body === "ping")).toHaveLength(1);
 });
 
 test("a current_mode_update syncs the mode picker + broadcasts (claude has no echo)", () => {
@@ -231,26 +325,20 @@ test("command methods delegate to the manager", async () => {
   expect(m.calls).toContainEqual(["setModel", "demo", "codex-1", "deepseek-v3"]);
 });
 
-test("promptRouter echoes a user message into the router transcript", async () => {
+test("promptRouter delegates without immediate user message echo", async () => {
   const m = fakeManager();
   const gw = new WebGateway(m as any);
   await gw.promptRouter("demo", "hello");
   const tr = gw.snapshot().perMesh.demo.transcripts.router;
-  expect(tr[tr.length - 1]).toMatchObject({ kind: "message", role: "user", text: "hello" });
+  expect(tr ?? []).toHaveLength(0);
 });
 
-test("promptRouter threads images to manager and user transcript", async () => {
+test("promptRouter threads images to manager without exposing private image fields", async () => {
   const m = fakeManager();
   const gw = new WebGateway(m as any, undefined, { root: "/tmp/root" });
   await gw.promptRouter("demo", "see", [{ id: "abc.png", mimeType: "image/png", name: "abc.png" }]);
   expect(m.calls[m.calls.length - 1][0]).toBe("promptRouter");
   expect(m.calls[m.calls.length - 1][3][0]).toMatchObject({ id: "abc.png", bucket: "demo", url: "/api/uploads/demo/abc.png" });
-  const tr = gw.snapshot().perMesh.demo.transcripts.router;
-  const broadcastImg = (tr[tr.length - 1] as any).images[0];
-  expect(broadcastImg).toMatchObject({ name: "abc.png", url: "/api/uploads/demo/abc.png" });
-  // the broadcast/persisted transcript must NOT leak the absolute server path or internal bucket
-  expect(broadcastImg.path).toBeUndefined();
-  expect(broadcastImg.bucket).toBeUndefined();
 });
 
 test("promptRouter ignores a client-supplied image path/bucket/url (no arbitrary file read)", async () => {
