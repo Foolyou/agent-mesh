@@ -24,7 +24,7 @@ test("ChatPane renders a compact plain-text queue box above the composer", () =>
     ),
   );
 
-  expect(html).toContain("queued: 2");
+  expect(html).toContain("queued: 2/2");
   expect(html).toContain("mail · review");
   expect(html).toContain("review: **not markdown** &lt;script&gt;");
   expect(html).not.toContain("<strong>not markdown</strong>");
@@ -33,6 +33,31 @@ test("ChatPane renders a compact plain-text queue box above the composer", () =>
   expect(html).toContain("tabindex=\"0\"");
   expect(html).toContain("aria-label=\"queued messages, 2\"");
   expect(html).toContain("disabled=\"\"");
+});
+
+test("ChatPane renders the current queue position within the total count", () => {
+  const html = renderToStaticMarkup(
+    createElement(
+      I18nContext.Provider,
+      { value: { lang: "zh", t: (key, vars) => translate(key, "zh", vars) } },
+      createElement(ChatPane, {
+        items: [],
+        queue: {
+          count: 3,
+          latestId: "q1",
+          latestPreview: "you: first",
+          items: [
+            { id: "q1", source: "operator", from: "operator", to: "codex-1", preview: "you: first", ts: "T1" },
+            { id: "q2", source: "mail", from: "review", to: "codex-1", preview: "review: second", ts: "T2" },
+            { id: "q3", source: "mail", from: "consultant", to: "codex-1", preview: "consultant: third", ts: "T3" },
+          ],
+        },
+        onSend: () => {},
+      }),
+    ),
+  );
+
+  expect(html).toContain("队列: 1/3");
 });
 
 test("queue navigation defaults to latest and clamps at boundaries", () => {

@@ -152,7 +152,7 @@ const DICT: Record<string, Entry> = {
   "seg.log": ["Log", "日志"],
 
   // ── composer ──
-  "queue.count": ["queued: {count}", "队列: {count}"],
+  "queue.count": ["queued: {current}/{count}", "队列: {current}/{count}"],
   "composer.placeholder": [
     "type a message…  (Enter send · Ctrl+Enter steer · Shift+Enter newline)",
     "输入消息…(Enter 发送 · Ctrl+Enter 打断引导 · Shift+Enter 换行)",

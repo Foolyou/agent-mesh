@@ -129,7 +129,7 @@ export function ChatPane({
             }
           }}
         >
-          <span className="queue-count">{t("queue.count", { count: queue.count })}</span>
+          <span className="queue-count">{t("queue.count", { current: nav.index + 1, count: queue.count })}</span>
           <span className={`queue-source ${nav.item.source}`}>{queueSourceLabel(nav.item)}</span>
           <span className="queue-preview">{nav.item.preview}</span>
           <span className="queue-nav">
