@@ -1,7 +1,7 @@
 // Right column = the TUI "mesh context" + the PoC three-pane intent, web-enhanced:
 // topology, unified conversation tabs, permission cards, and activity/mail/
 // permission-history timelines for the selected mesh.
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import type { Store } from "./store";
 import type { GatewayState, MeshSummary, PerMeshState, ActivityEntry, MailEntry, ResolvedPermission, PermissionReq, AgentModes, AgentModels, ThinkingEffort, HarnessId, StartSessionStrategy } from "../types";
 import { Dot, Btn, Empty, ConfirmButton, InfoIcon, fmtTime } from "./ui";
@@ -9,6 +9,7 @@ import { ChatPane } from "./ChatPane";
 import { MeshCanvas } from "./MeshCanvas";
 import { Topology } from "./Topology";
 import { useI18n, tStatus } from "./i18n";
+import { VirtualList } from "./VirtualList";
 
 function Header({ m, store, onDeleted, onEdit }: { m: MeshSummary; store: Store; onDeleted: () => void; onEdit: () => void }) {
   const { t } = useI18n();
@@ -403,64 +404,67 @@ function ConversationPanel({
   );
 }
 
-function Timeline({ activity }: { activity: ActivityEntry[] }) {
+function Timeline({ activity, className, style }: { activity: ActivityEntry[]; className?: string; style?: CSSProperties }) {
   const { t } = useI18n();
-  if (!activity.length) return <Empty>{t("empty.activity")}</Empty>;
+  const rows = activity.slice().reverse();
   return (
-    <div className="tl">
-      {activity
-        .slice()
-        .reverse()
-        .map((e) => (
-          <div className="ent" key={e.id}>
-            <span className="ts">{fmtTime(e.ts)}</span>
-            <span className={`k ${e.kind}`}>{e.kind === "permission_resolved" ? "perm" : e.kind}</span>
-            <span className="tx">{e.text}</span>
-          </div>
-        ))}
-    </div>
+    <VirtualList
+      items={rows}
+      className={`tl ${className ?? ""}`}
+      style={style}
+      empty={<Empty>{t("empty.activity")}</Empty>}
+      render={(e) => (
+        <div className="ent" key={e.id}>
+          <span className="ts">{fmtTime(e.ts)}</span>
+          <span className={`k ${e.kind}`}>{e.kind === "permission_resolved" ? "perm" : e.kind}</span>
+          <span className="tx">{e.text}</span>
+        </div>
+      )}
+    />
   );
 }
 
-function Mailbox({ mail }: { mail: MailEntry[] }) {
+function Mailbox({ mail, className, style }: { mail: MailEntry[]; className?: string; style?: CSSProperties }) {
   const { t } = useI18n();
-  if (!mail.length) return <Empty>{t("empty.mail")}</Empty>;
+  const rows = mail.slice().reverse();
   return (
-    <div className="tl">
-      {mail
-        .slice()
-        .reverse()
-        .map((e) => (
-          <div className="ent" key={e.id}>
-            <span className="ts">{fmtTime(e.ts)}</span>
-            <span className="k mail">
-              {e.from} → {e.to}
-            </span>
-            <span className="tx">{e.body}</span>
-          </div>
-        ))}
-    </div>
+    <VirtualList
+      items={rows}
+      className={`tl ${className ?? ""}`}
+      style={style}
+      empty={<Empty>{t("empty.mail")}</Empty>}
+      render={(e) => (
+        <div className="ent" key={e.id}>
+          <span className="ts">{fmtTime(e.ts)}</span>
+          <span className="k mail">
+            {e.from} → {e.to}
+          </span>
+          <span className="tx">{e.body}</span>
+        </div>
+      )}
+    />
   );
 }
 
-function History({ history }: { history: ResolvedPermission[] }) {
+function History({ history, className, style }: { history: ResolvedPermission[]; className?: string; style?: CSSProperties }) {
   const { t } = useI18n();
-  if (!history.length) return <Empty>{t("empty.history")}</Empty>;
+  const rows = history.slice().reverse();
   return (
-    <div className="tl">
-      {history
-        .slice()
-        .reverse()
-        .map((e) => (
-          <div className="ent" key={e.requestId + e.ts}>
-            <span className="ts">{fmtTime(e.ts)}</span>
-            <span className="k permission_resolved">{e.by}</span>
-            <span className="tx">
-              {e.agent} · {e.requestId.slice(0, 8)} → {e.optionId}
-            </span>
-          </div>
-        ))}
-    </div>
+    <VirtualList
+      items={rows}
+      className={`tl ${className ?? ""}`}
+      style={style}
+      empty={<Empty>{t("empty.history")}</Empty>}
+      render={(e) => (
+        <div className="ent" key={e.requestId + e.ts}>
+          <span className="ts">{fmtTime(e.ts)}</span>
+          <span className="k permission_resolved">{e.by}</span>
+          <span className="tx">
+            {e.agent} · {e.requestId.slice(0, 8)} → {e.optionId}
+          </span>
+        </div>
+      )}
+    />
   );
 }
 
@@ -483,9 +487,7 @@ function RailLogs({ pm }: { pm: PerMeshState }) {
           </button>
         </span>
       </div>
-      <div className="body-scroll">
-        {tab === "activity" ? <Timeline activity={pm.activity} /> : tab === "mail" ? <Mailbox mail={pm.mail} /> : <History history={pm.history} />}
-      </div>
+      {tab === "activity" ? <Timeline activity={pm.activity} className="body-scroll" /> : tab === "mail" ? <Mailbox mail={pm.mail} className="body-scroll" /> : <History history={pm.history} className="body-scroll" />}
     </div>
   );
 }
@@ -674,9 +676,7 @@ export function MeshDetail({
           <InfoIcon text={t("activity.sub")} />
         </span>
       </div>
-      <div className="body-scroll" style={{ maxHeight: mobile ? undefined : 240 }}>
-        <Timeline activity={pm.activity} />
-      </div>
+      <Timeline activity={pm.activity} className="body-scroll" style={{ maxHeight: mobile ? undefined : 240 }} />
     </div>
   );
   const mailboxPanel = (
@@ -687,9 +687,7 @@ export function MeshDetail({
           <InfoIcon text={t("mailbox.sub")} />
         </span>
       </div>
-      <div className="body-scroll" style={{ maxHeight: mobile ? undefined : 240 }}>
-        <Mailbox mail={pm.mail} />
-      </div>
+      <Mailbox mail={pm.mail} className="body-scroll" style={{ maxHeight: mobile ? undefined : 240 }} />
     </div>
   );
   const historyPanel = (
@@ -698,9 +696,7 @@ export function MeshDetail({
         <span className="ttl">{t("permission history")}</span>
         <span className="sub">{pm.history.length}</span>
       </div>
-      <div className="body-scroll" style={{ maxHeight: mobile ? undefined : 200 }}>
-        <History history={pm.history} />
-      </div>
+      <History history={pm.history} className="body-scroll" style={{ maxHeight: mobile ? undefined : 200 }} />
     </div>
   );
   const permissionEl = <PermissionCards pending={pm.pending} mesh={m.name} store={store} />;
