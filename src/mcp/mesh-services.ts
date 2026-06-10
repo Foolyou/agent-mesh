@@ -125,7 +125,7 @@ export function createMeshServicesServer(opts: {
 
   function buildServer(agentId: AgentId, entry: { role: AgentRole; steerTargets: string[] }): McpServer {
     const { role, steerTargets } = entry;
-    const server = new McpServer({ name: "mesh-services", version: "0.1.0" });
+    const server = new McpServer({ name: "mesh-services", version: "0.2.0" });
     const ctx: MeshToolContext = { agentId, role };
 
     server.registerTool(

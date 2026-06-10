@@ -102,7 +102,7 @@ export async function createMeshControlServer(opts: {
   const host = opts.host ?? "127.0.0.1";
   const text = (t: string) => ({ content: [{ type: "text" as const, text: t }] });
 
-  const server = new McpServer({ name: "mesh-control", version: "0.1.0" });
+  const server = new McpServer({ name: "mesh-control", version: "0.2.0" });
   server.registerTool("create_mesh",
     { description: "Define a NEW mesh (validated + persisted; does not start it).", inputSchema: meshSpecShape },
     async (spec) => text(await opts.handlers.createMesh(parseMeshSpec(spec))));
