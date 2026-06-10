@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="agent-mesh">
+  <rect width="32" height="32" rx="5" fill="#0a0b0d"/>
+  <path data-part="mesh-edge" d="M9 22 L21 10 M12 12 L23 22" fill="none" stroke="#c2c8cf" stroke-width="1.6" stroke-linecap="round"/>
+  <rect data-part="brand-block" x="8" y="8" width="6" height="6" rx="1" fill="#4ec97a"/>
+  <rect data-part="brand-block" x="16" y="8" width="6" height="6" rx="1" fill="#4ec97a"/>
+  <circle data-part="mesh-node" cx="9" cy="22" r="3" fill="#e8eae5"/>
+  <circle data-part="mesh-node" cx="23" cy="22" r="3" fill="#5ac8e0"/>
+</svg>
