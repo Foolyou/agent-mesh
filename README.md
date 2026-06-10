@@ -1,184 +1,296 @@
 # Agent Mesh
 
-A PoC **Agent Mesh Controller**: a parent control plane manages multiple meshes of
-heterogeneous coding agents that connect over the **Agent Client Protocol (ACP)**.
-An optional LLM **master agent** accepts natural-language instructions to create,
-start, and stop meshes; a **React + Bun web console** lets you drive the whole
-control plane — chat with the master agent and individual mesh Routers, build/
-start/stop meshes, watch a live topology, resolve permission escalations, and
-follow inter-agent mail and activity in real time.
+Agent Mesh is a local control plane for coordinating multiple coding agents as a
+team. It lets you define agent groups, route work through a mesh Router, watch
+their conversations and tool activity in real time, and keep the whole system
+operable from a web console.
 
-> The earlier PTY-based prototype (`src/pty-*.ts`, `src/codex-*-test.ts`,
-> `src/mock-agent.ts`, `src/work-packet.ts`) is retained as history but is no
-> longer used — PTY proved too unstable and was replaced by ACP.
+Instead of juggling several independent agent terminals, Agent Mesh gives you a
+single place to create teams, start and stop them, pass work between agents,
+review outputs, resolve permissions, and recover from controller restarts.
 
-## Architecture
+The project is evolving quickly, but it is already usable for local development
+and for evaluating multi-agent coding workflows.
 
-```
-   Browser (React SPA)  ⇄  REST + one WebSocket (snapshot + deltas)
-        │
-   Bun web server (src/web/server.ts)  ── WebGateway (authoritative state,
-        │                                   aggregated transcripts, fan-out)
-        │                                        │
-        │                                 MeshManager  ←→  optional MasterAgent (configurable ACP harness)
-        │                                    │   │            └─ mesh-control MCP server
-        │                                    │   │               (create/get/update/delete/start/stop/list_meshes)
-        │                                    │   │
-        │             [Unix socket .mesh/run/<name>.sock — NDJSON]
-        │                                    │
-    mesh-host subprocess (one per running mesh)
-    └─ ControlPlane for that mesh
-       ├─ ACP Client (one connection per agent)
-       ├─ Mesh Services MCP — send_mail / check_mail / interrupt
-       └─ Mailbox (NDJSON) + event bus
-            │ ACP over stdio
-      Mesh "demo"
-      ├─ router      (claude)    — gateway: talks to user/other meshes
-      ├─ codex-1     (codex)     — member
-      └─ opencode-1  (opencode)  — member
-```
+## What You Can Do
 
-The web server runs **in the parent process** (it's the new face of the same
-parent that owns `MeshManager`); the subprocess-per-mesh model is unchanged.
+- **Build agent teams**: define meshes with a Router, member agents, directed
+  mail edges, per-agent roles, harnesses, projects, and instructions.
+- **Mix agent runtimes**: run heterogeneous ACP agents such as Codex, Claude,
+  opencode, and Kimi in one mesh.
+- **Operate from a web console**: create, edit, start, stop, and delete meshes;
+  chat with the Mesh Assistant, Routers, and member agents; inspect topology and
+  live status.
+- **Coordinate agent work**: agents can send mail, check their inbox, wake lazy
+  peers, and expose their activity through mailbox and timeline views.
+- **Keep humans in control**: permission requests become explicit cards in the
+  UI, and Routers can interrupt runaway member turns.
+- **Review outputs as work happens**: transcripts coalesce streamed chunks into
+  readable messages, tool-call cards, file links, image attachments, and live
+  plan checklists.
+- **Run safely while developing**: use fake mode for a no-login demo, split dev
+  and production roots, run the web tier separately from the backend, or ship a
+  single self-contained binary.
 
-**Parent process** owns `MeshManager` (deterministic lifecycle: validate, persist,
-spawn, supervise, aggregate events), an optional `MasterAgent` (an ACP agent,
-defaulting to `codex`, with `create_mesh` / `get_mesh` / `update_mesh` / `delete_mesh` / `start_mesh` /
-`stop_mesh` / `list_meshes` MCP tools — full lifecycle in natural language), and the
-**web server** (`src/web/`). A testable `WebGateway` folds the manager + master
-event streams into authoritative state — including **aggregated transcripts** (raw
-ACP `SessionUpdate` chunks are coalesced into message bubbles and tool-call cards,
-not one line per event) — and fans a snapshot + deltas out to the browser over one
-WebSocket; commands go over REST.
+## Why It Exists
 
-**Each running mesh** lives in its own `mesh-host` subprocess (`src/mesh-host.ts`)
-that wraps the existing `ControlPlane` for that one mesh. The parent supervises it
-over a per-mesh Unix domain socket (`.mesh/run/<name>.sock`) speaking an NDJSON
-control protocol (`src/protocol.ts`). A crash in one mesh is contained; `stop`
-reaps the entire subprocess tree (no orphans).
+Single-agent CLIs are useful, but real work often wants a small team:
 
-**Mesh definitions** persist under `.mesh/meshes/<name>.json` and survive a parent
-restart. Running state does not — each mesh must be started explicitly after the
-parent boots.
+- one agent to talk to the user,
+- one or more agents to implement or investigate,
+- another agent to review,
+- a way to pass context without copy/paste,
+- a live view of what everyone is doing,
+- and a control plane that survives ordinary restarts.
 
-**Agents are ACP-first.** "Router" is just a member agent designated as the mesh's
-gateway. Per the three-layer composition **Project × Harness × Instance**, each
-agent is `(cwd, harness, ACP session)`. Agents get mesh tools via an injected HTTP
-MCP server (`mcpServers` at `session/new`): `send_mail`, `check_mail`, and —
-Router-only — `interrupt`, `mesh_status`. Internal mesh-tool calls are
-pre-authorized; only non-mesh operations escalate to a human permission prompt.
+Agent Mesh turns those pieces into an explicit operating environment. A mesh is
+a directed team of agents. The Router is the user-facing gateway. Member agents
+receive delegated work, report back through mail, and stay observable through the
+same console.
 
-Harnesses (all real ACP agents): `codex` → `codex-acp`, `opencode` →
-`opencode acp`, `claude` → `claude-agent-acp`.
-
-## Run
+## Quick Start
 
 ```bash
 bun install
+bun run mesh
 ```
 
-Agents run in `test_mesh_0/` and use your existing local logins (codex via
-ChatGPT, opencode via its provider, claude via the Claude Agent SDK).
+Open the printed URL, usually:
 
-**Web console** — master agent + multi-mesh manager + live control:
+```text
+http://localhost:7317
+```
+
+Agents use your existing local logins for their harnesses, such as Codex,
+Claude, opencode, or Kimi.
+
+For a self-contained demo with no real agent logins:
 
 ```bash
-bun run mesh          # → opens http://localhost:7317
-# bun run mesh --port 8080      # custom port (or MESH_WEB_PORT=8080)
-# bun run mesh --no-master      # skip the master agent
-# bun run mesh --master-harness claude   # Mesh Assistant harness: codex(default)|claude|opencode|kimi
-# bun run mesh --fake           # self-contained scripted demo (no real agents)
-# bun run mesh --root ~/work/mesh   # data root (default ~/.agent-mesh; or MESH_ROOT)
+bun run mesh --fake
 ```
 
-**Data root** — mesh definitions, the per-mesh mailbox, and run-time sockets live
-under a single root, default **`~/.agent-mesh`**, overridable with `--root <path>`
-or `MESH_ROOT`.
+Common options:
 
-**Themes** — pick a built-in theme (Phosphor / Amber CRT / Ice / Paper / Mono) from
-the top bar, or open the editor (`✎`) to craft a custom palette (live preview, JSON
-export/import). The choice persists in the browser.
+| Command | Purpose |
+|---|---|
+| `bun run mesh` | Run the combined web console and backend. |
+| `bun run mesh --fake` | Run a scripted demo with fake agents. |
+| `bun run mesh --no-master` | Skip the natural-language Mesh Assistant. |
+| `bun run mesh --master-harness claude` | Choose the Mesh Assistant harness. Supported: `codex`, `claude`, `opencode`, `kimi`. |
+| `bun run mesh --port 8080` | Serve the console on another port. |
+| `bun run mesh --root ~/work/mesh` | Store mesh data under another base directory. |
 
-**Split deployment** (one binary, two processes — controlled by separate commands).
-`mesh` (above) is the combined single process; to run the web tier and the backend
-engine separately:
+The default data root is `~/.agent-mesh`. Passing `--root <dir>` stores data in
+`<dir>/.agent-mesh`.
+
+## Web Console Tour
+
+The console is built for operating live agent teams:
+
+- **Mesh list**: see every defined mesh, status dots, start/stop controls, and a
+  form for creating or editing meshes.
+- **Mesh Assistant**: ask a configured agent to create, update, start, stop, or
+  inspect meshes in natural language.
+- **Topology view**: inspect the Router/member graph and how agents are allowed
+  to communicate.
+- **Router chat**: talk to the mesh gateway, the agent responsible for routing
+  user intent into the team.
+- **Member panels**: chat directly with an agent, inspect its mode/model/effort
+  controls, and interrupt a turn when needed.
+- **Permission cards**: approve or deny escalated operations directly in the UI,
+  including keyboard shortcuts `1`-`9`.
+- **Activity, mailbox, and history timelines**: follow inter-agent messages,
+  status changes, permission decisions, and other control-plane events.
+- **Readable transcripts**: streamed updates fold into message bubbles, tool-call
+  cards, generated-file links, images, and live plan checklists.
+
+Keyboard shortcuts:
+
+| Key | Action |
+|---|---|
+| `↑` / `↓` | Select previous or next mesh. |
+| `f` | Toggle fullscreen Router chat. |
+| `n` | Create a new mesh. |
+| `r` | Reload mesh definitions. |
+| `1`-`9` | Resolve a pending permission card. |
+| `esc` | Back out of the current detail or modal. |
+
+## Core Capabilities
+
+### Build Agent Teams
+
+A mesh is a named team with one Router and any number of member agents. Each
+agent has a harness, project directory, role, optional instructions, and runtime
+settings. Edges define who can mail whom, so collaboration is explicit rather
+than an untracked side channel.
+
+### Coordinate Work Between Agents
+
+Agents receive mesh MCP tools at session start:
+
+- `send_mail` delegates or reports to another reachable agent.
+- `check_mail` reads new mail addressed to the agent.
+- `mesh_status` lets the Router inspect live peer state.
+- `interrupt` lets the Router cancel a member's current turn.
+
+The web console turns these into visible mailbox and activity timelines, so the
+team's coordination is inspectable.
+
+### Keep Human Decisions Explicit
+
+Agent operations outside the trusted mesh-control surface still escalate through
+the underlying harness permission flow. Agent Mesh surfaces those requests as
+permission cards, records the decision history, and keeps the agent turn visible
+while it waits.
+
+### Review Work Products
+
+Transcripts are aggregated for reading rather than dumped as raw event streams.
+Tool calls render as cards with input, status, output, and affected files.
+Markdown links to generated files can open through the file viewer, and image
+attachments can be uploaded to prompts.
+
+### Survive Controller Restarts
+
+Running meshes live in detachable mesh-host processes. The parent backend can
+restart, reconnect to running hosts, replay recent state, and resume control
+without treating every restart as a lost session.
+
+### Package and Deploy Simply
+
+The same codebase can run as:
+
+- a source-mode dev server,
+- a split backend plus web frontend,
+- or one compiled binary that embeds the web app and re-execs itself for mesh
+  hosts.
+
+## How It Works
+
+```text
+Browser web console
+   ⇅ REST commands + WebSocket state stream
+Bun web server
+   ⇅
+WebGateway
+   ⇅
+MeshManager ── optional Mesh Assistant agent
+   ⇅
+mesh-host subprocess per running mesh
+   ⇅
+ControlPlane
+   ├─ ACP client per agent
+   ├─ mesh MCP tools: send_mail / check_mail / mesh_status / interrupt
+   └─ mailbox + event stream
+```
+
+The important pieces:
+
+- **ACP-first agents**: Codex, Claude, opencode, Kimi, and other compatible
+  harnesses connect through Agent Client Protocol sessions.
+- **Parent process**: owns mesh definitions, lifecycle commands, web API, state
+  aggregation, and optional Mesh Assistant control.
+- **Mesh host subprocesses**: isolate each running mesh so one crashed mesh does
+  not take down the whole controller.
+- **WebGateway**: folds raw manager and agent events into authoritative UI state,
+  aggregated transcripts, and WebSocket deltas.
+- **Mesh MCP tools**: give agents a controlled collaboration surface without
+  exposing the mailbox implementation directly.
+- **Persistent root**: mesh definitions, mailbox data, sockets, service records,
+  and session metadata live under one root, defaulting to `~/.agent-mesh`.
+
+The old PTY prototype files remain in the repository as history, but the current
+system is ACP-based.
+
+## Running Modes
+
+### Combined Console
 
 ```bash
-bun run backend                          # control plane: REST + WS on :7300 (no frontend)
-#   = bun run mesh backend [--port 7300] [--fake] [--no-master]
-bun run web                              # SPA + reverse-proxy /api + /ws → backend, on :7317
-#   = bun run mesh web [--port 7317] [--backend http://localhost:7300]
+bun run mesh
 ```
 
-The **backend** owns `MeshManager` + the mesh-host subprocesses and exposes only the
-API/WS; the **web** tier serves the React SPA and proxies to the backend (same browser
-origin). The backend can run headless (scripting, restarting the UI without disturbing
-running meshes); the web tier carries zero backend code and vice-versa.
+This starts the backend and web console in one process.
 
-**Single binary** — compile everything (runtime + bundled SPA + all commands) into one
-self-contained executable:
+### Split Backend and Web Tier
 
 ```bash
-bun run build            # → dist/mesh  (standalone, ~96 MB; bun build --compile)
-./dist/mesh              # combined console (./dist/mesh backend | web | --fake | --root … all work)
+bun run backend
+bun run web
 ```
 
-The binary serves the embedded SPA and, for real meshes, **re-execs itself** as the
-per-mesh `mesh-host` (no separate script needed) — so one file is the whole product.
-For another platform, add `--target=bun-<os>-<arch>` to the build.
+The backend owns `MeshManager` and mesh-host subprocesses. The web tier serves
+the React app and reverse-proxies `/api` and `/ws` to the backend. This is useful
+when restarting the UI should not disturb the backend.
 
-Open the printed URL. The console is a master/detail layout:
-
-- **Left** — the mesh list (status dot, `start`/`stop`, `+ new mesh` form) and the
-  **master-agent chat** (full mesh lifecycle — create/edit/delete/start/stop — in natural language).
-- **Right** (selected mesh) — `start` / `stop` / `edit` / `delete`; a live
-  **topology** graph; the **router chat**; per-member **agent panels** (direct chat,
-  permission-mode control, and an **interrupt** button to cancel a runaway turn);
-  **permission cards** (click an option, or press `1`–`9`); and **activity / mailbox /
-  permission-history** timelines.
-- **Aggregated transcripts** — streamed chunks coalesce into message bubbles; tool
-  calls render as one card (input / affected files / output, status updated in place);
-  agent **plans** show as a live checklist. Command failures surface as toasts.
-- **Keys**: `↑`/`↓` select mesh · `f` fullscreen router chat · `n` new mesh ·
-  `r` reload definitions · `1`–`9` resolve a pending permission · `esc` back. (Web
-  equivalents of the old TUI keys — `Ctrl-R`/`Ctrl-F`/`Tab` are left to the browser.)
-
-Closing the server (`Ctrl-C` in the terminal) reaps every mesh subprocess (no orphans).
-
-`--fake` mode streams a full scripted scenario (messages, a thought, a tool call,
-inter-agent mail, a permission, an interrupt) so you can explore every widget with
-no agents or logins.
-
-**Tests & verification:**
+### Single Binary
 
 ```bash
-bun test                              # unit/integration (transcript reducer, gateway, api, store…)
-bun run src/web/server.smoke.ts       # combined http + ws + bundler smoke
-bun run src/web/split.smoke.ts        # split: backend + web reverse-proxy (rest/post/ws)
-bun run src/web/browser.e2e.ts        # headless-browser e2e over --fake (every widget)
-bun run src/web/mobile.e2e.ts         # mobile (390x844) e2e: stack nav + segments
-bun run src/web/theme.e2e.ts          # theme switching / persistence / custom editor
-bun run src/web/split-cli.e2e.ts      # two real processes (mesh backend + mesh web), browser via proxy
-bun run src/web/real.e2e.ts           # real claude+codex+opencode mesh on a fictional project
-bun run e2e                           # headless 6-PoC-point verification through MeshManager
-bun run src/flows/mesh-lifecycle.smoke.ts   # real-agent lifecycle smoke
+bun run build
+./dist/mesh
 ```
 
-## The 6 PoC verification points
+The compiled binary serves the embedded SPA and re-execs itself as each per-mesh
+host. The same binary also supports service commands:
 
-1. Control plane spawns + manages ≥2 heterogeneous ACP agents with live event streams.
-2. A hardwired mesh: a Router (gateway) + members, with an interaction graph.
-3. Inter-agent mailbox: agent A `send_mail` → B, B is woken and processes it.
-4. A member's permission request escalates to a human decision, then the op runs.
-5. Router `interrupt` → control-plane `session/cancel` on a member.
-6. The web console renders 1–5 live (topology, aggregated transcripts, permission
-   cards, mailbox/activity timelines), driven by one WebSocket.
+```bash
+mesh up
+mesh status
+mesh logs -f
+mesh restart
+mesh restart --cold
+mesh down --cold
+```
 
-## Design docs
+See [docs/dev-workflow.md](docs/dev-workflow.md) for the development vs.
+production workflow, root conventions, and service-control details.
 
-- Spec (original PoC): `docs/superpowers/specs/2026-06-06-agent-mesh-poc-design.md`
-- Plan (original PoC): `docs/superpowers/plans/2026-06-06-agent-mesh-poc.md`
-- Spec (multi-mesh): `docs/superpowers/specs/2026-06-06-control-agent-multi-mesh-design.md`
-- Plan (multi-mesh): `docs/superpowers/plans/2026-06-06-control-agent-multi-mesh.md`
-- Spec (web console): `docs/superpowers/specs/2026-06-07-mesh-webui-design.md`
-- Plan (web console): `docs/superpowers/plans/2026-06-07-mesh-webui.md`
+## Verification
+
+Primary check:
+
+```bash
+bun test
+```
+
+Useful targeted checks:
+
+```bash
+bun run src/web/server.smoke.ts       # combined HTTP + WS + bundler smoke
+bun run src/web/split.smoke.ts        # split backend/web reverse proxy
+bun run src/web/browser.e2e.ts        # browser e2e over --fake
+bun run src/web/mobile.e2e.ts         # mobile layout e2e
+bun run src/web/theme.e2e.ts          # theme switching and custom palette
+bun run src/web/split-cli.e2e.ts      # real split CLI processes
+bun run e2e                           # headless MeshManager PoC verification
+```
+
+The broader test suite covers mesh validation, lifecycle, mailbox behavior,
+session resume metadata, the web gateway, transcript aggregation, upload/file
+serving safety, and browser-facing UI behavior.
+
+## Project Status
+
+The original proof-of-concept goals are implemented and covered by tests:
+
+1. Spawn and manage multiple heterogeneous ACP agents.
+2. Run a hardwired Router/member mesh with explicit communication edges.
+3. Deliver inter-agent mail and wake recipients.
+4. Escalate member permission requests to a human decision.
+5. Let Routers interrupt member turns.
+6. Render the above live in the web console.
+
+The project is still actively evolving. Current work focuses on making the
+controller more durable, making agent outputs easier to inspect, and tightening
+the operator experience.
+
+## Design Docs
+
+- Original PoC spec: [docs/superpowers/specs/2026-06-06-agent-mesh-poc-design.md](docs/superpowers/specs/2026-06-06-agent-mesh-poc-design.md)
+- Original PoC plan: [docs/superpowers/plans/2026-06-06-agent-mesh-poc.md](docs/superpowers/plans/2026-06-06-agent-mesh-poc.md)
+- Multi-mesh spec: [docs/superpowers/specs/2026-06-06-control-agent-multi-mesh-design.md](docs/superpowers/specs/2026-06-06-control-agent-multi-mesh-design.md)
+- Multi-mesh plan: [docs/superpowers/plans/2026-06-06-control-agent-multi-mesh.md](docs/superpowers/plans/2026-06-06-control-agent-multi-mesh.md)
+- Web console spec: [docs/superpowers/specs/2026-06-07-mesh-webui-design.md](docs/superpowers/specs/2026-06-07-mesh-webui-design.md)
+- Web console plan: [docs/superpowers/plans/2026-06-07-mesh-webui.md](docs/superpowers/plans/2026-06-07-mesh-webui.md)
+
