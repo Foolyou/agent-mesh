@@ -27,6 +27,15 @@ export function queueSourceLabel(item: QueueItem): string {
   return "you";
 }
 
+export function queuePreviewText(item: QueueItem): string {
+  if (item.preview.startsWith("you: ")) return item.preview.slice("you: ".length);
+  if (item.preview.startsWith("mail:")) return item.preview.replace(/^mail:\s*/, "");
+  if (item.preview.startsWith("steer:")) return item.preview.replace(/^steer:\s*/, "");
+  const fromPrefix = item.from ? `${item.from}: ` : "";
+  if (fromPrefix && item.preview.startsWith(fromPrefix)) return item.preview.slice(fromPrefix.length);
+  return item.preview;
+}
+
 function queueItems(queue?: QueueSummary): QueueItem[] {
   if (!queue?.count) return [];
   if (queue.items?.length) return queue.items;
@@ -42,7 +51,6 @@ export function ChatPane({
   placeholder,
   disabled,
   working,
-  steerEnabled,
   imageEnabled,
   imageDisabledReason,
   queue,
@@ -55,7 +63,6 @@ export function ChatPane({
   placeholder?: string;
   disabled?: boolean;
   working?: boolean;
-  steerEnabled?: boolean;
   imageEnabled?: boolean;
   imageDisabledReason?: string;
   queue?: QueueSummary;
@@ -114,7 +121,7 @@ export function ChatPane({
       {queue?.count && nav.item ? (
         <div
           className="queue-box"
-          title={nav.item.preview}
+          title={queuePreviewText(nav.item)}
           aria-live="polite"
           aria-label={`queued messages, ${queue.count}`}
           tabIndex={0}
@@ -131,7 +138,7 @@ export function ChatPane({
         >
           <span className="queue-count">{t("queue.count", { current: nav.index + 1, count: queue.count })}</span>
           <span className={`queue-source ${nav.item.source}`}>{queueSourceLabel(nav.item)}</span>
-          <span className="queue-preview">{nav.item.preview}</span>
+          <span className="queue-preview">{queuePreviewText(nav.item)}</span>
           <span className="queue-nav">
             <button
               type="button"
@@ -162,7 +169,6 @@ export function ChatPane({
         placeholder={placeholder}
         disabled={disabled}
         working={working}
-        steerEnabled={steerEnabled}
         imageEnabled={imageEnabled}
         imageDisabledReason={imageDisabledReason}
       />

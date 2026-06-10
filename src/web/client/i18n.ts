@@ -23,17 +23,7 @@ const DICT: Record<string, Entry> = {
   offline: ["offline", "离线"],
   reload: ["reload", "重载"],
   back: ["back", "返回"],
-  "hint.select": ["select", "选择"],
-  "hint.full": ["full", "全屏"],
-  "hint.new": ["new", "新建"],
-  "hint.reload": ["reload", "重载"],
   "reload.confirm": ["reload?", "确认重载?"],
-  "hint.permit": ["permit", "批准"],
-  "hint.back": ["back", "返回"],
-  "hints.all": [
-    "keyboard:  ↑↓ select mesh · f fullscreen · n new mesh · r reload · 1-9 resolve permission · esc back",
-    "快捷键:  ↑↓ 选择 mesh · f 全屏 · n 新建 mesh · r 重载 · 1-9 处理权限 · esc 返回",
-  ],
   "overview.hint": [
     "select a mesh from the list to open its console — topology, unified conversation tabs, permissions, and live mail/activity timelines.",
     "从列表选择一个 mesh 打开它的控制台 —— 拓扑、统一对话标签、权限,以及实时邮件/活动时间线。",
@@ -100,7 +90,7 @@ const DICT: Record<string, Entry> = {
   full: ["full", "全屏"],
   exit: ["exit", "退出"],
   "router.placeholder": ["talk to the router… (Enter send)", "与 router 对话…(Enter 发送)"],
-  "agent.placeholder": ["message {id}… (Enter send · Ctrl+Enter steer)", "发消息给 {id}…(Enter 发送 · Ctrl+Enter 打断引导)"],
+  "agent.placeholder": ["message {id}… (Enter send)", "发消息给 {id}…(Enter 发送)"],
   mode: ["mode", "模式"],
   "mode.hint": ["initial permission/operating mode (the agent can also switch at runtime)", "初始许可/工作模式(运行时也可切换)"],
   "mode.default": ["default", "默认"],
@@ -154,8 +144,8 @@ const DICT: Record<string, Entry> = {
   // ── composer ──
   "queue.count": ["queued: {current}/{count}", "队列: {current}/{count}"],
   "composer.placeholder": [
-    "type a message…  (Enter send · Ctrl+Enter steer · Shift+Enter newline)",
-    "输入消息…(Enter 发送 · Ctrl+Enter 打断引导 · Shift+Enter 换行)",
+    "type a message…  (Enter send · Shift+Enter newline)",
+    "输入消息…(Enter 发送 · Shift+Enter 换行)",
   ],
 
   // ── theme / language chrome ──

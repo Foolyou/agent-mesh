@@ -81,15 +81,15 @@ export const Composer = forwardRef<HTMLTextAreaElement, {
   placeholder?: string;
   disabled?: boolean;
   working?: boolean;
-  steerEnabled?: boolean;
   imageEnabled?: boolean;
   imageDisabledReason?: string;
-}>(function Composer({ onSend, onInterrupt, onUploadImages, placeholder, disabled, working, steerEnabled, imageEnabled, imageDisabledReason }, ref) {
+}>(function Composer({ onSend, onInterrupt, onUploadImages, placeholder, disabled, working, imageEnabled, imageDisabledReason }, ref) {
   const { t } = useI18n();
   const [v, setV] = useState("");
   const [pending, setPending] = useState<{ file: File; url: string }[]>([]);
   const [err, setErr] = useState("");
   const [sending, setSending] = useState(false);
+  const refocusAfterSend = useRef(false);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   useImperativeHandle(ref, () => taRef.current!, []);
@@ -110,13 +110,14 @@ export const Composer = forwardRef<HTMLTextAreaElement, {
     ta.style.height = `${Math.min(ta.scrollHeight, 140)}px`;
   }, [v]);
 
+  useEffect(() => {
+    if (sending || !refocusAfterSend.current) return;
+    refocusAfterSend.current = false;
+    taRef.current?.focus({ preventScroll: true });
+  }, [sending]);
+
   function onKey(e: KeyboardEvent<HTMLTextAreaElement>) {
-    e.stopPropagation(); // keep keystrokes out of the global shortcuts
-    if (e.key === "Enter" && e.ctrlKey && !e.shiftKey) {
-      e.preventDefault();
-      void submit(steerEnabled ? { steer: true } : undefined);
-      return;
-    }
+    e.stopPropagation();
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       void submit();
@@ -171,6 +172,7 @@ export const Composer = forwardRef<HTMLTextAreaElement, {
     } catch (e: any) {
       setErr(String(e?.message ?? e));
     } finally {
+      refocusAfterSend.current = true;
       setSending(false);
     }
   }
@@ -206,7 +208,7 @@ export const Composer = forwardRef<HTMLTextAreaElement, {
           rows={1}
           value={v}
           disabled={disabled || sending}
-          placeholder={placeholder ?? "type a message…  (Enter send · Ctrl+Enter steer · Shift+Enter newline)"}
+          placeholder={placeholder ?? "type a message…  (Enter send · Shift+Enter newline)"}
           onChange={(e) => setV(e.target.value)}
           onKeyDown={onKey}
           onPaste={onPaste}

@@ -71,7 +71,7 @@ function MeshList({
   const all = state.meshes;
   const pages = Math.max(1, Math.ceil(all.length / PER_PAGE));
   const [page, setPage] = useState(0);
-  // follow the selected mesh onto its page (e.g. keyboard ↑/↓ cycling)
+  // follow the selected mesh onto its page when selection changes elsewhere
   useEffect(() => {
     if (!selected) return;
     const i = all.findIndex((m) => m.name === selected);
@@ -169,7 +169,6 @@ function MasterChat({
             placeholder={st === "ready" ? t("conductor.placeholder") : t("conductor.starting")}
             disabled={st !== "ready"}
             working={!!state.master.working}
-            steerEnabled={st === "ready"}
             imageEnabled={!!state.master.capabilities?.image}
             imageDisabledReason="The master agent does not advertise image input support"
             onUploadImages={(files) => store.uploadImages("master", files)}

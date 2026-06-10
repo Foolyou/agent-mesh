@@ -64,11 +64,46 @@ try {
     await ta.press("Enter");
     await page.waitForSelector(`${routerPanel} .msg.user`, { timeout: 4000 });
     if ((await ta.inputValue()) !== "") throw new Error("textarea not cleared after send");
+    const focused = await ta.evaluate((el) => el === document.activeElement);
+    if (!focused) throw new Error("textarea not focused after send");
     const align = await page
       .locator(`${routerPanel} .msg.user`)
       .last()
       .evaluate((el) => getComputedStyle(el).textAlign);
     if (align !== "left" && align !== "start") throw new Error(`user message text-align is ${align}`);
+  });
+
+  await step("conversation queue preview does not repeat the source label", async () => {
+    await page.evaluate(() => {
+      (window as any).__meshStore.apply({
+        t: "agent.queue",
+        name: "demo",
+        agent: "router",
+        summary: { count: 1, latestPreview: "you: cancel all shortcuts" },
+      });
+    });
+    const box = page.locator(`${routerPanel} .queue-box`);
+    await box.waitFor({ timeout: 4000 });
+    await box.locator(".queue-source", { hasText: "you" }).waitFor({ timeout: 4000 });
+    await box.locator(".queue-preview", { hasText: "cancel all shortcuts" }).waitFor({ timeout: 4000 });
+    if (await box.locator(".queue-preview", { hasText: "you:" }).count()) throw new Error("queue preview repeated the source label");
+    await page.evaluate(() => {
+      (window as any).__meshStore.apply({
+        t: "agent.queue",
+        name: "demo",
+        agent: "router",
+        summary: { count: 0 },
+      });
+    });
+    await box.waitFor({ state: "detached", timeout: 4000 });
+  });
+
+  await step("global keyboard shortcuts are disabled", async () => {
+    await page.locator(".detail-head .mtitle").click();
+    await page.keyboard.press("f");
+    if (await page.locator(".dmain.full").count()) throw new Error("f key still toggled fullscreen");
+    await page.keyboard.press("n");
+    if (await page.locator(".modal").count()) throw new Error("n key still opened the new mesh modal");
   });
 
   await step("topology expand → canvas overlay", async () => {

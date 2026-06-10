@@ -389,7 +389,6 @@ function ConversationPanel({
           imageDisabledReason="This agent does not advertise image input support"
           onUploadImages={(files) => store.uploadImages(m.name, files)}
           working={working}
-          steerEnabled={live}
           onInterrupt={live ? () => store.interruptAgent(m.name, cur.id) : undefined}
           onSend={(msg, images, opts) =>
             isRouter

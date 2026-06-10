@@ -1,15 +1,14 @@
 // Top-level composition: owns UI state (selected mesh/agent, fullscreen, modal),
-// wires the store + keyboard shortcuts, and lays out the TTY-style console shell.
+// wires the store, and lays out the TTY-style console shell.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createStore, useStore, useConnected, useToasts, type Store } from "./store";
 import { Sidebar } from "./Sidebar";
 import { MeshDetail } from "./MeshDetail";
 import { MeshBuilder } from "./MeshBuilder";
-import { useKeyboard } from "./useKeyboard";
 import { useIsMobile } from "./useMedia";
 import { ThemeControls } from "./Theme";
 import { I18nContext, loadLang, saveLang, translate, tStatus, type Lang } from "./i18n";
-import { Dot, Btn, ConfirmButton, InfoIcon } from "./ui";
+import { Dot, Btn, ConfirmButton } from "./ui";
 import { FileViewer, parseFileRoute, type FileRoute } from "./FileViewer";
 
 const SEL_KEY = "mesh.selected";
@@ -111,37 +110,6 @@ export function App() {
     setFullView(null);
   }, [selectedMesh]);
 
-  const names = state.meshes.map((m) => m.name);
-  const cycle = (dir: 1 | -1) => {
-    if (!names.length) return;
-    const i = selectedMesh ? names.indexOf(selectedMesh) : -1;
-    const next = ((i + dir + names.length) % names.length + names.length) % names.length;
-    setSelectedMesh(names[next]);
-  };
-
-  useKeyboard({
-    onPrev: () => cycle(-1),
-    onNext: () => cycle(1),
-    onReload: () => void store.reload(),
-    onToggleFull: () => selectedMesh && setFullView((v) => (v === "agent" ? null : "agent")),
-    onNewMesh: () => {
-      setEditInitial(null);
-      setNewMeshOpen(true);
-    },
-    onEsc: () => {
-      if (newMeshOpen) setNewMeshOpen(false);
-      else if (fullView) setFullView(null);
-      else setSelectedMesh(null);
-    },
-    onDigit: (idx) => {
-      if (!selectedMesh) return;
-      const pm = state.perMesh[selectedMesh];
-      const req = pm?.pending[0];
-      const opt = req?.options[idx];
-      if (req && opt) void store.resolvePermission(selectedMesh, req.requestId, opt.id);
-    },
-  });
-
   const masterDotStatus =
     state.master.status === "ready"
       ? "ready"
@@ -213,7 +181,6 @@ export function App() {
           {!mobile ? <> {connected ? t("live") : t("offline")}</> : null}
         </span>
         <span className="spacer" />
-        {!mobile ? <InfoIcon text={t("hints.all")} /> : null}
         <ThemeControls />
         <Btn
           small

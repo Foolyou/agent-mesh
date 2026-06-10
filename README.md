@@ -98,23 +98,11 @@ The console is built for operating live agent teams:
   user intent into the team.
 - **Member panels**: chat directly with an agent, inspect its mode/model/effort
   controls, and interrupt a turn when needed.
-- **Permission cards**: approve or deny escalated operations directly in the UI,
-  including keyboard shortcuts `1`-`9`.
+- **Permission cards**: approve or deny escalated operations directly in the UI.
 - **Activity, mailbox, and history timelines**: follow inter-agent messages,
   status changes, permission decisions, and other control-plane events.
 - **Readable transcripts**: streamed updates fold into message bubbles, tool-call
   cards, generated-file links, images, and live plan checklists.
-
-Keyboard shortcuts:
-
-| Key | Action |
-|---|---|
-| `↑` / `↓` | Select previous or next mesh. |
-| `f` | Toggle fullscreen Router chat. |
-| `n` | Create a new mesh. |
-| `r` | Reload mesh definitions. |
-| `1`-`9` | Resolve a pending permission card. |
-| `esc` | Back out of the current detail or modal. |
 
 ## Core Capabilities
 
@@ -293,4 +281,3 @@ the operator experience.
 - Multi-mesh plan: [docs/superpowers/plans/2026-06-06-control-agent-multi-mesh.md](docs/superpowers/plans/2026-06-06-control-agent-multi-mesh.md)
 - Web console spec: [docs/superpowers/specs/2026-06-07-mesh-webui-design.md](docs/superpowers/specs/2026-06-07-mesh-webui-design.md)
 - Web console plan: [docs/superpowers/plans/2026-06-07-mesh-webui.md](docs/superpowers/plans/2026-06-07-mesh-webui.md)
-

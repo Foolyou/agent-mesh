@@ -201,7 +201,9 @@ try {
     const box = panel.locator(".queue-box");
     await box.waitFor({ timeout: 4000 });
     await box.locator(".queue-count", { hasText: "queued: 2" }).waitFor({ timeout: 4000 });
-    await box.locator(".queue-preview", { hasText: "you: queued preview should stay on one line" }).waitFor({ timeout: 4000 });
+    await box.locator(".queue-source", { hasText: "you" }).waitFor({ timeout: 4000 });
+    await box.locator(".queue-preview", { hasText: "queued preview should stay on one line" }).waitFor({ timeout: 4000 });
+    if (await box.locator(".queue-preview", { hasText: "you:" }).count()) throw new Error("queue preview repeated the source label");
     const queueBox = await box.boundingBox();
     const composerBox = await panel.locator(".composer").boundingBox();
     if (!queueBox || !composerBox || queueBox.y >= composerBox.y) throw new Error("queue box is not above composer");
@@ -450,18 +452,6 @@ try {
     await page.waitForSelector('.drail .panel .tx:has-text("operator")', { timeout: 6000 });
   });
 
-  await step("operator Ctrl+Enter steers an agent and records steer activity", async () => {
-    await page.locator('.topo .node:has-text("codex-1")').click();
-    const panel = page.locator(".dchat .panel:has(.tabs)").first();
-    const input = panel.locator(".composer textarea");
-    await input.fill("redirect via steer");
-    await input.press("Control+Enter");
-    await panel.locator(".msg.user .bubble", { hasText: "redirect via steer" }).last().waitFor({ timeout: 6000 });
-    await page.locator('.drail .seg-tab:has-text("activity")').click();
-    await page.waitForSelector('.drail .panel .k.steer', { timeout: 6000 });
-    await page.waitForSelector('.drail .panel .tx:has-text("redirect via steer")', { timeout: 6000 });
-  });
-
   await step("master chat: send instruction → user bubble + streamed reply", async () => {
     const input = page.locator('.panel:has(.head:has-text("Mesh Assistant")) .composer textarea');
     await input.fill("create a build squad mesh");
@@ -470,9 +460,10 @@ try {
     await page.waitForSelector('.panel:has(.head:has-text("Mesh Assistant")) .msg.agent', { timeout: 8000 });
   });
 
-  await step("master chat fullscreens on desktop and Esc exits without hiding composer", async () => {
+  await step("master chat fullscreens on desktop and exits via button without hiding composer", async () => {
     const panel = page.locator(".master-chat");
-    await panel.locator('button[aria-label*="Mesh Assistant"]').click();
+    const toggle = panel.locator('button[aria-label*="Mesh Assistant"]');
+    await toggle.click();
     await panel.evaluate((el) => {
       const box = (el as HTMLElement).getBoundingClientRect();
       if (box.left > 1 || box.top > 1 || Math.abs(box.width - window.innerWidth) > 2 || Math.abs(box.height - window.innerHeight) > 2) {
@@ -480,16 +471,17 @@ try {
       }
     });
     await panel.locator(".composer textarea").waitFor({ timeout: 4000 });
-    await page.keyboard.press("Escape");
+    await toggle.click();
     await page.waitForFunction(() => !document.querySelector(".master-chat")?.classList.contains("master-full"), { timeout: 4000 });
   });
 
-  await step("master chat fullscreens on mobile and Esc exits without hiding composer", async () => {
+  await step("master chat fullscreens on mobile and exits via button without hiding composer", async () => {
     await page.setViewportSize({ width: 375, height: 667 });
     const back = page.locator('.topbar .btn:has-text("back")');
     await back.waitFor({ timeout: 4000 }).then(() => back.click()).catch(() => {});
     const panel = page.locator(".master-chat");
-    await panel.locator('button[aria-label*="Mesh Assistant"]').click();
+    const toggle = panel.locator('button[aria-label*="Mesh Assistant"]');
+    await toggle.click();
     await panel.evaluate((el) => {
       const box = (el as HTMLElement).getBoundingClientRect();
       if (box.left > 1 || box.top > 1 || Math.abs(box.width - window.innerWidth) > 2 || Math.abs(box.height - window.innerHeight) > 2) {
@@ -497,7 +489,7 @@ try {
       }
     });
     await panel.locator(".composer textarea").waitFor({ timeout: 4000 });
-    await page.keyboard.press("Escape");
+    await toggle.click();
     await page.waitForFunction(() => !document.querySelector(".master-chat")?.classList.contains("master-full"), { timeout: 4000 });
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.locator('.mrow:has-text("demo")').click();
@@ -510,6 +502,8 @@ try {
     await input.fill("status **please**");
     await input.press("Enter");
     await panel.locator(".msg.user").last().waitFor({ timeout: 6000 });
+    const focused = await input.evaluate((el) => el === document.activeElement);
+    if (!focused) throw new Error("composer textarea did not regain focus after send");
     const user = panel.locator(".msg.user .bubble", { hasText: "status please" }).last();
     await user.waitFor({ timeout: 4000 });
     if ((await user.locator("strong").count()) < 1) throw new Error("user message did not render markdown");
@@ -574,12 +568,14 @@ try {
     if (gap >= 40) throw new Error(`stream not pinned after markdown height change, gap=${gap}`);
   });
 
-  await step("keyboard: 'f' fullscreens router chat, Esc exits", async () => {
+  await step("global keyboard shortcuts are disabled", async () => {
     await page.locator(".detail-head .mtitle").click(); // focus a non-input element
     await page.keyboard.press("f");
-    await page.waitForSelector(".dmain.full", { timeout: 4000 });
+    if (await page.locator(".dmain.full").count()) throw new Error("f key still toggled router fullscreen");
     await page.keyboard.press("Escape");
-    await page.waitForSelector(".drail", { timeout: 4000 }); // rail (topology + logs) returns
+    await page.locator(".detail").waitFor({ timeout: 4000 });
+    await page.keyboard.press("n");
+    if (await page.locator(".modal").count()) throw new Error("n key still opened the new mesh modal");
   });
 
   await step("mesh canvas opens from topology with draggable, resizable agent windows and directed edges", async () => {

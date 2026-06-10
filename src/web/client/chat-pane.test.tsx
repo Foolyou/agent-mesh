@@ -1,7 +1,7 @@
 import { test, expect } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { ChatPane, queueNavState, queueSourceLabel } from "./ChatPane";
+import { ChatPane, queueNavState, queuePreviewText, queueSourceLabel } from "./ChatPane";
 import { I18nContext, translate } from "./i18n";
 
 test("ChatPane renders a compact plain-text queue box above the composer", () => {
@@ -26,7 +26,8 @@ test("ChatPane renders a compact plain-text queue box above the composer", () =>
 
   expect(html).toContain("queued: 2/2");
   expect(html).toContain("mail · review");
-  expect(html).toContain("review: **not markdown** &lt;script&gt;");
+  expect(html).toContain("**not markdown** &lt;script&gt;");
+  expect(html).not.toContain("review: **not markdown**");
   expect(html).not.toContain("<strong>not markdown</strong>");
   expect(html).toContain("queue-box");
   expect(html).toContain("queue-nav");
@@ -81,4 +82,12 @@ test("queue source labels distinguish mailbox and user messages", () => {
   expect(queueSourceLabel({ id: "q1", source: "operator", from: "operator", to: "a", preview: "p", ts: "T" })).toBe("you");
   expect(queueSourceLabel({ id: "q2", source: "mail", from: "review", to: "a", preview: "p", ts: "T" })).toBe("mail · review");
   expect(queueSourceLabel({ id: "q3", source: "steer", from: "lead", to: "a", preview: "p", ts: "T" })).toBe("steer · lead");
+});
+
+test("queue preview removes the repeated source prefix shown by the badge", () => {
+  expect(queuePreviewText({ id: "q1", source: "operator", from: "operator", to: "a", preview: "you: cancel shortcuts", ts: "T" })).toBe("cancel shortcuts");
+  expect(queuePreviewText({ id: "q2", source: "mail", from: "review", to: "a", preview: "mail: review this", ts: "T" })).toBe("review this");
+  expect(queuePreviewText({ id: "q3", source: "steer", from: "lead", to: "a", preview: "steer: urgent", ts: "T" })).toBe("urgent");
+  expect(queuePreviewText({ id: "q4", source: "mail", from: "review", to: "a", preview: "review: please check", ts: "T" })).toBe("please check");
+  expect(queuePreviewText({ id: "q5", source: "operator", from: "operator", to: "a", preview: "plain text", ts: "T" })).toBe("plain text");
 });
