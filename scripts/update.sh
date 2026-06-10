@@ -87,7 +87,7 @@ list_backups() {
   shopt -s nullglob
   local files=("$BACKUP_DIR"/mesh-*)
   ((${#files[@]})) || return 0
-  printf '%s\n' "${files[@]}" | sort -r
+  printf '%s\n' "${files[@]}" | grep -v '\.build-id$' | sort -r || true
 }
 
 wait_healthy() {
@@ -126,7 +126,8 @@ restart_and_verify() {
 
 prune_backups() {
   shopt -s nullglob
-  local all=("$BACKUP_DIR"/mesh-*)
+  local all=()
+  mapfile -t all < <(list_backups)
   ((${#all[@]} > KEEP)) || return 0
   # newest-first, delete everything past KEEP
   local sorted i
@@ -134,6 +135,7 @@ prune_backups() {
   for ((i = KEEP; i < ${#sorted[@]}; i++)); do
     echo "pruning old backup: ${sorted[i]##*/}"
     rm -f "${sorted[i]}"
+    rm -f "${sorted[i]}.build-id"
   done
 }
 
@@ -161,6 +163,11 @@ if [[ "$MODE" == "rollback" ]]; then
   echo "rolling back: installing ${target##*/} → $BIN"
   mkdir -p "$(dirname "$BIN")"
   cp -f "$target" "$BIN"
+  if [[ -f "$target.build-id" ]]; then
+    cp -f "$target.build-id" "$BIN.build-id"
+  else
+    rm -f "$BIN.build-id"
+  fi
   chmod +x "$BIN"
   restart_and_verify "rollback (${target##*/})"
   exit $?
@@ -186,14 +193,17 @@ chmod +x "$OUT"
 
 # 3) Archive the current binary (timestamped), then atomically swap the new one in.
 TS="${MESH_NOW:-$(date +%Y%m%d-%H%M%S)}"
+BUILD_ID="${MESH_BUILD_ID:-$TS}"
 if [[ -f "$BIN" ]]; then
   archive="$BACKUP_DIR/mesh-$TS"
   # guard against same-second collisions so an archive is never overwritten
   if [[ -e "$archive" ]]; then n=2; while [[ -e "$archive.$n" ]]; do n=$((n + 1)); done; archive="$archive.$n"; fi
   echo "archiving current binary → ${archive#./}"
   mv "$BIN" "$archive"
+  if [[ -f "$BIN.build-id" ]]; then mv "$BIN.build-id" "$archive.build-id"; fi
 fi
 mv "$OUT" "$BIN"
+printf '%s\n' "$BUILD_ID" > "$BIN.build-id"
 chmod +x "$BIN"
 prune_backups
 

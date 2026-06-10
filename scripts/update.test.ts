@@ -90,6 +90,7 @@ test("deploy: builds, archives the old binary, swaps in the new, restarts health
   const { code, out } = await runScript({ ...h.env, MESH_NOW: "20260608-000001" });
   expect({ code, out }).toMatchObject({ code: 0 });
   expect(await readFile(h.bin, "utf8")).toBe("NEWBIN"); // new binary installed
+  expect(await readFile(`${h.bin}.build-id`, "utf8")).toBe("20260608-000001\n"); // deployed build id
   expect(await readFile(join(h.backups, "mesh-20260608-000001"), "utf8")).toBe("OLDBIN"); // old archived
   expect(out).toContain("✓ new binary live and healthy");
 });
@@ -133,22 +134,30 @@ test("deploy: retention keeps only MESH_BACKUP_KEEP newest archives", async () =
     const { code } = await runScript({ ...h.env, MESH_NOW: ts });
     expect(code).toBe(0);
   }
-  const kept = (await readdir(h.backups)).sort();
+  const keptAll = (await readdir(h.backups)).sort();
+  const kept = keptAll.filter((name) => !name.endsWith(".build-id"));
   // 3 deploys archived 3 old binaries, but only the 2 newest are retained
   expect(kept).toEqual(["mesh-20260608-000002", "mesh-20260608-000003"]);
+  expect(keptAll).toContain("mesh-20260608-000002.build-id");
+  expect(keptAll).toContain("mesh-20260608-000003.build-id");
+  expect(keptAll).not.toContain("mesh-20260608-000001.build-id");
 });
 
 test("rollback: restores the newest archive and restarts healthy", async () => {
   const h = await harness();
   await mkdir(h.backups, { recursive: true });
   await writeFile(join(h.backups, "mesh-20260608-000001"), "OLD1");
+  await writeFile(join(h.backups, "mesh-20260608-000001.build-id"), "20260608-000001\n");
   await writeFile(join(h.backups, "mesh-20260608-000002"), "OLD2"); // newest
+  await writeFile(join(h.backups, "mesh-20260608-000002.build-id"), "20260608-000002\n");
   await writeFile(h.bin, "BADBIN");
+  await writeFile(`${h.bin}.build-id`, "bad-build\n");
   healthyServer(h.port);
 
   const { code, out } = await runScript(h.env, "--rollback");
   expect({ code, out }).toMatchObject({ code: 0 });
   expect(await readFile(h.bin, "utf8")).toBe("OLD2"); // newest archive restored
+  expect(await readFile(`${h.bin}.build-id`, "utf8")).toBe("20260608-000002\n");
   expect(await exists(join(h.backups, "mesh-20260608-000002"))).toBe(true); // archive preserved
 });
 
