@@ -4,7 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MeshManager } from "../mesh-manager";
-import { createMeshControlHandlers } from "./mesh-control";
+import { createMeshControlHandlers, createMeshControlServer, type MeshControlServer } from "./mesh-control";
 import { readSessionState, writeSessionState } from "../session-storage";
 import type { MeshConfig } from "../acp/types";
 
@@ -17,11 +17,56 @@ const FIXTURE = join(import.meta.dir, "..", "fixtures", "echo-host.ts");
 
 let dir: string;
 let mgr: MeshManager;
+let server: MeshControlServer | undefined;
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), "ctl-"));
   mgr = new MeshManager({ meshesDir: join(dir, "meshes"), runDir: join(dir, "run"), hostScript: FIXTURE });
 });
-afterEach(async () => { await mgr.stopAll(); await rm(dir, { recursive: true, force: true }); });
+afterEach(async () => { server?.close(); server = undefined; await mgr.stopAll(); await rm(dir, { recursive: true, force: true }); });
+
+async function initialize(url: string): Promise<string | undefined> {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json", accept: "application/json, text/event-stream" },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "test", version: "0" } },
+    }),
+  });
+  expect(res.status).toBe(200);
+  const session = res.headers.get("mcp-session-id") ?? undefined;
+  await fetch(url, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+      ...(session ? { "mcp-session-id": session } : {}),
+    },
+    body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }),
+  });
+  return session;
+}
+
+async function listToolSchemas(url: string, session: string | undefined): Promise<Array<{ name: string; inputSchema: any }>> {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+      ...(session ? { "mcp-session-id": session } : {}),
+    },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list" }),
+  });
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  return body.result.tools ?? [];
+}
+
+async function listTools(url: string, session: string | undefined): Promise<string[]> {
+  return (await listToolSchemas(url, session)).map((tool: { name: string }) => tool.name).sort();
+}
 
 test("create -> start -> list -> stop via handlers", async () => {
   const h = createMeshControlHandlers(mgr);
@@ -29,6 +74,36 @@ test("create -> start -> list -> stop via handlers", async () => {
   expect(await h.startMesh("echo")).toMatch(/started/i);
   expect(h.listMeshes()).toMatch(/echo.*running/i);
   expect(await h.stopMesh("echo")).toMatch(/stopped/i);
+});
+
+test("mesh-control MCP exposes update_mesh and lifecycle tools", async () => {
+  server = await createMeshControlServer({ handlers: createMeshControlHandlers(mgr) });
+  const session = await initialize(server.url);
+
+  const tools = await listTools(server.url, session);
+  expect(tools).toContain("create_mesh");
+  expect(tools).toContain("get_mesh");
+  expect(tools).toContain("update_mesh");
+  expect(tools).toContain("delete_mesh");
+  expect(tools).toContain("start_mesh");
+  expect(tools).toContain("stop_mesh");
+  expect(tools).toContain("list_meshes");
+});
+
+test("create and update mesh expose simple object-edge schemas for ACP harness compatibility", async () => {
+  server = await createMeshControlServer({ handlers: createMeshControlHandlers(mgr) });
+  const session = await initialize(server.url);
+  const schemas = await listToolSchemas(server.url, session);
+
+  for (const name of ["create_mesh", "update_mesh"]) {
+    const tool = schemas.find((t) => t.name === name);
+    expect(tool).toBeTruthy();
+    const edgeItems = tool!.inputSchema.properties.edges.items;
+    expect(edgeItems.type).toBe("object");
+    expect(edgeItems.anyOf).toBeUndefined();
+    expect(edgeItems.properties.from.type).toBe("string");
+    expect(edgeItems.properties.to.type).toBe("string");
+  }
 });
 
 test("startMesh can request fresh sessions via handlers", async () => {

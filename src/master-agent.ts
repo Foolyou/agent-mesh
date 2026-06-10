@@ -6,6 +6,7 @@ import { resolve } from "node:path";
 import { AcpAgentConnection, type AcpConnectionOptions } from "./acp/client";
 import type { HarnessId, PromptImageRef } from "./acp/types";
 import { resolveHarness } from "./harness";
+import { buildMasterBriefing } from "./master-briefing";
 import { createMeshControlHandlers, createMeshControlServer, type MeshControlServer } from "./mcp/mesh-control";
 import type { MeshManager } from "./mesh-manager";
 
@@ -16,6 +17,7 @@ export class MasterAgent {
   /** Whether the master agent advertised image input (promptCapabilities.image). */
   private imageCap = false;
   private _busy = false;
+  private briefed = false;
 
   constructor(
     private manager: MeshManager,
@@ -59,6 +61,7 @@ export class MasterAgent {
         args: spec.args,
         cwd,
         debug: this.opts.debug ?? false,
+        fs: false,
         onUpdate: (u) => {
           this.opts.onUpdate?.(u);
           for (const l of this.listeners) l(u);
@@ -67,6 +70,7 @@ export class MasterAgent {
       await this.conn.start();
       const initRes = await this.conn.initialize();
       await this.conn.newSession([{ type: "http", name: "mesh-control", url: this.mcp.url, headers: [] }]);
+      this.briefed = false;
       this.imageCap = !!(initRes as any)?.agentCapabilities?.promptCapabilities?.image;
       this.opts.onCapabilities?.({ image: this.imageCap });
     } catch (err) {
@@ -84,9 +88,16 @@ export class MasterAgent {
     if (!this.conn) throw new Error("master agent not started");
     this._busy = true;
     const imgs = this.imageCap ? images : [];
-    return this.conn.prompt(text, imgs.map((i) => ({ ...i, path: i.path ?? (this.opts.uploadRoot && i.bucket ? `${this.opts.uploadRoot}/${i.bucket}/${i.id}` : undefined) }))).finally(() => {
+    const promptText = this.compose(text);
+    return this.conn.prompt(promptText, imgs.map((i) => ({ ...i, path: i.path ?? (this.opts.uploadRoot && i.bucket ? `${this.opts.uploadRoot}/${i.bucket}/${i.id}` : undefined) }))).finally(() => {
       this._busy = false;
     });
+  }
+
+  private compose(text: string): string {
+    if (this.briefed) return text;
+    this.briefed = true;
+    return `${buildMasterBriefing()}\n\n---\n\nUser request:\n\n${text}`;
   }
 
   /** Cancel the master agent's current in-flight turn. No-op when idle. */

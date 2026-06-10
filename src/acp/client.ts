@@ -87,6 +87,8 @@ export interface AcpConnectionOptions {
   onExit?: (code: number) => void;
   /** inherit agent stderr to this process (debugging) */
   debug?: boolean;
+  /** expose ACP filesystem tools to the agent; defaults to true */
+  fs?: boolean;
   /** extra env layered on top of the stripped host env (e.g. MAX_THINKING_TOKENS for claude) */
   extraEnv?: Record<string, string>;
   onPromptQueued?: (turn: AgentTurn) => void;
@@ -193,12 +195,11 @@ export class AcpAgentConnection {
   }
 
   async initialize() {
+    const clientCapabilities: Record<string, unknown> = { terminal: false };
+    if (this.opts?.fs !== false) clientCapabilities.fs = { readTextFile: true, writeTextFile: true };
     const res = await this.conn!.initialize({
       protocolVersion: PROTOCOL_VERSION,
-      clientCapabilities: {
-        fs: { readTextFile: true, writeTextFile: true },
-        terminal: false,
-      },
+      clientCapabilities,
     });
     this.supportsLoadSession = !!(res as any)?.agentCapabilities?.loadSession;
     return res;
