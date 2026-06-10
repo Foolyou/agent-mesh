@@ -119,11 +119,18 @@ export interface Toast {
   text: string;
 }
 
+export interface UpgradeState {
+  available: boolean;
+  current?: string;
+  next?: string;
+}
+
 export interface Store {
   getState(): GatewayState;
   subscribe(cb: () => void): () => void;
   wsConnected(): boolean;
   getToasts(): Toast[];
+  getUpgrade(): UpgradeState;
   apply(msg: ServerMsg): void;
   dismissToast(id: number): void;
   startMesh(name: string, sessionStrategy?: StartSessionStrategy): Promise<any>;
@@ -154,6 +161,8 @@ export function createStore(): Store {
   let connected = false;
   let everConnected = false;
   let toasts: Toast[] = [];
+  let loadedAppVersion: string | undefined;
+  let upgrade: UpgradeState = { available: false };
   let toastSeq = 0;
   const subs = new Set<() => void>();
   const emit = () => {
@@ -163,6 +172,20 @@ export function createStore(): Store {
     state = next;
     emit();
   };
+  function noteSnapshotVersion(next?: string) {
+    if (!next) return;
+    if (!loadedAppVersion) {
+      loadedAppVersion = next;
+      return;
+    }
+    if (next !== loadedAppVersion) {
+      upgrade = { available: true, current: loadedAppVersion, next };
+    }
+  }
+  function applyIncoming(msg: ServerMsg) {
+    if (msg.t === "snapshot") noteSnapshotVersion(msg.state.appVersion);
+    set(applyMsg(state, msg));
+  }
   function pushToast(kind: Toast["kind"], text: string) {
     const id = ++toastSeq;
     toasts = [...toasts, { id, kind, text }];
@@ -193,7 +216,7 @@ export function createStore(): Store {
     };
     ws.onmessage = (ev) => {
       try {
-        set(applyMsg(state, JSON.parse(String(ev.data)) as ServerMsg));
+        applyIncoming(JSON.parse(String(ev.data)) as ServerMsg);
       } catch {
         /* ignore malformed frame */
       }
@@ -247,7 +270,8 @@ export function createStore(): Store {
     },
     wsConnected: () => connected,
     getToasts: () => toasts,
-    apply: (msg) => set(applyMsg(state, msg)),
+    getUpgrade: () => upgrade,
+    apply: (msg) => applyIncoming(msg),
     dismissToast: (id) => {
       toasts = toasts.filter((t) => t.id !== id);
       emit();
@@ -286,4 +310,7 @@ export function useConnected(store: Store): boolean {
 }
 export function useToasts(store: Store): Toast[] {
   return useSyncExternalStore(store.subscribe, store.getToasts, store.getToasts);
+}
+export function useUpgrade(store: Store): UpgradeState {
+  return useSyncExternalStore(store.subscribe, store.getUpgrade, store.getUpgrade);
 }

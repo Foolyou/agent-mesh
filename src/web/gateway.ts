@@ -9,6 +9,7 @@ import type { AgentConfig, MeshConfig, MeshEdge, MeshEvent, AgentId, AgentStatus
 import type { StartMeshOptions } from "../mesh-manager";
 import { readUpload, storeUploads, uploadPath, type UploadFileLike } from "./uploads";
 import { AgentFileError, resolveAgentFile } from "./agent-files";
+import { defaultAppVersion } from "./version";
 import type {
   GatewayState,
   ServerMsg,
@@ -90,9 +91,10 @@ export class WebGateway {
   constructor(
     private manager: ManagerLike,
     private master?: MasterLike,
-    private opts: { root?: string } = {},
+    private opts: { root?: string; appVersion?: string } = {},
   ) {
     this.state = {
+      appVersion: opts.appVersion ?? defaultAppVersion(),
       meshes: [],
       master: { status: master ? "starting" : "absent", working: false, transcript: [], capabilities: { image: false } },
       perMesh: {},
@@ -125,6 +127,7 @@ export class WebGateway {
   snapshot(): GatewayState {
     this.refreshMeshes();
     for (const m of this.state.meshes) this.ensureMesh(m.name);
+    this.state.appVersion = this.opts.appVersion ?? this.state.appVersion ?? defaultAppVersion();
     return structuredClone(this.state);
   }
 

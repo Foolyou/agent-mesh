@@ -144,6 +144,7 @@ export interface PerMeshState {
 export type MasterStatus = "absent" | "starting" | "ready" | "stopped";
 
 export interface GatewayState {
+  appVersion?: string;
   meshes: MeshSummary[];
   master: { status: MasterStatus; working?: boolean; transcript: TranscriptItem[]; capabilities?: AgentCapabilities };
   perMesh: Record<string, PerMeshState>;

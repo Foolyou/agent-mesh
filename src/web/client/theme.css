@@ -442,6 +442,8 @@ body::after {
    auto min-size becomes 0) collapses to its borders (~2px). */
 .stream > * {
   flex-shrink: 0;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 80px;
 }
 .msg {
   animation: fadeUp 0.18s ease;
@@ -1124,6 +1126,14 @@ body::after {
   display: flex;
   flex-direction: column;
 }
+.virtual-list.tl {
+  display: block;
+  overflow: auto;
+}
+.virtual-list-window {
+  display: flex;
+  flex-direction: column;
+}
 .tl .ent {
   display: flex;
   gap: 9px;
@@ -1769,6 +1779,34 @@ select.inp {
     opacity: 1;
     transform: none;
   }
+}
+.upgrade-banner {
+  position: fixed;
+  left: 50%;
+  top: 56px;
+  transform: translateX(-50%);
+  z-index: 210;
+  width: min(560px, calc(100vw - 24px));
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--warn);
+  border-left-width: 3px;
+  border-radius: var(--r);
+  background: var(--bg-raise);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.48);
+}
+.upgrade-banner .utitle {
+  color: var(--fg);
+  font-weight: 700;
+  margin-bottom: 2px;
+}
+.upgrade-banner .umeta {
+  color: var(--fg-dim);
+  font-size: 11px;
+  word-break: break-word;
 }
 .row {
   display: flex;

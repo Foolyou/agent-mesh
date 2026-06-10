@@ -1,7 +1,7 @@
 // Top-level composition: owns UI state (selected mesh/agent, fullscreen, modal),
 // wires the store, and lays out the TTY-style console shell.
 import { useCallback, useEffect, useRef, useState } from "react";
-import { createStore, useStore, useConnected, useToasts, type Store } from "./store";
+import { createStore, useStore, useConnected, useToasts, useUpgrade, type Store } from "./store";
 import { Sidebar } from "./Sidebar";
 import { MeshDetail } from "./MeshDetail";
 import { MeshBuilder } from "./MeshBuilder";
@@ -24,6 +24,24 @@ function Toaster({ store }: { store: Store }) {
           {t.text}
         </div>
       ))}
+    </div>
+  );
+}
+
+function UpgradePrompt({ store }: { store: Store }) {
+  const upgrade = useUpgrade(store);
+  if (!upgrade.available) return null;
+  return (
+    <div className="upgrade-banner" role="dialog" aria-live="assertive" aria-label="Frontend update available">
+      <div>
+        <div className="utitle">Frontend update available</div>
+        <div className="umeta">
+          Server changed from {upgrade.current} to {upgrade.next}. Refresh to load the new console.
+        </div>
+      </div>
+      <Btn kind="go" onClick={() => window.location.reload()}>
+        Refresh
+      </Btn>
     </div>
   );
 }
@@ -237,6 +255,7 @@ export function App() {
       ) : null}
 
       <Toaster store={store} />
+      <UpgradePrompt store={store} />
     </div>
     )}
     </I18nContext.Provider>

@@ -9,6 +9,8 @@ import index from "./client/index.html";
 import { handleApi } from "./api";
 import type { WebGateway } from "./gateway";
 
+const SPA_CACHE_CONTROL = "no-store, max-age=0, must-revalidate";
+
 export interface WebServerOptions {
   port?: number;
   /** Interface to bind. Defaults to loopback (127.0.0.1) so the console is never exposed on
@@ -38,12 +40,21 @@ export function startWebServer(opts: WebServerOptions = {}): WebServerHandle {
   const wsBackend = backendUrl ? backendUrl.replace(/^http/, "ws") + "/ws" : undefined;
   const dev = opts.dev ?? process.env.NODE_ENV !== "production";
   const hostname = opts.hostname ?? "127.0.0.1";
+  const assetServer = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    development: dev ? { hmr: true, console: false } : false,
+    routes: { "/": index, "/mesh/*": index },
+    fetch() {
+      return new Response("not found", { status: 404 });
+    },
+  });
+  const assetOrigin = `http://127.0.0.1:${assetServer.port}`;
 
   const server = Bun.serve<WsData>({
     port: opts.port ?? 7317,
     hostname,
     development: dev ? { hmr: true, console: false } : false,
-    routes: { "/": index, "/mesh/*": index },
     async fetch(req, srv) {
       const url = new URL(req.url);
 
@@ -74,7 +85,13 @@ export function startWebServer(opts: WebServerOptions = {}): WebServerHandle {
         });
       }
 
-      return new Response("not found", { status: 404 });
+      const resp = await fetch(assetOrigin + url.pathname + url.search).catch(() => null);
+      if (!resp) return new Response("not found", { status: 404 });
+      const headers = new Headers(resp.headers);
+      if (url.pathname === "/" || url.pathname.startsWith("/mesh/")) {
+        headers.set("cache-control", SPA_CACHE_CONTROL);
+      }
+      return new Response(resp.body, { status: resp.status, statusText: resp.statusText, headers });
     },
     websocket: {
       open(ws) {
@@ -137,7 +154,10 @@ export function startWebServer(opts: WebServerOptions = {}): WebServerHandle {
     url: `http://${hostname}:${port}`,
     mode: gw ? "gateway" : "proxy",
     backendUrl,
-    stop: () => server.stop(true),
+    stop: () => {
+      server.stop(true);
+      assetServer.stop(true);
+    },
   };
 }
 

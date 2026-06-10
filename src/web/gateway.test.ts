@@ -89,6 +89,12 @@ test("snapshot includes meshes with composed agent rows", () => {
   expect(s.meshes[0].agents.map((a) => a.id)).toEqual(["router", "codex-1"]);
 });
 
+test("snapshot includes the gateway app version for client upgrade detection", () => {
+  const m = fakeManager();
+  const gw = new WebGateway(m as any, undefined, { appVersion: "build-2" });
+  expect(gw.snapshot().appVersion).toBe("build-2");
+});
+
 test("update event folds into the agent transcript and broadcasts a transcript op", () => {
   const m = fakeManager();
   const gw = new WebGateway(m as any);

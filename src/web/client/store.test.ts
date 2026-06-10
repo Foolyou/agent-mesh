@@ -1,9 +1,10 @@
 import { test, expect } from "bun:test";
-import { emptyState, applyMsg } from "./store";
+import { emptyState, applyMsg, createStore } from "./store";
 import type { GatewayState } from "../types";
 
 function seed(): GatewayState {
   return {
+    appVersion: "build-1",
     meshes: [
       {
         name: "demo",
@@ -27,6 +28,23 @@ function seed(): GatewayState {
 test("snapshot replaces state", () => {
   const s = applyMsg(emptyState(), { t: "snapshot", state: seed() });
   expect(s.meshes[0].name).toBe("demo");
+  expect(s.appVersion).toBe("build-1");
+});
+
+test("store marks an upgrade available when a later snapshot has a different app version", () => {
+  const store = createStore();
+  store.apply({ t: "snapshot", state: { ...seed(), appVersion: "build-1" } });
+  expect(store.getUpgrade()).toEqual({ available: false });
+
+  store.apply({ t: "snapshot", state: { ...seed(), appVersion: "build-2" } });
+  expect(store.getUpgrade()).toEqual({ available: true, current: "build-1", next: "build-2" });
+});
+
+test("store ignores snapshots without an app version for upgrade detection", () => {
+  const store = createStore();
+  store.apply({ t: "snapshot", state: { ...seed(), appVersion: undefined } });
+  store.apply({ t: "snapshot", state: { ...seed(), appVersion: undefined } });
+  expect(store.getUpgrade()).toEqual({ available: false });
 });
 
 test("mesh.status updates the summary", () => {
