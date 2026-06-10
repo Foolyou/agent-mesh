@@ -6,6 +6,7 @@ import type { AcpAgentConnection, AcpConnectionOptions } from "./acp/client";
 import type { MeshConfig } from "./acp/types";
 import { ControlPlane } from "./control-plane";
 import { readSessionState } from "./session-storage";
+import { readMailboxEvents, sendMail } from "./mailbox";
 
 const config: MeshConfig = {
   name: "mail-cursor",
@@ -120,6 +121,63 @@ test("snapshotEvents replays recent durable mail (with stable ids) across a cont
       expect.objectContaining({ kind: "mail", id: liveMail.id, from: "router", to: "member", body: "hello there" }),
     );
     await second.stop();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("start snapshot replays only unread durable mail after each recipient cursor", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mesh-mail-start-unread-"));
+  const mailboxPath = join(root, "mailbox.ndjson");
+  const runDir = join(root, "run");
+  const makePlane = () =>
+    new ControlPlane(config, {
+      mailboxPath,
+      sessionRunDir: runDir,
+      connectionFactory: (opts) => new CursorConnection(opts) as unknown as AcpAgentConnection,
+    });
+
+  try {
+    const first = makePlane();
+    await first.start();
+    await (first as any).handleSendMail({ agentId: "router", role: "router" }, "member", "already read");
+    expect(await (first as any).handleCheckMail({ agentId: "member", role: "member" })).toBe("from router: already read");
+    await first.stop();
+
+    const unread = await sendMail({ mailboxPath, mesh: config.name, from: "router", to: "member", body: "still unread" });
+
+    const second = makePlane();
+    await second.start();
+    const mail = second.snapshotEvents().filter((event) => event.kind === "mail");
+    expect(mail).toEqual([
+      expect.objectContaining({ kind: "mail", id: unread.id, from: "router", to: "member", body: "still unread" }),
+    ]);
+    await second.stop();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("stop compacts consumed mail so the next start does not scan handled history", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mesh-mail-stop-compact-"));
+  const mailboxPath = join(root, "mailbox.ndjson");
+  const runDir = join(root, "run");
+  const cp = new ControlPlane(config, {
+    mailboxPath,
+    sessionRunDir: runDir,
+    connectionFactory: (opts) => new CursorConnection(opts) as unknown as AcpAgentConnection,
+  });
+
+  try {
+    await cp.start();
+    await (cp as any).handleSendMail({ agentId: "router", role: "router" }, "member", "handled");
+    expect(await (cp as any).handleCheckMail({ agentId: "member", role: "member" })).toBe("from router: handled");
+    await (cp as any).handleSendMail({ agentId: "router", role: "router" }, "member", "pending");
+
+    await cp.stop();
+
+    expect((await readMailboxEvents(mailboxPath)).map((event) => event.body)).toEqual(["pending"]);
+    expect((await readMailboxEvents(mailboxPath.replace(/\.ndjson$/, ".archive.ndjson"))).map((event) => event.body)).toEqual(["handled"]);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

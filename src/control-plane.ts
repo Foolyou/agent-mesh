@@ -9,7 +9,7 @@ import { spawnConfigFor } from "./harness";
 import { Mesh } from "./mesh";
 import { buildMeshBriefing } from "./mesh-briefing";
 import { createMeshServicesServer, type MeshServicesHandlers, type MeshServicesServer, type MeshToolContext } from "./mcp/mesh-services";
-import { compactMailbox, sendMail, readMailFor, readMailboxEvents, readRecentAddressedMail } from "./mailbox";
+import { compactMailbox, sendMail, readMailFor, readMailboxEvents, readUnreadAddressedMail } from "./mailbox";
 import { validateAddAgent, validateAddEdge } from "./mesh-validate";
 import { readSessionState, setMeshExpectedAlive, updateAgentMailCursor, updateAgentSession, clearAgentSession, type MeshSessionState } from "./session-storage";
 import { now, type AgentActivity, type AgentConfig, type AgentId, type AgentTurn, type MeshConfig, type MeshEdge, type MeshEvent, type PromptImageRef, type SessionMode, type SessionModel } from "./acp/types";
@@ -49,6 +49,7 @@ export interface ControlPlaneOptions {
   spawnTimeoutMs?: number;
   mailboxCompactThresholdEvents?: number;
   mailboxCompactThresholdBytes?: number;
+  mailboxArchiveMaxEvents?: number;
   /** Max mails returned per check_mail call (cursor only advances past returned mail). */
   checkMailMaxCount?: number;
   /** Max total body bytes per check_mail call; at least one mail is always returned. */
@@ -72,6 +73,7 @@ export class ControlPlane {
   private spawnTimeoutMs: number;
   private mailboxCompactThresholdEvents: number;
   private mailboxCompactThresholdBytes: number;
+  private mailboxArchiveMaxEvents: number;
   private checkMailMaxCount: number;
   private checkMailMaxBytes: number;
   private spawning = new Map<AgentId, Promise<AcpAgentConnection>>();
@@ -113,6 +115,7 @@ export class ControlPlane {
     this.spawnTimeoutMs = opts.spawnTimeoutMs ?? 60_000;
     this.mailboxCompactThresholdEvents = opts.mailboxCompactThresholdEvents ?? 1_000;
     this.mailboxCompactThresholdBytes = opts.mailboxCompactThresholdBytes ?? 1_000_000;
+    this.mailboxArchiveMaxEvents = opts.mailboxArchiveMaxEvents ?? 2_000;
     this.checkMailMaxCount = opts.checkMailMaxCount ?? 20;
     this.checkMailMaxBytes = opts.checkMailMaxBytes ?? 64_000;
   }
@@ -355,8 +358,8 @@ export class ControlPlane {
     for (const [agentId, record] of Object.entries(this.sessionState.agents)) {
       if (record.mailCursor) this.mailCursors.set(agentId, record.mailCursor);
     }
-    this.compactMailboxSoon();
-    this.recentMail = (await readRecentAddressedMail({ mailboxPath: this.mailboxPath })).map((event) => ({
+    await this.compactMailboxNow();
+    this.recentMail = (await readUnreadAddressedMail({ mailboxPath: this.mailboxPath, cursors: this.mailboxCursorsSnapshot() })).map((event) => ({
       id: event.id,
       from: event.from,
       to: (event.meta as { to?: string }).to!,
@@ -395,6 +398,7 @@ export class ControlPlane {
     if ((reason === "explicit" || reason === "idle") && this.sessionRunDir) {
       this.sessionState = await setMeshExpectedAlive(this.sessionRunDir, this.mesh.name, false);
     }
+    await this.compactMailboxNow();
     for (const c of this.conns.values()) c.kill();
     this.mcp?.close();
     for (const p of this.pending.values()) clearTimeout(p.timer);
@@ -859,12 +863,21 @@ export class ControlPlane {
     return lines.join("\n");
   }
 
-  private compactMailboxSoon(): void {
+  private mailboxCursorsSnapshot(): Record<string, string | undefined> {
     const cursors: Record<string, string | undefined> = {};
     for (const a of this.mesh.agents) {
       cursors[a.id] = this.mailCursors.get(a.id) ?? this.sessionState.agents[a.id]?.mailCursor;
     }
-    void compactMailbox({ mailboxPath: this.mailboxPath, cursors }).catch((err) => this.log(`compact mailbox failed: ${String(err)}`));
+    return cursors;
+  }
+
+  private async compactMailboxNow(): Promise<void> {
+    await compactMailbox({ mailboxPath: this.mailboxPath, cursors: this.mailboxCursorsSnapshot(), archiveCap: this.mailboxArchiveMaxEvents });
+  }
+
+  private compactMailboxSoon(): void {
+    const cursors = this.mailboxCursorsSnapshot();
+    void compactMailbox({ mailboxPath: this.mailboxPath, cursors, archiveCap: this.mailboxArchiveMaxEvents }).catch((err) => this.log(`compact mailbox failed: ${String(err)}`));
   }
 
   private compactMailboxIfOverThreshold(): void {

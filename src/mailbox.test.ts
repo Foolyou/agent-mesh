@@ -88,3 +88,17 @@ test("compactMailbox skips replacement when mail is appended after its snapshot"
   expect(await readMailboxEvents(p)).toEqual([]);
   expect((await readMailboxEvents(next.archivePath)).map((event) => event.body)).toEqual(["old", "new"]);
 });
+
+test("compactMailbox can roll the archive to the newest capped events", async () => {
+  const p = join(tmpdir(), `mbx-${randomUUID()}.ndjson`);
+  const first = await sendMail({ mailboxPath: p, mesh: "m", from: "a", to: "b", body: "one" });
+  const second = await sendMail({ mailboxPath: p, mesh: "m", from: "a", to: "b", body: "two" });
+  const third = await sendMail({ mailboxPath: p, mesh: "m", from: "a", to: "b", body: "three" });
+
+  const result = await compactMailbox({ mailboxPath: p, cursors: { b: third.id }, archiveCap: 2 });
+
+  expect(result.archived).toBe(3);
+  expect((await readMailboxEvents(result.archivePath)).map((event) => event.id)).toEqual([second.id, third.id]);
+  expect((await readMailboxEvents(result.archivePath)).map((event) => event.body)).toEqual(["two", "three"]);
+  expect(first.id).toBeString();
+});

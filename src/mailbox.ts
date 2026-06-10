@@ -148,6 +148,36 @@ export async function readRecentAddressedMail(
   return mail.length > cap ? mail.slice(mail.length - cap) : mail;
 }
 
+/** Unread addressed mail from the live mailbox only, using per-recipient cursors.
+ *  Compacted archive files contain already-consumed history and are deliberately
+ *  ignored so a restarted mesh does not replay old coordination traffic. */
+export async function readUnreadAddressedMail(
+  options: { mailboxPath?: string; cursors: Record<string, string | undefined>; cap?: number },
+): Promise<MailboxEvent[]> {
+  const live = await readMailboxEvents(options.mailboxPath);
+  const cursorInLive = new Set<string>();
+  for (const event of live) {
+    const to = (event.meta as { to?: string } | undefined)?.to;
+    if (to && options.cursors[to] === event.id) cursorInLive.add(to);
+  }
+
+  const passedCursor = new Set<string>();
+  const mail = live.filter((event) => {
+    const meta = event.meta as { to?: string; steer?: boolean } | undefined;
+    const to = meta?.to;
+    if (!to || meta.steer) return false;
+    const cursor = options.cursors[to];
+    if (cursor && cursorInLive.has(to) && !passedCursor.has(to)) {
+      if (event.id === cursor) passedCursor.add(to);
+      return false;
+    }
+    return true;
+  });
+
+  const cap = options.cap ?? 200;
+  return mail.length > cap ? mail.slice(mail.length - cap) : mail;
+}
+
 export async function readMailboxEvents(
   mailboxPath = defaultMailboxPath(),
 ): Promise<MailboxEvent[]> {
@@ -168,6 +198,7 @@ export async function readMailboxEvents(
 export async function compactMailbox(input: {
   mailboxPath?: string;
   archivePath?: string;
+  archiveCap?: number;
   cursors: Record<string, string | undefined>;
   beforeReplace?: () => Promise<void>;
 }): Promise<{ archived: number; kept: number; archivePath: string; skipped?: boolean }> {
@@ -227,11 +258,16 @@ export async function compactMailbox(input: {
     const archivedById = new Map<string, MailboxEvent>();
     for (const event of await readMailboxEvents(archivePath)) archivedById.set(event.id, event);
     for (const event of archive) archivedById.set(event.id, event);
+    const archivedEvents = [...archivedById.values()];
+    const archiveCap = input.archiveCap ?? Number.POSITIVE_INFINITY;
+    const rolledArchive = Number.isFinite(archiveCap) && archiveCap >= 0
+      ? archivedEvents.slice(Math.max(0, archivedEvents.length - archiveCap))
+      : archivedEvents;
     const archiveTmp = `${archivePath}.${process.pid}.${Date.now()}.tmp`;
     const mailboxTmp = `${mailboxPath}.${process.pid}.${Date.now()}.tmp`;
     await mkdir(dirname(mailboxPath), { recursive: true });
     await mkdir(dirname(archivePath), { recursive: true });
-    await writeFile(archiveTmp, [...archivedById.values()].map((event) => JSON.stringify(event)).join("\n") + "\n", "utf8");
+    await writeFile(archiveTmp, rolledArchive.length ? rolledArchive.map((event) => JSON.stringify(event)).join("\n") + "\n" : "", "utf8");
     await writeFile(mailboxTmp, keep.length ? keep.map((event) => JSON.stringify(event)).join("\n") + "\n" : "", "utf8");
     try {
       await rename(archiveTmp, archivePath);
