@@ -60,3 +60,12 @@ test("strong does not leak the hast `node` AST as a DOM attribute", () => {
   expect(html).toContain("<strong>bold</strong>");
   expect(html).not.toContain("node=");
 });
+
+test("fenced code renders as the app themed pre/code block instead of Streamdown chrome", () => {
+  const html = renderMd('```ts\ntype TaskStatus = "pending";\ninterface Task { id: string }\n```');
+
+  expect(html).toContain('<pre><code class="language-ts">type TaskStatus = &quot;pending&quot;');
+  expect(html).toContain(";\ninterface Task");
+  expect(html).not.toContain("data-streamdown=\"code-block");
+  expect(html).not.toContain("code-block-header");
+});

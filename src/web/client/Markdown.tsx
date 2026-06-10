@@ -93,6 +93,14 @@ function Strong({ node: _node, children, ...rest }: WithNode<ComponentProps<"str
   return <strong {...rest}>{children}</strong>;
 }
 
+function Pre({ node: _node, children, ...rest }: WithNode<ComponentProps<"pre">>) {
+  return <pre {...rest}>{children}</pre>;
+}
+
+function Code({ node: _node, children, ...rest }: WithNode<ComponentProps<"code">>) {
+  return <code {...rest}>{children}</code>;
+}
+
 export function Markdown({ text }: { text: string }) {
   return (
     <Streamdown
@@ -102,7 +110,7 @@ export function Markdown({ text }: { text: string }) {
       controls={false}
       rehypePlugins={rehypePlugins as any}
       urlTransform={urlTransform}
-      components={{ a: Anchor, img: Image, strong: Strong } as Components}
+      components={{ a: Anchor, img: Image, strong: Strong, pre: Pre, code: Code } as Components}
     >
       {text}
     </Streamdown>
