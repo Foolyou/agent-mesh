@@ -71,6 +71,11 @@ const edgeSchema = z.union([
     steer: z.boolean().optional(),
   }),
 ]);
+const toolEdgeSchema = z.object({
+  from: z.string(),
+  to: z.string(),
+  steer: z.boolean().optional(),
+});
 const meshSpecShape = {
   name: z.string().describe("unique mesh name (filesystem-safe)"),
   agents: z.array(agentSchema).describe("agents; exactly one must have role 'router'"),
@@ -81,6 +86,12 @@ const meshSpecShape = {
     .string()
     .optional()
     .describe("optional team charter: shared goal + working norms, injected into every agent's briefing"),
+};
+const meshToolSpecShape = {
+  ...meshSpecShape,
+  edges: z
+    .array(toolEdgeSchema)
+    .describe("directed mail edges as {from, to, steer?}; both IDs must appear in agents[].id"),
 };
 const meshSpecSchema = z.object(meshSpecShape);
 function parseMeshSpec(spec: unknown): MeshConfig {
@@ -104,13 +115,13 @@ export async function createMeshControlServer(opts: {
 
   const server = new McpServer({ name: "mesh-control", version: "0.2.0" });
   server.registerTool("create_mesh",
-    { description: "Define a NEW mesh (validated + persisted; does not start it).", inputSchema: meshSpecShape },
+    { description: "Define a NEW mesh (validated + persisted; does not start it).", inputSchema: meshToolSpecShape },
     async (spec) => text(await opts.handlers.createMesh(parseMeshSpec(spec))));
   server.registerTool("get_mesh",
     { description: "Get a mesh's full definition (agents, edges, project, charter) as JSON. Use this before update_mesh to see what to change.", inputSchema: { name: z.string() } },
     async ({ name }) => text(opts.handlers.getMesh(name)));
   server.registerTool("update_mesh",
-    { description: "Replace the definition of an existing STOPPED mesh — same shape as create_mesh (validated + persisted). Read it first with get_mesh, change the fields you want, and pass the full updated spec.", inputSchema: meshSpecShape },
+    { description: "Replace the definition of an existing STOPPED mesh — same shape as create_mesh (validated + persisted). Read it first with get_mesh, change the fields you want, and pass the full updated spec.", inputSchema: meshToolSpecShape },
     async (spec) => text(await opts.handlers.updateMesh(parseMeshSpec(spec))));
   server.registerTool("delete_mesh",
     { description: "Delete a mesh definition permanently. The mesh must be stopped first.", inputSchema: { name: z.string() } },

@@ -51,6 +51,25 @@ test("initialize captures advertised loadSession support", async () => {
   }
 });
 
+test("initialize can omit filesystem client capabilities", async () => {
+  const calls: any[] = [];
+  const c = Object.create(AcpAgentConnection.prototype) as AcpAgentConnection;
+  (c as any).id = "no-fs";
+  (c as any).supportsLoadSession = false;
+  (c as any).opts = { fs: false };
+  (c as any).conn = {
+    initialize: async (params: any) => {
+      calls.push(params);
+      return { agentCapabilities: {} };
+    },
+  };
+
+  await c.initialize();
+
+  expect(calls[0].clientCapabilities.fs).toBeUndefined();
+  expect(calls[0].clientCapabilities.terminal).toBe(false);
+});
+
 test("setModel writes one raw ACP session/set_model line to child stdin", async () => {
   const chunks: Uint8Array[] = [];
   let flushes = 0;

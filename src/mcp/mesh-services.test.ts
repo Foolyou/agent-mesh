@@ -57,6 +57,21 @@ async function callTool(url: string, session: string | undefined, name: string, 
   return res.json();
 }
 
+async function listTools(url: string, session: string | undefined): Promise<string[]> {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+      ...(session ? { "mcp-session-id": session } : {}),
+    },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 3, method: "tools/list" }),
+  });
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  return (body.result.tools ?? []).map((tool: { name: string }) => tool.name).sort();
+}
+
 // Root cause of toolless claude sessions (2026-06-10): claude-agent-acp makes MORE THAN
 // ONE MCP initialize per spawn (an internal probe session plus the real session, ~2s apart).
 // A stateful single-session transport accepts the first and rejects the rest with
@@ -81,6 +96,19 @@ test("multiple MCP clients of one agent registration can all initialize and call
   // Client 3: a later reconnect (e.g. stream drop) must also survive.
   const reconnect = await handshake(url);
   expect((await callTool(url, reconnect, "check_mail")).result.content[0].text).toBe("ok-3");
+});
+
+test("mesh-services exposes collaboration tools but not mesh-control lifecycle tools", async () => {
+  server = createMeshServicesServer({ handlers, log: () => {} });
+  await server.register("A", "member");
+  const url = server.urlFor("A");
+  const session = await handshake(url);
+
+  const tools = await listTools(url, session);
+  expect(tools).toContain("send_mail");
+  expect(tools).toContain("check_mail");
+  expect(tools).toContain("mesh_status");
+  expect(tools).not.toContain("update_mesh");
 });
 
 test("tool calls produce structured start/end logs with agent, tool, request id, and duration", async () => {

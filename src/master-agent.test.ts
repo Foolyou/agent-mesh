@@ -4,18 +4,23 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AcpAgentConnection, AcpConnectionOptions } from "./acp/client";
+import { buildMasterBriefing } from "./master-briefing";
 import { MasterAgent } from "./master-agent";
 
 class FakeAcpConnection {
+  prompts: string[] = [];
+  newSessionArgs: unknown[][] = [];
   constructor(private opts: AcpConnectionOptions) {}
   async start(): Promise<void> {}
   async initialize(): Promise<unknown> {
     return { agentCapabilities: { promptCapabilities: { image: true } } };
   }
-  async newSession(): Promise<unknown> {
+  async newSession(...args: unknown[]): Promise<unknown> {
+    this.newSessionArgs.push(args);
     return { sessionId: `s-${this.opts.id}`, promptCapabilities: { image: false } };
   }
-  async prompt(): Promise<unknown> {
+  async prompt(text: string): Promise<unknown> {
+    this.prompts.push(text);
     return { stopReason: "end_turn" };
   }
   kill(): void {}
@@ -63,6 +68,7 @@ test("master agent defaults to the codex harness", async () => {
     await master.start();
     expect(seen?.command).toBe("codex-acp");
     expect(seen?.args).toEqual([]);
+    expect(seen?.fs).toBe(false);
   } finally {
     await master.stop();
   }
@@ -104,5 +110,45 @@ test("master agent starts in the configured assistant cwd", async () => {
   } finally {
     await master.stop();
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("master agent injects mesh-control MCP into the session", async () => {
+  let conn: FakeAcpConnection | undefined;
+  const master = new MasterAgent(fakeManager as any, {
+    connectionFactory: (opts) => {
+      conn = new FakeAcpConnection(opts);
+      return conn as unknown as AcpAgentConnection;
+    },
+  });
+  try {
+    await master.start();
+    expect(conn!.newSessionArgs[0]?.[0]).toEqual([
+      expect.objectContaining({ type: "http", name: "mesh-control", headers: [] }),
+    ]);
+  } finally {
+    await master.stop();
+  }
+});
+
+test("master agent prepends the control briefing only to the first user prompt", async () => {
+  let conn: FakeAcpConnection | undefined;
+  const master = new MasterAgent(fakeManager as any, {
+    connectionFactory: (opts) => {
+      conn = new FakeAcpConnection(opts);
+      return conn as unknown as AcpAgentConnection;
+    },
+  });
+  try {
+    await master.start();
+    await master.prompt("create a mesh named demo");
+    await master.prompt("list meshes");
+
+    const briefing = buildMasterBriefing();
+    expect(conn!.prompts[0]?.startsWith(briefing)).toBe(true);
+    expect(conn!.prompts[0]).toContain("create a mesh named demo");
+    expect(conn!.prompts[1]).toBe("list meshes");
+  } finally {
+    await master.stop();
   }
 });
