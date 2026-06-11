@@ -12,7 +12,7 @@ import { createMeshServicesServer, type MeshServicesHandlers, type MeshServicesS
 import { compactMailbox, sendMail, readMailFor, readMailboxEvents, readRecentAddressedMail, readUnreadAddressedMail, type MailMeta } from "./mailbox";
 import { validateAddAgent, validateAddEdge } from "./mesh-validate";
 import { readSessionState, setMeshExpectedAlive, updateAgentMailCursor, updateAgentSession, clearAgentSession, type MeshSessionState } from "./session-storage";
-import { now, type AgentActivity, type AgentConfig, type AgentId, type AgentTurn, type MeshConfig, type MeshEdge, type MeshEvent, type PromptImageRef, type SessionMode, type SessionModel } from "./acp/types";
+import { now, type AgentActivity, type AgentConfig, type AgentId, type AgentTurn, type MeshConfig, type MeshEdge, type MeshEvent, type PromptImageRef, type SessionMode, type SessionModel, type TurnHealthReason } from "./acp/types";
 
 interface PendingDecision {
   resolve: (decision: PermissionDecision) => void;
@@ -26,6 +26,23 @@ interface MailDeliveryMeta {
   task?: string;
 }
 
+interface ActiveTurnHealth {
+  agent: AgentId;
+  turn: AgentTurn;
+  conn: AcpAgentConnection;
+  startedAt: string;
+  firstSignalAt?: string;
+  lastSignalAt?: string;
+  firstSignalTimer?: ReturnType<typeof setTimeout>;
+  cancelGraceTimer?: ReturnType<typeof setTimeout>;
+}
+
+interface HealthFailureSummary {
+  reason: TurnHealthReason;
+  detail: string;
+  ts: string;
+}
+
 function compactPreview(text: string): string {
   return text.replace(/\s+/g, " ").trim().slice(0, 160);
 }
@@ -35,8 +52,19 @@ function turnPreview(label: string, text: string, images: PromptImageRef[] = [])
   return `${label}: ${preview || (images.length ? "[image]" : "")}`;
 }
 
+function numberEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === "") return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
+}
+
 function publicImageRef(i: PromptImageRef): PromptImageRef {
   return { id: i.id, mimeType: i.mimeType, name: i.name, url: i.url };
+}
+
+function isSystemReceipt(body: string): boolean {
+  return body.startsWith("[DELIVERY FAILED]") || body.startsWith("[SPAWN FAILED]");
 }
 
 export type ControlPlaneStopReason = "explicit" | "idle" | "shutdown";
@@ -61,6 +89,12 @@ export interface ControlPlaneOptions {
   checkMailMaxCount?: number;
   /** Max total body bytes per check_mail call; at least one mail is always returned. */
   checkMailMaxBytes?: number;
+  /** Started prompt must emit an update/permission/result/error before this deadline. */
+  turnFirstSignalTimeoutMs?: number;
+  /** Reserved for future idle-stall enforcement. 0 disables enforcement. */
+  turnIdleStallTimeoutMs?: number;
+  /** Grace period after best-effort cancel before a silent turn kills its connection. */
+  turnCancelGraceMs?: number;
 }
 
 export class ControlPlane {
@@ -83,6 +117,9 @@ export class ControlPlane {
   private mailboxArchiveMaxEvents: number;
   private checkMailMaxCount: number;
   private checkMailMaxBytes: number;
+  private turnFirstSignalTimeoutMs: number;
+  private turnIdleStallTimeoutMs: number;
+  private turnCancelGraceMs: number;
   private spawning = new Map<AgentId, Promise<AcpAgentConnection>>();
   private spawnFails = new Map<AgentId, number>();
   private spawnGeneration = new Map<AgentId, number>();
@@ -102,6 +139,9 @@ export class ControlPlane {
   /** Per-agent in-flight prompt turns. count > 0 means working unless the agent is dead. */
   private turnCounts = new Map<AgentId, number>();
   private queuedTurns = new Map<AgentId, AgentTurn[]>();
+  private startedTurnIds = new Set<string>();
+  private activeTurnHealth = new Map<AgentId, ActiveTurnHealth>();
+  private lastHealthFailure = new Map<AgentId, HealthFailureSummary>();
   /** Mail ids each agent has already read via check_mail; a late wake for one of
    *  these is dropped instead of queueing a duplicate prompt turn. */
   private consumedMailIds = new Map<AgentId, Set<string>>();
@@ -132,6 +172,9 @@ export class ControlPlane {
     this.mailboxArchiveMaxEvents = opts.mailboxArchiveMaxEvents ?? 2_000;
     this.checkMailMaxCount = opts.checkMailMaxCount ?? 20;
     this.checkMailMaxBytes = opts.checkMailMaxBytes ?? 64_000;
+    this.turnFirstSignalTimeoutMs = opts.turnFirstSignalTimeoutMs ?? numberEnv("MESH_TURN_FIRST_SIGNAL_MS", 120_000);
+    this.turnIdleStallTimeoutMs = opts.turnIdleStallTimeoutMs ?? numberEnv("MESH_TURN_IDLE_STALL_MS", 0);
+    this.turnCancelGraceMs = opts.turnCancelGraceMs ?? numberEnv("MESH_TURN_CANCEL_GRACE_MS", 5_000);
   }
 
   // ---- event bus ----
@@ -186,6 +229,7 @@ export class ControlPlane {
   }
 
   private noteTurnQueued(turn: AgentTurn): void {
+    if (this.startedTurnIds.has(turn.id)) return;
     const q = this.queuedTurns.get(turn.agent) ?? [];
     if (!q.some((queued) => queued.id === turn.id)) q.push(turn);
     this.queuedTurns.set(turn.agent, q);
@@ -193,16 +237,109 @@ export class ControlPlane {
   }
 
   private noteTurnStarted(turn: AgentTurn): void {
+    if (this.startedTurnIds.has(turn.id)) {
+      this.startTurnHealth(turn);
+      return;
+    }
+    this.startedTurnIds.add(turn.id);
+    while (this.startedTurnIds.size > 1000) this.startedTurnIds.delete(this.startedTurnIds.values().next().value!);
     const q = this.queuedTurns.get(turn.agent) ?? [];
     const idx = q.findIndex((queued) => queued.id === turn.id);
     if (idx >= 0) q.splice(idx, 1);
     if (q.length) this.queuedTurns.set(turn.agent, q);
     else this.queuedTurns.delete(turn.agent);
     this.emit({ kind: "agent_turn", phase: "started", turn, ts: now() });
+    this.startTurnHealth(turn);
   }
 
   private clearQueuedTurns(id: AgentId): void {
     this.queuedTurns.delete(id);
+  }
+
+  private startTurnHealth(turn: AgentTurn): void {
+    const conn = this.conns.get(turn.agent);
+    if (!conn || this.turnFirstSignalTimeoutMs <= 0) return;
+    this.clearTurnHealth(turn.agent, turn.id);
+    const active: ActiveTurnHealth = {
+      agent: turn.agent,
+      turn,
+      conn,
+      startedAt: now(),
+    };
+    active.firstSignalTimer = setTimeout(() => this.handleFirstSignalTimeout(active), this.turnFirstSignalTimeoutMs);
+    this.activeTurnHealth.set(turn.agent, active);
+  }
+
+  private noteTurnSignal(agent: AgentId, turn: AgentTurn | undefined): void {
+    const active = this.activeTurnHealth.get(agent);
+    if (!active || !turn || active.turn.id !== turn.id) return;
+    const ts = now();
+    active.firstSignalAt ??= ts;
+    active.lastSignalAt = ts;
+    if (active.firstSignalTimer) {
+      clearTimeout(active.firstSignalTimer);
+      active.firstSignalTimer = undefined;
+    }
+    // Idle-stall tracking is intentionally data-only in v1.
+    void this.turnIdleStallTimeoutMs;
+  }
+
+  private finishTurnHealth(agent: AgentId, turn: AgentTurn | undefined): void {
+    if (!turn) return;
+    this.clearTurnHealth(agent, turn.id);
+  }
+
+  private clearTurnHealth(agent: AgentId, turnId?: string): void {
+    const active = this.activeTurnHealth.get(agent);
+    if (!active || (turnId && active.turn.id !== turnId)) return;
+    if (active.firstSignalTimer) clearTimeout(active.firstSignalTimer);
+    if (active.cancelGraceTimer) clearTimeout(active.cancelGraceTimer);
+    this.activeTurnHealth.delete(agent);
+  }
+
+  private clearTurnHealthForAgent(agent: AgentId): void {
+    this.clearTurnHealth(agent);
+  }
+
+  private handleFirstSignalTimeout(active: ActiveTurnHealth): void {
+    if (this.activeTurnHealth.get(active.agent) !== active) return;
+    active.firstSignalTimer = undefined;
+    const detail = `first signal timed out after ${this.turnFirstSignalTimeoutMs}ms`;
+    this.recordTurnHealthFailure(active, "first_signal_timeout", detail);
+    active.conn.cancel().catch((err) => this.log(`turn cancel after first-signal timeout for ${active.agent} failed: ${String(err)}`));
+    active.cancelGraceTimer = setTimeout(() => this.finalizeFirstSignalTimeout(active, detail), this.turnCancelGraceMs);
+  }
+
+  private finalizeFirstSignalTimeout(active: ActiveTurnHealth, detail: string): void {
+    if (this.activeTurnHealth.get(active.agent) !== active) return;
+    active.cancelGraceTimer = undefined;
+    const current = this.conns.get(active.agent);
+    const stopped = this.mesh.status(active.agent) === "stopped";
+    this.failActiveTurn(active.conn, active.turn.id, new Error(detail));
+    this.clearTurnHealth(active.agent, active.turn.id);
+    if (current !== active.conn || stopped) return;
+    active.conn.kill();
+    if (this.conns.get(active.agent) === active.conn) this.conns.delete(active.agent);
+    if (this.mesh.status(active.agent) !== "stopped") {
+      this.mesh.setStatus(active.agent, "dead");
+      this.clearQueuedTurns(active.agent);
+      this.emit({ kind: "agent_status", agent: active.agent, status: "dead", detail, ts: now() });
+    }
+    this.emitActivityIfChanged(active.agent);
+  }
+
+  private failActiveTurn(conn: AcpAgentConnection, turnId: string, err: unknown): void {
+    const failer = (conn as unknown as { failActiveTurn?: (turnId: string, err: unknown) => boolean }).failActiveTurn;
+    if (failer) failer.call(conn, turnId, err);
+  }
+
+  private recordTurnHealthFailure(active: ActiveTurnHealth, reason: TurnHealthReason, detail: string): void {
+    const ts = now();
+    this.lastHealthFailure.set(active.agent, { reason, detail, ts });
+    this.emit({ kind: "agent_turn_health", agent: active.agent, turn: active.turn, level: "failed", reason, detail, ts });
+    if (active.turn.source === "mail" && active.turn.from && active.turn.from !== "operator" && !isSystemReceipt(active.turn.text)) {
+      this.sendDeliveryFailedReceipt(active.turn, reason, detail);
+    }
   }
 
   private noteTurnConsumed(turn: AgentTurn): void {
@@ -265,7 +402,7 @@ export class ControlPlane {
     };
   }
 
-  private mailTurn(to: AgentId, from: AgentId, body: string, mailId?: string): AgentTurn {
+  private mailTurn(to: AgentId, from: AgentId, body: string, mailId?: string, mailSeq?: number): AgentTurn {
     return {
       id: randomUUID(),
       agent: to,
@@ -276,6 +413,7 @@ export class ControlPlane {
       preview: `${from}: ${compactPreview(body)}`,
       ts: now(),
       mailId,
+      mailSeq,
     };
   }
 
@@ -444,6 +582,7 @@ export class ControlPlane {
       this.sessionState = await setMeshExpectedAlive(this.sessionRunDir, this.mesh.name, false);
     }
     await this.compactMailboxNow();
+    for (const a of this.mesh.agents) this.clearTurnHealthForAgent(a.id);
     for (const c of this.conns.values()) c.kill();
     this.mcp?.close();
     for (const p of this.pending.values()) clearTimeout(p.timer);
@@ -495,8 +634,10 @@ export class ControlPlane {
       onPermission: (req) => this.handlePermission(a.id, req),
       onPromptQueued: (turn) => this.noteTurnQueued(turn),
       onPromptStarted: (turn) => this.noteTurnStarted(turn),
+      onPromptSignal: (turn) => this.noteTurnSignal(a.id, turn),
       onExit: (code) => {
         if (this.conns.get(a.id) !== conn) return;
+        this.clearTurnHealthForAgent(a.id);
         this.mesh.setStatus(a.id, "dead");
         this.turnCounts.set(a.id, 0);
         this.clearQueuedTurns(a.id);
@@ -694,6 +835,7 @@ export class ControlPlane {
   async stopAgent(id: AgentId): Promise<void> {
     if (!this.mesh.agent(id)) throw new Error(`no such agent "${id}"`);
     this.spawnGeneration.set(id, (this.spawnGeneration.get(id) ?? 0) + 1);
+    this.clearTurnHealthForAgent(id);
     const conn = this.conns.get(id);
     if (conn) {
       conn.kill();
@@ -740,7 +882,7 @@ export class ControlPlane {
       const result = await this.trackTurn(
         id,
         () => steer ? conn.steerPrompt(prompt, images, turn) : conn.prompt(prompt, images, turn),
-      );
+      ).finally(() => this.finishTurnHealth(id, turn));
       this.resumePendingValidation.delete(id);
       return result;
     } catch (err) {
@@ -751,8 +893,8 @@ export class ControlPlane {
       const retryPrompt = this.compose(id, text);
       return this.trackTurn(
         id,
-        () => steer ? conn.steerPrompt(retryPrompt, images) : conn.prompt(retryPrompt, images),
-      );
+        () => steer ? conn.steerPrompt(retryPrompt, images, turn) : conn.prompt(retryPrompt, images, turn),
+      ).finally(() => this.finishTurnHealth(id, turn));
     }
   }
 
@@ -790,7 +932,9 @@ export class ControlPlane {
         .filter((o) => o.id !== a.id && this.mesh.canMail(a.id, o.id))
         .map((o) => o.id);
       const me = a.id === forAgent ? " (you)" : "";
-      return `- ${a.id}${me} [${a.harness}, ${a.role}, ${this.mesh.status(a.id)}, ${this.activityOf(a.id)}] can mail: ${reach.join(", ") || "(none)"}`;
+      const health = this.lastHealthFailure.get(a.id);
+      const healthText = health ? ` last health failure: ${health.reason} (${health.detail})` : "";
+      return `- ${a.id}${me} [${a.harness}, ${a.role}, ${this.mesh.status(a.id)}, ${this.activityOf(a.id)}] can mail: ${reach.join(", ") || "(none)"}${healthText}`;
     });
     return `Mesh "${this.mesh.name}" — router is ${this.mesh.router.id}.\n${lines.join("\n")}`;
   }
@@ -896,7 +1040,7 @@ export class ControlPlane {
     }
     // Remember AFTER the reply_to check so a mail cannot satisfy its own reference.
     this.rememberMailSeq(seq, { from: ctx.agentId, to, body });
-    return [`delivered to ${to} as #${seq}`, ...notes].join("\n");
+    return [`queued for ${to} as #${seq}; wake scheduled`, ...notes].join("\n");
   }
 
   private wakeLazy(to: AgentId, from: AgentId, body: string, mailId?: string, meta: MailDeliveryMeta = {}): void {
@@ -922,13 +1066,34 @@ export class ControlPlane {
       .catch((err) => this.log(`spawn failed receipt ${to}->${from} failed: ${String(err)}`));
   }
 
+  private sendDeliveryFailedReceipt(turn: AgentTurn, reason: TurnHealthReason, detail: string): void {
+    const from = turn.from;
+    const to = turn.to ?? turn.agent;
+    if (!from || from === "operator") return;
+    const mailLabel = turn.mailId ? `mail ${turn.mailId}` : "mail";
+    const seq = ++this.mailSeq;
+    const body =
+      `[DELIVERY FAILED] ${to} did not start handling ${mailLabel}. ` +
+      `Reason: ${reason} (${detail}). ` +
+      `The original mail${turn.mailSeq !== undefined ? ` #${turn.mailSeq}` : ""} is still persisted; ` +
+      `retry after manual wake or model change.`;
+    void sendMail({ mailboxPath: this.mailboxPath, mesh: this.mesh.name, from: to, to: from, body, seq })
+      .then((event) => {
+        this.rememberMailSeq(seq, { from: to, to: from, body });
+        this.pushRecentMail({ id: event.id, from: to, to: from, body, ts: event.ts });
+        this.emit({ kind: "mail", id: event.id, from: to, to: from, body, ts: event.ts });
+        this.wake(from, to, body, event.id, { seq });
+      })
+      .catch((err) => this.log(`delivery failed receipt ${to}->${from} failed: ${String(err)}`));
+  }
+
   private wake(to: AgentId, from: AgentId, body: string, mailId?: string, meta: MailDeliveryMeta = {}): void {
     if (mailId && this.consumedMailIds.get(to)?.has(mailId)) return;
     const mail =
       `${this.renderMailHeader(from, meta)}: ${body}` +
       this.renderReplyQuote(meta.replyTo) +
       `\n\n${MAIL_WAKE_GUIDANCE}`;
-    this.prompt(to, mail, [], this.mailTurn(to, from, body, mailId)).catch((err) => this.log(`wake(${to}) failed: ${String(err)}`));
+    this.prompt(to, mail, [], this.mailTurn(to, from, body, mailId, meta.seq)).catch((err) => this.log(`wake(${to}) failed: ${String(err)}`));
   }
 
   private async handleSteerMail(ctx: MeshToolContext, to: AgentId, body: string): Promise<string> {

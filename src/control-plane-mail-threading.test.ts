@@ -75,7 +75,7 @@ test("send_mail assigns #seq, reply_to renders header and quote, task tags the t
   try {
     await cp.start();
     const first = await (cp as any).handleSendMail({ agentId: "router", role: "router" }, "member", "[REQ] which port?");
-    expect(first).toBe("delivered to member as #1");
+    expect(first).toBe("queued for member as #1; wake scheduled");
 
     const reply = await (cp as any).handleSendMail(
       { agentId: "member", role: "member" },
@@ -83,7 +83,7 @@ test("send_mail assigns #seq, reply_to renders header and quote, task tags the t
       "[FYI] port 15001",
       { replyTo: 1, task: "fix-ports" },
     );
-    expect(reply).toBe("delivered to router as #2");
+    expect(reply).toBe("queued for router as #2; wake scheduled");
 
     await waitUntil(() => conns["router"].prompts.some((p) => p.includes("#2")));
     const delivered = conns["router"].prompts.find((p) => p.includes("#2"))!;
@@ -113,7 +113,7 @@ test("reply_to referencing unknown mail still delivers but notes the bad referen
   try {
     await cp.start();
     const res = await (cp as any).handleSendMail({ agentId: "router", role: "router" }, "member", "hi", { replyTo: 99 });
-    expect(res).toContain("delivered to member as #1");
+    expect(res).toContain("queued for member as #1; wake scheduled");
     expect(res).toContain("reply_to #99 does not match any known mail");
   } finally {
     await cp.stop();
@@ -172,10 +172,10 @@ test("mail seq survives a daemon restart and keeps increasing", async () => {
     const second = makePlane(root, conns);
     await second.start();
     const res = await (second as any).handleSendMail({ agentId: "router", role: "router" }, "member", "three");
-    expect(res).toBe("delivered to member as #3");
+    expect(res).toBe("queued for member as #3; wake scheduled");
     // The reply quote map is also recovered: replying to #2 renders its quote.
     const reply = await (second as any).handleSendMail({ agentId: "member", role: "member" }, "router", "re", { replyTo: 2 });
-    expect(reply).toBe("delivered to router as #4");
+    expect(reply).toBe("queued for router as #4; wake scheduled");
     await waitUntil(() => conns["router"].prompts.some((p) => p.includes("#4")));
     const delivered = conns["router"].prompts.find((p) => p.includes("#4"))!;
     expect(delivered).toContain('(#2, router → member, was: "two")');
