@@ -7,6 +7,7 @@ const A = (over: Partial<AgentConfig>): AgentConfig => ({ id: "a", harness: "cod
 test("codex applies model_reasoning_effort, defaulting to low", () => {
   expect(spawnConfigFor(A({ harness: "codex" })).args).toEqual(["-c", "model_reasoning_effort=low"]);
   expect(spawnConfigFor(A({ harness: "codex", effort: "high" })).args).toEqual(["-c", "model_reasoning_effort=high"]);
+  expect(spawnConfigFor(A({ harness: "codex", effort: "xhigh" })).args).toEqual(["-c", "model_reasoning_effort=xhigh"]);
   expect(spawnConfigFor(A({ harness: "codex" })).env).toEqual({});
   expect(spawnConfigFor(A({ harness: "codex" })).command).toBe("codex-acp");
 });

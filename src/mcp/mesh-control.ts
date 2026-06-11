@@ -9,6 +9,7 @@ import type { MeshManager } from "../mesh-manager";
 import type { StartSessionStrategy } from "../mesh-manager";
 import { normalizeMeshEdges, type MeshConfig, type HarnessId } from "../acp/types";
 import { HARNESSES } from "../harness";
+import { ALL_THINKING_EFFORTS } from "../harness-utils";
 
 const harnessIds = Object.keys(HARNESSES) as [HarnessId, ...HarnessId[]];
 
@@ -57,7 +58,7 @@ export function createMeshControlHandlers(manager: MeshManager): MeshControlHand
   };
 }
 
-const effortIds = ["minimal", "low", "medium", "high"] as const;
+const effortIds = ALL_THINKING_EFFORTS;
 
 const agentSchema = z.object({
   id: z.string(),
