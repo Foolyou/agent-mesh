@@ -383,6 +383,22 @@ export class AcpAgentConnection {
     stdin.flush();
   }
 
+  /** Switch a generic ACP session config option, e.g. thought_level/thinking. */
+  async setConfigOption(configId: string, value: string) {
+    if (!this.sessionId) return;
+    if (!this.child) throw new Error(`${this.id}: no child process`);
+    const line = JSON.stringify({
+      jsonrpc: "2.0",
+      id: `mesh-set-config-option-${++this.rawRequestSeq}`,
+      method: "session/set_config_option",
+      params: { sessionId: this.sessionId, configId, value },
+    }) + "\n";
+    const stdin = this.child.stdin;
+    if (!stdin || typeof stdin === "number") throw new Error(`${this.id}: child stdin is not writable`);
+    stdin.write(new TextEncoder().encode(line));
+    stdin.flush();
+  }
+
   /** Interrupt the current turn (Router-authorized at the control-plane layer). */
   async cancel() {
     if (this.sessionId) await this.conn!.cancel({ sessionId: this.sessionId });

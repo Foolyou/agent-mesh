@@ -6,13 +6,14 @@ import { mkdir, stat } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { AcpAgentConnection, type AcpConnectionOptions, type PermissionDecision } from "./acp/client";
 import { spawnConfigFor } from "./harness";
+import { runtimeEffortConfig } from "./harness-utils";
 import { Mesh } from "./mesh";
 import { buildMeshBriefing, MAIL_WAKE_GUIDANCE } from "./mesh-briefing";
 import { createMeshServicesServer, type MeshServicesHandlers, type MeshServicesServer, type MeshToolContext, type SendMailOptions } from "./mcp/mesh-services";
 import { compactMailbox, sendMail, readMailFor, readMailboxEvents, readRecentAddressedMail, readUnreadAddressedMail, type MailMeta } from "./mailbox";
 import { validateAddAgent, validateAddEdge } from "./mesh-validate";
 import { readSessionState, setMeshExpectedAlive, updateAgentMailCursor, updateAgentSession, clearAgentSession, type MeshSessionState } from "./session-storage";
-import { now, type AgentActivity, type AgentConfig, type AgentHealthSignalKind, type AgentId, type AgentTurn, type MeshConfig, type MeshEdge, type MeshEvent, type PromptImageRef, type SessionMode, type SessionModel, type TurnHealthReason } from "./acp/types";
+import { now, type AgentActivity, type AgentConfig, type AgentHealthSignalKind, type AgentId, type AgentTurn, type MeshConfig, type MeshEdge, type MeshEvent, type PromptImageRef, type SessionMode, type SessionModel, type ThinkingEffort, type TurnHealthReason } from "./acp/types";
 
 interface PendingDecision {
   resolve: (decision: PermissionDecision) => void;
@@ -431,7 +432,7 @@ export class ControlPlane {
     while (set.size > 500) set.delete(set.values().next().value!);
   }
 
-  private async persistRuntimeSessionFields(id: AgentId, fields: { mode?: string; model?: string }): Promise<void> {
+  private async persistRuntimeSessionFields(id: AgentId, fields: { mode?: string; model?: string; effort?: ThinkingEffort }): Promise<void> {
     if (!this.sessionRunDir) return;
     const current = this.sessionState.agents[id];
     if (!current) return;
@@ -536,6 +537,15 @@ export class ControlPlane {
       this.emit({ kind: "agent_models", agent: id, current: next.current, available: next.available, ts: now() });
     }
     await this.persistRuntimeSessionFields(id, { model: modelId });
+  }
+
+  /** Switch an agent's runtime thinking effort where the harness supports it. */
+  async setEffort(id: AgentId, effort?: ThinkingEffort): Promise<void> {
+    const agent = this.mesh.agent(id);
+    if (!agent) throw new Error(`no such agent "${id}"`);
+    const runtime = runtimeEffortConfig(agent.harness, effort);
+    if (runtime) await this.agent(id).setConfigOption(runtime.configId, runtime.value);
+    await this.persistRuntimeSessionFields(id, { effort });
   }
 
   /** Operator-initiated interrupt: cancel an agent's current turn and record it.

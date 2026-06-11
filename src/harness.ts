@@ -30,8 +30,8 @@ const CLAUDE_THINK_TOKENS: Record<ThinkingEffort, number> = {
 /** Resolve the spawn command/args/env for an agent, applying its thinking effort per harness:
  *  - codex: `-c model_reasoning_effort=<effort>` (defaults to "low" for responsiveness)
  *  - claude: `MAX_THINKING_TOKENS` env (only when an effort is set; else the harness default)
- *  - opencode/kimi: no effort mechanism — ignored.
- *  Effort is a launch-time setting; changing it requires (re)starting the agent. */
+ *  - opencode/kimi: no spawn-time effort mechanism — ignored.
+ *  Some harnesses also support runtime switching via ACP config options. */
 export function spawnConfigFor(a: AgentConfig): { command: string; args: string[]; env: Record<string, string> } {
   const spec = resolveHarness(a.harness);
   if (a.harness === "codex") {

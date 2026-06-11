@@ -27,8 +27,9 @@ export function normalizeMeshEdges(edges: readonly MeshEdgeInput[] = []): MeshEd
   return edges.map((edge) => normalizeMeshEdge(edge));
 }
 
-/** Reasoning / thinking effort for an agent. Applied at spawn (codex: model_reasoning_effort;
- *  claude: MAX_THINKING_TOKENS). `undefined` = the harness's own default. */
+/** Reasoning / thinking effort for an agent. Some harnesses apply it at spawn
+ *  (codex: model_reasoning_effort; claude: MAX_THINKING_TOKENS) and some can
+ *  switch compatible runtime thought-level config options. `undefined` = default. */
 export type ThinkingEffort = "minimal" | "low" | "medium" | "high";
 
 export interface AgentConfig {
@@ -39,7 +40,7 @@ export interface AgentConfig {
   role: AgentRole;
   /** If true, the agent starts cold and is spawned on first mail or manual wake. Routers may not be lazy. */
   lazy?: boolean;
-  /** Optional reasoning/thinking effort; applied when the agent process (re)starts. */
+  /** Optional reasoning/thinking effort; runtime-switched when supported, otherwise applied on restart. */
   effort?: ThinkingEffort;
   /** Runtime-selected session mode cache. Applied best-effort after spawn when advertised. */
   mode?: string;

@@ -94,15 +94,15 @@ export class MeshManager {
     this.entries.set(config.name, { config, status: "stopped" });
   }
 
-  /** Update one agent's thinking effort and persist it, WITHOUT restarting. Effort is a
-   *  launch-time setting, so a running mesh keeps its current agents; the new value takes hold
-   *  on the next start. Allowed while running (unlike defineMesh) since the topology is unchanged. */
+  /** Update one agent's thinking effort and persist it. Running agents apply it immediately
+   *  when their harness supports runtime thought-level switching; others keep it for next start. */
   async setAgentEffort(name: string, agentId: string, effort?: ThinkingEffort): Promise<void> {
     const entry = this.require(name);
     if (!entry.config.agents.some((a) => a.id === agentId)) throw new Error(`no agent "${agentId}" in mesh "${name}"`);
     const patched: MeshConfig = { ...entry.config, agents: entry.config.agents.map((a) => (a.id === agentId ? { ...a, effort } : a)) };
-    await this.store.define(patched); // validates + persists; does NOT touch the running daemon
+    await this.store.define(patched); // validates + persists
     entry.config = patched;
+    entry.client?.setEffort(agentId, effort);
   }
 
   /** Delete a mesh definition (and forget it). Refuses while running/starting. */

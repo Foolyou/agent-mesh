@@ -444,13 +444,13 @@ try {
     if (h < 24) throw new Error(`tool card collapsed to ${h}px under overflow (flex-shrink regression)`);
   });
 
-  await step("thinking effort is read-only while the mesh is running", async () => {
-    // effort is a launch-time setting — while running it's shown but not editable (edit when stopped
-    // or in the builder). The create/edit builder test covers the stopped-edit + persist round-trip.
+  await step("codex thinking effort is read-only while the mesh is running", async () => {
+    // Codex effort is still spawn-time only; Claude/Kimi can switch runtime thought level.
+    // The create/edit builder test covers the stopped-edit + persist round-trip.
     await page.locator('.topo .node:has-text("codex-1")').click();
     const sel = page.locator('.dchat .panel:has(.tabs) .effort-sel').first();
     await sel.waitFor({ timeout: 6000 });
-    if (!(await sel.isDisabled())) throw new Error("effort select should be read-only (disabled) while running");
+    if (!(await sel.isDisabled())) throw new Error("codex effort select should be read-only (disabled) while running");
   });
 
   await step("failed command surfaces an error toast", async () => {

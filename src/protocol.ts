@@ -7,12 +7,12 @@
 // later. Events carry a monotonic `seq`; on (re)connect the parent sends `hello`
 // with the last seq it saw and the host replays everything newer, so the parent's
 // aggregated view is rebuilt seamlessly without losing the live agents.
-import type { AgentConfig, MeshEdge, MeshEvent } from "./acp/types";
+import type { AgentConfig, MeshEdge, MeshEvent, ThinkingEffort } from "./acp/types";
 import type { PromptImageRef } from "./acp/types";
 
 /** Bumped when the wire protocol changes incompatibly; a reconnecting parent that
  *  speaks a different version refuses to attach to an old daemon. */
-export const PROTO_VERSION = 10;
+export const PROTO_VERSION = 11;
 
 export interface SeqEvent {
   seq: number;
@@ -37,6 +37,7 @@ export type ParentMsg =
   | { t: "resolve"; requestId: string; optionId: string }
   | { t: "setMode"; target: string; modeId: string }
   | { t: "setModel"; target: string; modelId: string }
+  | { t: "setEffort"; target: string; effort?: ThinkingEffort }
   | { t: "interrupt"; target: string }
   | { t: "newSession"; target: string }
   | { t: "newAllSessions" }
