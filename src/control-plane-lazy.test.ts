@@ -76,6 +76,23 @@ class DeferredStartConnection extends RecordingConnection {
   }
 }
 
+class KillRejectsLaterConnection extends RecordingConnection {
+  startResolve!: () => void;
+  startReject!: (err: unknown) => void;
+  startPromise = new Promise<void>((resolve, reject) => {
+    this.startResolve = resolve;
+    this.startReject = reject;
+  });
+  override async start(): Promise<void> {
+    this.starts++;
+    await this.startPromise;
+  }
+  override kill(): void {
+    super.kill();
+    setTimeout(() => this.startReject(new Error("killed asynchronously")), 15);
+  }
+}
+
 class FailingStartConnection extends RecordingConnection {
   override async start(): Promise<void> {
     this.starts++;
@@ -212,6 +229,84 @@ test("stopAgent cancels a spawning agent without letting the stale spawn become 
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect((cp as any).mesh.status("lazy-1")).toBe("stopped");
     expect((cp as any).conns.has("lazy-1")).toBe(false);
+  } finally {
+    await cp.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("stopAgent followed by immediate wake keeps the new connection when the old kill rejects later", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mesh-stop-agent-rewake-race-"));
+  const lazyConns: KillRejectsLaterConnection[] = [];
+  const cp = new ControlPlane(lazyConfig, {
+    mailboxPath: join(root, "mailbox.ndjson"),
+    connectionFactory: (opts) => {
+      if (opts.id === "lazy-1") {
+        const conn = new KillRejectsLaterConnection(opts);
+        lazyConns.push(conn);
+        return conn as unknown as AcpAgentConnection;
+      }
+      return new RecordingConnection(opts) as unknown as AcpAgentConnection;
+    },
+  });
+
+  try {
+    await cp.start();
+    const firstWake = cp.wakeAgent("lazy-1").catch(() => {});
+    await waitUntil(() => (cp as any).mesh.status("lazy-1") === "spawning");
+    const first = lazyConns[0]!;
+    await (cp as any).stopAgent("lazy-1");
+
+    const secondWake = cp.wakeAgent("lazy-1");
+    await waitUntil(() => lazyConns.length === 2);
+    const second = lazyConns[1]!;
+    second.startResolve();
+    await secondWake;
+
+    await firstWake;
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect((cp as any).mesh.status("lazy-1")).toBe("ready");
+    expect((cp as any).conns.get("lazy-1")).toBe(second);
+    expect(second.killed).toBe(false);
+    expect((cp as any).spawnFails.get("lazy-1") ?? 0).toBe(0);
+  } finally {
+    await cp.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("peer steer_mail to a manually stopped agent persists mail but does not wake it", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mesh-stop-agent-steer-"));
+  let lazyCreations = 0;
+  const steerConfig: MeshConfig = {
+    ...lazyConfig,
+    edges: [
+      { from: "router", to: "lazy-1", steer: true },
+      { from: "lazy-1", to: "router" },
+    ],
+  };
+  const cp = new ControlPlane(steerConfig, {
+    mailboxPath: join(root, "mailbox.ndjson"),
+    connectionFactory: (opts) => {
+      if (opts.id === "lazy-1") lazyCreations++;
+      return new RecordingConnection(opts) as unknown as AcpAgentConnection;
+    },
+  });
+
+  try {
+    await cp.start();
+    await cp.wakeAgent("lazy-1");
+    expect(lazyCreations).toBe(1);
+    await (cp as any).stopAgent("lazy-1");
+
+    const res = await (cp as any).handleSteerMail({ agentId: "router", role: "router" }, "lazy-1", "urgent but stopped");
+    expect(res).toContain("error:");
+    expect(res).toContain("manually stopped");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(lazyCreations).toBe(1);
+    expect((cp as any).mesh.status("lazy-1")).toBe("stopped");
+    const mail = await readMailFor("lazy-1", { mailboxPath: join(root, "mailbox.ndjson") });
+    expect(mail.map((m) => m.body)).toEqual(["urgent but stopped"]);
   } finally {
     await cp.stop();
     await rm(root, { recursive: true, force: true });

@@ -613,11 +613,11 @@ export class ControlPlane {
         this.sessionModels.delete(a.id);
         this.imageCaps.delete(a.id);
       }
-      this.conns.delete(a.id);
-      this.clearQueuedTurns(a.id);
       conn.kill();
-      this.emitActivityIfChanged(a.id);
-      if (this.mesh.status(a.id) !== "stopped") {
+      if (this.conns.get(a.id) === conn) {
+        this.conns.delete(a.id);
+        this.clearQueuedTurns(a.id);
+        this.emitActivityIfChanged(a.id);
         this.mesh.setStatus(a.id, "dead");
         this.emit({ kind: "agent_status", agent: a.id, status: "dead", detail: String(err), ts: now() });
       }
@@ -634,7 +634,7 @@ export class ControlPlane {
     if (existing) return existing;
     const generation = (this.spawnGeneration.get(id) ?? 0) + 1;
     this.spawnGeneration.set(id, generation);
-    const p = this.withSpawnTimeout(id, this.spawnAgent(a, { drainPendingMail: opts.drainPendingMail ?? true, forceFresh: opts.forceFresh }))
+    const p = this.withSpawnTimeout(id, generation, this.spawnAgent(a, { drainPendingMail: opts.drainPendingMail ?? true, forceFresh: opts.forceFresh }))
       .then((conn) => {
         if (this.spawnGeneration.get(id) !== generation || this.mesh.status(id) === "stopped") {
           conn.kill();
@@ -644,7 +644,7 @@ export class ControlPlane {
         return conn;
       })
       .catch((err) => {
-        if (this.mesh.status(id) !== "stopped") this.spawnFails.set(id, (this.spawnFails.get(id) ?? 0) + 1);
+        if (this.spawnGeneration.get(id) === generation && this.mesh.status(id) !== "stopped") this.spawnFails.set(id, (this.spawnFails.get(id) ?? 0) + 1);
         throw err;
       })
       .finally(() => {
@@ -654,16 +654,19 @@ export class ControlPlane {
     return p;
   }
 
-  private async withSpawnTimeout<T>(id: AgentId, spawn: Promise<T>): Promise<T> {
+  private async withSpawnTimeout<T>(id: AgentId, generation: number, spawn: Promise<T>): Promise<T> {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<never>((_, reject) => {
       timer = setTimeout(() => {
-        this.conns.get(id)?.kill();
-        this.conns.delete(id);
-        this.mesh.setStatus(id, "dead");
-        this.clearQueuedTurns(id);
-        this.emitActivityIfChanged(id);
-        this.emit({ kind: "agent_status", agent: id, status: "dead", detail: `spawn timed out after ${this.spawnTimeoutMs}ms`, ts: now() });
+        const conn = this.conns.get(id);
+        if (this.spawnGeneration.get(id) === generation) conn?.kill();
+        if (conn && this.spawnGeneration.get(id) === generation && this.conns.get(id) === conn) {
+          this.conns.delete(id);
+          this.mesh.setStatus(id, "dead");
+          this.clearQueuedTurns(id);
+          this.emitActivityIfChanged(id);
+          this.emit({ kind: "agent_status", agent: id, status: "dead", detail: `spawn timed out after ${this.spawnTimeoutMs}ms`, ts: now() });
+        }
         reject(new Error(`spawn for ${id} timed out after ${this.spawnTimeoutMs}ms`));
       }, this.spawnTimeoutMs);
     });
@@ -941,6 +944,9 @@ export class ControlPlane {
     const seq = ++this.mailSeq;
     await sendMail({ mailboxPath: this.mailboxPath, mesh: this.mesh.name, from: ctx.agentId, to, body, steer: true, seq });
     this.rememberMailSeq(seq, { from: ctx.agentId, to, body });
+    if (this.mesh.status(to) === "stopped") {
+      return `error: ${to} is manually stopped; steer mail was persisted as #${seq} but the agent was not started`;
+    }
     this.emit({ kind: "steer", from: ctx.agentId, to, body, ts: now() });
     this.steerWake(to, ctx.agentId, body, [], seq);
     return `steered to ${to} as #${seq}`;

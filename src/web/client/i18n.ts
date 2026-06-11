@@ -79,7 +79,7 @@ const DICT: Record<string, Entry> = {
   interrupt: ["interrupt", "中断"],
   "interrupt.current": ["interrupt current agent", "中断当前 agent 回合"],
   wake: ["start", "启动"],
-  "wake.hint": ["start this cold lazy agent", "启动这个冷态 lazy agent"],
+  "wake.hint": ["start this agent", "启动这个 agent"],
   "agent.stop": ["stop", "停止"],
   "agent.stop.hint": ["stop this agent process", "停止这个 agent 进程"],
   "agent.spawning": ["starting", "启动中"],
