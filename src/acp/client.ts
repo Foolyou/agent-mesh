@@ -94,6 +94,7 @@ export interface AcpConnectionOptions {
   extraEnv?: Record<string, string>;
   onPromptQueued?: (turn: AgentTurn) => void;
   onPromptStarted?: (turn: AgentTurn) => void;
+  onPromptSignal?: (turn: AgentTurn | undefined, signal: unknown) => void;
 }
 
 type PromptPlacement = "back" | "front";
@@ -114,6 +115,7 @@ export class AcpAgentConnection {
   private child?: ReturnType<typeof Bun.spawn>;
   private conn?: ClientSideConnection;
   private rawRequestSeq = 0;
+  private activeJob?: QueuedPrompt;
 
   constructor(private opts: AcpConnectionOptions) {
     this.id = opts.id;
@@ -154,9 +156,11 @@ export class AcpAgentConnection {
     this.conn = new ClientSideConnection(
       (): Client => ({
         async sessionUpdate(params: any) {
+          self.opts.onPromptSignal?.(self.activeJob?.turn, params.update);
           self.opts.onUpdate?.(params.update);
         },
         async requestPermission(params: any) {
+          self.opts.onPromptSignal?.(self.activeJob?.turn, params);
           const options = params.options ?? [];
           let decision: PermissionDecision;
           if (self.opts.onPermission) {
@@ -278,11 +282,21 @@ export class AcpAgentConnection {
     return removed;
   }
 
+  failActiveTurn(turnId: string, err: unknown): boolean {
+    if (this.activeJob?.turn?.id !== turnId) return false;
+    const job = this.activeJob;
+    this.activeJob = undefined;
+    this.busy = false;
+    job.reject(err);
+    return true;
+  }
+
   private async pump(): Promise<void> {
     if (this.busy) return;
     const job = this.queue.shift();
     if (!job) return;
     this.busy = true;
+    this.activeJob = job;
     if (job.turn) this.opts.onPromptStarted?.(job.turn);
     try {
       const prompt: any[] = [{ type: "text", text: job.text }];
@@ -306,6 +320,7 @@ export class AcpAgentConnection {
     } catch (err) {
       job.reject(err);
     } finally {
+      if (this.activeJob === job) this.activeJob = undefined;
       this.busy = false;
       void this.pump();
     }

@@ -330,7 +330,7 @@ test("first mail to a lazy agent triggers one spawn and one visible mail turn", 
   try {
     await cp.start();
     const res = await (cp as any).handleSendMail({ agentId: "router", role: "router" }, "lazy-1", "hello");
-    expect(res).toBe("delivered to lazy-1 as #1");
+    expect(res).toBe("queued for lazy-1 as #1; wake scheduled");
     await waitUntil(() => created["lazy-1"]?.prompts.length === 1);
 
     expect(created["lazy-1"].starts).toBe(1);
@@ -432,7 +432,7 @@ test("spawn failure marks dead and sends an async spawn failed receipt without l
 
   try {
     await cp.start();
-    expect(await (cp as any).handleSendMail({ agentId: "router", role: "router" }, "lazy-1", "please wake")).toBe("delivered to lazy-1 as #1");
+    expect(await (cp as any).handleSendMail({ agentId: "router", role: "router" }, "lazy-1", "please wake")).toBe("queued for lazy-1 as #1; wake scheduled");
     await waitUntil(() => created.router.prompts.length === 1);
 
     expect((cp as any).mesh.status("lazy-1")).toBe("dead");
@@ -545,7 +545,7 @@ test("addEdge mutates the running control plane and send_mail returns a dynamic 
     expect((cp as any).mesh.canMail("a", "b")).toBe(true);
 
     const res = await (cp as any).handleSendMail({ agentId: "a", role: "member" }, "b", "review this");
-    expect(res).toContain("delivered to b");
+    expect(res).toContain("queued for b as #1; wake scheduled");
     expect(res).toContain("may have been added after your session started");
     await waitUntil(() => created.b.prompts.length === 1);
     expect(created.b.prompts[0]).toContain("[MAIL #1 from a]: review this");
@@ -615,7 +615,7 @@ test("control-plane addAgent creates a cold lazy member and optional edges can w
     expect(events).toContainEqual(expect.objectContaining({ kind: "agent_status", agent: "c", status: "cold" }));
 
     const res = await (cp as any).handleSendMail({ agentId: "a", role: "member" }, "c", "hello new peer");
-    expect(res).toContain("delivered to c");
+    expect(res).toContain("queued for c as #1; wake scheduled");
     expect(res).toContain("may have been added after your session started");
     await waitUntil(() => created.c?.prompts.length === 1);
     expect((cp as any).mesh.status("c")).toBe("ready");

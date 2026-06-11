@@ -99,7 +99,11 @@ export interface AgentTurn {
   /** Durable mailbox event id for mail-wake turns; lets check_mail cancel the
    *  still-queued wake once the mail has been read inside another turn. */
   mailId?: string;
+  /** Human-facing durable mail number used in mesh mail headers. */
+  mailSeq?: number;
 }
+
+export type TurnHealthReason = "first_signal_timeout" | "idle_stall_timeout" | "wake_failed" | "cancel_failed";
 
 export type MeshEvent =
   | { kind: "agent_status"; agent: AgentId; status: AgentStatus; detail?: string; ts: string }
@@ -109,6 +113,7 @@ export type MeshEvent =
   | { kind: "agent_models"; agent: AgentId; current: string; available: SessionModel[]; ts: string }
   | { kind: "agent_capabilities"; agent: AgentId; image: boolean; ts: string }
   | { kind: "agent_turn"; phase: "queued" | "started" | "consumed" | "removed"; turn: AgentTurn; ts: string }
+  | { kind: "agent_turn_health"; agent: AgentId; turn?: AgentTurn; level: "warning" | "failed"; reason: TurnHealthReason; detail: string; ts: string }
   | { kind: "mail"; from: AgentId; to: AgentId; body: string; ts: string; id?: string }
   | { kind: "steer"; from: AgentId | "operator"; to: AgentId; body: string; ts: string }
   | {
