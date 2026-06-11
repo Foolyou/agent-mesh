@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "bun:test";
@@ -133,6 +133,34 @@ test("lazy agents start cold without a connection while eager agents become read
     expect((cp as any).mesh.status("router")).toBe("ready");
     expect((cp as any).mesh.status("lazy-1")).toBe("cold");
     expect(events).toContainEqual(expect.objectContaining({ kind: "agent_status", agent: "lazy-1", status: "cold" }));
+  } finally {
+    await cp.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("spawn creates a missing project cwd before starting the connection", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mesh-spawn-cwd-"));
+  const project = join(root, "test_mesh_0");
+  const cfg: MeshConfig = {
+    name: "cwd",
+    agents: [{ id: "router", harness: "codex", project, role: "router" }],
+    edges: [],
+  };
+  const cp = new ControlPlane(cfg, {
+    mailboxPath: join(root, "mailbox.ndjson"),
+    connectionFactory: (opts) =>
+      new (class extends RecordingConnection {
+        override async start(): Promise<void> {
+          await stat(opts.cwd);
+          await super.start();
+        }
+      })(opts) as unknown as AcpAgentConnection,
+  });
+
+  try {
+    await cp.start();
+    expect((await stat(project)).isDirectory()).toBe(true);
   } finally {
     await cp.stop();
     await rm(root, { recursive: true, force: true });

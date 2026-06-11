@@ -99,15 +99,10 @@ function claudeHealthSignal(message: unknown): { signal: AgentHealthSignalKind; 
     return { signal: "compacting", detail: { status: m.status ?? m.state } };
   }
   if (m.type === "system" && m.subtype === "status" && m.status === null && m.compact_result) {
-    const result = m.compact_result;
+    const result = String(m.compact_result);
     return {
       signal: "compact_done",
-      detail: {
-        trigger: result.trigger,
-        preTokens: result.pre_tokens ?? result.preTokens,
-        postTokens: result.post_tokens ?? result.postTokens,
-        durationMs: result.duration_ms ?? result.durationMs,
-      },
+      detail: { outcome: result },
     };
   }
   if (m.type === "system" && m.subtype === "compact_boundary") {
@@ -718,6 +713,7 @@ export class ControlPlane {
     this.emit({ kind: "agent_status", agent: a.id, status: "spawning", ts: now() });
     let initialized = false;
     try {
+      await mkdir(cwd, { recursive: true });
       await conn.start();
       const initRes = await conn.initialize();
       const mcpServers = [{ type: "http", name: "mesh", url: this.mcp.urlFor(a.id), headers: [] }];
