@@ -3,6 +3,7 @@ import type { Store } from "./store";
 import type { MeshSummary, PerMeshState } from "../types";
 import { Btn, ConfirmButton, Dot } from "./ui";
 import { ChatPane } from "./ChatPane";
+import { AgentHealthBadges } from "./health";
 import { topologyNodePositions } from "./Topology";
 import { useI18n } from "./i18n";
 
@@ -559,6 +560,7 @@ export function MeshCanvas({
                 {isRouter ? <span className="pin">📌</span> : null}
                 <Dot status={status} />
                 <span className="agent-id">{agent.id}</span>
+                <AgentHealthBadges agent={agent.id} entry={pm.health?.[agent.id]} />
                 <span className="sub">{agent.harness}</span>
                 <span className="canvas-agent-actions" onPointerDown={stopDrag}>
                   {canStopAgent(status) ? (

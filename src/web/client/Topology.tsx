@@ -1,9 +1,10 @@
 // Hand-rolled SVG topology: router centered, members on a ring, directed mail edges
 // with arrowheads, nodes colored by live agent status. Zero graph-lib dependency.
 import { useState } from "react";
-import type { MeshSummary, AgentStatus } from "../types";
+import type { MeshSummary, AgentStatus, AgentHealthSignalEntry } from "../types";
 import { Btn } from "./ui";
 import { useI18n } from "./i18n";
+import { AgentHealthBadges } from "./health";
 
 const STATUS_COLOR: Record<string, string> = {
   ready: "var(--ok)",
@@ -44,12 +45,14 @@ export function Topology({
   selectedAgent,
   onSelect,
   flashId,
+  health,
   maxHeight = 320,
 }: {
   summary: MeshSummary;
   selectedAgent: string | null;
   onSelect: (id: string) => void;
   flashId?: string | null;
+  health?: Record<string, AgentHealthSignalEntry>;
   maxHeight?: number;
 }) {
   const live = summary.status === "running" || summary.status === "starting";
@@ -137,6 +140,9 @@ export function Topology({
               <text className="role" x={NODE_W / 2} y={34} textAnchor="middle">
                 {a.role.toUpperCase()} · {a.harness}
               </text>
+              <foreignObject x={NODE_W - 70} y={2} width={66} height={18}>
+                <AgentHealthBadges agent={a.id} entry={health?.[a.id]} />
+              </foreignObject>
             </g>
           );
         })}

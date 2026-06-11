@@ -1285,6 +1285,12 @@ body::after {
   font-size: 9px;
   letter-spacing: 1px;
 }
+.topo .health-badge {
+  max-width: 64px;
+  height: 16px;
+  justify-content: center;
+  font-size: 8px;
+}
 .topo .edge {
   stroke: var(--line-bright);
   fill: none;
@@ -1594,6 +1600,34 @@ body::after {
   min-width: 58px;
   height: 24px;
   padding: 0 8px;
+}
+.health-badge {
+  display: inline-flex;
+  align-items: center;
+  max-width: 104px;
+  height: 18px;
+  padding: 0 5px;
+  border: 1px solid var(--line-bright);
+  border-radius: 3px;
+  color: var(--fg);
+  background: var(--bg);
+  font-size: 10px;
+  line-height: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.health-badge.compacting {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.health-badge.retrying {
+  border-color: var(--warn);
+  color: var(--warn);
+}
+.health-badge.rate_limited {
+  border-color: var(--bad);
+  color: var(--bad);
 }
 .canvas-window-body {
   display: flex;
@@ -2138,6 +2172,56 @@ select.inp {
 }
 .topology-controls.open {
   display: flex;
+}
+.context-waterline {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0 0 8px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--bg-inset);
+}
+.context-agent {
+  display: grid;
+  grid-template-columns: minmax(54px, 0.7fr) minmax(60px, 1fr) 34px;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 10px;
+}
+.context-agent-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg-dim);
+}
+.context-track {
+  height: 5px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+}
+.context-fill {
+  display: block;
+  height: 100%;
+  background: var(--ok);
+}
+.context-fill[data-level="warn"] {
+  background: var(--warn);
+}
+.context-fill[data-level="high"] {
+  background: var(--bad);
+}
+.context-fill[data-level="unknown"] {
+  background: var(--line-bright);
+}
+.context-agent-pct {
+  text-align: right;
+  color: var(--fg-faint);
 }
 /* segmented header (rail logs: activity / mail / history) */
 .seg-tabs {

@@ -88,7 +88,10 @@ export function applyMsg(state: GatewayState, msg: ServerMsg): GatewayState {
     case "agent.health":
       return withPerMesh(state, msg.name, (pm) => ({
         ...pm,
-        health: { ...pm.health, [msg.agent]: msg.health },
+        health:
+          msg.health.signal === "compact_done"
+            ? Object.fromEntries(Object.entries(pm.health).filter(([agent]) => agent !== msg.agent))
+            : { ...pm.health, [msg.agent]: msg.health },
       }));
     case "agent.queue":
       return withPerMesh(state, msg.name, (pm) => ({
