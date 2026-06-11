@@ -2,7 +2,8 @@
 // per-agent and mesh-wide "new session" buttons render, two-click-confirm, and drop a
 // "new session" divider into the transcript.
 // Run: bun run src/web/new-session-ui.e2e.ts
-import { chromium, type Page } from "playwright";
+import { type Page } from "playwright";
+import { launchChromium, e2eEnv } from "./e2e-playwright";
 
 const PORT = Number(process.env.E2E_PORT) || 7541;
 const BASE = `http://localhost:${PORT}`;
@@ -21,8 +22,8 @@ async function step(name: string, fn: () => Promise<void>) {
   }
 }
 
-const server = Bun.spawn(["bun", "run", "src/main.ts", "--fake", "--port", String(PORT)], { stdout: "pipe", stderr: "pipe" });
-const browser = await chromium.launch({ headless: true });
+const server = Bun.spawn(["bun", "run", "src/main.ts", "--fake", "--port", String(PORT)], { stdout: "pipe", stderr: "pipe", env: e2eEnv() });
+const browser = await launchChromium();
 try {
   for (let i = 0; i < 80; i++) {
     try {

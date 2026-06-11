@@ -7,6 +7,7 @@ import type { AgentConfig, MeshConfig, MeshEdge, PromptImageRef } from "../acp/t
 import type { StartMeshOptions } from "../mesh-manager";
 import type { UploadFileLike } from "./uploads";
 import { AgentFileError } from "./agent-files";
+import { probeHarnesses } from "../harness-probe";
 
 export interface ApiResult {
   status: number;
@@ -22,6 +23,7 @@ export async function handleApi(
   path: string,
   body: any,
   query: URLSearchParams = new URLSearchParams(),
+  harnessProbe = probeHarnesses,
 ): Promise<ApiResult> {
   const seg = path
     .replace(/^\/+|\/+$/g, "")
@@ -34,6 +36,7 @@ export async function handleApi(
 
   try {
     if (method === "GET" && p.length === 1 && p[0] === "state") return ok(gw.snapshot());
+    if (method === "GET" && p.length === 1 && p[0] === "harnesses") return ok(harnessProbe());
 
     if (p[0] === "uploads") {
       if (method === "POST" && p.length === 1) {

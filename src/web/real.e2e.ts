@@ -6,7 +6,7 @@
 // Bounded and tolerant: real agents depend on local logins, so if they don't reach
 // "ready" within the window it reports that and tears down cleanly. Run:
 //   bun run src/web/real.e2e.ts
-import { chromium } from "playwright";
+import { launchChromium } from "./e2e-playwright";
 import { mkdirSync } from "node:fs";
 
 const PORT = Number(process.env.E2E_PORT) || 7414;
@@ -108,7 +108,7 @@ async function main() {
   console.log(`agents ready: ${ready} · ws open: ${wsOpen}`);
 
   // screenshot the live console
-  const browser = await chromium.launch({ headless: true });
+  const browser = await launchChromium();
   try {
     const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
     await page.goto(BASE, { waitUntil: "domcontentloaded" });

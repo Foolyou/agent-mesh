@@ -1,6 +1,7 @@
 // Browser check for the theme system: preset switching, persistence across reload,
 // the live custom-theme editor, and a few screenshots. Run: bun run src/web/theme.e2e.ts
-import { chromium, type Page } from "playwright";
+import { type Page } from "playwright";
+import { launchChromium, e2eEnv } from "./e2e-playwright";
 import { mkdirSync } from "node:fs";
 
 const PORT = Number(process.env.E2E_PORT) || 7440;
@@ -22,8 +23,8 @@ async function step(name: string, fn: () => Promise<void>) {
   }
 }
 
-const server = Bun.spawn(["bun", "run", "src/main.ts", "--fake", "--port", String(PORT)], { stdout: "pipe", stderr: "pipe" });
-const browser = await chromium.launch({ headless: true });
+const server = Bun.spawn(["bun", "run", "src/main.ts", "--fake", "--port", String(PORT)], { stdout: "pipe", stderr: "pipe", env: e2eEnv() });
+const browser = await launchChromium();
 try {
   for (let i = 0; i < 80; i++) {
     try {

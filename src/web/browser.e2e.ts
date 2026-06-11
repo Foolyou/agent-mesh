@@ -1,7 +1,8 @@
 // Headless browser end-to-end over the `--fake` server: spawns the server, drives the
 // real DOM with Playwright (bundled chromium), and asserts every widget. Also writes
 // screenshots to /tmp/mesh-shots. Run: bun run src/web/browser.e2e.ts
-import { chromium, type Page } from "playwright";
+import { type Page } from "playwright";
+import { launchChromium, e2eEnv } from "./e2e-playwright";
 import { mkdirSync } from "node:fs";
 
 const PORT = Number(process.env.E2E_PORT) || 7413;
@@ -49,9 +50,10 @@ async function waitReady() {
 const server = Bun.spawn(["bun", "run", "src/main.ts", "--fake", "--port", String(PORT)], {
   stdout: "pipe",
   stderr: "pipe",
+  env: e2eEnv(),
 });
 
-const browser = await chromium.launch({ headless: true });
+const browser = await launchChromium();
 try {
   await waitReady();
   const page: Page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
@@ -62,6 +64,18 @@ try {
     if (m.type() === "error" && !/Failed to load resource/.test(m.text())) errors.push(m.text());
   });
   page.on("pageerror", (e) => errors.push(String(e)));
+  await page.route("**/api/harnesses", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([
+        { id: "codex", installed: true },
+        { id: "claude", installed: true },
+        { id: "opencode", installed: true },
+        { id: "kimi", installed: false },
+      ]),
+    }),
+  );
 
   await page.goto(BASE, { waitUntil: "domcontentloaded" });
 
@@ -882,8 +896,12 @@ try {
 
   await step("mesh builder: valid config creates a mesh", async () => {
     await page.locator('.modal .field:has(label:has-text("mesh name")) input').fill("squad-x");
-    const harnessOpts = await page.locator(".modal .agrow select").nth(0).locator("option").allTextContents();
-    if (!harnessOpts.includes("kimi")) throw new Error(`builder harness options missing kimi: ${harnessOpts.join(",")}`);
+    await page.locator('.modal .builder-tab:has-text("router")').click();
+    const harnessSelect = page.locator(".modal .agent-block .agrow select").nth(0);
+    await harnessSelect.locator('option[value="kimi"]:has-text("not installed")').waitFor({ timeout: 4000 });
+    if (!(await harnessSelect.locator('option[value="kimi"]').isDisabled())) throw new Error("uninstalled harness option was not disabled");
+    const harnessOpts = await harnessSelect.locator("option").allTextContents();
+    if (!harnessOpts.some((opt) => opt.includes("kimi"))) throw new Error(`builder harness options missing kimi: ${harnessOpts.join(",")}`);
     await page.locator(".modal .agent-instructions").first().fill("Router should coordinate handoffs and keep tasks scoped.");
     await page.locator('.modal .btn:has-text("+ agent")').click();
     await page.waitForSelector('.modal .builder-tab[aria-selected="true"]:has-text("agent-1")', { timeout: 4000 });

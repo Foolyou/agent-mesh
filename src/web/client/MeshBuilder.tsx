@@ -1,6 +1,6 @@
 // Modal form to compose a MeshConfig and POST it. Client-side validation mirrors
 // src/mesh-validate.ts; the server re-validates and any error is shown inline.
-import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
 import type { Store } from "./store";
 import type { HarnessId, AgentRole, MeshConfig, ThinkingEffort } from "../types";
 import { Btn } from "./ui";
@@ -28,6 +28,7 @@ type BuilderPage = { kind: "overview" } | { kind: "agent"; key: string };
 
 const HARNESSES: HarnessId[] = ["claude", "codex", "opencode", "kimi"];
 let agentDraftSeq = 0;
+type HarnessProbeRow = { id: HarnessId; installed: boolean };
 
 function agentKey() {
   agentDraftSeq += 1;
@@ -185,6 +186,8 @@ export function MeshBuilder({
   const [busy, setBusy] = useState(false);
   const [textEdit, setTextEdit] = useState<TextEditTarget | null>(null);
   const [page, setPage] = useState<BuilderPage>({ kind: "overview" });
+  const [harnessInstalled, setHarnessInstalled] = useState<Partial<Record<HarnessId, boolean>>>({});
+  const [harnessProbeErr, setHarnessProbeErr] = useState(false);
   const restoreFocusRef = useRef<HTMLElement | null>(null);
   const modalRef = useRef<HTMLDivElement>(null);
   const tabRefs = useRef<Array<HTMLElement | null>>([]);
@@ -194,6 +197,17 @@ export function MeshBuilder({
 
   const setAgent = (i: number, patch: Partial<AgentDraft>) =>
     setAgents((as) => as.map((a, j) => (j === i ? { ...a, ...patch } : a)));
+  const refreshHarnesses = useCallback(async () => {
+    try {
+      const res = await fetch("/api/harnesses");
+      const rows = (await res.json()) as HarnessProbeRow[];
+      if (!res.ok || !Array.isArray(rows)) throw new Error("bad harness probe response");
+      setHarnessInstalled(Object.fromEntries(rows.map((r) => [r.id, r.installed])) as Partial<Record<HarnessId, boolean>>);
+      setHarnessProbeErr(false);
+    } catch {
+      setHarnessProbeErr(true);
+    }
+  }, []);
   const addAgent = () => {
     const key = agentKey();
     setAgents((as) => [...as, { key, id: nextAgentId(as), harness: "codex", role: "member", project: "test_mesh_0" }]);
@@ -268,6 +282,14 @@ export function MeshBuilder({
   const activeTabIndex = page.kind === "overview" ? 0 : Math.max(0, agents.findIndex((a) => a.key === page.key) + 1);
   const activePanelId = page.kind === "overview" ? "mesh-builder-panel-overview" : `mesh-builder-panel-${activeAgent?.key ?? "missing"}`;
   const activeTabId = page.kind === "overview" ? "mesh-builder-tab-overview" : `mesh-builder-tab-${activeAgent?.key ?? "missing"}`;
+
+  useEffect(() => {
+    void refreshHarnesses();
+  }, [refreshHarnesses]);
+
+  useEffect(() => {
+    if (page.kind === "agent") void refreshHarnesses();
+  }, [page, refreshHarnesses]);
 
   useLayoutEffect(() => {
     if (page.kind !== "agent" || pendingAgentFocusRef.current !== page.key) return;
@@ -498,10 +520,16 @@ export function MeshBuilder({
                       placeholder="id"
                       onChange={(e) => setAgent(activeIndex, { id: e.target.value })}
                     />
-                    <select className="inp select-control" value={activeAgent.harness} onChange={(e) => setAgent(activeIndex, { harness: e.target.value as HarnessId })}>
+                    <select
+                      className="inp select-control"
+                      value={activeAgent.harness}
+                      onFocus={() => void refreshHarnesses()}
+                      title={harnessProbeErr ? t("build.harness.refreshFailed") : undefined}
+                      onChange={(e) => setAgent(activeIndex, { harness: e.target.value as HarnessId })}
+                    >
                       {HARNESSES.map((h) => (
-                        <option key={h} value={h}>
-                          {h}
+                        <option key={h} value={h} disabled={harnessInstalled[h] === false} title={harnessInstalled[h] === false ? t("build.harness.notInstalled") : undefined}>
+                          {harnessInstalled[h] === false ? `${h} (${t("build.harness.notInstalled")})` : h}
                         </option>
                       ))}
                     </select>

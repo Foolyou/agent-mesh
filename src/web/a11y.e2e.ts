@@ -3,7 +3,8 @@
 // translucent layers + element opacity). This is what catches structural bugs the palette
 // audit can't — e.g. a control that keeps its dark-surface color on the inverted (light)
 // selection row (the start-button bug). Run: bun run src/web/a11y.e2e.ts
-import { chromium, type Page } from "playwright";
+import { type Page } from "playwright";
+import { launchChromium, e2eEnv } from "./e2e-playwright";
 import { UI_COMPONENT } from "./client/contrast";
 
 const PORT = Number(process.env.E2E_PORT) || 7490;
@@ -110,8 +111,8 @@ const SELECTORS: Check[] = [
   { sel: ".canvas-edge.active", kind: "ui", prop: "stroke" }, // active directed canvas edge uses info accent
 ];
 
-const server = Bun.spawn(["bun", "run", "src/main.ts", "--fake", "--port", String(PORT)], { stdout: "pipe", stderr: "pipe" });
-const browser = await chromium.launch({ headless: true });
+const server = Bun.spawn(["bun", "run", "src/main.ts", "--fake", "--port", String(PORT)], { stdout: "pipe", stderr: "pipe", env: e2eEnv() });
+const browser = await launchChromium();
 try {
   for (let i = 0; i < 80; i++) {
     try {

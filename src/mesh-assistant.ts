@@ -6,6 +6,7 @@ import { resolve } from "node:path";
 import { AcpAgentConnection, type AcpConnectionOptions } from "./acp/client";
 import type { HarnessId, PromptImageRef } from "./acp/types";
 import { resolveHarness } from "./harness";
+import { probeHarnesses, type HarnessProbeResult } from "./harness-probe";
 import { buildMeshAssistantBriefing } from "./mesh-assistant-briefing";
 import { createMeshControlHandlers, createMeshControlServer, type MeshControlServer } from "./mcp/mesh-control";
 import type { MeshManager } from "./mesh-manager";
@@ -18,6 +19,7 @@ export class MeshAssistant {
   private imageCap = false;
   private _busy = false;
   private briefed = false;
+  private selectedHarness?: HarnessId;
 
   constructor(
     private manager: MeshManager,
@@ -27,8 +29,9 @@ export class MeshAssistant {
       onUpdate?: (u: any) => void;
       debug?: boolean;
       uploadRoot?: string;
-      onCapabilities?: (caps: { image: boolean }) => void;
+      onCapabilities?: (caps: { image: boolean; harness?: HarnessId }) => void;
       harness?: HarnessId;
+      installedHarnesses?: HarnessProbeResult[];
       connectionFactory?: (opts: AcpConnectionOptions) => AcpAgentConnection;
     } = {},
   ) {}
@@ -36,6 +39,10 @@ export class MeshAssistant {
   /** Whether the Mesh Assistant has an in-flight turn. */
   get busy(): boolean {
     return this._busy;
+  }
+
+  get harness(): HarnessId | undefined {
+    return this.selectedHarness;
   }
 
   /** Subscribe to the Mesh Assistant's streamed session updates. */
@@ -46,36 +53,57 @@ export class MeshAssistant {
 
   async start(): Promise<void> {
     this.mcp = await createMeshControlServer({ handlers: createMeshControlHandlers(this.manager) });
+    const cwd = this.opts.cwd
+      ? resolve(this.opts.cwd)
+      : this.opts.project
+        ? resolve(process.cwd(), this.opts.project)
+        : resolve(process.cwd(), ".");
+    if (this.opts.cwd) await mkdir(cwd, { recursive: true });
+    const connectionFactory = this.opts.connectionFactory ?? ((connOpts: AcpConnectionOptions) => new AcpAgentConnection(connOpts));
+    const installed = this.opts.installedHarnesses ?? probeHarnesses();
+    const installedIds = new Set(installed.filter((h) => h.installed).map((h) => h.id));
+    const failures: string[] = [];
     try {
-      const spec = resolveHarness(this.opts.harness ?? "codex");
-      const cwd = this.opts.cwd
-        ? resolve(this.opts.cwd)
-        : this.opts.project
-          ? resolve(process.cwd(), this.opts.project)
-          : resolve(process.cwd(), ".");
-      if (this.opts.cwd) await mkdir(cwd, { recursive: true });
-      const connectionFactory = this.opts.connectionFactory ?? ((connOpts: AcpConnectionOptions) => new AcpAgentConnection(connOpts));
-      this.conn = connectionFactory({
-        id: "assistant",
-        command: spec.command,
-        args: spec.args,
-        cwd,
-        debug: this.opts.debug ?? false,
-        fs: false,
-        onUpdate: (u) => {
-          this.opts.onUpdate?.(u);
-          for (const l of this.listeners) l(u);
-        },
-      });
-      await this.conn.start();
-      const initRes = await this.conn.initialize();
-      await this.conn.newSession([{ type: "http", name: "mesh-control", url: this.mcp.url, headers: [] }]);
-      this.briefed = false;
-      this.imageCap = !!(initRes as any)?.agentCapabilities?.promptCapabilities?.image;
-      this.opts.onCapabilities?.({ image: this.imageCap });
+      for (const harness of assistantHarnessFallbackOrder(this.opts.harness)) {
+        if (!installedIds.has(harness)) {
+          failures.push(`${harness}: not installed`);
+          continue;
+        }
+        const spec = resolveHarness(harness);
+        const conn = connectionFactory({
+          id: "assistant",
+          command: spec.command,
+          args: spec.args,
+          cwd,
+          debug: this.opts.debug ?? false,
+          fs: false,
+          onUpdate: (u) => {
+            this.opts.onUpdate?.(u);
+            for (const l of this.listeners) l(u);
+          },
+        });
+        this.conn = conn;
+        try {
+          await conn.start();
+          const initRes = await conn.initialize();
+          await conn.newSession([{ type: "http", name: "mesh-control", url: this.mcp.url, headers: [] }]);
+          this.selectedHarness = harness;
+          this.briefed = false;
+          this.imageCap = !!(initRes as any)?.agentCapabilities?.promptCapabilities?.image;
+          this.opts.onCapabilities?.({ image: this.imageCap, harness });
+          console.log(`Mesh Assistant started with ${harness}`);
+          return;
+        } catch (err) {
+          failures.push(`${harness}: ${err instanceof Error ? err.message : String(err)}`);
+          conn.kill();
+          if (this.conn === conn) this.conn = undefined;
+        }
+      }
+      throw new Error(`no Mesh Assistant harness started (${failures.join("; ")})`);
     } catch (err) {
       this.conn?.kill();
       this.conn = undefined;
+      this.selectedHarness = undefined;
       this.mcp.close();
       this.mcp = undefined;
       throw err;
@@ -109,5 +137,16 @@ export class MeshAssistant {
   async stop(): Promise<void> {
     this.conn?.kill();
     this.mcp?.close();
+    this.conn = undefined;
+    this.mcp = undefined;
+    this.selectedHarness = undefined;
   }
+}
+
+export const ASSISTANT_HARNESS_FALLBACK_ORDER: HarnessId[] = ["codex", "claude", "opencode", "kimi"];
+
+export function assistantHarnessFallbackOrder(preferred?: HarnessId): HarnessId[] {
+  return preferred
+    ? [preferred, ...ASSISTANT_HARNESS_FALLBACK_ORDER.filter((id) => id !== preferred)]
+    : [...ASSISTANT_HARNESS_FALLBACK_ORDER];
 }

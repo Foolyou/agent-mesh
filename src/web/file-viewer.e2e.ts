@@ -1,5 +1,6 @@
 // File viewer e2e over the fake server. Run: bun run src/web/file-viewer.e2e.ts
-import { chromium, type Page } from "playwright";
+import { type Page } from "playwright";
+import { launchChromium, e2eEnv } from "./e2e-playwright";
 import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -60,8 +61,9 @@ await symlink(join(work, "server.ts"), join(work, "linked.ts"));
 const server = Bun.spawn(["bun", "run", "src/main.ts", "--fake", "--port", String(PORT)], {
   stdout: "pipe",
   stderr: "pipe",
+  env: e2eEnv(),
 });
-const browser = await chromium.launch({ headless: true });
+const browser = await launchChromium();
 
 try {
   await waitReady();
