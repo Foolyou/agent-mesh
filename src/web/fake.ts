@@ -197,6 +197,11 @@ export class FakeManager {
     const e = this.require(name);
     e.config = { ...e.config, agents: e.config.agents.map((a) => (a.id === agentId ? { ...a, effort } : a)) };
   }
+  async setAgentBypass(name: string, agentId: string, bypass?: boolean): Promise<void> {
+    const e = this.require(name);
+    e.config = { ...e.config, agents: e.config.agents.map((a) => (a.id === agentId ? { ...a, bypass } : a)) };
+    if (bypass === true && e.status === "running") await this.setMode(name, agentId, "full-access");
+  }
   async addEdge(name: string, edge: { from: string; to: string; steer?: boolean }): Promise<void> {
     const e = this.require(name);
     if (!e.config.agents.some((a) => a.id === edge.from) || !e.config.agents.some((a) => a.id === edge.to)) {

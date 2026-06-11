@@ -33,6 +33,12 @@ export function validateMeshConfig(config: MeshConfig): void {
     if (a.effort !== undefined && !["minimal", "low", "medium", "high"].includes(a.effort)) {
       throw new Error(`agent "${a.id}" has invalid effort "${a.effort}" (use minimal|low|medium|high)`);
     }
+    if (a.bypass !== undefined && typeof a.bypass !== "boolean") {
+      throw new Error(`agent "${a.id}" bypass must be a boolean`);
+    }
+    if (a.bypass === true && a.harness === "kimi") {
+      throw new Error(`agent "${a.id}" cannot enable bypass: kimi has no bypass mechanism`);
+    }
     if (a.role === "router" && a.lazy === true) {
       throw new Error(`router agent "${a.id}" cannot be lazy`);
     }
@@ -96,6 +102,12 @@ export function validateAddAgent(config: MeshConfig, cfg: AgentConfig): AgentCon
   }
   if (agent.effort !== undefined && !["minimal", "low", "medium", "high"].includes(agent.effort)) {
     throw new Error(`agent "${agent.id}" has invalid effort "${agent.effort}" (use minimal|low|medium|high)`);
+  }
+  if (agent.bypass !== undefined && typeof agent.bypass !== "boolean") {
+    throw new Error(`agent "${agent.id}" bypass must be a boolean`);
+  }
+  if (agent.bypass === true && agent.harness === "kimi") {
+    throw new Error(`agent "${agent.id}" cannot enable bypass: kimi has no bypass mechanism`);
   }
   if (agent.role === "router") {
     if (config.agents.some((a) => a.role === "router")) {

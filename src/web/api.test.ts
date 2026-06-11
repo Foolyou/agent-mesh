@@ -71,6 +71,9 @@ function fakeManager(config: MeshConfig = CFG) {
     async setModel(n: string, a: string, m: string) {
       calls.push(["setModel", n, a, m]);
     },
+    async setAgentBypass(n: string, a: string, bypass?: boolean) {
+      calls.push(["setAgentBypass", n, a, bypass]);
+    },
     interruptAgent(n: string, a: string) {
       calls.push(["interrupt", n, a]);
     },
@@ -253,9 +256,17 @@ test("POST /api/meshes/demo/agents delegates to addAgent", async () => {
   expect(m.calls).toContainEqual([
     "addAgent",
     "demo",
-    { id: "newbie", harness: "codex", project: "p", role: "member", lazy: undefined, effort: undefined, mode: undefined, model: undefined, instructions: undefined },
+    { id: "newbie", harness: "codex", project: "p", role: "member", lazy: undefined, effort: undefined, bypass: undefined, mode: undefined, model: undefined, instructions: undefined },
     [{ from: "router", to: "newbie", steer: false }],
   ]);
+});
+
+test("POST /api/meshes/demo/agents/codex-1/bypass delegates to setBypass", async () => {
+  const m = fakeManager();
+  const gw = new WebGateway(m as any);
+  const r = await handleApi(gw, "POST", "/api/meshes/demo/agents/codex-1/bypass", { bypass: true });
+  expect(r.status).toBe(200);
+  expect(m.calls).toContainEqual(["setAgentBypass", "demo", "codex-1", true]);
 });
 
 test("POST /api/meshes/demo/agents/codex-1/mode delegates to setMode", async () => {

@@ -27,6 +27,7 @@ function fakeCp() {
     async setMode(target, modeId) { calls.push(`setMode:${target}:${modeId}`); },
     async setModel(target, modelId) { calls.push(`setModel:${target}:${modelId}`); },
     async setEffort(target, effort) { calls.push(`setEffort:${target}:${effort ?? "default"}`); },
+    async setBypass(target, bypass) { calls.push(`setBypass:${target}:${bypass === true}`); },
     async interrupt(target) { calls.push(`interrupt:${target}`); },
     async newSession(target) { calls.push(`newSession:${target}`); },
     async newAllSessions() { calls.push("newAllSessions"); },
@@ -75,6 +76,7 @@ test("hello → ack(running, proto, seq); prompt relays a seq'd event; commands 
   send({ t: "setMode", target: "codex-1", modeId: "read-only" });
   send({ t: "setModel", target: "codex-1", modelId: "kimi-k2" });
   send({ t: "setEffort", target: "codex-1", effort: "high" });
+  send({ t: "setBypass", target: "codex-1", bypass: true });
   send({ t: "removeQueuedTurn", target: "codex-1", turnId: "turn-1" });
   send({ t: "interrupt", target: "codex-1" });
   send({ t: "newSession", target: "codex-1" });
@@ -86,6 +88,7 @@ test("hello → ack(running, proto, seq); prompt relays a seq'd event; commands 
   expect(calls).toContain("setMode:codex-1:read-only");
   expect(calls).toContain("setModel:codex-1:kimi-k2");
   expect(calls).toContain("setEffort:codex-1:high");
+  expect(calls).toContain("setBypass:codex-1:true");
   expect(calls).toContain("removeQueuedTurn:codex-1:turn-1");
   expect(calls).toContain("interrupt:codex-1");
   expect(calls).toContain("newSession:codex-1");

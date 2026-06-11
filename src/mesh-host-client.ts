@@ -211,6 +211,7 @@ export class MeshHostClient {
   setMode(target: string, modeId: string): void { this.send({ t: "setMode", target, modeId }); }
   setModel(target: string, modelId: string): void { this.send({ t: "setModel", target, modelId }); }
   setEffort(target: string, effort?: ThinkingEffort): void { this.send({ t: "setEffort", target, effort }); }
+  setBypass(target: string, bypass?: boolean): void { this.send({ t: "setBypass", target, bypass }); }
   interrupt(target: string): void { this.send({ t: "interrupt", target }); }
   newSession(target: string): void { this.send({ t: "newSession", target }); }
   newAllSessions(): void { this.send({ t: "newAllSessions" }); }
