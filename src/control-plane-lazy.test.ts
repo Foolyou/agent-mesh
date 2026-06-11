@@ -23,6 +23,7 @@ class RecordingConnection {
   starts = 0;
   prompts: string[] = [];
   killed = false;
+  kills = 0;
 
   constructor(readonly opts: AcpConnectionOptions) {}
   async start(): Promise<void> {
@@ -58,6 +59,7 @@ class RecordingConnection {
   async cancel(): Promise<void> {}
   kill(): void {
     this.killed = true;
+    this.kills++;
   }
 }
 
@@ -114,6 +116,102 @@ test("lazy agents start cold without a connection while eager agents become read
     expect((cp as any).mesh.status("router")).toBe("ready");
     expect((cp as any).mesh.status("lazy-1")).toBe("cold");
     expect(events).toContainEqual(expect.objectContaining({ kind: "agent_status", agent: "lazy-1", status: "cold" }));
+  } finally {
+    await cp.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("stopAgent kills a ready agent and leaves it manually stopped", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mesh-stop-agent-ready-"));
+  const created: Record<string, RecordingConnection> = {};
+  const cp = new ControlPlane(lazyConfig, {
+    mailboxPath: join(root, "mailbox.ndjson"),
+    connectionFactory: (opts) => {
+      const conn = new RecordingConnection(opts);
+      created[opts.id] = conn;
+      return conn as unknown as AcpAgentConnection;
+    },
+  });
+  const events: any[] = [];
+  cp.on((e) => events.push(e));
+
+  try {
+    await cp.start();
+    await cp.wakeAgent("lazy-1");
+    await (cp as any).stopAgent("lazy-1");
+    await (cp as any).stopAgent("lazy-1");
+
+    expect(created["lazy-1"].kills).toBe(1);
+    expect((cp as any).conns.has("lazy-1")).toBe(false);
+    expect((cp as any).mesh.status("lazy-1")).toBe("stopped");
+    expect(events).toContainEqual(expect.objectContaining({ kind: "agent_status", agent: "lazy-1", status: "stopped" }));
+  } finally {
+    await cp.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("stopAgent suppresses mail auto-wake until manual wake or prompt", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mesh-stop-agent-mail-"));
+  let lazyCreations = 0;
+  const created: Record<string, RecordingConnection> = {};
+  const cp = new ControlPlane(lazyConfig, {
+    mailboxPath: join(root, "mailbox.ndjson"),
+    connectionFactory: (opts) => {
+      if (opts.id === "lazy-1") lazyCreations++;
+      const conn = new RecordingConnection(opts);
+      created[opts.id] = conn;
+      return conn as unknown as AcpAgentConnection;
+    },
+  });
+
+  try {
+    await cp.start();
+    await cp.wakeAgent("lazy-1");
+    expect(lazyCreations).toBe(1);
+    await (cp as any).stopAgent("lazy-1");
+
+    await (cp as any).handleSendMail({ agentId: "router", role: "router" }, "lazy-1", "hello stopped");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(lazyCreations).toBe(1);
+    expect((cp as any).mesh.status("lazy-1")).toBe("stopped");
+
+    await cp.wakeAgent("lazy-1");
+    expect(lazyCreations).toBe(2);
+    expect((cp as any).mesh.status("lazy-1")).toBe("ready");
+  } finally {
+    await cp.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("stopAgent cancels a spawning agent without letting the stale spawn become ready", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mesh-stop-agent-spawning-"));
+  let lazyConn: DeferredStartConnection | undefined;
+  const cp = new ControlPlane(lazyConfig, {
+    mailboxPath: join(root, "mailbox.ndjson"),
+    connectionFactory: (opts) => {
+      if (opts.id === "lazy-1") {
+        lazyConn = new DeferredStartConnection(opts);
+        return lazyConn as unknown as AcpAgentConnection;
+      }
+      return new RecordingConnection(opts) as unknown as AcpAgentConnection;
+    },
+  });
+
+  try {
+    await cp.start();
+    const waking = cp.wakeAgent("lazy-1").catch(() => {});
+    await waitUntil(() => (cp as any).mesh.status("lazy-1") === "spawning");
+    await (cp as any).stopAgent("lazy-1");
+    expect(lazyConn?.killed).toBe(true);
+    expect((cp as any).mesh.status("lazy-1")).toBe("stopped");
+    lazyConn!.startResolve();
+    await waking;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect((cp as any).mesh.status("lazy-1")).toBe("stopped");
+    expect((cp as any).conns.has("lazy-1")).toBe(false);
   } finally {
     await cp.stop();
     await rm(root, { recursive: true, force: true });

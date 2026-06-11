@@ -194,6 +194,10 @@ export async function handleApi(
           gw.wakeAgent(name, agentId);
           return ok();
         }
+        if (p[4] === "stop") {
+          gw.stopAgent(name, agentId);
+          return ok();
+        }
         if (p[4] === "session") {
           await gw.newAgentSession(name, agentId);
           return ok();

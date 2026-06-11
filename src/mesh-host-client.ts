@@ -214,6 +214,7 @@ export class MeshHostClient {
   newSession(target: string): void { this.send({ t: "newSession", target }); }
   newAllSessions(): void { this.send({ t: "newAllSessions" }); }
   wakeAgent(target: string): void { this.send({ t: "wake", target }); }
+  stopAgent(target: string): void { this.send({ t: "stopAgent", target }); }
   addEdge(edge: MeshEdge): void { this.send({ t: "addEdge", edge }); }
   addAgent(agent: AgentConfig, edges: MeshEdge[] = []): void { this.send({ t: "addAgent", agent, edges }); }
 

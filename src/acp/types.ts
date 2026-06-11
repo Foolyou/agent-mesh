@@ -59,7 +59,7 @@ export interface MeshConfig {
   charter?: string;
 }
 
-export type AgentStatus = "cold" | "spawning" | "ready" | "dead";
+export type AgentStatus = "cold" | "spawning" | "ready" | "dead" | "stopped";
 export type AgentActivity = "idle" | "working";
 
 /** An ACP session operating mode the agent advertises (e.g. codex read-only / full-access,

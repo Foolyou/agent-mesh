@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import type { Store } from "./store";
 import type { MeshSummary, PerMeshState } from "../types";
-import { Dot } from "./ui";
+import { Btn, ConfirmButton, Dot } from "./ui";
 import { ChatPane } from "./ChatPane";
 import { topologyNodePositions } from "./Topology";
 import { useI18n } from "./i18n";
@@ -260,16 +260,22 @@ export function MeshCanvas({
   pm,
   store,
   onClose,
+  onEdit,
+  onDeleted,
 }: {
   m: MeshSummary;
   pm: PerMeshState;
   store: Store;
   onClose: () => void;
+  onEdit: () => void;
+  onDeleted: () => void;
 }) {
   const { t } = useI18n();
   const [layout, setLayout] = useState<Layout>(() => readLayout(m));
   const [order, setOrder] = useState<string[]>(() => m.agents.map((a) => a.id));
   const [activeEdges, setActiveEdges] = useState<Set<string>>(() => new Set());
+  const [menuOpen, setMenuOpen] = useState(false);
+  const actionsRef = useRef<HTMLSpanElement | null>(null);
   const seenMailIds = useRef<Set<string>>(new Set(pm.mail.map((mail) => mail.id)));
   const flashTimers = useRef<Map<string, FlashTimer>>(new Map());
   const scheduledPatches = useRef<Map<string, Partial<Rect>>>(new Map());
@@ -277,6 +283,22 @@ export function MeshCanvas({
   const sig = useMemo(() => signature(m), [m]);
   const edgeKeys = useMemo(() => new Set(m.edges.map((edge) => edgeKey(edge.from, edge.to))), [m.edges]);
   const live = m.status === "running" || m.status === "starting";
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onDoc = (e: MouseEvent) => {
+      if (!actionsRef.current?.contains(e.target as Node)) setMenuOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [menuOpen]);
 
   useEffect(() => {
     setLayout(readLayout(m));
@@ -377,6 +399,18 @@ export function MeshCanvas({
     setOrder((cur) => [...cur.filter((x) => x !== id), id]);
   }
 
+  function stopDrag(e: ReactPointerEvent): void {
+    e.stopPropagation();
+  }
+
+  function canWakeAgent(status: string): boolean {
+    return live && (status === "cold" || status === "stopped" || status === "dead");
+  }
+
+  function canStopAgent(status: string): boolean {
+    return live && status === "ready";
+  }
+
   function startDrag(id: string, e: ReactPointerEvent): void {
     e.preventDefault();
     focus(id);
@@ -444,6 +478,44 @@ export function MeshCanvas({
         <span className="ttl">{t("canvas.title")}</span>
         <span className="sub">{m.name}</span>
         <span style={{ flex: 1 }} />
+        <span className="canvas-actions detail-overflow" ref={actionsRef}>
+          <Btn kind="ghost" title={t("actions")} ariaLabel={t("actions")} onClick={() => setMenuOpen((o) => !o)}>
+            ⋯
+          </Btn>
+          {menuOpen ? (
+            <span className="detail-overflow-menu">
+              {live ? (
+                <>
+                  <ConfirmButton kind="ghost" confirmLabel={t("new sessions all.confirm")} title={t("new sessions all.hint")} onConfirm={() => void store.newAllSessions(m.name)}>
+                    {t("new sessions all")}
+                  </ConfirmButton>
+                  <ConfirmButton kind="stop" confirmLabel={t("stop.confirm")} ariaLabel={t("stop mesh")} onConfirm={() => void store.stopMesh(m.name)}>
+                    {t("stop mesh")}
+                  </ConfirmButton>
+                </>
+              ) : (
+                <>
+                  <Btn kind="go" onClick={() => void store.startMesh(m.name)}>
+                    {t("start mesh")}
+                  </Btn>
+                  <Btn kind="ghost" title={t("edit")} onClick={onEdit}>
+                    {t("edit")}
+                  </Btn>
+                  <ConfirmButton
+                    kind="stop"
+                    confirmLabel={t("del.confirm")}
+                    title={t("del")}
+                    onConfirm={() => {
+                      void store.deleteMesh(m.name).then(onDeleted, () => {});
+                    }}
+                  >
+                    {t("del")}
+                  </ConfirmButton>
+                </>
+              )}
+            </span>
+          ) : null}
+        </span>
         <button className="btn sm ghost canvas-close" onClick={onClose}>
           ✕ {t("esc")}
         </button>
@@ -483,6 +555,21 @@ export function MeshCanvas({
                 <Dot status={status} />
                 <span className="agent-id">{agent.id}</span>
                 <span className="sub">{agent.harness}</span>
+                <span className="canvas-agent-actions" onPointerDown={stopDrag}>
+                  {canStopAgent(status) ? (
+                    <Btn small kind="stop" onClick={() => void store.stopAgent(m.name, agent.id)} title={t("agent.stop.hint")} ariaLabel={`${t("agent.stop")} ${agent.id}`}>
+                      {t("agent.stop")}
+                    </Btn>
+                  ) : canWakeAgent(status) ? (
+                    <Btn small kind="go" onClick={() => void store.wakeAgent(m.name, agent.id)} title={t("wake.hint")} ariaLabel={`${t("wake")} ${agent.id}`}>
+                      {t("wake")}
+                    </Btn>
+                  ) : (
+                    <Btn small kind="ghost" disabled title={t("agent.spawning.hint")} ariaLabel={`${t("agent.spawning")} ${agent.id}`}>
+                      {t("agent.spawning")}
+                    </Btn>
+                  )}
+                </span>
               </div>
               <div className="canvas-window-body">
                 <ChatPane

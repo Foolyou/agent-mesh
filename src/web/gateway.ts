@@ -48,6 +48,7 @@ export interface ManagerLike {
   addAgent(name: string, agent: AgentConfig, edges?: MeshEdge[]): Promise<void>;
   interruptAgent(name: string, agentId: string): void;
   wakeAgent(name: string, agentId: string): void;
+  stopAgent(name: string, agentId: string): void;
   newAgentSession(name: string, agentId: string): Promise<void>;
   newAllSessions(name: string): Promise<void>;
   defineMesh(config: MeshConfig): Promise<void>;
@@ -505,6 +506,9 @@ export class WebGateway {
   }
   wakeAgent(name: string, agentId: string): void {
     this.manager.wakeAgent(name, agentId);
+  }
+  stopAgent(name: string, agentId: string): void {
+    this.manager.stopAgent(name, agentId);
   }
   async newAgentSession(name: string, agentId: string): Promise<void> {
     await this.manager.newAgentSession(name, agentId);

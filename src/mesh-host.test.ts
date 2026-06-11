@@ -30,6 +30,7 @@ function fakeCp() {
     async newSession(target) { calls.push(`newSession:${target}`); },
     async newAllSessions() { calls.push("newAllSessions"); },
     async wakeAgent(target) { calls.push(`wake:${target}`); },
+    async stopAgent(target) { calls.push(`stopAgent:${target}`); },
     addEdge(edge) { calls.push(`addEdge:${edge.from}:${edge.to}:${edge.steer === true}`); },
     addAgent(agent, edges = []) { calls.push(`addAgent:${agent.id}:${edges.map((e) => `${e.from}->${e.to}`).join(",")}`); },
     async stop() { calls.push("stop"); },

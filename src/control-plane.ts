@@ -85,6 +85,7 @@ export class ControlPlane {
   private checkMailMaxBytes: number;
   private spawning = new Map<AgentId, Promise<AcpAgentConnection>>();
   private spawnFails = new Map<AgentId, number>();
+  private spawnGeneration = new Map<AgentId, number>();
   private dynamicEdges = new Set<string>();
   /** Per-agent advertised image-input capability (promptCapabilities.image). */
   private imageCaps = new Map<AgentId, boolean>();
@@ -612,12 +613,14 @@ export class ControlPlane {
         this.sessionModels.delete(a.id);
         this.imageCaps.delete(a.id);
       }
-      this.mesh.setStatus(a.id, "dead");
       this.conns.delete(a.id);
       this.clearQueuedTurns(a.id);
       conn.kill();
       this.emitActivityIfChanged(a.id);
-      this.emit({ kind: "agent_status", agent: a.id, status: "dead", detail: String(err), ts: now() });
+      if (this.mesh.status(a.id) !== "stopped") {
+        this.mesh.setStatus(a.id, "dead");
+        this.emit({ kind: "agent_status", agent: a.id, status: "dead", detail: String(err), ts: now() });
+      }
       throw err;
     }
   }
@@ -629,13 +632,23 @@ export class ControlPlane {
     if (opts.manual) this.spawnFails.delete(id);
     const existing = this.spawning.get(id);
     if (existing) return existing;
+    const generation = (this.spawnGeneration.get(id) ?? 0) + 1;
+    this.spawnGeneration.set(id, generation);
     const p = this.withSpawnTimeout(id, this.spawnAgent(a, { drainPendingMail: opts.drainPendingMail ?? true, forceFresh: opts.forceFresh }))
+      .then((conn) => {
+        if (this.spawnGeneration.get(id) !== generation || this.mesh.status(id) === "stopped") {
+          conn.kill();
+          if (this.conns.get(id) === conn) this.conns.delete(id);
+          throw new Error(`spawn for ${id} was stopped`);
+        }
+        return conn;
+      })
       .catch((err) => {
-        this.spawnFails.set(id, (this.spawnFails.get(id) ?? 0) + 1);
+        if (this.mesh.status(id) !== "stopped") this.spawnFails.set(id, (this.spawnFails.get(id) ?? 0) + 1);
         throw err;
       })
       .finally(() => {
-        this.spawning.delete(id);
+        if (this.spawning.get(id) === p) this.spawning.delete(id);
       });
     this.spawning.set(id, p);
     return p;
@@ -673,6 +686,27 @@ export class ControlPlane {
 
   async wakeAgent(id: AgentId): Promise<void> {
     await this.ensureSpawned(id, { manual: true, forceFresh: this.shouldForceFreshForEngagement(id) });
+  }
+
+  async stopAgent(id: AgentId): Promise<void> {
+    if (!this.mesh.agent(id)) throw new Error(`no such agent "${id}"`);
+    this.spawnGeneration.set(id, (this.spawnGeneration.get(id) ?? 0) + 1);
+    const conn = this.conns.get(id);
+    if (conn) {
+      conn.kill();
+      this.conns.delete(id);
+    }
+    this.spawning.delete(id);
+    this.sessionModes.delete(id);
+    this.sessionModels.delete(id);
+    this.imageCaps.delete(id);
+    this.loadedSessions.delete(id);
+    this.resumePendingValidation.delete(id);
+    this.mesh.setStatus(id, "stopped");
+    this.turnCounts.delete(id);
+    this.clearQueuedTurns(id);
+    this.emitActivityIfChanged(id);
+    this.emit({ kind: "agent_status", agent: id, status: "stopped", detail: "manual stop", ts: now() });
   }
 
   private promptWithResumeFallback(
@@ -845,7 +879,10 @@ export class ControlPlane {
     this.emit({ kind: "mail", id: event.id, from: ctx.agentId, to, body, ts: event.ts });
     // Wake the recipient asynchronously (fire-and-forget; sender's tool returns now).
     const target = this.mesh.agent(to);
-    if (target?.lazy && this.mesh.status(to) !== "ready") this.wakeLazy(to, ctx.agentId, body, event.id, meta);
+    if (this.mesh.status(to) === "stopped") {
+      // Manual stop is sticky for peer mail: the durable mail remains readable, but
+      // only an explicit wake or operator prompt restarts the agent.
+    } else if (target?.lazy && this.mesh.status(to) !== "ready") this.wakeLazy(to, ctx.agentId, body, event.id, meta);
     else this.wake(to, ctx.agentId, body, event.id, meta);
     const notes: string[] = [];
     if (opts.replyTo !== undefined && !this.mailBySeq.has(opts.replyTo)) {

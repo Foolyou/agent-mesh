@@ -36,6 +36,7 @@ function fakeManager() {
     async addAgent() {},
     interruptAgent() {},
     wakeAgent() {},
+    stopAgent() {},
     async newAgentSession() {},
     async newAllSessions() {},
     async defineMesh() {},

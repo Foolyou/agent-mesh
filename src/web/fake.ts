@@ -135,6 +135,13 @@ export class FakeManager {
       this.emit(name, { kind: "log", text: `agent "${agentId}" woken (fake)`, ts: now() });
     }, 200);
   }
+  stopAgent(name: string, agentId: string): void {
+    const e = this.require(name);
+    if (!e.config.agents.some((x) => x.id === agentId)) throw new Error(`no agent "${agentId}" in mesh "${name}"`);
+    this.emit(name, { kind: "agent_status", agent: agentId, status: "stopped", ts: now() });
+    this.emit(name, { kind: "agent_activity", agent: agentId, activity: "idle", ts: now() });
+    this.emit(name, { kind: "log", text: `agent "${agentId}" stopped (fake)`, ts: now() });
+  }
   async stopMesh(name: string): Promise<void> {
     const e = this.require(name);
     for (const a of e.config.agents) this.emit(name, { kind: "agent_status", agent: a.id, status: "dead", ts: now() });

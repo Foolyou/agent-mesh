@@ -53,6 +53,9 @@ function fakeManager(config: MeshConfig = CFG) {
     wakeAgent(n: string, a: string) {
       calls.push(["wakeAgent", n, a]);
     },
+    stopAgent(n: string, a: string) {
+      calls.push(["stopAgent", n, a]);
+    },
     async addEdge(n: string, edge: any) {
       calls.push(["addEdge", n, edge]);
     },
@@ -221,6 +224,14 @@ test("POST /api/meshes/demo/agents/codex-1/wake delegates to wakeAgent", async (
   const r = await handleApi(gw, "POST", "/api/meshes/demo/agents/codex-1/wake", {});
   expect(r.status).toBe(200);
   expect(m.calls).toContainEqual(["wakeAgent", "demo", "codex-1"]);
+});
+
+test("POST /api/meshes/demo/agents/codex-1/stop delegates to stopAgent", async () => {
+  const m = fakeManager();
+  const gw = new WebGateway(m as any);
+  const r = await handleApi(gw, "POST", "/api/meshes/demo/agents/codex-1/stop", {});
+  expect(r.status).toBe(200);
+  expect(m.calls).toContainEqual(["stopAgent", "demo", "codex-1"]);
 });
 
 test("POST /api/meshes/demo/edges delegates to addEdge", async () => {
