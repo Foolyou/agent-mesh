@@ -17,6 +17,7 @@ export interface BridgeControlPlane {
   on(listener: (e: MeshEvent) => void): () => void;
   snapshotEvents(): MeshEvent[];
   prompt(target: string, text: string, images?: PromptImageRef[]): Promise<unknown>;
+  removeQueuedTurn(target: string, turnId: string): boolean;
   steer(target: string, text: string, images?: PromptImageRef[]): Promise<void>;
   resolveDecision(requestId: string, optionId: string, by?: "human" | "timeout"): boolean;
   setMode(target: string, modeId: string): Promise<void>;
@@ -148,6 +149,9 @@ export class MeshHostDaemon {
       }
       case "prompt":
         this.cp.prompt(msg.target, msg.text, msg.images).catch(() => {});
+        break;
+      case "removeQueuedTurn":
+        this.cp.removeQueuedTurn(msg.target, msg.turnId);
         break;
       case "steer":
         this.cp.steer(msg.target, msg.text, msg.images).catch(() => {});

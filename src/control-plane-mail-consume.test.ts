@@ -147,6 +147,91 @@ test("check_mail leaves queued operator turns and unrelated mail turns alone", a
   }
 });
 
+test("removeQueuedTurn drops only a queued operator turn", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mesh-queue-remove-"));
+  const created: Record<string, QueueingConnection> = {};
+  const cp = makePlane(root, created);
+  const events: any[] = [];
+  cp.on((e) => events.push(e));
+
+  try {
+    await cp.start();
+    void cp.prompt("member", "long work");
+    void cp.prompt("member", "queued operator prompt");
+    const queuedEvent = events.find((e) => e.kind === "agent_turn" && e.phase === "queued" && e.turn.source === "operator" && e.turn.text === "queued operator prompt");
+    expect(queuedEvent).toBeDefined();
+    expect(created.member.queue).toHaveLength(1);
+
+    expect(cp.removeQueuedTurn("member", queuedEvent.turn.id)).toBe(true);
+
+    const removed = events.find((e) => e.kind === "agent_turn" && e.phase === "removed" && e.turn.id === queuedEvent.turn.id);
+    expect(removed).toBeDefined();
+    expect(created.member.queue).toHaveLength(0);
+    expect(cp.snapshotEvents()).not.toContainEqual(
+      expect.objectContaining({ kind: "agent_turn", phase: "queued", turn: expect.objectContaining({ id: queuedEvent.turn.id }) }),
+    );
+
+    created.member.finishCurrent();
+    expect(created.member.inFlight).toHaveLength(0);
+  } finally {
+    await cp.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("removeQueuedTurn refuses queued mail turns", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mesh-queue-remove-mail-"));
+  const created: Record<string, QueueingConnection> = {};
+  const cp = makePlane(root, created);
+  const events: any[] = [];
+  cp.on((e) => events.push(e));
+
+  try {
+    await cp.start();
+    void cp.prompt("member", "long work");
+    await (cp as any).handleSendMail({ agentId: "router", role: "router" }, "member", "ping");
+    const queuedEvent = events.find((e) => e.kind === "agent_turn" && e.phase === "queued" && e.turn.source === "mail");
+    expect(queuedEvent).toBeDefined();
+
+    expect(cp.removeQueuedTurn("member", queuedEvent.turn.id)).toBe(false);
+    expect(created.member.queue).toHaveLength(1);
+    expect(cp.snapshotEvents()).toContainEqual(
+      expect.objectContaining({ kind: "agent_turn", phase: "queued", turn: expect.objectContaining({ id: queuedEvent.turn.id }) }),
+    );
+  } finally {
+    await cp.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("removeQueuedTurn can drop an operator steer but not a peer steer", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mesh-queue-remove-steer-"));
+  const created: Record<string, QueueingConnection> = {};
+  const cp = makePlane(root, created);
+  const events: any[] = [];
+  cp.on((e) => events.push(e));
+
+  try {
+    await cp.start();
+    void cp.prompt("member", "long work");
+    await cp.steer("member", "operator urgent");
+    void (cp as any).steerWake("member", "router", "peer urgent");
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const operatorSteer = events.find((e) => e.kind === "agent_turn" && e.phase === "queued" && e.turn.source === "steer" && e.turn.from === "operator");
+    const peerSteer = events.find((e) => e.kind === "agent_turn" && e.phase === "queued" && e.turn.source === "steer" && e.turn.from === "router");
+    expect(operatorSteer).toBeDefined();
+    expect(peerSteer).toBeDefined();
+
+    expect(cp.removeQueuedTurn("member", operatorSteer.turn.id)).toBe(true);
+    expect(cp.removeQueuedTurn("member", peerSteer.turn.id)).toBe(false);
+    expect(created.member.queue.map((job) => job.turn?.id)).toContain(peerSteer.turn.id);
+    expect(created.member.queue.map((job) => job.turn?.id)).not.toContain(operatorSteer.turn.id);
+  } finally {
+    await cp.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("wake skips mail already consumed by check_mail (send/check race)", async () => {
   const root = await mkdtemp(join(tmpdir(), "mesh-mail-consume-race-"));
   const created: Record<string, QueueingConnection> = {};

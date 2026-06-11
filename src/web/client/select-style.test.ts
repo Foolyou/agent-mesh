@@ -63,3 +63,24 @@ test("topology edit controls live in the expandable manage area", () => {
   expect(toggle).toContain("display: inline-flex");
   expect(openControls).toContain("display: flex");
 });
+
+test("jump-to-bottom control keeps a touch-sized target clear of scrollbars", () => {
+  const button = blockFor(".jump-bottom");
+  const hoverMedia = css.slice(css.indexOf("@media (hover: hover)"));
+
+  expect(button).toContain("right: max(20px, calc(env(safe-area-inset-right) + 16px))");
+  expect(button).toContain("width: 44px");
+  expect(button).toContain("height: 44px");
+  expect(button).toContain("box-shadow: 0 6px 18px rgba(0, 0, 0, 0.22)");
+  expect(hoverMedia).toContain(".jump-bottom:hover");
+});
+
+test("root layout height follows the visual viewport variable", () => {
+  const root = blockFor("html,\nbody,\n#root");
+  const app = blockFor(".app");
+  const fullscreenMaster = blockFor(".master-chat.master-full");
+
+  expect(root).toContain("height: var(--mesh-vvh, 100dvh)");
+  expect(app).toContain("height: var(--mesh-vvh, 100dvh)");
+  expect(fullscreenMaster).toContain("height: var(--mesh-vvh, 100dvh)");
+});

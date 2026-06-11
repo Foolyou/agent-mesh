@@ -35,7 +35,7 @@
 html,
 body,
 #root {
-  height: 100%;
+  height: var(--mesh-vvh, 100dvh);
   margin: 0;
 }
 body {
@@ -121,7 +121,7 @@ body::after {
 .app {
   display: grid;
   grid-template-rows: auto 1fr;
-  height: 100%;
+  height: var(--mesh-vvh, 100dvh);
 }
 .topbar {
   display: flex;
@@ -265,7 +265,7 @@ body::after {
   z-index: 121;
   border-radius: 0;
   border: none;
-  height: 100dvh;
+  height: var(--mesh-vvh, 100dvh);
   width: 100vw;
 }
 .master-chat.master-full > .head {
@@ -426,6 +426,13 @@ body::after {
   min-width: 0;
   flex: 1;
 }
+.stream-shell {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
 .stream {
   overflow: auto;
   padding: 10px;
@@ -435,6 +442,34 @@ body::after {
   flex: 1;
   min-height: 0;
   min-width: 0;
+  width: 100%;
+}
+.jump-bottom {
+  position: absolute;
+  right: max(20px, calc(env(safe-area-inset-right) + 16px));
+  bottom: 12px;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 1px solid var(--line-bright);
+  background: var(--bg);
+  color: var(--fg);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.22);
+  font-size: 18px;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+@media (hover: hover) {
+  .jump-bottom:hover {
+    border-color: var(--info);
+    color: var(--info);
+  }
+}
+.jump-bottom:focus-visible {
+  outline: 2px solid var(--info);
+  outline-offset: 2px;
 }
 /* The stream is a flex column that scrolls (overflow:auto). Its children must keep their
    content height and never be squished to fit — without this, an overflowing transcript
@@ -852,6 +887,10 @@ body::after {
 .queue-nav-btn:disabled {
   opacity: 0.35;
   cursor: not-allowed;
+}
+.queue-remove-btn {
+  color: var(--bad);
+  border-color: color-mix(in srgb, var(--bad) 42%, var(--line));
 }
 .composer {
   display: flex;

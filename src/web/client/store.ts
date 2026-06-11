@@ -141,6 +141,7 @@ export interface Store {
   uploadImages(bucket: string, files: File[]): Promise<PromptImageRef[]>;
   promptRouter(name: string, text: string, images?: PromptImageRef[]): Promise<any>;
   promptAgent(name: string, agentId: string, text: string, images?: PromptImageRef[]): Promise<any>;
+  removeQueuedTurn(name: string, agentId: string, turnId: string): Promise<any>;
   steerAgent(name: string, agentId: string, text: string, images?: PromptImageRef[]): Promise<any>;
   promptMaster(text: string, images?: PromptImageRef[]): Promise<any>;
   resolvePermission(name: string, requestId: string, optionId: string): Promise<any>;
@@ -286,6 +287,7 @@ export function createStore(): Store {
     uploadImages: (bucket, files) => guard(uploadImages(bucket, files), "upload images"),
     promptRouter: (n, t, images) => guard(post(`/api/meshes/${enc(n)}/prompt`, { text: t, images }), `prompt ${n}`),
     promptAgent: (n, a, t, images) => guard(post(`/api/meshes/${enc(n)}/agents/${enc(a)}/prompt`, { text: t, images }), `prompt ${a}`),
+    removeQueuedTurn: (n, a, turnId) => guard(send("DELETE", `/api/meshes/${enc(n)}/agents/${enc(a)}/queue/${enc(turnId)}`), `remove queued message`),
     steerAgent: (n, a, t, images) => guard(post(`/api/meshes/${enc(n)}/agents/${enc(a)}/steer`, { text: t, images }), `steer ${a}`),
     promptMaster: (t, images) => guard(post(`/api/master/prompt`, { text: t, images }), "master"),
     interruptMaster: () => guard(post(`/api/master/interrupt`), "interrupt master"),

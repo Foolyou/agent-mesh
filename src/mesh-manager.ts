@@ -260,6 +260,12 @@ export class MeshManager {
     entry.client.prompt(agentId, text, images);
   }
 
+  removeQueuedTurn(name: string, agentId: string, turnId: string): void {
+    const entry = this.require(name);
+    if (entry.status !== "running" || !entry.client) throw new Error(`mesh "${name}" is not running`);
+    entry.client.removeQueuedTurn(agentId, turnId);
+  }
+
   steerAgent(name: string, agentId: string, text: string, images?: PromptImageRef[]): void {
     const entry = this.require(name);
     if (entry.status !== "running" || !entry.client) throw new Error(`mesh "${name}" is not running`);

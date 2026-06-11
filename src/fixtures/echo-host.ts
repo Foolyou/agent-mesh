@@ -30,6 +30,10 @@ const cp = {
     listener?.({ kind: "log", text: `echo:${text}`, ts: "t" });
     return {};
   },
+  removeQueuedTurn(target: string, turnId: string) {
+    listener?.({ kind: "log", text: `removeQueuedTurn:${target}:${turnId}`, ts: "t" });
+    return true;
+  },
   resolveDecision() {
     return true;
   },

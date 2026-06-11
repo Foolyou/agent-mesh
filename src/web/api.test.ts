@@ -44,6 +44,9 @@ function fakeManager(config: MeshConfig = CFG) {
     promptAgent(n: string, a: string, t: string, images?: any[]) {
       calls.push(["promptAgent", n, a, t, images]);
     },
+    removeQueuedTurn(n: string, a: string, turnId: string) {
+      calls.push(["removeQueuedTurn", n, a, turnId]);
+    },
     steerAgent(n: string, a: string, t: string, images?: any[]) {
       calls.push(["steerAgent", n, a, t, images]);
     },
@@ -132,6 +135,15 @@ test("POST /api/meshes/demo/agents/codex-1/steer delegates to steerAgent", async
   const r = await handleApi(gw, "POST", "/api/meshes/demo/agents/codex-1/steer", { text: "urgent" });
   expect(r.status).toBe(200);
   expect(m.calls).toContainEqual(["steerAgent", "demo", "codex-1", "urgent", []]);
+});
+
+test("DELETE /api/meshes/demo/agents/codex-1/queue/q1 delegates to removeQueuedTurn", async () => {
+  const m = fakeManager();
+  const gw = new WebGateway(m as any) as any;
+  gw.removeQueuedTurn = (n: string, a: string, turnId: string) => m.calls.push(["removeQueuedTurn", n, a, turnId]);
+  const r = await handleApi(gw, "DELETE", "/api/meshes/demo/agents/codex-1/queue/q1", {});
+  expect(r.status).toBe(200);
+  expect(m.calls).toContainEqual(["removeQueuedTurn", "demo", "codex-1", "q1"]);
 });
 
 test("POST /api/meshes/demo/agents/codex-1/wake delegates to wakeAgent", async () => {

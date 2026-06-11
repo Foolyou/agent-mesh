@@ -24,6 +24,9 @@ const cp = {
   async prompt() {
     return {};
   },
+  removeQueuedTurn() {
+    return true;
+  },
   resolveDecision() {
     return true;
   },

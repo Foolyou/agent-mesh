@@ -180,6 +180,11 @@ export async function handleApi(
           return ok();
         }
       }
+      // DELETE /api/meshes/:name/agents/:id/queue/:turnId
+      if (method === "DELETE" && p.length === 6 && p[2] === "agents" && p[4] === "queue") {
+        gw.removeQueuedTurn(name, str(p[3]), str(p[5]));
+        return ok();
+      }
     }
 
     return fail(404, `no route: ${method} ${path}`);

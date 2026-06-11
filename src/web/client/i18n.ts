@@ -134,6 +134,7 @@ const DICT: Record<string, Entry> = {
   "tool.output": ["output", "输出"],
   plan: ["plan", "计划"],
   "mail.from": ["from {from}", "来自 {from}"],
+  "transcript.jumpBottom": ["Jump to bottom", "回到底部"],
 
   // ── mobile segments ──
   "seg.chat": ["Chat", "对话"],

@@ -12,7 +12,7 @@ import type { PromptImageRef } from "./acp/types";
 
 /** Bumped when the wire protocol changes incompatibly; a reconnecting parent that
  *  speaks a different version refuses to attach to an old daemon. */
-export const PROTO_VERSION = 8;
+export const PROTO_VERSION = 9;
 
 export interface SeqEvent {
   seq: number;
@@ -32,6 +32,7 @@ export type ChildMsg =
 export type ParentMsg =
   | { t: "hello"; proto: number; resumeFrom: number }
   | { t: "prompt"; target: string; text: string; images?: PromptImageRef[] }
+  | { t: "removeQueuedTurn"; target: string; turnId: string }
   | { t: "steer"; target: string; text: string; images?: PromptImageRef[] }
   | { t: "resolve"; requestId: string; optionId: string }
   | { t: "setMode"; target: string; modeId: string }

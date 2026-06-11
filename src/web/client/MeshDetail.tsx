@@ -389,6 +389,7 @@ function ConversationPanel({
           imageEnabled={!!pm.capabilities?.[cur.id]?.image}
           imageDisabledReason="This agent does not advertise image input support"
           onUploadImages={(files) => store.uploadImages(m.name, files)}
+          onRemoveQueued={(item) => store.removeQueuedTurn(m.name, activeId, item.id)}
           working={working}
           onInterrupt={live ? () => store.interruptAgent(m.name, cur.id) : undefined}
           onSend={(msg, images, opts) =>

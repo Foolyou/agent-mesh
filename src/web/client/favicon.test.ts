@@ -6,6 +6,7 @@ const html = readFileSync(new URL("./index.html", import.meta.url), "utf8");
 test("index html declares the agent-mesh favicon and theme color", () => {
   expect(html).toContain('<link rel="icon" type="image/svg+xml" href="./favicon.svg" />');
   expect(html).toContain('<meta name="theme-color" content="#0a0b0d" />');
+  expect(html).toContain('<meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content" />');
 });
 
 test("favicon svg contains the approved mesh glyph mark", () => {

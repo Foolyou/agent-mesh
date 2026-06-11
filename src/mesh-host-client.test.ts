@@ -32,8 +32,10 @@ test("start resolves on ready; prompt relays an event; stop reaps the process", 
   expect(pid).toBeGreaterThan(0);
 
   client.prompt("r", "hello");
+  client.removeQueuedTurn("r", "turn-1");
   await Bun.sleep(100);
   expect(events.some((e) => e.kind === "log" && e.text === "echo:hello")).toBe(true);
+  expect(events.some((e) => e.kind === "log" && e.text === "removeQueuedTurn:r:turn-1")).toBe(true);
 
   await client.stop();
   // process is gone -> signalling it throws ESRCH

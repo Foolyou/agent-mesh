@@ -166,6 +166,13 @@ function MailBubble({ item, meshId }: { item: Extract<TranscriptItem, { kind: "m
   );
 }
 
+export function isTranscriptAtBottom(
+  scroll: Pick<HTMLElement, "scrollHeight" | "scrollTop" | "clientHeight">,
+  threshold = 40,
+): boolean {
+  return scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight <= threshold;
+}
+
 export function Transcript({ items, author }: { items: TranscriptItem[]; author?: AuthorRef }) {
   const { t } = useI18n();
   const endRef = useRef<HTMLDivElement>(null);
@@ -189,30 +196,43 @@ export function Transcript({ items, author }: { items: TranscriptItem[]; author?
   function onScroll() {
     const el = wrapRef.current;
     if (!el) return;
-    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+    const atBottom = isTranscriptAtBottom(el);
     stickRef.current = atBottom;
     setStick(atBottom);
   }
 
+  function jumpToBottom() {
+    stickRef.current = true;
+    setStick(true);
+    wrapRef.current?.focus({ preventScroll: true });
+  }
+
   if (!items.length) return <Empty>{t("empty.messages")}</Empty>;
   return (
-    <div className="stream" ref={wrapRef} onScroll={onScroll}>
-      {items.map((it) =>
-        it.kind === "message" ? (
-          <Msg key={it.id} item={it} author={author} />
-        ) : it.kind === "thought" ? (
-          <Thought key={it.id} item={it} author={author} />
-        ) : it.kind === "tool_call" ? (
-          <ToolCard key={it.id} item={it} />
-        ) : it.kind === "mail" ? (
-          <MailBubble key={it.id} item={it} meshId={author?.meshId} />
-        ) : it.kind === "divider" ? (
-          <Divider key={it.id} />
-        ) : (
-          <PlanCard key={it.id} item={it} />
-        ),
-      )}
-      <div ref={endRef} />
+    <div className="stream-shell">
+      <div className="stream" ref={wrapRef} onScroll={onScroll} tabIndex={-1}>
+        {items.map((it) =>
+          it.kind === "message" ? (
+            <Msg key={it.id} item={it} author={author} />
+          ) : it.kind === "thought" ? (
+            <Thought key={it.id} item={it} author={author} />
+          ) : it.kind === "tool_call" ? (
+            <ToolCard key={it.id} item={it} />
+          ) : it.kind === "mail" ? (
+            <MailBubble key={it.id} item={it} meshId={author?.meshId} />
+          ) : it.kind === "divider" ? (
+            <Divider key={it.id} />
+          ) : (
+            <PlanCard key={it.id} item={it} />
+          ),
+        )}
+        <div ref={endRef} />
+      </div>
+      {!stick ? (
+        <button className="jump-bottom" type="button" title={t("transcript.jumpBottom")} aria-label={t("transcript.jumpBottom")} onClick={jumpToBottom}>
+          <span aria-hidden="true">↓</span>
+        </button>
+      ) : null}
     </div>
   );
 }

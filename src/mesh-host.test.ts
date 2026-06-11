@@ -21,6 +21,7 @@ function fakeCp() {
     on(l) { listener = l; return () => { listener = undefined; }; },
     snapshotEvents() { return []; },
     async prompt(target, text) { calls.push(`prompt:${target}:${text}`); listener?.({ kind: "log", text: "got prompt", ts: "t" }); return {}; },
+    removeQueuedTurn(target, turnId) { calls.push(`removeQueuedTurn:${target}:${turnId}`); return true; },
     async steer(target, text) { calls.push(`steer:${target}:${text}`); listener?.({ kind: "steer", from: "operator", to: target, body: text, ts: "t" }); },
     resolveDecision(requestId, optionId) { calls.push(`resolve:${requestId}:${optionId}`); return true; },
     async setMode(target, modeId) { calls.push(`setMode:${target}:${modeId}`); },
@@ -71,6 +72,7 @@ test("hello → ack(running, proto, seq); prompt relays a seq'd event; commands 
 
   send({ t: "setMode", target: "codex-1", modeId: "read-only" });
   send({ t: "setModel", target: "codex-1", modelId: "kimi-k2" });
+  send({ t: "removeQueuedTurn", target: "codex-1", turnId: "turn-1" });
   send({ t: "interrupt", target: "codex-1" });
   send({ t: "newSession", target: "codex-1" });
   send({ t: "newAllSessions" });
@@ -80,6 +82,7 @@ test("hello → ack(running, proto, seq); prompt relays a seq'd event; commands 
   await Bun.sleep(50);
   expect(calls).toContain("setMode:codex-1:read-only");
   expect(calls).toContain("setModel:codex-1:kimi-k2");
+  expect(calls).toContain("removeQueuedTurn:codex-1:turn-1");
   expect(calls).toContain("interrupt:codex-1");
   expect(calls).toContain("newSession:codex-1");
   expect(calls).toContain("newAllSessions");

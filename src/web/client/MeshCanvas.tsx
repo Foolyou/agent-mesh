@@ -493,6 +493,7 @@ export function MeshCanvas({
                   imageEnabled={!!pm.capabilities?.[agent.id]?.image}
                   imageDisabledReason="This agent does not advertise image input support"
                   onUploadImages={(files) => store.uploadImages(m.name, files)}
+                  onRemoveQueued={(item) => store.removeQueuedTurn(m.name, agent.id, item.id)}
                   working={working}
                   onInterrupt={live ? () => store.interruptAgent(m.name, agent.id) : undefined}
                   onSend={(msg, images, opts) =>

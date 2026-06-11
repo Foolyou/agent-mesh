@@ -43,10 +43,15 @@ function queueItems(queue?: QueueSummary): QueueItem[] {
   return [{ id: "__latest__", source: "operator", from: "operator", preview: queue.latestPreview, ts: "" }];
 }
 
+export function isRemovableQueueItem(item: QueueItem): boolean {
+  return item.id !== "__latest__" && (item.source === "operator" || (item.source === "steer" && item.from === "operator"));
+}
+
 export function ChatPane({
   items,
   onSend,
   onInterrupt,
+  onRemoveQueued,
   onUploadImages,
   placeholder,
   disabled,
@@ -59,6 +64,7 @@ export function ChatPane({
   items: TranscriptItem[];
   onSend: (text: string, images?: PromptImageRef[], opts?: { steer?: boolean }) => void | Promise<void>;
   onInterrupt?: () => void | Promise<void>;
+  onRemoveQueued?: (item: QueueItem) => void | Promise<void>;
   onUploadImages?: (files: File[]) => Promise<PromptImageRef[]>;
   placeholder?: string;
   disabled?: boolean;
@@ -115,6 +121,11 @@ export function ChatPane({
     setQueuePinned(true);
   }
 
+  function removeQueued(item: QueueItem) {
+    if (!isRemovableQueueItem(item)) return;
+    void onRemoveQueued?.(item);
+  }
+
   return (
     <div className="chat" onClick={focusOnClick}>
       <Transcript items={items} author={author} />
@@ -140,6 +151,17 @@ export function ChatPane({
           <span className={`queue-source ${nav.item.source}`}>{queueSourceLabel(nav.item)}</span>
           <span className="queue-preview">{queuePreviewText(nav.item)}</span>
           <span className="queue-nav">
+            {isRemovableQueueItem(nav.item) && onRemoveQueued ? (
+              <button
+                type="button"
+                className="queue-nav-btn queue-remove-btn"
+                aria-label="remove queued message"
+                title="remove queued message"
+                onClick={() => removeQueued(nav.item!)}
+              >
+                -
+              </button>
+            ) : null}
             <button
               type="button"
               className="queue-nav-btn"

@@ -38,6 +38,7 @@ export interface ManagerLike {
   stopMesh(name: string): Promise<void>;
   promptRouter(name: string, text: string, images?: PromptImageRef[]): Promise<void>;
   promptAgent(name: string, agentId: string, text: string, images?: PromptImageRef[]): void;
+  removeQueuedTurn(name: string, agentId: string, turnId: string): void;
   steerAgent(name: string, agentId: string, text: string, images?: PromptImageRef[]): void;
   resolvePermission(name: string, requestId: string, optionId: string): void;
   setMode(name: string, agentId: string, modeId: string): Promise<void>;
@@ -340,11 +341,20 @@ export class WebGateway {
         if (e.phase === "queued") {
           this.addQueuedTurn(q, e.turn);
           this.publishQueue(name, e.turn.agent);
-        } else {
+        } else if (e.phase === "started") {
           const idx = q.findIndex((turn) => turn.id === e.turn.id);
           if (idx >= 0) q.splice(idx, 1);
           this.publishQueue(name, e.turn.agent);
           this.foldStartedTurn(name, e.turn, e.ts || now());
+        } else if (e.phase === "consumed") {
+          const idx = q.findIndex((turn) => turn.id === e.turn.id);
+          if (idx >= 0) q.splice(idx, 1);
+          this.publishQueue(name, e.turn.agent);
+          this.foldStartedTurn(name, e.turn, e.ts || now());
+        } else {
+          const idx = q.findIndex((turn) => turn.id === e.turn.id);
+          if (idx >= 0) q.splice(idx, 1);
+          this.publishQueue(name, e.turn.agent);
         }
         break;
       }
@@ -452,6 +462,13 @@ export class WebGateway {
   promptAgent(name: string, agentId: string, text: string, images: PromptImageRef[] = []): void {
     const refs = images.map((i) => this.withBucket(name, i));
     this.manager.promptAgent(name, agentId, text, refs);
+  }
+  removeQueuedTurn(name: string, agentId: string, turnId: string): void {
+    const q = this.queueFor(name, agentId);
+    const turn = q.find((item) => item.id === turnId);
+    if (!turn) throw new Error("queued message not found");
+    if (!(turn.source === "operator" || (turn.source === "steer" && turn.from === "operator"))) throw new Error("only user queued messages can be removed");
+    this.manager.removeQueuedTurn(name, agentId, turnId);
   }
   steerAgent(name: string, agentId: string, text: string, images: PromptImageRef[] = []): void {
     const refs = images.map((i) => this.withBucket(name, i));

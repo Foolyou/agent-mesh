@@ -1,7 +1,7 @@
 import { test, expect } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { Transcript } from "./Transcript";
+import { isTranscriptAtBottom, Transcript } from "./Transcript";
 import type { TranscriptItem } from "../types";
 
 const T = "2026-06-09T00:00:00.000Z";
@@ -43,4 +43,25 @@ test("user message relative image without an author does not rewrite to an agent
 
   expect(html).not.toMatch(/<img\b/);
   expect(html).not.toContain("/api/agents/");
+});
+
+test("transcript bottom detection treats nearby scroll positions as bottom", () => {
+  expect(isTranscriptAtBottom({ scrollHeight: 1000, scrollTop: 560, clientHeight: 400 })).toBe(true);
+  expect(isTranscriptAtBottom({ scrollHeight: 1000, scrollTop: 559, clientHeight: 400 })).toBe(false);
+});
+
+test("transcript stream is programmatically focusable for jump-to-bottom", () => {
+  const html = render([
+    {
+      id: "u1",
+      kind: "message",
+      role: "user",
+      text: "hello",
+      ts: T,
+      complete: true,
+    },
+  ]);
+
+  expect(html).toContain('class="stream"');
+  expect(html).toContain('tabindex="-1"');
 });

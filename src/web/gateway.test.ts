@@ -52,6 +52,9 @@ function fakeManager() {
     promptAgent(n: string, a: string, t: string, images?: any[]) {
       calls.push(["promptAgent", n, a, t, images]);
     },
+    removeQueuedTurn(n: string, a: string, turnId: string) {
+      calls.push(["removeQueuedTurn", n, a, turnId]);
+    },
     steerAgent(n: string, a: string, t: string, images?: any[]) {
       calls.push(["steerAgent", n, a, t, images]);
     },
@@ -363,6 +366,54 @@ test("mail turn consumed clears the queue and folds the mail as read context", (
   expect(got.some((x) => x.t === "agent.queue" && x.agent === "codex-1" && x.summary.count === 0)).toBe(true);
   // The mail entered the agent's context via check_mail, so it must appear in the transcript exactly once.
   expect(s.perMesh.demo.transcripts["codex-1"].filter((i: any) => i.kind === "mail" && i.from === "router" && i.body === "ping")).toHaveLength(1);
+});
+
+test("removeQueuedTurn delegates only for queued operator turns", () => {
+  const m = fakeManager();
+  const gw = new WebGateway(m as any);
+  m.emit("demo", {
+    kind: "agent_turn",
+    phase: "queued",
+    turn: { id: "user-1", agent: "codex-1", source: "operator", from: "operator", to: "codex-1", text: "later", preview: "you: later", ts: "T1" },
+    ts: "T1",
+  } as any);
+  m.emit("demo", {
+    kind: "agent_turn",
+    phase: "queued",
+    turn: { id: "mail-1", agent: "codex-1", source: "mail", from: "router", to: "codex-1", text: "ping", preview: "router: ping", ts: "T2" },
+    ts: "T2",
+  } as any);
+  m.emit("demo", {
+    kind: "agent_turn",
+    phase: "queued",
+    turn: { id: "operator-steer-1", agent: "codex-1", source: "steer", from: "operator", to: "codex-1", text: "urgent", preview: "you: urgent", ts: "T3" },
+    ts: "T3",
+  } as any);
+  m.emit("demo", {
+    kind: "agent_turn",
+    phase: "queued",
+    turn: { id: "peer-steer-1", agent: "codex-1", source: "steer", from: "router", to: "codex-1", text: "urgent mail", preview: "router: urgent mail", ts: "T4" },
+    ts: "T4",
+  } as any);
+
+  gw.removeQueuedTurn("demo", "codex-1", "user-1");
+  expect(m.calls).toContainEqual(["removeQueuedTurn", "demo", "codex-1", "user-1"]);
+  gw.removeQueuedTurn("demo", "codex-1", "operator-steer-1");
+  expect(m.calls).toContainEqual(["removeQueuedTurn", "demo", "codex-1", "operator-steer-1"]);
+  expect(() => gw.removeQueuedTurn("demo", "codex-1", "mail-1")).toThrow(/only user queued messages/i);
+  expect(() => gw.removeQueuedTurn("demo", "codex-1", "peer-steer-1")).toThrow(/only user queued messages/i);
+});
+
+test("removed queue events clear the summary without adding transcript items", () => {
+  const m = fakeManager();
+  const gw = new WebGateway(m as any);
+  const turn = { id: "user-1", agent: "codex-1", source: "operator", from: "operator", to: "codex-1", text: "later", preview: "you: later", ts: "T1" };
+  m.emit("demo", { kind: "agent_turn", phase: "queued", turn, ts: "T1" } as any);
+  m.emit("demo", { kind: "agent_turn", phase: "removed", turn, ts: "T2" } as any);
+
+  const s = gw.snapshot();
+  expect(s.perMesh.demo.queues["codex-1"]?.count ?? 0).toBe(0);
+  expect(s.perMesh.demo.transcripts["codex-1"] ?? []).toHaveLength(0);
 });
 
 test("a current_mode_update syncs the mode picker + broadcasts (claude has no echo)", () => {

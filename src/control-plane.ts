@@ -200,6 +200,15 @@ export class ControlPlane {
     this.emit({ kind: "agent_turn", phase: "consumed", turn, ts: now() });
   }
 
+  private noteTurnRemoved(turn: AgentTurn): void {
+    const q = this.queuedTurns.get(turn.agent) ?? [];
+    const idx = q.findIndex((queued) => queued.id === turn.id);
+    if (idx >= 0) q.splice(idx, 1);
+    if (q.length) this.queuedTurns.set(turn.agent, q);
+    else this.queuedTurns.delete(turn.agent);
+    this.emit({ kind: "agent_turn", phase: "removed", turn, ts: now() });
+  }
+
   private rememberConsumedMail(agent: AgentId, mailIds: Iterable<string>): void {
     let set = this.consumedMailIds.get(agent);
     if (!set) {
@@ -277,6 +286,19 @@ export class ControlPlane {
     const imgs = this.imageCaps.get(id) ? images : [];
     const promptImages = imgs.map((i) => this.resolveImagePath(i));
     return this.promptWithResumeFallback(id, text, promptImages, false, turn ?? this.operatorTurn(id, text, imgs));
+  }
+
+  /** Remove a not-yet-started user/operator prompt from one agent's queue.
+   *  Mail wakeups are deliberately not removable here because the durable mailbox
+   *  remains the source of truth for inter-agent mail delivery. */
+  removeQueuedTurn(id: AgentId, turnId: string): boolean {
+    if (!this.mesh.agent(id)) throw new Error(`no such agent "${id}"`);
+    const conn = this.conns.get(id);
+    if (!conn) throw new Error(`no connection for agent ${id}`);
+    const [removed] = conn.removeQueued((turn) => turn.id === turnId && (turn.source === "operator" || (turn.source === "steer" && turn.from === "operator")));
+    if (!removed) return false;
+    this.noteTurnRemoved(removed);
+    return true;
   }
 
   /** Switch an agent's permission/approval mode (delegates to its connection). */

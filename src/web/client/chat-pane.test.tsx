@@ -1,7 +1,7 @@
 import { test, expect } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { ChatPane, queueNavState, queuePreviewText, queueSourceLabel } from "./ChatPane";
+import { ChatPane, isRemovableQueueItem, queueNavState, queuePreviewText, queueSourceLabel } from "./ChatPane";
 import { I18nContext, translate } from "./i18n";
 
 test("ChatPane renders a compact plain-text queue box above the composer", () => {
@@ -90,4 +90,52 @@ test("queue preview removes the repeated source prefix shown by the badge", () =
   expect(queuePreviewText({ id: "q3", source: "steer", from: "lead", to: "a", preview: "steer: urgent", ts: "T" })).toBe("urgent");
   expect(queuePreviewText({ id: "q4", source: "mail", from: "review", to: "a", preview: "review: please check", ts: "T" })).toBe("please check");
   expect(queuePreviewText({ id: "q5", source: "operator", from: "operator", to: "a", preview: "plain text", ts: "T" })).toBe("plain text");
+});
+
+test("ChatPane renders a remove button only for user queued messages", () => {
+  const userHtml = renderToStaticMarkup(
+    createElement(
+      I18nContext.Provider,
+      { value: { lang: "en", t: (key, vars) => translate(key, "en", vars) } },
+      createElement(ChatPane, {
+        items: [],
+        queue: {
+          count: 1,
+          latestId: "q1",
+          latestPreview: "you: remove me",
+          items: [{ id: "q1", source: "operator", from: "operator", to: "codex-1", preview: "you: remove me", ts: "T1" }],
+        },
+        onSend: () => {},
+        onRemoveQueued: () => {},
+      }),
+    ),
+  );
+  expect(userHtml).toContain("aria-label=\"remove queued message\"");
+
+  const mailHtml = renderToStaticMarkup(
+    createElement(
+      I18nContext.Provider,
+      { value: { lang: "en", t: (key, vars) => translate(key, "en", vars) } },
+      createElement(ChatPane, {
+        items: [],
+        queue: {
+          count: 1,
+          latestId: "q1",
+          latestPreview: "review: keep me",
+          items: [{ id: "q1", source: "mail", from: "review", to: "codex-1", preview: "review: keep me", ts: "T1" }],
+        },
+        onSend: () => {},
+        onRemoveQueued: () => {},
+      }),
+    ),
+  );
+  expect(mailHtml).not.toContain("aria-label=\"remove queued message\"");
+});
+
+test("queue removal eligibility treats operator steer as user and mail-like items as protected", () => {
+  expect(isRemovableQueueItem({ id: "q1", source: "operator", from: "operator", to: "a", preview: "p", ts: "T" })).toBe(true);
+  expect(isRemovableQueueItem({ id: "q2", source: "steer", from: "operator", to: "a", preview: "p", ts: "T" })).toBe(true);
+  expect(isRemovableQueueItem({ id: "q3", source: "mail", from: "review", to: "a", preview: "p", ts: "T" })).toBe(false);
+  expect(isRemovableQueueItem({ id: "q4", source: "steer", from: "lead", to: "a", preview: "p", ts: "T" })).toBe(false);
+  expect(isRemovableQueueItem({ id: "__latest__", source: "operator", from: "operator", preview: "p", ts: "T" })).toBe(false);
 });
