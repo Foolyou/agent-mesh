@@ -27,6 +27,7 @@ const cp = {
   async newSession() {},
   async newAllSessions() {},
   async wakeAgent() {},
+  async stopAgent() {},
   addEdge() {},
   addAgent() {},
   async stop() {},

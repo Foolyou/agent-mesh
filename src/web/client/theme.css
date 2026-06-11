@@ -1497,6 +1497,12 @@ body::after {
   font-weight: 600;
   font-size: 12px;
 }
+.canvas-top .canvas-actions {
+  display: inline-flex;
+}
+.canvas-actions .detail-overflow-menu {
+  top: calc(100% + 7px);
+}
 .canvas-edges {
   position: absolute;
   inset: 0;
@@ -1577,6 +1583,17 @@ body::after {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-weight: 600;
+}
+.canvas-agent-actions {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
+.canvas-agent-actions .btn {
+  min-width: 58px;
+  height: 24px;
+  padding: 0 8px;
 }
 .canvas-window-body {
   display: flex;

@@ -668,7 +668,7 @@ export function MeshDetail({
       </div>
     </div>
   );
-  const canvasOverlay = topoOpen ? <MeshCanvas m={m} pm={pm} store={store} onClose={() => setTopoOpen(false)} /> : null;
+  const canvasOverlay = topoOpen ? <MeshCanvas m={m} pm={pm} store={store} onClose={() => setTopoOpen(false)} onEdit={onEdit} onDeleted={onDeleted} /> : null;
   const activityPanel = (
     <div className="panel">
       <div className="head">

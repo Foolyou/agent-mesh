@@ -647,6 +647,22 @@ try {
     const marker = await canvas.locator('.canvas-edge[data-from="codex-1"][data-to="opencode-1"]').getAttribute("marker-end");
     if (!marker?.includes("canvas-arrow")) throw new Error(`directed edge missing arrowhead marker: ${marker}`);
 
+    await canvas.locator('.canvas-actions .btn[aria-label="actions"]').click();
+    const menu = canvas.locator(".canvas-actions .detail-overflow-menu");
+    await menu.waitFor({ timeout: 4000 });
+    await menu.locator('.btn:has-text("new sessions")').waitFor({ timeout: 4000 });
+    await menu.locator('.btn:has-text("stop mesh")').waitFor({ timeout: 4000 });
+    await canvas.locator('.canvas-window[data-agent="router"] .canvas-window-head .btn:has-text("stop")').waitFor({ timeout: 4000 });
+    await page.mouse.click(20, 70);
+    await menu.waitFor({ state: "detached", timeout: 4000 });
+
+    const lifecycle = canvas.locator('.canvas-window[data-agent="codex-1"] .canvas-window-head');
+    await lifecycle.locator('.btn:has-text("stop")').click();
+    await lifecycle.locator('.btn:has-text("start")').waitFor({ timeout: 4000 });
+    await lifecycle.locator('.btn:has-text("start")').click();
+    await lifecycle.locator('.btn:has-text("starting")').waitFor({ timeout: 4000 });
+    await lifecycle.locator('.btn:has-text("stop")').waitFor({ timeout: 5000 });
+
     const win = canvas.locator('.canvas-window[data-agent="codex-1"]');
     const before = await win.boundingBox();
     if (!before) throw new Error("codex-1 window missing box");

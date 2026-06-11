@@ -26,6 +26,7 @@ export interface BridgeControlPlane {
   newSession(target: string): Promise<void>;
   newAllSessions(): Promise<void>;
   wakeAgent(target: string): Promise<void>;
+  stopAgent(target: string): Promise<void>;
   addEdge(edge: MeshEdge): void;
   addAgent(agent: AgentConfig, edges?: MeshEdge[]): void;
   stop(reason?: ControlPlaneStopReason): Promise<void>;
@@ -176,6 +177,9 @@ export class MeshHostDaemon {
         break;
       case "wake":
         this.cp.wakeAgent(msg.target).catch(() => {});
+        break;
+      case "stopAgent":
+        this.cp.stopAgent(msg.target).catch(() => {});
         break;
       case "addEdge":
         this.cp.addEdge(msg.edge);
