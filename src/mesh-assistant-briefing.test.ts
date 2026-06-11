@@ -23,6 +23,15 @@ test("Mesh Assistant briefing requires safe mesh-management workflows", () => {
   expect(text).toContain("explicit user confirmation");
 });
 
+test("Mesh Assistant briefing explains per-agent instructions management", () => {
+  const text = buildMeshAssistantBriefing();
+
+  expect(text).toContain("per-agent instructions");
+  expect(text).toContain("agents[].instructions");
+  expect(text).toContain("create_mesh");
+  expect(text).toContain("update_mesh");
+});
+
 test("Mesh Assistant briefing confines scope, cwd, and mesh operations", () => {
   const text = buildMeshAssistantBriefing();
 
