@@ -146,6 +146,26 @@ test("GET /api/harnesses/:id/models returns 4xx for uninstalled harnesses", asyn
   expect(r.body.error.message).toContain("harness kimi is not installed");
 });
 
+test("GET /api/harnesses/:id/models rejects prototype property names as unknown harnesses", async () => {
+  const gw = new WebGateway(fakeManager() as any);
+  let called = false;
+  const r = await handleApi(
+    gw,
+    "GET",
+    "/api/harnesses/constructor/models",
+    undefined,
+    new URLSearchParams(),
+    undefined,
+    async () => {
+      called = true;
+      return { models: [], probedAt: 0 };
+    },
+  );
+  expect(r.status).toBe(404);
+  expect(r.body.error.message).toContain("unknown harness");
+  expect(called).toBe(false);
+});
+
 test("POST /api/meshes/demo/start delegates to startMesh", async () => {
   const m = fakeManager();
   const gw = new WebGateway(m as any);

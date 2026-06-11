@@ -44,7 +44,7 @@ export async function handleApi(
     if (method === "GET" && p.length === 1 && p[0] === "harnesses") return ok(harnessProbe());
     if (method === "GET" && p.length === 3 && p[0] === "harnesses" && p[2] === "models") {
       const harness = str(p[1]) as AgentConfig["harness"];
-      if (!(harness in HARNESSES)) return fail(404, `unknown harness: ${harness}`);
+      if (!Object.hasOwn(HARNESSES, harness)) return fail(404, `unknown harness: ${harness}`);
       try {
         return ok(await harnessModelProbe(harness, { refresh: query.get("refresh") === "1" }));
       } catch (e: any) {

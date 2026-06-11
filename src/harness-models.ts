@@ -6,6 +6,7 @@ import type { HarnessId, SessionModel } from "./acp/types";
 import { resolveHarness, type HarnessSpec } from "./harness";
 
 const DEFAULT_TTL_MS = 5 * 60 * 1000;
+const DEFAULT_TIMEOUT_MS = 20_000;
 const EFFORT_SUFFIX = /\/(?:minimal|low|medium|high|xhigh)$/;
 
 export interface HarnessModelProbeResult {
@@ -23,6 +24,7 @@ export interface HarnessModelProbeConnection {
 export interface HarnessModelProbeOptions {
   refresh?: boolean;
   ttlMs?: number;
+  timeoutMs?: number;
   now?: () => number;
   installed?: (id: HarnessId, spec: HarnessSpec) => boolean;
   createConnection?: (id: HarnessId, spec: HarnessSpec, cwd: string) => HarnessModelProbeConnection;
@@ -42,7 +44,7 @@ export async function probeHarnessModels(id: HarnessId, opts: HarnessModelProbeO
   if (!opts.refresh && cached && now() - cached.probedAt < ttlMs) return cached;
 
   const existing = inflight.get(id);
-  if (!opts.refresh && existing) return existing;
+  if (existing) return existing;
 
   const probe = runProbe(id, spec, opts, now).finally(() => {
     if (inflight.get(id) === probe) inflight.delete(id);
@@ -68,16 +70,28 @@ async function runProbe(
   }));
   const conn = createConnection(id, spec, root);
   try {
-    await conn.start();
-    await conn.initialize();
-    const session = await conn.newSession();
-    const result = { models: deriveBaseModels(session), probedAt: now() };
-    cache.set(id, result);
-    return result;
+    return await withTimeout((async () => {
+      await conn.start();
+      await conn.initialize();
+      const session = await conn.newSession();
+      const result = { models: deriveBaseModels(session), probedAt: now() };
+      cache.set(id, result);
+      return result;
+    })(), opts.timeoutMs ?? DEFAULT_TIMEOUT_MS, `model probe for ${id} timed out`);
   } finally {
     conn.kill();
     await rm(root, { recursive: true, force: true }).catch(() => {});
   }
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
 }
 
 export function deriveBaseModels(session: unknown): SessionModel[] {

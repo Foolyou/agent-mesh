@@ -158,6 +158,91 @@ test("probeHarnessModels deduplicates concurrent probes for one harness", async 
   expect(ra).toEqual(rb);
 });
 
+test("probeHarnessModels deduplicates concurrent refresh probes", async () => {
+  let count = 0;
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const opts = {
+    refresh: true,
+    now: () => 4500,
+    installed: () => true,
+    createConnection: () => ({
+      async start() {
+        count += 1;
+      },
+      async initialize() {},
+      async newSession() {
+        await gate;
+        return configSession(["refresh-shared"]);
+      },
+      kill() {},
+    }),
+  };
+
+  const a = probeHarnessModels("kimi", opts);
+  const b = probeHarnessModels("kimi", opts);
+  release();
+  const [ra, rb] = await Promise.all([a, b]);
+
+  expect(count).toBe(1);
+  expect(ra).toEqual(rb);
+});
+
+test("probeHarnessModels times out hung probes and kills the process", async () => {
+  let killed = false;
+  await expect(probeHarnessModels("codex", {
+    refresh: true,
+    timeoutMs: 5,
+    installed: () => true,
+    createConnection: () => ({
+      async start() {},
+      async initialize() {
+        await new Promise(() => {});
+      },
+      async newSession() {
+        return configSession(["never"]);
+      },
+      kill() {
+        killed = true;
+      },
+    }),
+  })).rejects.toThrow("model probe for codex timed out");
+
+  expect(killed).toBe(true);
+});
+
+test("probeHarnessModels retries with a new spawn after a rejected probe", async () => {
+  let count = 0;
+  const opts = {
+    refresh: true,
+    installed: () => true,
+    createConnection: () => {
+      count += 1;
+      if (count === 1) {
+        return {
+          async start() {
+            throw new Error("first failure");
+          },
+          async initialize() {},
+          async newSession() {
+            return configSession(["never"]);
+          },
+          kill() {},
+        };
+      }
+      return new FakeConnection(configSession(["second-ok"]), []);
+    },
+  };
+
+  await expect(probeHarnessModels("claude", opts)).rejects.toThrow("first failure");
+  const res = await probeHarnessModels("claude", opts);
+
+  expect(count).toBe(2);
+  expect(res.models[0]?.id).toBe("second-ok");
+});
+
 test("probeHarnessModels rejects uninstalled harnesses without spawning", async () => {
   let spawned = false;
   await expect(probeHarnessModels("kimi", {

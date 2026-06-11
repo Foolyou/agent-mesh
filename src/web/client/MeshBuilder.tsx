@@ -298,6 +298,8 @@ export function MeshBuilder({
 
   const activeIndex = page.kind === "agent" ? agents.findIndex((a) => a.key === page.key) : -1;
   const activeAgent = activeIndex >= 0 ? agents[activeIndex] : undefined;
+  const activeModelProbe = activeAgent ? modelProbes[activeAgent.harness] : undefined;
+  const activeModelMissing = !!(activeAgent?.model && !(activeModelProbe?.models ?? []).some((m) => m.id === activeAgent.model));
   const activeTabIndex = page.kind === "overview" ? 0 : Math.max(0, agents.findIndex((a) => a.key === page.key) + 1);
   const activePanelId = page.kind === "overview" ? "mesh-builder-panel-overview" : `mesh-builder-panel-${activeAgent?.key ?? "missing"}`;
   const activeTabId = page.kind === "overview" ? "mesh-builder-tab-overview" : `mesh-builder-tab-${activeAgent?.key ?? "missing"}`;
@@ -581,14 +583,17 @@ export function MeshBuilder({
                       onChange={(e) => setAgent(activeIndex, { model: e.target.value || undefined })}
                     >
                       <option value="">{t("build.model.default")}</option>
-                      {(modelProbes[activeAgent.harness]?.models ?? []).map((m) => (
+                      {activeModelMissing ? (
+                        <option value={activeAgent.model}>{activeAgent.model} ({t("build.model.notAdvertised")})</option>
+                      ) : null}
+                      {(activeModelProbe?.models ?? []).map((m) => (
                         <option key={m.id} value={m.id}>{m.name || m.id}</option>
                       ))}
                     </select>
-                    {modelProbes[activeAgent.harness]?.status === "loading" ? (
+                    {activeModelProbe?.status === "loading" ? (
                       <span className="probe-note">{t("build.model.loading")}</span>
-                    ) : modelProbes[activeAgent.harness]?.status === "error" ? (
-                      <button type="button" className="linkish probe-note" onClick={() => void refreshModels(activeAgent.harness, true)} title={modelProbes[activeAgent.harness]?.message}>
+                    ) : activeModelProbe?.status === "error" ? (
+                      <button type="button" className="linkish probe-note" onClick={() => void refreshModels(activeAgent.harness, true)} title={activeModelProbe?.message}>
                         {t("build.model.retry")}
                       </button>
                     ) : null}
