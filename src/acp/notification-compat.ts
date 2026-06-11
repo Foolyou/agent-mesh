@@ -1,6 +1,6 @@
 import { sessionNotificationSchema } from "@zed-industries/agent-client-protocol";
 
-const COMPAT_UPDATE_KINDS = new Set(["tool_call_update", "usage_update", "config_option_update"]);
+const COMPAT_UPDATE_KINDS = new Set(["tool_call_update", "usage_update", "config_option_update", "session_info_update"]);
 const PATCHED = Symbol.for("mesh.acp.sessionNotificationCompat");
 
 function isObject(value: unknown): value is Record<string, unknown> {

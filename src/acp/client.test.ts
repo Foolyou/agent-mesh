@@ -125,6 +125,64 @@ test("loadSession wraps ACP session/load and returns a session setup shape", asy
   });
 });
 
+test("claude newSession requests raw SDK messages for silence visibility", async () => {
+  const calls: any[] = [];
+  const c = Object.create(AcpAgentConnection.prototype) as AcpAgentConnection;
+  (c as any).id = "claude";
+  (c as any).opts = { command: "claude-agent-acp" };
+  (c as any).conn = {
+    newSession: async (params: any) => {
+      calls.push(params);
+      return { sessionId: "s" };
+    },
+  };
+
+  await c.newSession([{ type: "http", name: "mesh", url: "http://mesh", headers: [] }]);
+
+  expect(calls[0]._meta.claudeCode.emitRawSDKMessages).toEqual([
+    { type: "rate_limit_event" },
+    { type: "system", subtype: "api_retry" },
+    { type: "system", subtype: "status" },
+    { type: "system", subtype: "compact_boundary" },
+  ]);
+});
+
+test("claude loadSession requests raw SDK messages for silence visibility", async () => {
+  const calls: any[] = [];
+  const c = Object.create(AcpAgentConnection.prototype) as AcpAgentConnection;
+  (c as any).id = "claude";
+  (c as any).opts = { command: "claude-agent-acp" };
+  (c as any).conn = {
+    loadSession: async (params: any) => {
+      calls.push(params);
+      return { modes: { currentModeId: "default", availableModes: [] } };
+    },
+  };
+
+  await c.loadSession("saved", "/tmp/project", [{ type: "http", name: "mesh", url: "http://mesh", headers: [] }]);
+
+  expect(calls[0]._meta.claudeCode.emitRawSDKMessages).toEqual([
+    { type: "rate_limit_event" },
+    { type: "system", subtype: "api_retry" },
+    { type: "system", subtype: "status" },
+    { type: "system", subtype: "compact_boundary" },
+  ]);
+});
+
+test("client handlers route only claude sdk ext notifications", async () => {
+  const ext: any[] = [];
+  const c = Object.create(AcpAgentConnection.prototype) as AcpAgentConnection;
+  (c as any).opts = {
+    onExtNotification: (method: string, params: unknown) => ext.push({ method, params }),
+  };
+
+  const client = (c as any).clientHandlers();
+  await client.extNotification({ method: "_claude/sdkMessage", params: { type: "system", subtype: "api_retry" } });
+  await client.extNotification({ method: "_other/noop", params: { ignored: true } });
+
+  expect(ext).toEqual([{ method: "_claude/sdkMessage", params: { type: "system", subtype: "api_retry" } }]);
+});
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (err: unknown) => void;

@@ -530,6 +530,8 @@ export function MeshDetail({
       modes: {},
       models: {},
       capabilities: {},
+      usage: {},
+      health: {},
       queues: {},
     };
   // interrupt flash: highlight a node briefly when a new interrupt activity arrives

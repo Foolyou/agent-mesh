@@ -68,6 +68,9 @@ class HealthConnection {
     this.opts.onPromptSignal?.(this.active?.turn, update);
     this.opts.onUpdate?.(update);
   }
+  emitExt(method: string, params: unknown): void {
+    this.opts.onExtNotification?.(method, params, this.active?.turn);
+  }
   finish(value: unknown = { stopReason: "end_turn" }): void {
     const job = this.active;
     this.active = undefined;
@@ -270,6 +273,67 @@ test("mail wake timeout keeps mail persisted, sends delivery-failed receipt, and
 
     const status = (cp as any).meshStatusText("router");
     expect(status).toContain("last health failure: first_signal_timeout");
+  } finally {
+    await cp.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("claude raw sdk retry and compaction signals emit health events and suppress first-signal timeout", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mesh-turn-health-signals-"));
+  const created: Record<string, HealthConnection> = {};
+  const cp = new ControlPlane(config, {
+    mailboxPath: join(root, "mailbox.ndjson"),
+    turnFirstSignalTimeoutMs: 10,
+    turnCancelGraceMs: 10,
+    connectionFactory: (opts) => {
+      const conn = new HealthConnection(opts);
+      created[opts.id] = conn;
+      return conn as unknown as AcpAgentConnection;
+    },
+  });
+  const events: any[] = [];
+  cp.on((e) => events.push(e));
+
+  try {
+    await cp.start();
+    const prompt = cp.prompt("router", "slow but alive");
+    await waitUntil(() => !!created.router.active);
+    created.router.emitExt("_claude/sdkMessage", {
+      type: "system",
+      subtype: "api_retry",
+      attempt: 2,
+      max_retries: 5,
+      retry_delay_ms: 25000,
+      error: "rate_limit",
+    });
+    created.router.emitExt("_claude/sdkMessage", {
+      type: "rate_limit_event",
+      rate_limit_info: { status: "allowed", resetsAt: 1781162400000, rateLimitType: "tokens", utilization: 0.5 },
+    });
+    created.router.emitExt("_claude/sdkMessage", {
+      type: "rate_limit_event",
+      rate_limit_info: { status: "allowed_warning", resetsAt: 1781162400000, rateLimitType: "tokens", utilization: 0.92 },
+    });
+    created.router.emitExt("_claude/sdkMessage", { type: "system", subtype: "status", status: "compacting" });
+    created.router.emitExt("_claude/sdkMessage", {
+      type: "system",
+      subtype: "compact_boundary",
+      compact_metadata: { trigger: "auto", pre_tokens: 120000, post_tokens: 45000, duration_ms: 2200 },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 35));
+    expect(created.router.killed).toBe(false);
+    expect((cp as any).mesh.status("router")).toBe("ready");
+    expect(events).toContainEqual(expect.objectContaining({ kind: "agent_health_signal", agent: "router", signal: "retrying", detail: expect.objectContaining({ attempt: 2, retryDelayMs: 25000, reason: "rate_limit" }) }));
+    expect(events).toContainEqual(expect.objectContaining({ kind: "agent_health_signal", agent: "router", signal: "rate_limited", detail: expect.objectContaining({ status: "allowed_warning", resetsAt: 1781162400000, utilization: 0.92 }) }));
+    expect(events.filter((e) => e.kind === "agent_health_signal" && e.signal === "rate_limited")).toHaveLength(1);
+    expect(events).toContainEqual(expect.objectContaining({ kind: "agent_health_signal", agent: "router", signal: "compacting" }));
+    expect(events).toContainEqual(expect.objectContaining({ kind: "agent_health_signal", agent: "router", signal: "compact_done", detail: expect.objectContaining({ trigger: "auto", preTokens: 120000, postTokens: 45000, durationMs: 2200 }) }));
+    expect(events.some((e) => e.kind === "agent_turn_health" && e.reason === "first_signal_timeout")).toBe(false);
+
+    created.router.finish();
+    await prompt;
   } finally {
     await cp.stop();
     await rm(root, { recursive: true, force: true });
