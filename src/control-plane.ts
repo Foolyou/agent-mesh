@@ -544,7 +544,7 @@ export class ControlPlane {
     const agent = this.mesh.agent(id);
     if (!agent) throw new Error(`no such agent "${id}"`);
     const runtime = runtimeEffortConfig(agent.harness, effort);
-    if (runtime) await this.agent(id).setConfigOption(runtime.configId, runtime.value);
+    if (runtime && this.conns.has(id)) await this.agent(id).setConfigOption(runtime.configId, runtime.value);
     await this.persistRuntimeSessionFields(id, { effort });
   }
 

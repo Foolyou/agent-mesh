@@ -625,6 +625,7 @@ test("setEffort dynamically switches supported thought_level config options and 
       { id: "claude", harness: "claude", project: root, role: "router" },
       { id: "kimi", harness: "kimi", project: root, role: "member" },
       { id: "codex", harness: "codex", project: root, role: "member" },
+      { id: "cold", harness: "claude", project: root, role: "member", lazy: true },
     ],
     edges: [],
   };
@@ -644,6 +645,7 @@ test("setEffort dynamically switches supported thought_level config options and 
     await cp.setEffort("claude", "high");
     await cp.setEffort("kimi", "low");
     await cp.setEffort("codex", "high");
+    await cp.setEffort("cold", "medium");
 
     expect(created.claude.setConfigOptions).toContainEqual({ configId: "thought_level", value: "high" });
     expect(created.kimi.setConfigOptions).toContainEqual({ configId: "thinking", value: "off" });
@@ -655,6 +657,7 @@ test("setEffort dynamically switches supported thought_level config options and 
         codex: expect.objectContaining({ effort: "high" }),
       }),
     }));
+    expect(created.cold).toBeUndefined();
   } finally {
     await cp.stop();
     await rm(root, { recursive: true, force: true });
