@@ -2,7 +2,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { test, expect } from "bun:test";
+import { test, expect, spyOn } from "bun:test";
 import type { AcpAgentConnection, AcpConnectionOptions } from "./acp/client";
 import type { MeshConfig } from "./acp/types";
 import { ControlPlane } from "./control-plane";
@@ -88,6 +88,94 @@ class ConfigOptionsConnection {
   }
   async cancel(): Promise<void> {}
   kill(): void {}
+}
+
+class ModelSelectionConnection {
+  setModels: string[] = [];
+
+  constructor(
+    private opts: AcpConnectionOptions,
+    private session: unknown,
+  ) {}
+  async start(): Promise<void> {}
+  async initialize(): Promise<unknown> {
+    return {};
+  }
+  async newSession(): Promise<unknown> {
+    return { sessionId: `s-${this.opts.id}`, ...(this.session as any) };
+  }
+  async prompt(): Promise<unknown> {
+    return { stopReason: "end_turn" };
+  }
+  async setMode(): Promise<void> {}
+  async setModel(modelId: string): Promise<void> {
+    this.setModels.push(modelId);
+  }
+  async cancel(): Promise<void> {}
+  kill(): void {}
+}
+
+function standardModels(currentModelId = "default-model", ids = ["default-model", "preferred-model"]) {
+  return {
+    models: {
+      currentModelId,
+      availableModels: ids.map((id) => ({ modelId: id, name: `Model ${id}` })),
+    },
+  };
+}
+
+function configModels(currentValue = "default-config-model", ids = ["default-config-model", "preferred-config-model"]) {
+  return {
+    configOptions: [
+      {
+        category: "model",
+        currentValue,
+        options: ids.map((id) => ({ value: id, name: `Config ${id}` })),
+      },
+    ],
+  };
+}
+
+function codexModels(currentModelId = "gpt-5.5/low", bareIds = ["gpt-5.4", "gpt-5.5"]) {
+  const efforts = ["low", "medium", "high", "xhigh"];
+  return {
+    ...standardModels(currentModelId, bareIds.flatMap((id) => efforts.map((effort) => `${id}/${effort}`))),
+    ...configModels(bareIds[0], bareIds),
+  };
+}
+
+async function startOneAgentWithModel({
+  harness = "opencode",
+  model,
+  effort,
+  session,
+  sessionRunDir,
+}: {
+  harness?: MeshConfig["agents"][number]["harness"];
+  model?: string;
+  effort?: MeshConfig["agents"][number]["effort"];
+  session: unknown;
+  sessionRunDir?: string;
+}) {
+  const root = await mkdtemp(join(tmpdir(), "mesh-control-plane-model-select-"));
+  const config: MeshConfig = {
+    name: "model-select",
+    agents: [{ id: "router", harness, project: root, role: "router", model, effort }],
+    edges: [],
+  };
+  let conn: ModelSelectionConnection | undefined;
+  const cp = new ControlPlane(config, {
+    mailboxPath: join(root, "mailbox.ndjson"),
+    sessionRunDir,
+    connectionFactory: (opts) => {
+      conn = new ModelSelectionConnection(opts, session);
+      return conn as unknown as AcpAgentConnection;
+    },
+  });
+  const events: any[] = [];
+  cp.on((e) => events.push(e));
+  await cp.start();
+  return { root, cp, conn: conn!, events };
 }
 
 function sessionSetup(sessionId: string): unknown {
@@ -518,6 +606,126 @@ test("start derives modes and models from configOptions when availableModes are 
     await cp.setModel("router", "kimi-k2");
     expect(conn?.setModels).toEqual(["deepseek-v3", "kimi-k2"]);
     expect(events).toContainEqual(expect.objectContaining({ kind: "agent_models", agent: "router", current: "kimi-k2" }));
+  } finally {
+    await cp.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("start applies codex model plus default low effort and maps UI current to configOptions", async () => {
+  const runDir = await mkdtemp(join(tmpdir(), "mesh-control-plane-model-run-"));
+  const { root, cp, conn, events } = await startOneAgentWithModel({
+    harness: "codex",
+    model: "gpt-5.5",
+    session: codexModels("gpt-5.4/low", ["gpt-5.4", "gpt-5.5"]),
+    sessionRunDir: runDir,
+  });
+  try {
+    expect(conn.setModels).toEqual(["gpt-5.5/low"]);
+    expect(events).toContainEqual(expect.objectContaining({
+      kind: "agent_models",
+      agent: "router",
+      current: "gpt-5.5",
+      available: [
+        { id: "gpt-5.4", name: "Config gpt-5.4" },
+        { id: "gpt-5.5", name: "Config gpt-5.5" },
+      ],
+    }));
+    expect(await readSessionState(runDir, "model-select")).toEqual(expect.objectContaining({
+      agents: expect.objectContaining({
+        router: expect.objectContaining({ model: "gpt-5.5/low" }),
+      }),
+    }));
+  } finally {
+    await cp.stop();
+    await rm(root, { recursive: true, force: true });
+    await rm(runDir, { recursive: true, force: true });
+  }
+});
+
+test("start applies desired model from configOptions when standard models are absent", async () => {
+  const { root, cp, conn, events } = await startOneAgentWithModel({
+    model: "preferred-config",
+    session: configModels("default-config", ["default-config", "preferred-config"]),
+  });
+  try {
+    expect(conn.setModels).toEqual(["preferred-config"]);
+    expect(events).toContainEqual(expect.objectContaining({ kind: "agent_models", agent: "router", current: "preferred-config" }));
+  } finally {
+    await cp.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("start applies codex model plus effort combination when advertised", async () => {
+  const { root, cp, conn, events } = await startOneAgentWithModel({
+    harness: "codex",
+    model: "gpt-5.5",
+    effort: "high",
+    session: codexModels("gpt-5.5/low", ["gpt-5.4", "gpt-5.5"]),
+  });
+  try {
+    expect(conn.setModels).toEqual(["gpt-5.5/high"]);
+    expect(events).toContainEqual(expect.objectContaining({
+      kind: "agent_models",
+      agent: "router",
+      current: "gpt-5.5",
+      available: [
+        { id: "gpt-5.4", name: "Config gpt-5.4" },
+        { id: "gpt-5.5", name: "Config gpt-5.5" },
+      ],
+    }));
+  } finally {
+    await cp.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("start falls back to codex config model when model plus effort combination is absent", async () => {
+  const { root, cp, conn, events } = await startOneAgentWithModel({
+    harness: "codex",
+    model: "gpt-5.5",
+    effort: "high",
+    session: {
+      ...standardModels("gpt-5.4/low", ["gpt-5.4/low", "gpt-5.4/medium"]),
+      ...configModels("gpt-5.4", ["gpt-5.4", "gpt-5.5"]),
+    },
+  });
+  try {
+    expect(conn.setModels).toEqual(["gpt-5.5"]);
+    expect(events).toContainEqual(expect.objectContaining({ kind: "agent_models", agent: "router", current: "gpt-5.5" }));
+  } finally {
+    await cp.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("start keeps default model and emits a log when desired model is not advertised", async () => {
+  const warn = spyOn(console, "warn").mockImplementation(() => {});
+  const { root, cp, conn, events } = await startOneAgentWithModel({
+    model: "stale-model",
+    session: standardModels("default-standard", ["default-standard", "other-model"]),
+  });
+  try {
+    expect(conn.setModels).toEqual([]);
+    expect(events).toContainEqual(expect.objectContaining({ kind: "agent_models", agent: "router", current: "default-standard" }));
+    expect(events).toContainEqual(expect.objectContaining({ kind: "log", text: expect.stringContaining("skip cached model router=stale-model: not advertised") }));
+    expect(warn).toHaveBeenCalledWith("skip cached model router=stale-model: not advertised");
+  } finally {
+    warn.mockRestore();
+    await cp.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("start leaves model untouched when no desired model is configured", async () => {
+  const { root, cp, conn, events } = await startOneAgentWithModel({
+    session: standardModels("default-standard", ["default-standard", "other-model"]),
+  });
+  try {
+    expect(conn.setModels).toEqual([]);
+    expect(events).toContainEqual(expect.objectContaining({ kind: "agent_models", agent: "router", current: "default-standard" }));
+    expect(events).not.toContainEqual(expect.objectContaining({ kind: "log", text: expect.stringContaining("model") }));
   } finally {
     await cp.stop();
     await rm(root, { recursive: true, force: true });
