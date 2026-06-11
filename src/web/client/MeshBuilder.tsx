@@ -12,6 +12,7 @@ interface AgentDraft {
   harness: HarnessId;
   role: AgentRole;
   project: string;
+  model?: string;
   effort?: ThinkingEffort;
   lazy?: boolean;
   instructions?: string;
@@ -29,6 +30,8 @@ type BuilderPage = { kind: "overview" } | { kind: "agent"; key: string };
 const HARNESSES: HarnessId[] = ["claude", "codex", "opencode", "kimi"];
 let agentDraftSeq = 0;
 type HarnessProbeRow = { id: HarnessId; installed: boolean };
+type ModelProbeRow = { id: string; name: string };
+type ModelProbeState = { status: "idle" | "loading" | "ready" | "error"; models: ModelProbeRow[]; message?: string };
 
 function agentKey() {
   agentDraftSeq += 1;
@@ -174,6 +177,7 @@ export function MeshBuilder({
           harness: a.harness,
           role: a.role,
           project: a.project,
+          model: a.model,
           effort: a.effort,
           lazy: a.lazy,
           instructions: a.instructions,
@@ -188,6 +192,7 @@ export function MeshBuilder({
   const [page, setPage] = useState<BuilderPage>({ kind: "overview" });
   const [harnessInstalled, setHarnessInstalled] = useState<Partial<Record<HarnessId, boolean>>>({});
   const [harnessProbeErr, setHarnessProbeErr] = useState(false);
+  const [modelProbes, setModelProbes] = useState<Partial<Record<HarnessId, ModelProbeState>>>({});
   const restoreFocusRef = useRef<HTMLElement | null>(null);
   const modalRef = useRef<HTMLDivElement>(null);
   const tabRefs = useRef<Array<HTMLElement | null>>([]);
@@ -206,6 +211,20 @@ export function MeshBuilder({
       setHarnessProbeErr(false);
     } catch {
       setHarnessProbeErr(true);
+    }
+  }, []);
+  const refreshModels = useCallback(async (harness: HarnessId, refresh = false) => {
+    setModelProbes((current) => ({ ...current, [harness]: { status: "loading", models: current[harness]?.models ?? [] } }));
+    try {
+      const res = await fetch(`/api/harnesses/${encodeURIComponent(harness)}/models${refresh ? "?refresh=1" : ""}`);
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok || !Array.isArray(body?.models)) throw new Error(body?.error?.message ?? "bad model probe response");
+      setModelProbes((current) => ({ ...current, [harness]: { status: "ready", models: body.models } }));
+    } catch (e: any) {
+      setModelProbes((current) => ({
+        ...current,
+        [harness]: { status: "error", models: current[harness]?.models ?? [], message: String(e?.message ?? e) },
+      }));
     }
   }, []);
   const addAgent = () => {
@@ -290,6 +309,11 @@ export function MeshBuilder({
   useEffect(() => {
     if (page.kind === "agent") void refreshHarnesses();
   }, [page, refreshHarnesses]);
+
+  useEffect(() => {
+    if (!activeAgent) return;
+    void refreshModels(activeAgent.harness);
+  }, [activeAgent?.key, activeAgent?.harness, refreshModels]);
 
   useLayoutEffect(() => {
     if (page.kind !== "agent" || pendingAgentFocusRef.current !== page.key) return;
@@ -525,7 +549,7 @@ export function MeshBuilder({
                       value={activeAgent.harness}
                       onFocus={() => void refreshHarnesses()}
                       title={harnessProbeErr ? t("build.harness.refreshFailed") : undefined}
-                      onChange={(e) => setAgent(activeIndex, { harness: e.target.value as HarnessId })}
+                      onChange={(e) => setAgent(activeIndex, { harness: e.target.value as HarnessId, model: undefined })}
                     >
                       {HARNESSES.map((h) => (
                         <option key={h} value={h} disabled={harnessInstalled[h] === false} title={harnessInstalled[h] === false ? t("build.harness.notInstalled") : undefined}>
@@ -547,6 +571,27 @@ export function MeshBuilder({
                     <input className="inp" value={activeAgent.project} placeholder="project dir" onChange={(e) => setAgent(activeIndex, { project: e.target.value })} />
                   </div>
                   <div className="agrow-adv">
+                    <span className="adv-label">{t("model")}</span>
+                    <select
+                      className="inp adv-sel select-control"
+                      value={activeAgent.model ?? ""}
+                      title={t("build.model.hint")}
+                      disabled={modelProbes[activeAgent.harness]?.status === "loading"}
+                      onFocus={() => void refreshModels(activeAgent.harness)}
+                      onChange={(e) => setAgent(activeIndex, { model: e.target.value || undefined })}
+                    >
+                      <option value="">{t("build.model.default")}</option>
+                      {(modelProbes[activeAgent.harness]?.models ?? []).map((m) => (
+                        <option key={m.id} value={m.id}>{m.name || m.id}</option>
+                      ))}
+                    </select>
+                    {modelProbes[activeAgent.harness]?.status === "loading" ? (
+                      <span className="probe-note">{t("build.model.loading")}</span>
+                    ) : modelProbes[activeAgent.harness]?.status === "error" ? (
+                      <button type="button" className="linkish probe-note" onClick={() => void refreshModels(activeAgent.harness, true)} title={modelProbes[activeAgent.harness]?.message}>
+                        {t("build.model.retry")}
+                      </button>
+                    ) : null}
                     <span className="adv-label">{t("effort")}</span>
                     <select
                       className="inp adv-sel select-control"

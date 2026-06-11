@@ -8,11 +8,15 @@ import type { StartMeshOptions } from "../mesh-manager";
 import type { UploadFileLike } from "./uploads";
 import { AgentFileError } from "./agent-files";
 import { probeHarnesses } from "../harness-probe";
+import { probeHarnessModels } from "../harness-models";
+import { HARNESSES } from "../harness";
 
 export interface ApiResult {
   status: number;
   body: any;
 }
+
+type HarnessModelProbe = typeof probeHarnessModels;
 
 const ok = (body: any = { ok: true }): ApiResult => ({ status: 200, body });
 const fail = (status: number, message: string): ApiResult => ({ status, body: { error: { message } } });
@@ -24,6 +28,7 @@ export async function handleApi(
   body: any,
   query: URLSearchParams = new URLSearchParams(),
   harnessProbe = probeHarnesses,
+  harnessModelProbe: HarnessModelProbe = probeHarnessModels,
 ): Promise<ApiResult> {
   const seg = path
     .replace(/^\/+|\/+$/g, "")
@@ -37,6 +42,16 @@ export async function handleApi(
   try {
     if (method === "GET" && p.length === 1 && p[0] === "state") return ok(gw.snapshot());
     if (method === "GET" && p.length === 1 && p[0] === "harnesses") return ok(harnessProbe());
+    if (method === "GET" && p.length === 3 && p[0] === "harnesses" && p[2] === "models") {
+      const harness = str(p[1]) as AgentConfig["harness"];
+      if (!(harness in HARNESSES)) return fail(404, `unknown harness: ${harness}`);
+      try {
+        return ok(await harnessModelProbe(harness, { refresh: query.get("refresh") === "1" }));
+      } catch (e: any) {
+        const msg = str(e?.message ?? e);
+        return fail(/not installed/.test(msg) ? 409 : 400, msg);
+      }
+    }
 
     if (p[0] === "uploads") {
       if (method === "POST" && p.length === 1) {

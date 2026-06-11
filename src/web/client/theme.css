@@ -1771,9 +1771,10 @@ select.inp {
   gap: 6px;
   align-items: center;
 }
-/* advanced per-agent settings (effort + initial mode) on a labeled sub-row */
+/* advanced per-agent settings on a labeled sub-row */
 .agrow-adv {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
   padding-left: 2px;
@@ -1786,10 +1787,26 @@ select.inp {
   white-space: nowrap;
 }
 .adv-sel {
-  flex: 1;
+  flex: 1 1 150px;
   min-width: 0;
   padding: 3px 6px;
   font-size: 12px;
+}
+.probe-note {
+  font-size: 11px;
+  color: var(--fg-dim);
+  white-space: nowrap;
+}
+.linkish {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--info);
+  cursor: pointer;
+  font: inherit;
+}
+.linkish:hover {
+  text-decoration: underline;
 }
 .agent-instructions-field {
   display: flex;

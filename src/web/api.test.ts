@@ -110,6 +110,42 @@ test("GET /api/harnesses probes harness installation on each request", async () 
   expect(second).toEqual({ status: 200, body: [{ id: "codex", installed: true }] });
 });
 
+test("GET /api/harnesses/:id/models returns probed model list and passes refresh", async () => {
+  const gw = new WebGateway(fakeManager() as any);
+  const calls: any[] = [];
+  const r = await handleApi(
+    gw,
+    "GET",
+    "/api/harnesses/codex/models",
+    undefined,
+    new URLSearchParams("refresh=1"),
+    undefined,
+    async (id, opts) => {
+      calls.push([id, opts]);
+      return { models: [{ id: "gpt-5.5", name: "GPT 5.5" }], probedAt: 1234 };
+    },
+  );
+  expect(r).toEqual({ status: 200, body: { models: [{ id: "gpt-5.5", name: "GPT 5.5" }], probedAt: 1234 } });
+  expect(calls).toEqual([["codex", { refresh: true }]]);
+});
+
+test("GET /api/harnesses/:id/models returns 4xx for uninstalled harnesses", async () => {
+  const gw = new WebGateway(fakeManager() as any);
+  const r = await handleApi(
+    gw,
+    "GET",
+    "/api/harnesses/kimi/models",
+    undefined,
+    new URLSearchParams(),
+    undefined,
+    async () => {
+      throw new Error("harness kimi is not installed");
+    },
+  );
+  expect(r.status).toBe(409);
+  expect(r.body.error.message).toContain("harness kimi is not installed");
+});
+
 test("POST /api/meshes/demo/start delegates to startMesh", async () => {
   const m = fakeManager();
   const gw = new WebGateway(m as any);
