@@ -3,22 +3,27 @@
 // fire-and-forget and assertions key off emitted events. Headless: permissions
 // are auto-resolved (simulating the human). Prints a pass/fail table and exits
 // non-zero on any failure.
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { mkdtemp, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, stat } from "node:fs/promises";
 import { MeshManager } from "./mesh-manager";
 import { DEMO_MESH } from "./config";
-
-const probe = resolve(process.cwd(), "test_mesh_0", "e2e-probe.txt");
-await rm(probe, { force: true });
 
 // Isolated throwaway root: persisted sessions / mailbox / daemon registry from
 // earlier runs replay stale events (false mailSeen, resumed agents with stale
 // context) and a shared registry lets concurrent e2e runs SIGTERM each other.
 const root = await mkdtemp(join(tmpdir(), "mesh-e2e-"));
 
+// Agent project dirs also live inside the throwaway root (as absolute paths, so
+// the daemon's relative-cwd resolution is bypassed). They must exist before
+// spawn: a fresh checkout has no test_mesh_0/ and Bun reports a missing spawn
+// cwd as a misleading ENOENT on the command itself.
+const mesh = { ...DEMO_MESH, agents: DEMO_MESH.agents.map((a) => ({ ...a, project: join(root, a.project) })) };
+for (const dir of new Set(mesh.agents.map((a) => a.project))) await mkdir(dir, { recursive: true });
+const probe = join(root, "test_mesh_0", "e2e-probe.txt");
+
 const manager = new MeshManager({ root, debug: process.env.E2E_DEBUG === "1" });
-await manager.defineMesh(DEMO_MESH);
+await manager.defineMesh(mesh);
 
 const ready = new Set<string>();
 // Assertion flags only arm after startMesh completes: spawn-time events (mailbox
