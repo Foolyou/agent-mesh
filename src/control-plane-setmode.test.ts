@@ -48,6 +48,7 @@ test("image-only operator and steer turns use a readable preview placeholder", (
 class ConfigOptionsConnection {
   setModes: string[] = [];
   setModels: string[] = [];
+  setConfigOptions: Array<{ configId: string; value: string }> = [];
 
   constructor(private opts: AcpConnectionOptions) {}
   async start(): Promise<void> {}
@@ -85,6 +86,9 @@ class ConfigOptionsConnection {
   }
   async setModel(modelId: string): Promise<void> {
     this.setModels.push(modelId);
+  }
+  async setConfigOption(configId: string, value: string): Promise<void> {
+    this.setConfigOptions.push({ configId, value });
   }
   async cancel(): Promise<void> {}
   kill(): void {}
@@ -609,6 +613,55 @@ test("start derives modes and models from configOptions when availableModes are 
   } finally {
     await cp.stop();
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("setEffort dynamically switches supported thought_level config options and persists runtime effort", async () => {
+  const runDir = await mkdtemp(join(tmpdir(), "mesh-control-plane-effort-run-"));
+  const root = await mkdtemp(join(tmpdir(), "mesh-control-plane-effort-"));
+  const config: MeshConfig = {
+    name: "dynamic-effort",
+    agents: [
+      { id: "claude", harness: "claude", project: root, role: "router" },
+      { id: "kimi", harness: "kimi", project: root, role: "member" },
+      { id: "codex", harness: "codex", project: root, role: "member" },
+      { id: "cold", harness: "claude", project: root, role: "member", lazy: true },
+    ],
+    edges: [],
+  };
+  const created: Record<string, ConfigOptionsConnection> = {};
+  const cp = new ControlPlane(config, {
+    mailboxPath: join(root, "mailbox.ndjson"),
+    sessionRunDir: runDir,
+    connectionFactory: (opts) => {
+      const conn = new ConfigOptionsConnection(opts);
+      created[opts.id] = conn;
+      return conn as unknown as AcpAgentConnection;
+    },
+  });
+
+  try {
+    await cp.start();
+    await cp.setEffort("claude", "high");
+    await cp.setEffort("kimi", "low");
+    await cp.setEffort("codex", "high");
+    await cp.setEffort("cold", "medium");
+
+    expect(created.claude.setConfigOptions).toContainEqual({ configId: "thought_level", value: "high" });
+    expect(created.kimi.setConfigOptions).toContainEqual({ configId: "thinking", value: "off" });
+    expect(created.codex.setConfigOptions).toEqual([]);
+    expect(await readSessionState(runDir, "dynamic-effort")).toEqual(expect.objectContaining({
+      agents: expect.objectContaining({
+        claude: expect.objectContaining({ effort: "high" }),
+        kimi: expect.objectContaining({ effort: "low" }),
+        codex: expect.objectContaining({ effort: "high" }),
+      }),
+    }));
+    expect(created.cold).toBeUndefined();
+  } finally {
+    await cp.stop();
+    await rm(root, { recursive: true, force: true });
+    await rm(runDir, { recursive: true, force: true });
   }
 });
 

@@ -22,6 +22,7 @@ const cp = {
   },
   async setMode() {},
   async setModel() {},
+  async setEffort() {},
   async steer() {},
   async interrupt() {},
   async newSession() {},

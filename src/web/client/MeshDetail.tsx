@@ -214,14 +214,14 @@ function ModelControl({ mesh, agent, store, models }: { mesh: string; agent: str
 
 const EFFORTS: ThinkingEffort[] = ["minimal", "low", "medium", "high"];
 
-// Per-agent thinking-effort picker. Effort is a launch-time setting, so it's editable only while
-// the mesh is STOPPED (the choice persists and applies on next start); while running it's shown
-// read-only. opencode/kimi have no mechanism, so the control is hidden for them.
+// Per-agent thinking-effort picker. Claude and Kimi can switch thought level at runtime;
+// Codex remains spawn-time only, and OpenCode is pending binary verification.
 function EffortControl({ m, agent, store }: { m: MeshSummary; agent: string; store: Store }) {
   const { t } = useI18n();
   const a = m.agents.find((x) => x.id === agent);
-  if (!a || a.harness === "opencode" || a.harness === "kimi") return null;
+  if (!a || a.harness === "opencode") return null;
   const live = m.status === "running" || m.status === "starting";
+  const runtime = a.harness === "claude" || a.harness === "kimi";
   return (
     <span className="row" style={{ gap: 5 }}>
       <span className="sub" style={{ fontSize: 10 }}>
@@ -230,9 +230,9 @@ function EffortControl({ m, agent, store }: { m: MeshSummary; agent: string; sto
       <select
         className="effort-sel select-control"
         value={a.effort ?? ""}
-        disabled={live}
+        disabled={live && !runtime}
         aria-label={t("effort")}
-        title={live ? t("effort.hint.live") : t("effort.hint")}
+        title={live && runtime ? t("effort.hint.runtime") : live ? t("effort.hint.live") : t("effort.hint")}
         onKeyDown={(e) => e.stopPropagation()}
         onChange={(e) => void store.setEffort(m.name, agent, (e.target.value || undefined) as ThinkingEffort | undefined)}
       >

@@ -10,7 +10,7 @@ import { rm, mkdir } from "node:fs/promises";
 import { ControlPlane, type ControlPlaneStopReason } from "./control-plane";
 import { LineBuffer, encodeFrame, PROTO_VERSION, type ParentMsg, type SeqEvent } from "./protocol";
 import { writeRecord, removeRecord } from "./mesh-registry";
-import { now, type AgentConfig, type MeshConfig, type MeshEdge, type MeshEvent, type PromptImageRef } from "./acp/types";
+import { now, type AgentConfig, type MeshConfig, type MeshEdge, type MeshEvent, type PromptImageRef, type ThinkingEffort } from "./acp/types";
 
 /** The slice of ControlPlane the daemon depends on (keeps it unit-testable). */
 export interface BridgeControlPlane {
@@ -22,6 +22,7 @@ export interface BridgeControlPlane {
   resolveDecision(requestId: string, optionId: string, by?: "human" | "timeout"): boolean;
   setMode(target: string, modeId: string): Promise<void>;
   setModel(target: string, modelId: string): Promise<void>;
+  setEffort(target: string, effort?: ThinkingEffort): Promise<void>;
   interrupt(target: string): Promise<void>;
   newSession(target: string): Promise<void>;
   newAllSessions(): Promise<void>;
@@ -165,6 +166,9 @@ export class MeshHostDaemon {
         break;
       case "setModel":
         this.enqueue(() => this.cp.setModel(msg.target, msg.modelId));
+        break;
+      case "setEffort":
+        this.enqueue(() => this.cp.setEffort(msg.target, msg.effort));
         break;
       case "interrupt":
         this.cp.interrupt(msg.target).catch(() => {});

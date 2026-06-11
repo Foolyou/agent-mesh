@@ -100,6 +100,36 @@ test("setModel writes one raw ACP session/set_model line to child stdin", async 
   );
 });
 
+test("setConfigOption writes one raw ACP session/set_config_option line to child stdin", async () => {
+  const chunks: Uint8Array[] = [];
+  let flushes = 0;
+  const c = Object.create(AcpAgentConnection.prototype) as AcpAgentConnection;
+  (c as any).id = "a";
+  (c as any).sessionId = "s";
+  (c as any).rawRequestSeq = 0;
+  (c as any).child = {
+    stdin: {
+      write(chunk: Uint8Array) {
+        chunks.push(chunk);
+      },
+      flush() {
+        flushes++;
+      },
+    },
+  };
+  await c.setConfigOption("thinking", "off");
+  expect(flushes).toBe(1);
+  expect(chunks).toHaveLength(1);
+  expect(new TextDecoder().decode(chunks[0])).toBe(
+    JSON.stringify({
+      jsonrpc: "2.0",
+      id: "mesh-set-config-option-1",
+      method: "session/set_config_option",
+      params: { sessionId: "s", configId: "thinking", value: "off" },
+    }) + "\n",
+  );
+});
+
 test("loadSession wraps ACP session/load and returns a session setup shape", async () => {
   const calls: any[] = [];
   const c = Object.create(AcpAgentConnection.prototype) as AcpAgentConnection;

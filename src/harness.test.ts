@@ -18,7 +18,7 @@ test("claude sets MAX_THINKING_TOKENS only when an effort is chosen", () => {
   expect(spawnConfigFor(A({ harness: "claude", effort: "minimal" })).env).toEqual({ MAX_THINKING_TOKENS: "1024" });
 });
 
-test("opencode and kimi ignore effort (no mechanism)", () => {
+test("opencode and kimi ignore spawn-time effort", () => {
   const c = spawnConfigFor(A({ harness: "opencode", effort: "high" }));
   expect(c.args).toEqual(["acp"]);
   expect(c.env).toEqual({});
