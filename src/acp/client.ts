@@ -1,6 +1,7 @@
 // AcpAgentConnection: one control-plane -> agent ACP connection.
 // Spawns a harness process, speaks ACP over stdio via the Zed client library,
 // and routes inbound session updates / permission requests to callbacks.
+import "./notification-compat";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import {

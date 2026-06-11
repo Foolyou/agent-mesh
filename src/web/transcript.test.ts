@@ -232,6 +232,20 @@ test("codex tool_call_update falls back to stdout and stderr", () => {
   expect((items[0] as any).output).toBe("ok\nwarning\n");
 });
 
+test("codex tool_call_update renders rawOutput strings", () => {
+  const items = fold([
+    {
+      sessionUpdate: "tool_call_update",
+      toolCallId: "exec1",
+      status: "completed",
+      rawOutput: "plain command output\n",
+    },
+  ]);
+
+  expect(items[0]).toMatchObject({ kind: "tool_call", toolCallId: "exec1", status: "completed" });
+  expect((items[0] as any).output).toBe("plain command output\n");
+});
+
 test("opencode tool_call_update reads output field from rawOutput objects", () => {
   const items = fold([
     {

@@ -73,6 +73,27 @@ function cap<T>(arr: T[], n: number): T[] {
   return arr.length > n ? arr.slice(arr.length - n) : arr;
 }
 
+function configOptionOf(update: any): { category: "mode" | "model"; current: string; available: Array<{ id: string; name: string; description?: string }> } | undefined {
+  if (!update || update.sessionUpdate !== "config_option_update") return undefined;
+  const option = update.option ?? update.configOption ?? update.config_option;
+  const category = option?.category;
+  if (category !== "mode" && category !== "model") return undefined;
+  const available = Array.isArray(option.options)
+    ? option.options
+        .map((o: any) => {
+          const id = String(o?.value ?? o?.id ?? "");
+          if (!id) return undefined;
+          const item: { id: string; name: string; description?: string } = { id, name: String(o?.name ?? o?.value ?? o?.id ?? id) };
+          if (o?.description !== undefined) item.description = String(o.description);
+          return item;
+        })
+        .filter(Boolean)
+    : [];
+  const current = String(option.currentValue ?? option.current_value ?? option.current ?? available[0]?.id ?? "");
+  if (!current && !available.length) return undefined;
+  return { category, current, available: available as Array<{ id: string; name: string; description?: string }> };
+}
+
 /** Project an image ref to the fields safe to broadcast/persist in a transcript: the absolute
  *  on-disk `path` and internal `bucket` stay server-side (used only at the ACP boundary to read
  *  the bytes) and must never reach WS clients. Clients render the thumbnail from `url`. */
@@ -280,6 +301,14 @@ export class WebGateway {
             am.current = u.currentModeId;
             this.broadcast({ t: "agent.modes", name, agent: e.agent, current: am.current, available: am.available });
           }
+        }
+        const configOption = configOptionOf(u);
+        if (configOption?.category === "mode") {
+          pm.modes[e.agent] = { current: configOption.current, available: configOption.available };
+          this.broadcast({ t: "agent.modes", name, agent: e.agent, current: configOption.current, available: configOption.available });
+        } else if (configOption?.category === "model") {
+          pm.models[e.agent] = { current: configOption.current, available: configOption.available };
+          this.broadcast({ t: "agent.models", name, agent: e.agent, current: configOption.current, available: configOption.available });
         }
         this.foldConv({ scope: "agent", mesh: name, agent: e.agent }, e.update, e.ts || now());
         break;
