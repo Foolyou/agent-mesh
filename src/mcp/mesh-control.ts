@@ -57,11 +57,21 @@ export function createMeshControlHandlers(manager: MeshManager): MeshControlHand
   };
 }
 
+const effortIds = ["minimal", "low", "medium", "high"] as const;
+
 const agentSchema = z.object({
   id: z.string(),
   harness: z.enum(harnessIds).describe("agent harness type"),
   project: z.string().describe("working directory"),
   role: z.enum(["router", "member"]).describe("'router' (exactly one per mesh) or 'member'"),
+  lazy: z.boolean().optional().describe("optional: start this non-router agent only on first mail or manual wake"),
+  effort: z.enum(effortIds).optional().describe("optional: reasoning/thinking effort for this agent"),
+  mode: z.string().optional().describe("optional: runtime-selected session mode cache, applied best-effort after spawn"),
+  model: z.string().optional().describe("optional: runtime-selected model cache, applied best-effort after spawn"),
+  instructions: z
+    .string()
+    .optional()
+    .describe("optional per-agent instructions injected only into this agent's briefing; omit or set blank to clear"),
 });
 const edgeSchema = z.union([
   z.tuple([z.string(), z.string()]),
@@ -85,7 +95,7 @@ const meshSpecShape = {
   charter: z
     .string()
     .optional()
-    .describe("optional team charter: shared goal + working norms, injected into every agent's briefing"),
+    .describe("optional team charter: shared goal + working norms, injected into every agent's briefing; distinct from per-agent instructions, which are private to one agent"),
 };
 const meshToolSpecShape = {
   ...meshSpecShape,
@@ -118,7 +128,7 @@ export async function createMeshControlServer(opts: {
     { description: "Define a NEW mesh (validated + persisted; does not start it).", inputSchema: meshToolSpecShape },
     async (spec) => text(await opts.handlers.createMesh(parseMeshSpec(spec))));
   server.registerTool("get_mesh",
-    { description: "Get a mesh's full definition (agents, edges, project, charter) as JSON. Use this before update_mesh to see what to change.", inputSchema: { name: z.string() } },
+    { description: "Get a mesh's full definition (agents, edges, project, charter, per-agent instructions) as JSON. Use this before update_mesh to see what to change.", inputSchema: { name: z.string() } },
     async ({ name }) => text(opts.handlers.getMesh(name)));
   server.registerTool("update_mesh",
     { description: "Replace the definition of an existing STOPPED mesh — same shape as create_mesh (validated + persisted). Read it first with get_mesh, change the fields you want, and pass the full updated spec.", inputSchema: meshToolSpecShape },

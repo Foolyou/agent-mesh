@@ -171,8 +171,11 @@ const DICT: Record<string, Entry> = {
   "build.basic": ["basic", "基础信息"],
   "build.name": ["mesh name", "mesh 名称"],
   "build.name.locked": ["mesh name (locked)", "mesh 名称(锁定)"],
+  "build.overview": ["overview", "总体"],
+  "build.agentPage": ["agent: {id}", "agent：{id}"],
   "build.agents": ["agents — exactly one router", "agents —— 恰好一个 router"],
   "build.addAgent": ["+ agent", "+ agent"],
+  "build.deleteAgent": ["delete agent", "删除 agent"],
   "build.instructions": ["role-specific instructions (optional)", "专属指令（可选）"],
   "build.instructions.placeholder": [
     "Only this agent sees this. Applies on the next start.",

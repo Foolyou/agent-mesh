@@ -24,6 +24,15 @@ async function step(name: string, fn: () => Promise<void>) {
   }
 }
 
+// Screenshots are diagnostics, not assertions — a hung capture must not kill the run.
+async function shot(page: Page, name: string) {
+  try {
+    await page.screenshot({ path: `${SHOTS}/${name}`, fullPage: true, timeout: 10_000 });
+  } catch (e: any) {
+    console.log(`  ⚠ screenshot ${name} skipped — ${String(e?.message ?? e).split("\n")[0]}`);
+  }
+}
+
 async function waitReady() {
   for (let i = 0; i < 80; i++) {
     try {
@@ -108,7 +117,7 @@ try {
     if (!box || box.height < 120) throw new Error(`topology svg too short (${box?.height}px) — graph cropped`);
   });
 
-  await page.screenshot({ path: `${SHOTS}/01-loaded.png`, fullPage: true });
+  await shot(page, "01-loaded.png");
 
   await step("start mesh → status running, agents ready", async () => {
     await page.locator('.detail-head .btn:has-text("start mesh")').click();
@@ -435,7 +444,7 @@ try {
   await step("permission card (pinned) appears and resolves into history", async () => {
     const card = page.locator(".dperm .perm");
     await card.first().waitFor({ timeout: 12000 });
-    await page.screenshot({ path: `${SHOTS}/02-running.png`, fullPage: true });
+    await shot(page, "02-running.png");
     await page.locator('.dperm .perm .btn:has-text("Allow once")').click();
     await page.locator('.drail .seg-tab:has-text("history")').click();
     await page.waitForSelector(".drail .panel .k.permission_resolved", { timeout: 6000 });
@@ -615,7 +624,7 @@ try {
     const resized = await win.boundingBox();
     if (!resized || resized.width <= moved.width + 20 || resized.height <= moved.height + 20) throw new Error("canvas window did not resize");
 
-    await page.screenshot({ path: `${SHOTS}/05-canvas.png`, fullPage: true });
+    await shot(page, "05-canvas.png");
     await canvas.locator(".canvas-close").click();
     await canvas.waitFor({ state: "detached", timeout: 4000 });
   });
@@ -641,7 +650,7 @@ try {
     const activeStroke = await edge.evaluate((el) => getComputedStyle(el).stroke);
     if (!activeStroke) throw new Error("active edge had no visible stroke");
     if (await reverse.evaluate((el) => el.classList.contains("active"))) throw new Error("reverse edge flashed for one-way mail");
-    await page.screenshot({ path: `${SHOTS}/06-canvas-flash-active.png`, fullPage: true });
+    await shot(page, "06-canvas-flash-active.png");
 
     await sleep(260);
     await page.evaluate(() => {
@@ -740,7 +749,7 @@ try {
       return false;
     }, routerBox);
     if (intersects) throw new Error("routed edge still sampled inside the intervening router window");
-    await page.screenshot({ path: `${SHOTS}/07-canvas-avoid.png`, fullPage: true });
+    await shot(page, "07-canvas-avoid.png");
     await canvas.locator(".canvas-close").click();
     await canvas.waitFor({ state: "detached", timeout: 4000 });
   });
@@ -877,9 +886,11 @@ try {
     if (!harnessOpts.includes("kimi")) throw new Error(`builder harness options missing kimi: ${harnessOpts.join(",")}`);
     await page.locator(".modal .agent-instructions").first().fill("Router should coordinate handoffs and keep tasks scoped.");
     await page.locator('.modal .btn:has-text("+ agent")').click();
-    await page.locator(".modal .agrow").nth(1).locator("input").first().fill("worker");
-    await page.locator(".modal .agrow").nth(1).locator("select").nth(0).selectOption("opencode");
-    await page.locator(".modal .agrow").nth(1).locator("select").nth(1).selectOption("member");
+    await page.waitForSelector('.modal .builder-tab[aria-selected="true"]:has-text("agent-1")', { timeout: 4000 });
+    await page.locator(".modal .agrow").locator("input").first().fill("worker");
+    await page.locator(".modal .agrow").locator("select").nth(0).selectOption("opencode");
+    await page.locator(".modal .agrow").locator("select").nth(1).selectOption("member");
+    await page.locator('.modal .builder-tab:has-text("overview")').click();
     await page.locator('.modal .btn:has-text("+ edge")').click();
     await page.locator('.modal .field:has(label:has-text("mail edges")) .row').last().locator("select").nth(0).selectOption("router");
     await page.locator('.modal .field:has(label:has-text("mail edges")) .row').last().locator("select").nth(1).selectOption("worker");
@@ -888,11 +899,13 @@ try {
       .locator('.modal .field:has(label:has-text("team charter")) textarea')
       .fill("Goal: build a tiny CLI. Norms: be concise, write a test.");
     // set the (claude) agent's thinking effort; mode/model are runtime-only pickers now.
+    await page.locator('.modal .builder-tab:has-text("router")').click();
     const adv = page.locator(".modal .agrow-adv .adv-sel");
-    if ((await adv.count()) !== 2) throw new Error("builder should render one effort selector per agent and no mode/model selectors");
-    await adv.nth(0).selectOption("high"); // effort
-    await page.locator(".modal .agent-block").nth(1).locator('label:has-text("lazy start") input').check();
-    await page.screenshot({ path: `${SHOTS}/03-builder.png`, fullPage: true });
+    if ((await adv.count()) !== 1) throw new Error("builder should render one effort selector on the active agent page and no mode/model selectors");
+    await adv.first().selectOption("high"); // effort
+    await page.locator('.modal .builder-tab:has-text("worker")').click();
+    await page.locator(".modal .agent-block").locator('label:has-text("lazy start") input').check();
+    await page.locator('.modal .builder-tab:has-text("overview")').click();
     await page.locator('.modal .btn:has-text("define mesh")').click();
     await page.waitForSelector('.mrow:has-text("squad-x")', { timeout: 6000 });
     // and it auto-opens its console (regression: post-snapshot mesh had no perMesh)
@@ -903,12 +916,15 @@ try {
   await step("edit a mesh prefills the builder with its config (name locked)", async () => {
     await page.locator('.detail-head .btn:has-text("edit")').click();
     await page.waitForSelector('.modal .mhead:has-text("edit mesh")', { timeout: 4000 });
-    const sections = await page.locator(".modal .builder-section").count();
-    if (sections < 4) throw new Error(`builder sections missing or unclear: ${sections}`);
+    const tabs = await page.locator(".modal .builder-tab").allTextContents();
+    for (const label of ["overview", "router", "worker"]) {
+      if (!tabs.some((tab) => tab.includes(label))) throw new Error(`builder tab missing ${label}: ${tabs.join(",")}`);
+    }
     const val = await page.locator('.modal .field:has(label:has-text("mesh name")) input').inputValue();
     if (val !== "squad-x") throw new Error(`edit prefill wrong name: "${val}"`);
     const charterVal = await page.locator('.modal .field:has(label:has-text("team charter")) textarea').inputValue();
     if (!charterVal.includes("build a tiny CLI")) throw new Error(`charter not prefilled: "${charterVal}"`);
+    await page.locator('.modal .builder-tab:has-text("router")').click();
     const instructionsVal = await page.locator(".modal .agent-instructions").first().inputValue();
     if (!instructionsVal.includes("coordinate handoffs")) throw new Error(`instructions not prefilled: "${instructionsVal}"`);
     const longInstructions = "Router should coordinate handoffs and keep tasks scoped.\n\n" + "Escalate ambiguity with a concise note.\n".repeat(18);
@@ -944,6 +960,7 @@ try {
       throw new Error("expanded instructions editor did not save back to the agent field");
     }
     const longCharter = "Goal: build a tiny CLI.\n\n" + "Norm: keep handoffs explicit and include verification evidence.\n".repeat(16);
+    await page.locator('.modal .builder-tab:has-text("overview")').click();
     await page.locator('.modal .field:has(label:has-text("team charter")) .btn:has-text("expand")').click();
     await page.waitForSelector('.text-editor-dialog:has-text("team charter") textarea', { timeout: 4000 });
     await page.locator(".text-editor-dialog textarea").fill(longCharter);
@@ -953,12 +970,19 @@ try {
       throw new Error("expanded charter editor did not save back to the charter field");
     }
     // effort round-trips from the saved config; mode/model are not editable in the builder.
+    await page.locator('.modal .builder-tab:has-text("router")').click();
     const adv2 = page.locator(".modal .agrow-adv .adv-sel");
-    if ((await adv2.count()) !== 2) throw new Error("edit builder should render one effort selector per agent and no mode/model selectors");
-    if ((await adv2.nth(0).inputValue()) !== "high") throw new Error("effort not prefilled");
-    if (!(await page.locator(".modal .agent-block").nth(1).locator('label:has-text("lazy start") input').isChecked())) {
+    if ((await adv2.count()) !== 1) throw new Error("edit builder should render one effort selector on the active agent page and no mode/model selectors");
+    if ((await adv2.first().inputValue()) !== "high") throw new Error("effort not prefilled");
+    await page.locator('.modal .builder-tab:has-text("worker")').click();
+    if (!(await page.locator(".modal .agent-block").locator('label:has-text("lazy start") input').isChecked())) {
       throw new Error("lazy checkbox not prefilled");
     }
+    await page.locator('.modal .btn:has-text("+ agent")').click();
+    await page.waitForSelector('.modal .builder-tab[aria-selected="true"]:has-text("agent-2")', { timeout: 4000 });
+    await page.locator('.modal .builder-tab[aria-selected="true"] .builder-tab-remove').click();
+    await page.waitForSelector('.modal .builder-tab:has-text("agent-2")', { state: "detached", timeout: 4000 });
+    await page.locator('.modal .builder-tab:has-text("overview")').click();
     const steerChecked = await page.locator('.modal .field:has(label:has-text("mail edges")) input[type="checkbox"]').first().isChecked();
     if (!steerChecked) throw new Error("steer checkbox not prefilled");
     await page.locator('.modal .btn:has-text("save mesh")').click();
@@ -1000,7 +1024,7 @@ try {
     await page.waitForSelector('.mrow:has-text("squad-x")', { state: "detached", timeout: 5000 });
   });
 
-  await page.screenshot({ path: `${SHOTS}/04-final.png`, fullPage: true });
+  await shot(page, "04-final.png");
 
   await step("no console/page errors", async () => {
     if (errors.length) throw new Error(`${errors.length} console errors: ${errors.slice(0, 3).join(" || ")}`);

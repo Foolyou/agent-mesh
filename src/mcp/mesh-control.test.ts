@@ -106,6 +106,25 @@ test("create and update mesh expose simple object-edge schemas for ACP harness c
   }
 });
 
+test("create and update mesh expose optional per-agent configuration fields", async () => {
+  server = await createMeshControlServer({ handlers: createMeshControlHandlers(mgr) });
+  const session = await initialize(server.url);
+  const schemas = await listToolSchemas(server.url, session);
+
+  for (const name of ["create_mesh", "update_mesh"]) {
+    const tool = schemas.find((t) => t.name === name);
+    expect(tool).toBeTruthy();
+    const agentProperties = tool!.inputSchema.properties.agents.items.properties;
+    expect(agentProperties.instructions.type).toBe("string");
+    expect(agentProperties.instructions.description).toContain("per-agent instructions");
+    expect(agentProperties.lazy.type).toBe("boolean");
+    expect(agentProperties.effort.enum).toEqual(["minimal", "low", "medium", "high"]);
+    expect(agentProperties.mode.type).toBe("string");
+    expect(agentProperties.model.type).toBe("string");
+    expect(tool!.inputSchema.properties.charter.description).toContain("distinct from per-agent instructions");
+  }
+});
+
 test("startMesh can request fresh sessions via handlers", async () => {
   const h = createMeshControlHandlers(mgr);
   await h.createMesh(cfg);
@@ -144,6 +163,23 @@ test("getMesh returns config JSON; updateMesh modifies it; deleteMesh removes it
 
   expect(await h.deleteMesh("echo")).toMatch(/deleted mesh "echo"/i);
   expect(h.listMeshes()).toMatch(/no meshes/i);
+});
+
+test("createMesh and updateMesh persist per-agent instructions", async () => {
+  const h = createMeshControlHandlers(mgr);
+  await h.createMesh({
+    ...cfg,
+    agents: [{ ...cfg.agents[0]!, instructions: "Route requests to the right teammate." }],
+  });
+
+  expect(JSON.parse(h.getMesh("echo")).agents[0].instructions).toBe("Route requests to the right teammate.");
+
+  await h.updateMesh({
+    ...cfg,
+    agents: [{ ...cfg.agents[0]!, instructions: "Keep coordination concise." }],
+  });
+
+  expect(JSON.parse(h.getMesh("echo")).agents[0].instructions).toBe("Keep coordination concise.");
 });
 
 test("updateMesh / deleteMesh refuse while running (errors returned as text)", async () => {
