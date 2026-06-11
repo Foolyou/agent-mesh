@@ -223,7 +223,7 @@ try {
     const panel = page.locator(".conv-panel").first();
     const box = panel.locator(".queue-box");
     await box.waitFor({ timeout: 4000 });
-    await box.locator(".queue-count", { hasText: "queued: 2" }).waitFor({ timeout: 4000 });
+    await box.locator(".queue-count", { hasText: "queued: 1/2" }).waitFor({ timeout: 4000 });
     await box.locator(".queue-source", { hasText: "you" }).waitFor({ timeout: 4000 });
     await box.locator(".queue-preview", { hasText: "queued preview should stay on one line" }).waitFor({ timeout: 4000 });
     if (await box.locator(".queue-preview", { hasText: "you:" }).count()) throw new Error("queue preview repeated the source label");
@@ -446,7 +446,9 @@ try {
     await page.locator('.topo .node:has-text("opencode-1")').click();
     const mail = page.locator(".msg.mail", { hasText: "core implemented" }).first();
     await mail.waitFor({ timeout: 10000 });
-    const who = (await mail.locator(".who").innerText()).toLowerCase();
+    // Use textContent instead of innerText because .stream > * has content-visibility: auto,
+    // which can cause innerText to return "" for elements Playwright evaluates before layout.
+    const who = ((await mail.locator(".who").textContent()) ?? "").toLowerCase();
     if (!who.includes("codex-1")) throw new Error(`mail bubble missing sender label: ${who}`);
   });
 
