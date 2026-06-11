@@ -580,7 +580,7 @@ export class ControlPlane {
           console.warn(`skip cached model ${a.id}=${desiredModel}: not advertised`);
           this.log(`skip cached model ${a.id}=${desiredModel}: not advertised`);
         }
-        const eventCurrent = currentModel;
+        const eventCurrent = displayModelCurrent(currentModel, displayModel.current, displayModel.available);
         this.sessionModels.set(a.id, { current: eventCurrent, available: displayModel.available });
         this.emit({ kind: "agent_models", agent: a.id, current: eventCurrent, available: displayModel.available, ts: now() });
       }
@@ -1145,13 +1145,25 @@ function resolveDesiredModel(
 ): string | undefined {
   const standardIds = new Set((standardModel?.available ?? []).map((m) => m.id));
   const configIds = new Set((configModel?.available ?? []).map((m) => m.id));
-  if (agent.harness === "codex" && agent.effort) {
-    const combined = `${desiredModel}/${agent.effort}`;
+  if (agent.harness === "codex") {
+    const combined = `${desiredModel}/${agent.effort ?? "low"}`;
     if (standardIds.has(combined)) return combined;
   }
   if (standardIds.has(desiredModel)) return desiredModel;
-  if (!standardIds.size && configIds.has(desiredModel)) return desiredModel;
+  if (configIds.has(desiredModel)) return desiredModel;
   return undefined;
+}
+
+function displayModelCurrent(
+  appliedModel: string | undefined,
+  fallback: string,
+  available: Array<{ id: string }>,
+): string {
+  const ids = new Set(available.map((m) => m.id));
+  if (appliedModel && ids.has(appliedModel)) return appliedModel;
+  const baseModel = appliedModel?.split("/")[0];
+  if (baseModel && ids.has(baseModel)) return baseModel;
+  return fallback;
 }
 
 function edgeKey(from: AgentId, to: AgentId): string {

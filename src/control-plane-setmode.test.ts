@@ -136,16 +136,26 @@ function configModels(currentValue = "default-config-model", ids = ["default-con
   };
 }
 
+function codexModels(currentModelId = "gpt-5.5/low", bareIds = ["gpt-5.4", "gpt-5.5"]) {
+  const efforts = ["low", "medium", "high", "xhigh"];
+  return {
+    ...standardModels(currentModelId, bareIds.flatMap((id) => efforts.map((effort) => `${id}/${effort}`))),
+    ...configModels(bareIds[0], bareIds),
+  };
+}
+
 async function startOneAgentWithModel({
   harness = "opencode",
   model,
   effort,
   session,
+  sessionRunDir,
 }: {
   harness?: MeshConfig["agents"][number]["harness"];
   model?: string;
   effort?: MeshConfig["agents"][number]["effort"];
   session: unknown;
+  sessionRunDir?: string;
 }) {
   const root = await mkdtemp(join(tmpdir(), "mesh-control-plane-model-select-"));
   const config: MeshConfig = {
@@ -156,6 +166,7 @@ async function startOneAgentWithModel({
   let conn: ModelSelectionConnection | undefined;
   const cp = new ControlPlane(config, {
     mailboxPath: join(root, "mailbox.ndjson"),
+    sessionRunDir,
     connectionFactory: (opts) => {
       conn = new ModelSelectionConnection(opts, session);
       return conn as unknown as AcpAgentConnection;
@@ -601,28 +612,34 @@ test("start derives modes and models from configOptions when availableModes are 
   }
 });
 
-test("start applies desired model from standard models before configOptions", async () => {
+test("start applies codex model plus default low effort and maps UI current to configOptions", async () => {
+  const runDir = await mkdtemp(join(tmpdir(), "mesh-control-plane-model-run-"));
   const { root, cp, conn, events } = await startOneAgentWithModel({
-    model: "preferred-standard",
-    session: {
-      ...standardModels("default-standard", ["default-standard", "preferred-standard"]),
-      ...configModels("default-config", ["default-config", "preferred-config"]),
-    },
+    harness: "codex",
+    model: "gpt-5.5",
+    session: codexModels("gpt-5.4/low", ["gpt-5.4", "gpt-5.5"]),
+    sessionRunDir: runDir,
   });
   try {
-    expect(conn.setModels).toEqual(["preferred-standard"]);
+    expect(conn.setModels).toEqual(["gpt-5.5/low"]);
     expect(events).toContainEqual(expect.objectContaining({
       kind: "agent_models",
       agent: "router",
-      current: "preferred-standard",
+      current: "gpt-5.5",
       available: [
-        { id: "default-config", name: "Config default-config" },
-        { id: "preferred-config", name: "Config preferred-config" },
+        { id: "gpt-5.4", name: "Config gpt-5.4" },
+        { id: "gpt-5.5", name: "Config gpt-5.5" },
       ],
+    }));
+    expect(await readSessionState(runDir, "model-select")).toEqual(expect.objectContaining({
+      agents: expect.objectContaining({
+        router: expect.objectContaining({ model: "gpt-5.5/low" }),
+      }),
     }));
   } finally {
     await cp.stop();
     await rm(root, { recursive: true, force: true });
+    await rm(runDir, { recursive: true, force: true });
   }
 });
 
@@ -645,23 +662,34 @@ test("start applies codex model plus effort combination when advertised", async 
     harness: "codex",
     model: "gpt-5.5",
     effort: "high",
-    session: standardModels("gpt-5.5/low", ["gpt-5.5/low", "gpt-5.5/high", "gpt-5.5"]),
+    session: codexModels("gpt-5.5/low", ["gpt-5.4", "gpt-5.5"]),
   });
   try {
     expect(conn.setModels).toEqual(["gpt-5.5/high"]);
-    expect(events).toContainEqual(expect.objectContaining({ kind: "agent_models", agent: "router", current: "gpt-5.5/high" }));
+    expect(events).toContainEqual(expect.objectContaining({
+      kind: "agent_models",
+      agent: "router",
+      current: "gpt-5.5",
+      available: [
+        { id: "gpt-5.4", name: "Config gpt-5.4" },
+        { id: "gpt-5.5", name: "Config gpt-5.5" },
+      ],
+    }));
   } finally {
     await cp.stop();
     await rm(root, { recursive: true, force: true });
   }
 });
 
-test("start falls back to codex base model when model plus effort combination is absent", async () => {
+test("start falls back to codex config model when model plus effort combination is absent", async () => {
   const { root, cp, conn, events } = await startOneAgentWithModel({
     harness: "codex",
     model: "gpt-5.5",
     effort: "high",
-    session: standardModels("gpt-5.4/low", ["gpt-5.4/low", "gpt-5.5"]),
+    session: {
+      ...standardModels("gpt-5.4/low", ["gpt-5.4/low", "gpt-5.4/medium"]),
+      ...configModels("gpt-5.4", ["gpt-5.4", "gpt-5.5"]),
+    },
   });
   try {
     expect(conn.setModels).toEqual(["gpt-5.5"]);
