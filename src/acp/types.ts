@@ -30,7 +30,7 @@ export function normalizeMeshEdges(edges: readonly MeshEdgeInput[] = []): MeshEd
 /** Reasoning / thinking effort for an agent. Some harnesses apply it at spawn
  *  (codex: model_reasoning_effort; claude: MAX_THINKING_TOKENS) and some can
  *  switch compatible runtime thought-level config options. `undefined` = default. */
-export type ThinkingEffort = "minimal" | "low" | "medium" | "high" | "xhigh";
+export type ThinkingEffort = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
 export interface AgentConfig {
   id: AgentId;
@@ -78,6 +78,12 @@ export interface SessionModel {
   name: string;
 }
 
+export interface SessionEffort {
+  id: string;
+  name: string;
+  description?: string;
+}
+
 export interface PromptImageRef {
   id: string;
   mimeType: string;
@@ -116,6 +122,7 @@ export type MeshEvent =
   | { kind: "update"; agent: AgentId; update: unknown; ts: string }
   | { kind: "agent_modes"; agent: AgentId; current: string; available: SessionMode[]; ts: string }
   | { kind: "agent_models"; agent: AgentId; current: string; available: SessionModel[]; ts: string }
+  | { kind: "agent_efforts"; agent: AgentId; configId: string; current: string; available: SessionEffort[]; ts: string }
   | { kind: "agent_capabilities"; agent: AgentId; image: boolean; ts: string }
   | { kind: "agent_turn"; phase: "queued" | "started" | "consumed" | "removed"; turn: AgentTurn; ts: string }
   | { kind: "agent_turn_health"; agent: AgentId; turn?: AgentTurn; level: "warning" | "failed"; reason: TurnHealthReason; detail: string; ts: string }

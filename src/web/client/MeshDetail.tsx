@@ -219,7 +219,8 @@ function EffortControl({ m, agent, store }: { m: MeshSummary; agent: string; sto
   const { t } = useI18n();
   const a = m.agents.find((x) => x.id === agent);
   if (!a) return null;
-  const efforts = effortOptionsForHarness(a.harness);
+  const advertised = store.getState().perMesh[m.name]?.efforts?.[agent];
+  const efforts = advertised?.available.length ? advertised.available.map((o) => o.id) : effortOptionsForHarness(a.harness);
   if (efforts.length === 0) return null;
   const live = m.status === "running" || m.status === "starting";
   const runtime = supportsRuntimeEffort(a.harness);
@@ -230,7 +231,7 @@ function EffortControl({ m, agent, store }: { m: MeshSummary; agent: string; sto
       </span>
       <select
         className="effort-sel select-control"
-        value={a.effort ?? ""}
+        value={a.effort ?? advertised?.current ?? ""}
         disabled={live && !runtime}
         aria-label={t("effort")}
         title={live && runtime ? t("effort.hint.runtime") : live ? t("effort.hint.live") : t("effort.hint")}
@@ -240,7 +241,7 @@ function EffortControl({ m, agent, store }: { m: MeshSummary; agent: string; sto
         <option value="">{t("effort.default")}</option>
         {efforts.map((eff) => (
           <option key={eff} value={eff}>
-            {t(`effort.${eff}`)}
+            {advertised?.available.find((o) => o.id === eff)?.name ?? t(`effort.${eff}`)}
           </option>
         ))}
       </select>

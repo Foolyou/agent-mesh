@@ -15,7 +15,7 @@ export function emptyState(): GatewayState {
 }
 
 function emptyPerMesh(name: string): PerMeshState {
-  return { config: { name, agents: [], edges: [] }, transcripts: {}, activity: [], mail: [], pending: [], history: [], modes: {}, models: {}, capabilities: {}, usage: {}, health: {}, queues: {} };
+  return { config: { name, agents: [], edges: [] }, transcripts: {}, activity: [], mail: [], pending: [], history: [], modes: {}, models: {}, efforts: {}, capabilities: {}, usage: {}, health: {}, queues: {} };
 }
 function withPerMesh(state: GatewayState, name: string, fn: (pm: PerMeshState) => PerMeshState): GatewayState {
   const pm = state.perMesh[name] ?? emptyPerMesh(name);
@@ -74,6 +74,11 @@ export function applyMsg(state: GatewayState, msg: ServerMsg): GatewayState {
         ...pm,
         models: { ...pm.models, [msg.agent]: { current: msg.current, available: msg.available } },
         config: pm.config,
+      }));
+    case "agent.efforts":
+      return withPerMesh(state, msg.name, (pm) => ({
+        ...pm,
+        efforts: { ...pm.efforts, [msg.agent]: { configId: msg.configId, current: msg.current, available: msg.available } },
       }));
     case "agent.capabilities":
       return withPerMesh(state, msg.name, (pm) => ({

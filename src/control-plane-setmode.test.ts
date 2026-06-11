@@ -75,6 +75,16 @@ class ConfigOptionsConnection {
             { value: "deepseek-v3", name: "deepseek-v3" },
           ],
         },
+        {
+          category: "effort",
+          id: "thought_level",
+          currentValue: "medium",
+          options: [
+            { value: "low", name: "Low" },
+            { value: "high", name: "High" },
+            { value: "max", name: "Max" },
+          ],
+        },
       ],
     };
   }
@@ -662,6 +672,41 @@ test("setEffort dynamically switches supported thought_level config options and 
     await cp.stop();
     await rm(root, { recursive: true, force: true });
     await rm(runDir, { recursive: true, force: true });
+  }
+});
+
+test("start emits advertised runtime effort options and setEffort uses their config id", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mesh-control-plane-effort-options-"));
+  const config: MeshConfig = {
+    name: "dynamic-effort-options",
+    agents: [{ id: "claude", harness: "claude", project: root, role: "router" }],
+    edges: [],
+  };
+  const events: any[] = [];
+  let created: ConfigOptionsConnection | undefined;
+  const cp = new ControlPlane(config, {
+    mailboxPath: join(root, "mailbox.ndjson"),
+    connectionFactory: (opts) => {
+      created = new ConfigOptionsConnection(opts);
+      return created as unknown as AcpAgentConnection;
+    },
+  });
+  cp.on((e) => events.push(e));
+
+  try {
+    await cp.start();
+    const effortEvent = events.find((e) => e.kind === "agent_efforts" && e.agent === "claude");
+    expect(effortEvent).toMatchObject({
+      current: "medium",
+      configId: "thought_level",
+      available: [{ id: "low", name: "Low" }, { id: "high", name: "High" }, { id: "max", name: "Max" }],
+    });
+
+    await cp.setEffort("claude", "max" as any);
+    expect(created?.setConfigOptions).toContainEqual({ configId: "thought_level", value: "max" });
+  } finally {
+    await cp.stop();
+    await rm(root, { recursive: true, force: true });
   }
 });
 

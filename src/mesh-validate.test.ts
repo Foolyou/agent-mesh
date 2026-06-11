@@ -23,11 +23,11 @@ test("rejects unsafe names", () => {
 test("validates effort per harness", () => {
   const accepted: Record<HarnessId, ThinkingEffort[]> = {
     codex: ["low", "medium", "high", "xhigh"],
-    claude: ["minimal", "low", "medium", "high"],
+    claude: ["minimal", "low", "medium", "high", "max"],
     kimi: ["low", "high"],
     opencode: [],
   };
-  const all: ThinkingEffort[] = ["minimal", "low", "medium", "high", "xhigh"];
+  const all: ThinkingEffort[] = ["minimal", "low", "medium", "high", "xhigh", "max"];
 
   for (const harness of Object.keys(accepted) as HarnessId[]) {
     for (const effort of all) {

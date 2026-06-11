@@ -75,11 +75,11 @@ function cap<T>(arr: T[], n: number): T[] {
   return arr.length > n ? arr.slice(arr.length - n) : arr;
 }
 
-function configOptionOf(update: any): { category: "mode" | "model"; current: string; available: Array<{ id: string; name: string; description?: string }> } | undefined {
-  if (!update || update.sessionUpdate !== "config_option_update") return undefined;
+function configOptionOf(update: any): { category: "mode" | "model" | "effort"; configId: string; current: string; available: Array<{ id: string; name: string; description?: string }> } | undefined {
+  if (!update || (update.sessionUpdate !== "config_option_update" && update.sessionUpdate !== "session_config_update")) return undefined;
   const option = update.option ?? update.configOption ?? update.config_option;
   const category = option?.category;
-  if (category !== "mode" && category !== "model") return undefined;
+  if (category !== "mode" && category !== "model" && category !== "effort") return undefined;
   const available = Array.isArray(option.options)
     ? option.options
         .map((o: any) => {
@@ -93,7 +93,7 @@ function configOptionOf(update: any): { category: "mode" | "model"; current: str
     : [];
   const current = String(option.currentValue ?? option.current_value ?? option.current ?? available[0]?.id ?? "");
   if (!current && !available.length) return undefined;
-  return { category, current, available: available as Array<{ id: string; name: string; description?: string }> };
+  return { category, configId: String(option.id ?? category), current, available: available as Array<{ id: string; name: string; description?: string }> };
 }
 
 function usageOf(update: any, ts: string): AgentUsage | undefined {
@@ -232,7 +232,7 @@ export class WebGateway {
       } catch {
         config = { name, agents: [], edges: [] };
       }
-      pm = { config, transcripts: {}, activity: [], mail: [], pending: [], history: [], modes: {}, models: {}, capabilities: {}, usage: {}, health: {}, queues: {} };
+      pm = { config, transcripts: {}, activity: [], mail: [], pending: [], history: [], modes: {}, models: {}, efforts: {}, capabilities: {}, usage: {}, health: {}, queues: {} };
       this.state.perMesh[name] = pm;
     }
     return pm;
@@ -331,6 +331,9 @@ export class WebGateway {
         } else if (configOption?.category === "model") {
           pm.models[e.agent] = { current: configOption.current, available: configOption.available };
           this.broadcast({ t: "agent.models", name, agent: e.agent, current: configOption.current, available: configOption.available });
+        } else if (configOption?.category === "effort") {
+          pm.efforts[e.agent] = { configId: configOption.configId, current: configOption.current, available: configOption.available };
+          this.broadcast({ t: "agent.efforts", name, agent: e.agent, configId: configOption.configId, current: configOption.current, available: configOption.available });
         }
         this.foldConv({ scope: "agent", mesh: name, agent: e.agent }, e.update, e.ts || now());
         break;
@@ -343,6 +346,11 @@ export class WebGateway {
       case "agent_models": {
         pm.models[e.agent] = { current: e.current, available: e.available };
         this.broadcast({ t: "agent.models", name, agent: e.agent, current: e.current, available: e.available });
+        break;
+      }
+      case "agent_efforts": {
+        pm.efforts[e.agent] = { configId: e.configId, current: e.current, available: e.available };
+        this.broadcast({ t: "agent.efforts", name, agent: e.agent, configId: e.configId, current: e.current, available: e.available });
         break;
       }
       case "agent_capabilities": {
