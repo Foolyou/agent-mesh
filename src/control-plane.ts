@@ -12,7 +12,7 @@ import { createMeshServicesServer, type MeshServicesHandlers, type MeshServicesS
 import { compactMailbox, sendMail, readMailFor, readMailboxEvents, readRecentAddressedMail, readUnreadAddressedMail, type MailMeta } from "./mailbox";
 import { validateAddAgent, validateAddEdge } from "./mesh-validate";
 import { readSessionState, setMeshExpectedAlive, updateAgentMailCursor, updateAgentSession, clearAgentSession, type MeshSessionState } from "./session-storage";
-import { now, type AgentActivity, type AgentConfig, type AgentId, type AgentTurn, type MeshConfig, type MeshEdge, type MeshEvent, type PromptImageRef, type SessionMode, type SessionModel, type TurnHealthReason } from "./acp/types";
+import { now, type AgentActivity, type AgentConfig, type AgentHealthSignalKind, type AgentId, type AgentTurn, type MeshConfig, type MeshEdge, type MeshEvent, type PromptImageRef, type SessionMode, type SessionModel, type TurnHealthReason } from "./acp/types";
 
 interface PendingDecision {
   resolve: (decision: PermissionDecision) => void;
@@ -65,6 +65,44 @@ function publicImageRef(i: PromptImageRef): PromptImageRef {
 
 function isSystemReceipt(body: string): boolean {
   return body.startsWith("[DELIVERY FAILED]") || body.startsWith("[SPAWN FAILED]");
+}
+
+function claudeHealthSignal(message: unknown): { signal: AgentHealthSignalKind; detail?: Record<string, unknown> } | undefined {
+  if (!message || typeof message !== "object") return undefined;
+  const m = message as any;
+  if (m.type === "system" && m.subtype === "api_retry") {
+    return {
+      signal: "retrying",
+      detail: {
+        attempt: m.attempt,
+        maxRetries: m.max_retries ?? m.maxRetries,
+        retryDelayMs: m.retry_delay_ms ?? m.retryDelayMs,
+        reason: m.error,
+      },
+    };
+  }
+  if (m.type === "rate_limit_event") {
+    const info = m.rate_limit_info ?? m.rateLimitInfo ?? {};
+    const status = info.status;
+    if (status !== "warning" && status !== "rejected") return undefined;
+    return {
+      signal: "rate_limited",
+      detail: {
+        status,
+        resetsAt: info.resetsAt,
+        rateLimitType: info.rateLimitType,
+        utilization: info.utilization,
+      },
+    };
+  }
+  if (m.type === "system" && m.subtype === "status" && (m.status === "compacting" || m.state === "compacting")) {
+    return { signal: "compacting", detail: { status: m.status ?? m.state } };
+  }
+  if (m.type === "system" && m.subtype === "compact_boundary") {
+    const phase = m.phase ?? m.boundary ?? m.status;
+    return { signal: phase === "start" || phase === "begin" ? "compacting" : "compact_done", detail: { phase } };
+  }
+  return undefined;
 }
 
 export type ControlPlaneStopReason = "explicit" | "idle" | "shutdown";
@@ -340,6 +378,14 @@ export class ControlPlane {
     if (active.turn.source === "mail" && active.turn.from && active.turn.from !== "operator" && !isSystemReceipt(active.turn.text)) {
       this.sendDeliveryFailedReceipt(active.turn, reason, detail);
     }
+  }
+
+  private noteExtNotification(agent: AgentId, method: string, params: unknown, turn: AgentTurn | undefined): void {
+    if (method !== "_claude/sdkMessage") return;
+    const health = claudeHealthSignal(params);
+    if (!health) return;
+    this.noteTurnSignal(agent, turn);
+    this.emit({ kind: "agent_health_signal", agent, signal: health.signal, detail: health.detail, turn, ts: now() });
   }
 
   private noteTurnConsumed(turn: AgentTurn): void {
@@ -635,6 +681,7 @@ export class ControlPlane {
       onPromptQueued: (turn) => this.noteTurnQueued(turn),
       onPromptStarted: (turn) => this.noteTurnStarted(turn),
       onPromptSignal: (turn) => this.noteTurnSignal(a.id, turn),
+      onExtNotification: (method, params, turn) => this.noteExtNotification(a.id, method, params, turn),
       onExit: (code) => {
         if (this.conns.get(a.id) !== conn) return;
         this.clearTurnHealthForAgent(a.id);

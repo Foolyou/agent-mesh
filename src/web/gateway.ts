@@ -26,6 +26,7 @@ import type {
   QueueSummary,
   TranscriptItem,
   TranscriptOp,
+  AgentUsage,
 } from "./types";
 
 /** The MeshManager surface the gateway depends on (structural — tests use a fake). */
@@ -92,6 +93,19 @@ function configOptionOf(update: any): { category: "mode" | "model"; current: str
   const current = String(option.currentValue ?? option.current_value ?? option.current ?? available[0]?.id ?? "");
   if (!current && !available.length) return undefined;
   return { category, current, available: available as Array<{ id: string; name: string; description?: string }> };
+}
+
+function usageOf(update: any, ts: string): AgentUsage | undefined {
+  if (!update || update.sessionUpdate !== "usage_update") return undefined;
+  const used = Number(update.used ?? update.context?.used);
+  const size = Number(update.size ?? update.context?.size);
+  const costRaw = update.cost ?? update.totalCost ?? update.total_cost;
+  const cost = costRaw === undefined ? undefined : Number(costRaw);
+  const usage: AgentUsage = { ts };
+  if (Number.isFinite(used)) usage.used = used;
+  if (Number.isFinite(size)) usage.size = size;
+  if (cost !== undefined && Number.isFinite(cost)) usage.cost = cost;
+  return usage.used !== undefined || usage.size !== undefined || usage.cost !== undefined ? usage : undefined;
 }
 
 /** Project an image ref to the fields safe to broadcast/persist in a transcript: the absolute
@@ -216,7 +230,7 @@ export class WebGateway {
       } catch {
         config = { name, agents: [], edges: [] };
       }
-      pm = { config, transcripts: {}, activity: [], mail: [], pending: [], history: [], modes: {}, models: {}, capabilities: {}, queues: {} };
+      pm = { config, transcripts: {}, activity: [], mail: [], pending: [], history: [], modes: {}, models: {}, capabilities: {}, usage: {}, health: {}, queues: {} };
       this.state.perMesh[name] = pm;
     }
     return pm;
@@ -295,6 +309,12 @@ export class WebGateway {
         // A mode change the agent reports mid-session (operator- or self-initiated) rides
         // the normal session-update stream; keep the picker's selection in sync with it.
         const u = e.update as any;
+        const usage = usageOf(u, e.ts || now());
+        if (usage) {
+          pm.usage[e.agent] = usage;
+          this.broadcast({ t: "agent.usage", name, agent: e.agent, usage });
+          break;
+        }
         if (u && u.sessionUpdate === "current_mode_update" && u.currentModeId) {
           const am = pm.modes[e.agent];
           if (am && am.current !== u.currentModeId) {
@@ -326,6 +346,12 @@ export class WebGateway {
       case "agent_capabilities": {
         pm.capabilities[e.agent] = { image: e.image };
         this.broadcast({ t: "agent.capabilities", name, agent: e.agent, image: e.image });
+        break;
+      }
+      case "agent_health_signal": {
+        const health = { signal: e.signal, detail: e.detail, turn: e.turn, ts: e.ts };
+        pm.health[e.agent] = health;
+        this.broadcast({ t: "agent.health", name, agent: e.agent, health });
         break;
       }
       case "steer": {

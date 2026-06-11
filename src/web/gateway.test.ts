@@ -115,6 +115,71 @@ test("update event folds into the agent transcript and broadcasts a transcript o
   expect((gw.snapshot().perMesh.demo.transcripts.router[0] as any).text).toBe("hi");
 });
 
+test("usage_update aggregates per-agent usage without entering transcript", () => {
+  const m = fakeManager();
+  const gw = new WebGateway(m as any);
+  const got: any[] = [];
+  gw.subscribe((msg) => got.push(msg));
+
+  m.emit("demo", {
+    kind: "update",
+    agent: "codex-1",
+    update: { sessionUpdate: "usage_update", used: 100, size: 2000, cost: 0.03 },
+    ts: "T1",
+  } as any);
+  m.emit("demo", {
+    kind: "update",
+    agent: "codex-1",
+    update: { sessionUpdate: "usage_update", used: 150, size: 2000, cost: 0.05 },
+    ts: "T2",
+  } as any);
+
+  const s = gw.snapshot();
+  expect(s.perMesh.demo.usage["codex-1"]).toEqual({ used: 150, size: 2000, cost: 0.05, ts: "T2" });
+  expect(s.perMesh.demo.transcripts["codex-1"] ?? []).toHaveLength(0);
+  expect(got.filter((x) => x.t === "agent.usage").at(-1)).toEqual({
+    t: "agent.usage",
+    name: "demo",
+    agent: "codex-1",
+    usage: { used: 150, size: 2000, cost: 0.05, ts: "T2" },
+  });
+});
+
+test("agent health signal is exposed in snapshot and ws without transcript folding", () => {
+  const m = fakeManager();
+  const gw = new WebGateway(m as any);
+  const got: any[] = [];
+  gw.subscribe((msg) => got.push(msg));
+
+  m.emit("demo", {
+    kind: "agent_health_signal",
+    agent: "router",
+    signal: "retrying",
+    detail: { attempt: 1, retryDelayMs: 5000, reason: "rate_limit" },
+    ts: "T",
+  } as any);
+
+  const s = gw.snapshot();
+  expect(s.perMesh.demo.health.router).toEqual({
+    signal: "retrying",
+    detail: { attempt: 1, retryDelayMs: 5000, reason: "rate_limit" },
+    turn: undefined,
+    ts: "T",
+  });
+  expect(s.perMesh.demo.transcripts.router ?? []).toHaveLength(0);
+  expect(got.find((x) => x.t === "agent.health")).toEqual({
+    t: "agent.health",
+    name: "demo",
+    agent: "router",
+    health: {
+      signal: "retrying",
+      detail: { attempt: 1, retryDelayMs: 5000, reason: "rate_limit" },
+      turn: undefined,
+      ts: "T",
+    },
+  });
+});
+
 test("permission add then resolved updates pending + history + activity", () => {
   const m = fakeManager();
   const gw = new WebGateway(m as any);

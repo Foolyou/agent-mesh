@@ -1,7 +1,7 @@
 // Shared types for the WebUI: aggregated transcript items, gateway state, and the
 // WebSocket wire protocol. These are the contract between WebGateway (server) and
 // the client store.
-import type { AgentConfig, MeshConfig, AgentId, AgentStatus, AgentActivity, AgentRole, HarnessId, SessionMode, SessionModel, PromptImageRef, ThinkingEffort, MeshEdge, AgentTurnSource } from "../acp/types";
+import type { AgentConfig, MeshConfig, AgentId, AgentStatus, AgentActivity, AgentRole, HarnessId, SessionMode, SessionModel, PromptImageRef, ThinkingEffort, MeshEdge, AgentTurnSource, AgentHealthSignalKind, AgentTurn } from "../acp/types";
 export type { SessionMode };
 export type { SessionModel };
 export type { PromptImageRef };
@@ -22,6 +22,20 @@ export interface AgentModels {
 
 export interface AgentCapabilities {
   image: boolean;
+}
+
+export interface AgentUsage {
+  used?: number;
+  size?: number;
+  cost?: number;
+  ts: string;
+}
+
+export interface AgentHealthSignalEntry {
+  signal: AgentHealthSignalKind;
+  detail?: Record<string, unknown>;
+  turn?: AgentTurn;
+  ts: string;
 }
 
 // ── Aggregated transcript ────────────────────────────────────────────────────
@@ -138,6 +152,10 @@ export interface PerMeshState {
   models: Record<AgentId, AgentModels>;
   /** Per-agent prompt capabilities, populated while the mesh runs. */
   capabilities: Record<AgentId, AgentCapabilities>;
+  /** Per-agent context/cost waterline folded from usage_update notifications. */
+  usage: Record<AgentId, AgentUsage>;
+  /** Latest per-agent silence/health signal for UI status surfaces. */
+  health: Record<AgentId, AgentHealthSignalEntry>;
   queues: Record<AgentId, QueueSummary>;
 }
 
@@ -159,6 +177,8 @@ export type ServerMsg =
   | { t: "agent.modes"; name: string; agent: AgentId; current: string; available: SessionMode[] }
   | { t: "agent.models"; name: string; agent: AgentId; current: string; available: SessionModel[] }
   | { t: "agent.capabilities"; name: string; agent: AgentId; image: boolean }
+  | { t: "agent.usage"; name: string; agent: AgentId; usage: AgentUsage }
+  | { t: "agent.health"; name: string; agent: AgentId; health: AgentHealthSignalEntry }
   | { t: "agent.queue"; name: string; agent: AgentId; summary: QueueSummary }
   | { t: "assistant.capabilities"; image: boolean; harness?: HarnessId }
   | { t: "transcript.upsert"; conv: ConvRef; item: TranscriptItem }

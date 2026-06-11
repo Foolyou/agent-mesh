@@ -20,7 +20,7 @@ function seed(): GatewayState {
     ],
     assistant: { status: "ready", transcript: [] },
     perMesh: {
-      demo: { config: { name: "demo", agents: [], edges: [] }, transcripts: {}, activity: [], mail: [], pending: [], history: [], modes: {}, models: {}, capabilities: {}, queues: {} },
+      demo: { config: { name: "demo", agents: [], edges: [] }, transcripts: {}, activity: [], mail: [], pending: [], history: [], modes: {}, models: {}, capabilities: {}, usage: {}, health: {}, queues: {} },
     },
   };
 }

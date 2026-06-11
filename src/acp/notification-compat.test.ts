@@ -46,3 +46,16 @@ test("ACP session/update parser accepts newer usage and config-option notificati
     }).update,
   ).toMatchObject({ sessionUpdate: "config_option_update" });
 });
+
+test("ACP session/update parser accepts newer session_info_update notifications", () => {
+  expect(
+    sessionNotificationSchema.parse({
+      sessionId: "s1",
+      update: {
+        sessionUpdate: "session_info_update",
+        model: "gpt-5.4",
+        contextWindow: 200000,
+      },
+    }).update,
+  ).toMatchObject({ sessionUpdate: "session_info_update", model: "gpt-5.4" });
+});

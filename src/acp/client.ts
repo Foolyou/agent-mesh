@@ -24,6 +24,23 @@ export function agentEnv(): Record<string, string> {
   return out;
 }
 
+function isClaudeCommand(command: string | undefined): boolean {
+  return !!command && command.includes("claude");
+}
+
+function claudeRawSdkMeta(): { claudeCode: { emitRawSDKMessages: Array<Record<string, string>> } } {
+  return {
+    claudeCode: {
+      emitRawSDKMessages: [
+        { type: "rate_limit_event" },
+        { type: "system", subtype: "api_retry" },
+        { type: "system", subtype: "status" },
+        { type: "system", subtype: "compact_boundary" },
+      ],
+    },
+  };
+}
+
 // --- process-tree teardown -------------------------------------------------
 // Harnesses launch as a node wrapper that spawns a real binary child (e.g.
 // codex-acp -> codex-acp-linux-x64). Killing only the wrapper orphans the
@@ -95,6 +112,7 @@ export interface AcpConnectionOptions {
   onPromptQueued?: (turn: AgentTurn) => void;
   onPromptStarted?: (turn: AgentTurn) => void;
   onPromptSignal?: (turn: AgentTurn | undefined, signal: unknown) => void;
+  onExtNotification?: (method: string, params: unknown, turn: AgentTurn | undefined) => void;
 }
 
 type PromptPlacement = "back" | "front";
@@ -152,50 +170,12 @@ export class AcpAgentConnection {
     });
     const stream = ndJsonStream(output, child.stdout as ReadableStream<Uint8Array>);
 
-    const self = this;
-    this.conn = new ClientSideConnection(
-      (): Client => ({
-        async sessionUpdate(params: any) {
-          self.opts.onPromptSignal?.(self.activeJob?.turn, params.update);
-          self.opts.onUpdate?.(params.update);
-        },
-        async requestPermission(params: any) {
-          self.opts.onPromptSignal?.(self.activeJob?.turn, params);
-          const options = params.options ?? [];
-          let decision: PermissionDecision;
-          if (self.opts.onPermission) {
-            decision = await self.opts.onPermission(params);
-          } else {
-            const allow =
-              options.find((o: any) => o.kind === "allow_once") ?? options[0];
-            decision = allow ? { optionId: allow.optionId } : "cancel";
-          }
-          if (decision === "cancel") return { outcome: { outcome: "cancelled" } };
-          return { outcome: { outcome: "selected", optionId: decision.optionId } };
-        },
-        async writeTextFile(params: any) {
-          await mkdir(dirname(params.path), { recursive: true });
-          await writeFile(params.path, params.content, "utf8");
-          return {};
-        },
-        async readTextFile(params: any) {
-          let content = await readFile(params.path, "utf8");
-          if (params.line != null || params.limit != null) {
-            const lines = content.split("\n");
-            const start = (params.line ?? 1) - 1;
-            const end = params.limit != null ? start + params.limit : lines.length;
-            content = lines.slice(start, end).join("\n");
-          }
-          return { content };
-        },
-      }),
-      stream,
-    );
+    this.conn = new ClientSideConnection((): Client => this.clientHandlers() as Client, stream);
 
     child.exited.then((code) => {
-      self.alive = false;
-      LIVE.delete(self);
-      self.opts.onExit?.(code);
+      this.alive = false;
+      LIVE.delete(this);
+      this.opts.onExit?.(code);
     });
   }
 
@@ -210,8 +190,52 @@ export class AcpAgentConnection {
     return res;
   }
 
+  private clientHandlers(): Client & { extNotification?: (notification: any, params?: unknown) => Promise<void> } {
+    return {
+      sessionUpdate: async (params: any) => {
+        this.opts.onPromptSignal?.(this.activeJob?.turn, params.update);
+        this.opts.onUpdate?.(params.update);
+      },
+      requestPermission: async (params: any) => {
+        this.opts.onPromptSignal?.(this.activeJob?.turn, params);
+        const options = params.options ?? [];
+        let decision: PermissionDecision;
+        if (this.opts.onPermission) {
+          decision = await this.opts.onPermission(params);
+        } else {
+          const allow = options.find((o: any) => o.kind === "allow_once") ?? options[0];
+          decision = allow ? { optionId: allow.optionId } : "cancel";
+        }
+        if (decision === "cancel") return { outcome: { outcome: "cancelled" } };
+        return { outcome: { outcome: "selected", optionId: decision.optionId } };
+      },
+      extNotification: async (notification: any, params?: unknown) => {
+        const method = typeof notification === "string" ? notification : notification?.method;
+        const payload = typeof notification === "string" ? params : notification?.params;
+        if (method === "_claude/sdkMessage") this.opts.onExtNotification?.(method, payload, this.activeJob?.turn);
+      },
+      writeTextFile: async (params: any) => {
+        await mkdir(dirname(params.path), { recursive: true });
+        await writeFile(params.path, params.content, "utf8");
+        return {};
+      },
+      readTextFile: async (params: any) => {
+        let content = await readFile(params.path, "utf8");
+        if (params.line != null || params.limit != null) {
+          const lines = content.split("\n");
+          const start = (params.line ?? 1) - 1;
+          const end = params.limit != null ? start + params.limit : lines.length;
+          content = lines.slice(start, end).join("\n");
+        }
+        return { content };
+      },
+    };
+  }
+
   async newSession(mcpServers: any[] = []) {
-    const res = await this.conn!.newSession({ cwd: this.opts.cwd, mcpServers });
+    const params: any = { cwd: this.opts.cwd, mcpServers };
+    if (isClaudeCommand(this.opts.command)) params._meta = claudeRawSdkMeta();
+    const res = await this.conn!.newSession(params);
     this.sessionId = res.sessionId;
     return res;
   }
