@@ -318,6 +318,12 @@ test("claude raw sdk retry and compaction signals emit health events and suppres
     created.router.emitExt("_claude/sdkMessage", { type: "system", subtype: "status", status: "compacting" });
     created.router.emitExt("_claude/sdkMessage", {
       type: "system",
+      subtype: "status",
+      status: null,
+      compact_result: "success",
+    });
+    created.router.emitExt("_claude/sdkMessage", {
+      type: "system",
       subtype: "compact_boundary",
       compact_metadata: { trigger: "auto", pre_tokens: 120000, post_tokens: 45000, duration_ms: 2200 },
     });
@@ -329,6 +335,7 @@ test("claude raw sdk retry and compaction signals emit health events and suppres
     expect(events).toContainEqual(expect.objectContaining({ kind: "agent_health_signal", agent: "router", signal: "rate_limited", detail: expect.objectContaining({ status: "allowed_warning", resetsAt: 1781162400000, utilization: 0.92 }) }));
     expect(events.filter((e) => e.kind === "agent_health_signal" && e.signal === "rate_limited")).toHaveLength(1);
     expect(events).toContainEqual(expect.objectContaining({ kind: "agent_health_signal", agent: "router", signal: "compacting" }));
+    expect(events).toContainEqual(expect.objectContaining({ kind: "agent_health_signal", agent: "router", signal: "compact_done", detail: { outcome: "success" } }));
     expect(events).toContainEqual(expect.objectContaining({ kind: "agent_health_signal", agent: "router", signal: "compact_done", detail: expect.objectContaining({ trigger: "auto", preTokens: 120000, postTokens: 45000, durationMs: 2200 }) }));
     expect(events.some((e) => e.kind === "agent_turn_health" && e.reason === "first_signal_timeout")).toBe(false);
 
