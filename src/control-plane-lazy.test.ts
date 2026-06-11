@@ -137,12 +137,12 @@ test("first mail to a lazy agent triggers one spawn and one visible mail turn", 
   try {
     await cp.start();
     const res = await (cp as any).handleSendMail({ agentId: "router", role: "router" }, "lazy-1", "hello");
-    expect(res).toBe("delivered to lazy-1");
+    expect(res).toBe("delivered to lazy-1 as #1");
     await waitUntil(() => created["lazy-1"]?.prompts.length === 1);
 
     expect(created["lazy-1"].starts).toBe(1);
     expect((cp as any).mesh.status("lazy-1")).toBe("ready");
-    expect(created["lazy-1"].prompts[0]).toContain("[MAIL from router]: hello");
+    expect(created["lazy-1"].prompts[0]).toContain("[MAIL #1 from router]: hello");
     expect(events).toContainEqual(
       expect.objectContaining({
         kind: "agent_turn",
@@ -153,7 +153,7 @@ test("first mail to a lazy agent triggers one spawn and one visible mail turn", 
 
     const mail = await readMailFor("lazy-1", { mailboxPath: join(root, "mailbox.ndjson") });
     expect(mail.map((m) => m.body)).toEqual(["hello"]);
-    expect(await (cp as any).handleCheckMail({ agentId: "lazy-1", role: "member" })).toBe("from router: hello");
+    expect(await (cp as any).handleCheckMail({ agentId: "lazy-1", role: "member" })).toBe("[MAIL #1 from router]: hello");
   } finally {
     await cp.stop();
     await rm(root, { recursive: true, force: true });
@@ -187,8 +187,8 @@ test("concurrent first mails share one spawn and deliver both visible mail turns
     expect(lazyCreations).toBe(1);
     expect(created["lazy-1"].starts).toBe(1);
     expect(created["lazy-1"].prompts).toHaveLength(2);
-    expect(created["lazy-1"].prompts.join("\n")).toContain("[MAIL from router]: one");
-    expect(created["lazy-1"].prompts.join("\n")).toContain("[MAIL from router]: two");
+    expect(created["lazy-1"].prompts.join("\n")).toContain("[MAIL #1 from router]: one");
+    expect(created["lazy-1"].prompts.join("\n")).toContain("[MAIL #2 from router]: two");
     const mail = await readMailFor("lazy-1", { mailboxPath: join(root, "mailbox.ndjson") });
     expect(mail.map((m) => m.body).sort()).toEqual(["one", "two"]);
   } finally {
@@ -239,7 +239,7 @@ test("spawn failure marks dead and sends an async spawn failed receipt without l
 
   try {
     await cp.start();
-    expect(await (cp as any).handleSendMail({ agentId: "router", role: "router" }, "lazy-1", "please wake")).toBe("delivered to lazy-1");
+    expect(await (cp as any).handleSendMail({ agentId: "router", role: "router" }, "lazy-1", "please wake")).toBe("delivered to lazy-1 as #1");
     await waitUntil(() => created.router.prompts.length === 1);
 
     expect((cp as any).mesh.status("lazy-1")).toBe("dead");
@@ -355,7 +355,7 @@ test("addEdge mutates the running control plane and send_mail returns a dynamic 
     expect(res).toContain("delivered to b");
     expect(res).toContain("may have been added after your session started");
     await waitUntil(() => created.b.prompts.length === 1);
-    expect(created.b.prompts[0]).toContain("[MAIL from a]: review this");
+    expect(created.b.prompts[0]).toContain("[MAIL #1 from a]: review this");
   } finally {
     await cp.stop();
     await rm(root, { recursive: true, force: true });
@@ -426,7 +426,7 @@ test("control-plane addAgent creates a cold lazy member and optional edges can w
     expect(res).toContain("may have been added after your session started");
     await waitUntil(() => created.c?.prompts.length === 1);
     expect((cp as any).mesh.status("c")).toBe("ready");
-    expect(created.c.prompts[0]).toContain("[MAIL from a]: hello new peer");
+    expect(created.c.prompts[0]).toContain("[MAIL #1 from a]: hello new peer");
   } finally {
     await cp.stop();
     await rm(root, { recursive: true, force: true });

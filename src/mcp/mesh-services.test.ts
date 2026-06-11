@@ -4,6 +4,7 @@ import { createMeshServicesServer, type MeshServicesServer } from "./mesh-servic
 const noop = () => "";
 const handlers = {
   meshStatus: noop,
+  meshBriefing: noop,
   sendMail: noop,
   steerMail: noop,
   steerTargets: () => [] as string[],

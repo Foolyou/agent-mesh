@@ -1,6 +1,6 @@
 import { test, expect } from "bun:test";
 import { Mesh } from "./mesh";
-import { buildMeshBriefing } from "./mesh-briefing";
+import { buildMeshBriefing, buildNormsCard, MAIL_WAKE_GUIDANCE } from "./mesh-briefing";
 import type { MeshConfig } from "./acp/types";
 
 const cfg: MeshConfig = {
@@ -137,4 +137,31 @@ test("briefing tells agents to write Markdown file references with paths relativ
 
 test("unknown agent yields an empty briefing", () => {
   expect(buildMeshBriefing(new Mesh(cfg), "ghost")).toBe("");
+});
+
+test("briefing embeds the communication norms card at the end (push model, intent tags, no acks)", () => {
+  const b = buildMeshBriefing(new Mesh(cfg), "codex-1");
+  expect(b).toContain("Mesh communication rules (MUST follow):");
+  expect(b).toContain("PUSH-delivered");
+  expect(b).toContain("END YOUR TURN");
+  expect(b).toContain("[REQ]");
+  expect(b).toContain("[FYI]");
+  expect(b).toContain("[DONE]");
+  expect(b).toMatch(/NEVER send pure acknowledgements/);
+  // The norms card is the LAST section so it sits closest to the model's attention.
+  expect(b.indexOf("Mesh communication rules")).toBeGreaterThan(b.indexOf("file references in Markdown"));
+});
+
+test("norms card and wake guidance agree on the core rules (single source, no drift)", () => {
+  expect(buildNormsCard()).toContain("reply_to");
+  expect(MAIL_WAKE_GUIDANCE).toContain("reply_to");
+  expect(MAIL_WAKE_GUIDANCE).toContain("end your turn");
+  expect(MAIL_WAKE_GUIDANCE).toContain("do not poll check_mail");
+});
+
+test("briefing advertises mesh_briefing and frames check_mail as backlog-only", () => {
+  const b = buildMeshBriefing(new Mesh(cfg), "codex-1");
+  expect(b).toContain("mesh_briefing()");
+  expect(b).toMatch(/check_mail\(\): drain backlogged mail/);
+  expect(b).toContain("send_mail(to, body, reply_to?, task?)");
 });

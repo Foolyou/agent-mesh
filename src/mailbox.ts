@@ -92,6 +92,17 @@ export async function sendMailboxEvent(input: {
   });
 }
 
+/** Addressed-mail metadata shape stored on MailboxEvent.meta. */
+export type MailMeta = {
+  to: string;
+  mesh: string;
+  steer?: boolean;
+  /** Per-mesh monotonic short number agents use to reference mail ("#17"). */
+  seq?: number;
+  /** seq of the mail this one replies to. */
+  replyTo?: number;
+};
+
 /** Send an addressed inter-agent message (mesh mailbox). */
 export async function sendMail(input: {
   mailboxPath?: string;
@@ -101,13 +112,24 @@ export async function sendMail(input: {
   body: string;
   /** Marks steer deliveries so durable mail history can distinguish them. */
   steer?: boolean;
+  seq?: number;
+  replyTo?: number;
+  /** Task thread this mail belongs to (e.g. a task slug); lands on event.taskId. */
+  task?: string;
 }): Promise<MailboxEvent> {
   return sendMailboxEvent({
     mailboxPath: input.mailboxPath,
     from: input.from,
     type: "handoff",
+    taskId: input.task,
     body: input.body,
-    meta: { to: input.to, mesh: input.mesh, ...(input.steer ? { steer: true } : {}) },
+    meta: {
+      to: input.to,
+      mesh: input.mesh,
+      ...(input.steer ? { steer: true } : {}),
+      ...(input.seq !== undefined ? { seq: input.seq } : {}),
+      ...(input.replyTo !== undefined ? { replyTo: input.replyTo } : {}),
+    } satisfies MailMeta,
   });
 }
 

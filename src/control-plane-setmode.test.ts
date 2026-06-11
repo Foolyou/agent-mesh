@@ -332,7 +332,7 @@ test("steer mail validates permissions, emits steer, and uses front delivery", a
     expect(await (cp as any).handleSteerMail({ agentId: "a", role: "member" }, "b", "urgent")).toMatch(/steered to b/i);
     expect(fake.cancels).toBe(0);
     expect(fake.prompts).toHaveLength(1);
-    expect(fake.prompts[0].text).toContain("[STEER from a]: urgent");
+    expect(fake.prompts[0].text).toContain("[STEER #1 from a]: urgent");
     expect(events).toContainEqual(expect.objectContaining({ kind: "steer", from: "a", to: "b", body: "urgent" }));
     expect(events).toContainEqual(expect.objectContaining({ kind: "agent_activity", agent: "b", activity: "working" }));
 

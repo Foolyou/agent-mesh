@@ -76,7 +76,7 @@ test("check_mail persists a recipient cursor and cold restart returns only later
     const first = makePlane();
     await first.start();
     await (first as any).handleSendMail({ agentId: "router", role: "router" }, "member", "old");
-    expect(await (first as any).handleCheckMail({ agentId: "member", role: "member" })).toBe("from router: old");
+    expect(await (first as any).handleCheckMail({ agentId: "member", role: "member" })).toBe("[MAIL #1 from router]: old");
     const stored = await readSessionState(runDir, config.name);
     expect(stored.agents.member.mailCursor).toBeString();
     await first.stop();
@@ -84,7 +84,7 @@ test("check_mail persists a recipient cursor and cold restart returns only later
     const second = makePlane();
     await second.start();
     await (second as any).handleSendMail({ agentId: "router", role: "router" }, "member", "new");
-    expect(await (second as any).handleCheckMail({ agentId: "member", role: "member" })).toBe("from router: new");
+    expect(await (second as any).handleCheckMail({ agentId: "member", role: "member" })).toBe("[MAIL #2 from router]: new");
     await second.stop();
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -141,7 +141,7 @@ test("start snapshot replays only unread durable mail after each recipient curso
     const first = makePlane();
     await first.start();
     await (first as any).handleSendMail({ agentId: "router", role: "router" }, "member", "already read");
-    expect(await (first as any).handleCheckMail({ agentId: "member", role: "member" })).toBe("from router: already read");
+    expect(await (first as any).handleCheckMail({ agentId: "member", role: "member" })).toBe("[MAIL #1 from router]: already read");
     await first.stop();
 
     const unread = await sendMail({ mailboxPath, mesh: config.name, from: "router", to: "member", body: "still unread" });
@@ -171,7 +171,7 @@ test("stop compacts consumed mail so the next start does not scan handled histor
   try {
     await cp.start();
     await (cp as any).handleSendMail({ agentId: "router", role: "router" }, "member", "handled");
-    expect(await (cp as any).handleCheckMail({ agentId: "member", role: "member" })).toBe("from router: handled");
+    expect(await (cp as any).handleCheckMail({ agentId: "member", role: "member" })).toBe("[MAIL #1 from router]: handled");
     await (cp as any).handleSendMail({ agentId: "router", role: "router" }, "member", "pending");
 
     await cp.stop();
@@ -198,13 +198,13 @@ test("check_mail caps a batch by count, advances cursor only past returned mail,
       await (cp as any).handleSendMail({ agentId: "router", role: "router" }, "member", body);
     }
     const first = await (cp as any).handleCheckMail({ agentId: "member", role: "member" });
-    expect(first).toContain("from router: one");
-    expect(first).toContain("from router: two");
-    expect(first).not.toContain("from router: three");
+    expect(first).toContain("[MAIL #1 from router]: one");
+    expect(first).toContain("[MAIL #2 from router]: two");
+    expect(first).not.toContain("from router]: three");
     expect(first).toContain("1 more message");
 
     const second = await (cp as any).handleCheckMail({ agentId: "member", role: "member" });
-    expect(second).toBe("from router: three");
+    expect(second).toBe("[MAIL #3 from router]: three");
     expect(await (cp as any).handleCheckMail({ agentId: "member", role: "member" })).toBe("no new mail");
   } finally {
     await cp.stop();
@@ -229,11 +229,11 @@ test("check_mail caps a batch by bytes but always returns at least one mail", as
 
     const first = await (cp as any).handleCheckMail({ agentId: "member", role: "member" });
     expect(first).toContain(big);
-    expect(first).not.toContain("from router: small");
+    expect(first).not.toContain("from router]: small");
     expect(first).toContain("1 more message");
 
     const second = await (cp as any).handleCheckMail({ agentId: "member", role: "member" });
-    expect(second).toBe("from router: small");
+    expect(second).toBe("[MAIL #2 from router]: small");
   } finally {
     await cp.stop();
     await rm(root, { recursive: true, force: true });
@@ -253,7 +253,7 @@ test("newSession preserves the mail cursor so read mail is not delivered again",
   try {
     await cp.start();
     await (cp as any).handleSendMail({ agentId: "router", role: "router" }, "member", "old");
-    expect(await (cp as any).handleCheckMail({ agentId: "member", role: "member" })).toBe("from router: old");
+    expect(await (cp as any).handleCheckMail({ agentId: "member", role: "member" })).toBe("[MAIL #1 from router]: old");
     expect((await readSessionState(runDir, config.name)).agents.member.mailCursor).toBeString();
 
     await cp.newSession("member");
@@ -261,7 +261,7 @@ test("newSession preserves the mail cursor so read mail is not delivered again",
     expect((await readSessionState(runDir, config.name)).agents.member.mailCursor).toBeString();
     expect(await (cp as any).handleCheckMail({ agentId: "member", role: "member" })).toBe("no new mail");
     await (cp as any).handleSendMail({ agentId: "router", role: "router" }, "member", "new");
-    expect(await (cp as any).handleCheckMail({ agentId: "member", role: "member" })).toBe("from router: new");
+    expect(await (cp as any).handleCheckMail({ agentId: "member", role: "member" })).toBe("[MAIL #2 from router]: new");
   } finally {
     await cp.stop();
     await rm(root, { recursive: true, force: true });

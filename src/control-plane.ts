@@ -7,9 +7,9 @@ import { randomUUID } from "node:crypto";
 import { AcpAgentConnection, type AcpConnectionOptions, type PermissionDecision } from "./acp/client";
 import { spawnConfigFor } from "./harness";
 import { Mesh } from "./mesh";
-import { buildMeshBriefing } from "./mesh-briefing";
-import { createMeshServicesServer, type MeshServicesHandlers, type MeshServicesServer, type MeshToolContext } from "./mcp/mesh-services";
-import { compactMailbox, sendMail, readMailFor, readMailboxEvents, readUnreadAddressedMail } from "./mailbox";
+import { buildMeshBriefing, MAIL_WAKE_GUIDANCE } from "./mesh-briefing";
+import { createMeshServicesServer, type MeshServicesHandlers, type MeshServicesServer, type MeshToolContext, type SendMailOptions } from "./mcp/mesh-services";
+import { compactMailbox, sendMail, readMailFor, readMailboxEvents, readRecentAddressedMail, readUnreadAddressedMail, type MailMeta } from "./mailbox";
 import { validateAddAgent, validateAddEdge } from "./mesh-validate";
 import { readSessionState, setMeshExpectedAlive, updateAgentMailCursor, updateAgentSession, clearAgentSession, type MeshSessionState } from "./session-storage";
 import { now, type AgentActivity, type AgentConfig, type AgentId, type AgentTurn, type MeshConfig, type MeshEdge, type MeshEvent, type PromptImageRef, type SessionMode, type SessionModel } from "./acp/types";
@@ -17,6 +17,13 @@ import { now, type AgentActivity, type AgentConfig, type AgentId, type AgentTurn
 interface PendingDecision {
   resolve: (decision: PermissionDecision) => void;
   timer: ReturnType<typeof setTimeout>;
+}
+
+/** Rendering metadata for one mail delivery: short number, reply reference, task thread. */
+interface MailDeliveryMeta {
+  seq?: number;
+  replyTo?: number;
+  task?: string;
 }
 
 function compactPreview(text: string): string {
@@ -100,6 +107,12 @@ export class ControlPlane {
   /** Recent durable mail, replayed via snapshotEvents() so reconnecting clients
    *  see mail history instead of only live deliveries. */
   private recentMail: { id: string; from: AgentId; to: AgentId; body: string; ts: string }[] = [];
+  /** Per-mesh monotonic short mail number; recovered from the mailbox on start. */
+  private mailSeq = 0;
+  /** seq → mail summary, for rendering "in reply to #N" quotes. Bounded. */
+  private mailBySeq = new Map<number, { from: string; to: string; body: string }>();
+  /** Consecutive empty check_mail calls per agent, to nudge pollers. */
+  private emptyMailChecks = new Map<AgentId, { count: number; last: number }>();
   private activityStates = new Map<AgentId, AgentActivity>();
   private sessionState: MeshSessionState = { meshExpectedAlive: true, agents: {} };
 
@@ -388,10 +401,19 @@ export class ControlPlane {
       body: event.body,
       ts: event.ts,
     }));
+    // Recover the mail seq counter and reply-quote map across daemon restarts. The
+    // recent window (live + archive) always contains the highest seq issued so far.
+    for (const event of await readRecentAddressedMail({ mailboxPath: this.mailboxPath })) {
+      const meta = event.meta as MailMeta | undefined;
+      if (!meta?.seq) continue;
+      this.mailSeq = Math.max(this.mailSeq, meta.seq);
+      this.rememberMailSeq(meta.seq, { from: event.from, to: meta.to, body: event.body });
+    }
 
     this.mcp = this.meshServicesFactory({
       meshStatus: (ctx) => this.meshStatusText(ctx.agentId),
-      sendMail: (ctx, to, body) => this.handleSendMail(ctx, to, body),
+      meshBriefing: (ctx) => this.meshBriefingText(ctx.agentId),
+      sendMail: (ctx, to, body, opts) => this.handleSendMail(ctx, to, body, opts),
       steerMail: (ctx, to, body) => this.handleSteerMail(ctx, to, body),
       steerTargets: (ctx) => this.steerTargets(ctx.agentId),
       checkMail: (ctx) => this.handleCheckMail(ctx),
@@ -731,6 +753,15 @@ export class ControlPlane {
     return `Mesh "${this.mesh.name}" — router is ${this.mesh.router.id}.\n${lines.join("\n")}`;
   }
 
+  private meshBriefingText(forAgent: AgentId): string {
+    const briefing = buildMeshBriefing(this.mesh, forAgent);
+    if (!briefing) return `error: no agent "${forAgent}" in this mesh`;
+    return (
+      `(Generated ${now()} from the live mesh configuration — authoritative over any earlier ` +
+      `briefing you remember.)\n\n${briefing}`
+    );
+  }
+
   private steerTargets(from: AgentId): AgentId[] {
     return this.mesh.agents.filter((agent) => agent.id !== from && this.mesh.canSteer(from, agent.id)).map((agent) => agent.id);
   }
@@ -767,51 +798,91 @@ export class ControlPlane {
     this.emitActivityIfChanged(id);
   }
 
-  private async handleSendMail(ctx: MeshToolContext, to: AgentId, body: string): Promise<string> {
+  /** Render the delivery header for a mail: [MAIL #7 from lead | task: x | in reply to #5]. */
+  private renderMailHeader(from: string, meta: MailDeliveryMeta, kind = "MAIL"): string {
+    const parts = [`${kind}${meta.seq !== undefined ? ` #${meta.seq}` : ""} from ${from}`];
+    if (meta.task) parts.push(`task: ${meta.task}`);
+    if (meta.replyTo !== undefined) parts.push(`in reply to #${meta.replyTo}`);
+    return `[${parts.join(" | ")}]`;
+  }
+
+  /** Quote the referenced mail so the recipient doesn't have to reconstruct the thread. */
+  private renderReplyQuote(replyTo?: number): string {
+    if (replyTo === undefined) return "";
+    const ref = this.mailBySeq.get(replyTo);
+    if (!ref) return "";
+    return `\n(#${replyTo}, ${ref.from} → ${ref.to}, was: "${compactPreview(ref.body)}")`;
+  }
+
+  private rememberMailSeq(seq: number, summary: { from: string; to: string; body: string }): void {
+    this.mailBySeq.set(seq, summary);
+    while (this.mailBySeq.size > 500) this.mailBySeq.delete(this.mailBySeq.keys().next().value!);
+  }
+
+  private async handleSendMail(ctx: MeshToolContext, to: AgentId, body: string, opts: SendMailOptions = {}): Promise<string> {
     if (!this.mesh.agent(to)) return `error: no such agent "${to}" in this mesh`;
     if (!this.mesh.canMail(ctx.agentId, to)) {
       return `error: you (${ctx.agentId}) are not allowed to mail ${to}`;
     }
-    const event = await sendMail({ mailboxPath: this.mailboxPath, mesh: this.mesh.name, from: ctx.agentId, to, body });
+    const seq = ++this.mailSeq;
+    const meta: MailDeliveryMeta = { seq, replyTo: opts.replyTo, task: opts.task };
+    const event = await sendMail({
+      mailboxPath: this.mailboxPath,
+      mesh: this.mesh.name,
+      from: ctx.agentId,
+      to,
+      body,
+      seq,
+      replyTo: opts.replyTo,
+      task: opts.task,
+    });
     this.pushRecentMail({ id: event.id, from: ctx.agentId, to, body, ts: event.ts });
     this.emit({ kind: "mail", id: event.id, from: ctx.agentId, to, body, ts: event.ts });
     // Wake the recipient asynchronously (fire-and-forget; sender's tool returns now).
     const target = this.mesh.agent(to);
-    if (target?.lazy && this.mesh.status(to) !== "ready") this.wakeLazy(to, ctx.agentId, body, event.id);
-    else this.wake(to, ctx.agentId, body, event.id);
-    const note = this.dynamicEdges.has(edgeKey(ctx.agentId, to))
-      ? `\nnote: ${to} may have been added after your session started; current status is ${this.mesh.status(to) ?? "unknown"}.`
-      : "";
-    return `delivered to ${to}${note}`;
+    if (target?.lazy && this.mesh.status(to) !== "ready") this.wakeLazy(to, ctx.agentId, body, event.id, meta);
+    else this.wake(to, ctx.agentId, body, event.id, meta);
+    const notes: string[] = [];
+    if (opts.replyTo !== undefined && !this.mailBySeq.has(opts.replyTo)) {
+      notes.push(`note: reply_to #${opts.replyTo} does not match any known mail; delivered anyway without a quote.`);
+    }
+    if (this.dynamicEdges.has(edgeKey(ctx.agentId, to))) {
+      notes.push(`note: ${to} may have been added after your session started; current status is ${this.mesh.status(to) ?? "unknown"}.`);
+    }
+    // Remember AFTER the reply_to check so a mail cannot satisfy its own reference.
+    this.rememberMailSeq(seq, { from: ctx.agentId, to, body });
+    return [`delivered to ${to} as #${seq}`, ...notes].join("\n");
   }
 
-  private wakeLazy(to: AgentId, from: AgentId, body: string, mailId?: string): void {
+  private wakeLazy(to: AgentId, from: AgentId, body: string, mailId?: string, meta: MailDeliveryMeta = {}): void {
     if ((this.spawnFails.get(to) ?? 0) >= 3) {
       this.sendSpawnFailedReceipt(to, from, "spawn fuse is locked after 3 consecutive failures; use manual wake to retry");
       return;
     }
     this.ensureSpawned(to, { forceFresh: this.shouldForceFreshForEngagement(to), drainPendingMail: false })
-      .then(() => this.wake(to, from, body, mailId))
+      .then(() => this.wake(to, from, body, mailId, meta))
       .catch((err) => this.sendSpawnFailedReceipt(to, from, String(err)));
   }
 
   private sendSpawnFailedReceipt(to: AgentId, from: AgentId, detail: string): void {
     const body = `[SPAWN FAILED] ${to} could not be started. ${detail}`;
-    void sendMail({ mailboxPath: this.mailboxPath, mesh: this.mesh.name, from: to, to: from, body })
+    const seq = ++this.mailSeq;
+    void sendMail({ mailboxPath: this.mailboxPath, mesh: this.mesh.name, from: to, to: from, body, seq })
       .then((event) => {
+        this.rememberMailSeq(seq, { from: to, to: from, body });
         this.pushRecentMail({ id: event.id, from: to, to: from, body, ts: event.ts });
         this.emit({ kind: "mail", id: event.id, from: to, to: from, body, ts: event.ts });
-        this.wake(from, to, body, event.id);
+        this.wake(from, to, body, event.id, { seq });
       })
       .catch((err) => this.log(`spawn failed receipt ${to}->${from} failed: ${String(err)}`));
   }
 
-  private wake(to: AgentId, from: AgentId, body: string, mailId?: string): void {
+  private wake(to: AgentId, from: AgentId, body: string, mailId?: string, meta: MailDeliveryMeta = {}): void {
     if (mailId && this.consumedMailIds.get(to)?.has(mailId)) return;
     const mail =
-      `[MAIL from ${from}]: ${body}\n\n` +
-      `This arrived in your mesh mailbox. Read it and respond appropriately; ` +
-      `you may reply with the send_mail tool (to: "${from}").`;
+      `${this.renderMailHeader(from, meta)}: ${body}` +
+      this.renderReplyQuote(meta.replyTo) +
+      `\n\n${MAIL_WAKE_GUIDANCE}`;
     this.prompt(to, mail, [], this.mailTurn(to, from, body, mailId)).catch((err) => this.log(`wake(${to}) failed: ${String(err)}`));
   }
 
@@ -825,15 +896,17 @@ export class ControlPlane {
       const detail = to === this.mesh.router.id ? `cannot steer the router ${to}` : `steer is not enabled from ${ctx.agentId} to ${to}`;
       return `error: ${detail}; use send_mail for ordinary queued delivery`;
     }
-    await sendMail({ mailboxPath: this.mailboxPath, mesh: this.mesh.name, from: ctx.agentId, to, body, steer: true });
+    const seq = ++this.mailSeq;
+    await sendMail({ mailboxPath: this.mailboxPath, mesh: this.mesh.name, from: ctx.agentId, to, body, steer: true, seq });
+    this.rememberMailSeq(seq, { from: ctx.agentId, to, body });
     this.emit({ kind: "steer", from: ctx.agentId, to, body, ts: now() });
-    this.steerWake(to, ctx.agentId, body);
-    return `steered to ${to}`;
+    this.steerWake(to, ctx.agentId, body, [], seq);
+    return `steered to ${to} as #${seq}`;
   }
 
-  private async steerWake(to: AgentId, from: AgentId | "operator", body: string, images: PromptImageRef[] = []): Promise<void> {
+  private async steerWake(to: AgentId, from: AgentId | "operator", body: string, images: PromptImageRef[] = [], seq?: number): Promise<void> {
     const mail =
-      `[STEER from ${from}]: ${body}\n\n` +
+      `${this.renderMailHeader(from, { seq }, "STEER")}: ${body}\n\n` +
       `This interrupted your current turn and was placed ahead of ordinary queued mail. ` +
       `Read it and adjust course appropriately.`;
     const promptImages = images.map((i) => this.resolveImagePath(i));
@@ -849,7 +922,23 @@ export class ControlPlane {
   private async handleCheckMail(ctx: MeshToolContext): Promise<string> {
     const cursor = this.mailCursors.get(ctx.agentId) ?? this.sessionState.agents[ctx.agentId]?.mailCursor;
     const unread = await readMailFor(ctx.agentId, { mailboxPath: this.mailboxPath, sinceId: cursor });
-    if (unread.length === 0) return "no new mail";
+    if (unread.length === 0) {
+      // Nudge pollers at the moment of the bad behavior: repeated empty checks in a
+      // short window mean the agent is busy-waiting instead of ending its turn.
+      const nowMs = Date.now();
+      const track = this.emptyMailChecks.get(ctx.agentId);
+      const streak = track && nowMs - track.last < 120_000 ? track.count + 1 : 1;
+      this.emptyMailChecks.set(ctx.agentId, { count: streak, last: nowMs });
+      if (streak >= 2) {
+        return (
+          "no new mail. Reminder: mail is PUSH-delivered — it arrives automatically as a new message, " +
+          "so polling check_mail gains nothing. If you are waiting for a reply, end your turn now; " +
+          "the reply will wake you."
+        );
+      }
+      return "no new mail";
+    }
+    this.emptyMailChecks.delete(ctx.agentId);
     // Cap the batch so one call can't blow up the tool result; the cursor only
     // advances past what is actually returned, so the rest stays unread.
     const mail: typeof unread = [];
@@ -880,7 +969,15 @@ export class ControlPlane {
       }
     }
     this.compactMailboxIfOverThreshold();
-    const lines = mail.map((m) => `from ${(m.meta as any)?.from ?? m.from}: ${m.body}`);
+    const lines = mail.map((m) => {
+      const meta = m.meta as (MailMeta & { from?: string }) | undefined;
+      const header = this.renderMailHeader(meta?.from ?? m.from, {
+        seq: meta?.seq,
+        replyTo: meta?.replyTo,
+        task: m.taskId && m.taskId !== "default" ? m.taskId : undefined,
+      });
+      return `${header}: ${m.body}${this.renderReplyQuote(meta?.replyTo)}`;
+    });
     if (remaining > 0) lines.push(`[${remaining} more message${remaining === 1 ? "" : "s"} pending; call check_mail again to continue]`);
     return lines.join("\n");
   }

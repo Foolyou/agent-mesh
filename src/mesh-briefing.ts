@@ -1,8 +1,46 @@
-// Builds the one-time "mesh briefing" injected into an agent's first prompt so it
-// understands it is a member of a collaborating mesh — its identity, role, the roster,
-// who it can mail, and which mesh tools to use. Pure function of the Mesh model.
+// Builds the "mesh briefing" injected into an agent's first prompt and served live
+// by the mesh_briefing tool, so it understands it is a member of a collaborating
+// mesh — its identity, role, the roster, who it can mail, which mesh tools to use,
+// and the communication norms. Pure function of the Mesh model.
+//
+// The norms exist in three sizes so every surface stays consistent (single source):
+//   buildNormsCard()    — full card, embedded at the end of the briefing
+//   MAIL_WAKE_GUIDANCE  — short form appended to every mail wake prompt
+//   tool descriptions   — one-line forms in mcp/mesh-services.ts (kept in sync by tests)
 import type { AgentId } from "./acp/types";
 import type { Mesh } from "./mesh";
+
+/** One-line norms reminder appended to every mail delivery prompt. */
+export const MAIL_WAKE_GUIDANCE =
+  "Reply with send_mail ONLY if this mail asks you something ([REQ]) or you are blocked — " +
+  "never send pure acknowledgements. When you reply, pass reply_to with this mail's number. " +
+  "If you now need to wait for someone else's reply, just end your turn: mail is push-delivered " +
+  "and will wake you; do not poll check_mail.";
+
+/** The full mesh communication norms card. Embedded at the end of the briefing so the
+ *  rules sit closest to the model's attention, and re-readable any time via mesh_briefing. */
+export function buildNormsCard(): string {
+  return [
+    "Mesh communication rules (MUST follow):",
+    "  - Mail is PUSH-delivered: when someone mails you, it arrives automatically as a new message in",
+    "    your session. You NEVER need to poll for it.",
+    "  - To wait for a reply: say what you are waiting for, then END YOUR TURN. The reply will wake you.",
+    "    NEVER poll check_mail in a loop and NEVER sleep/busy-wait for mail to arrive.",
+    "  - check_mail is ONLY for draining a backlog: call it when told you have pending mail (e.g. right",
+    "    after spawning) or when a previous result said \"N more messages pending\". If it returns",
+    "    \"no new mail\", do not call it again — end your turn instead.",
+    "  - Start every mail body with one intent tag:",
+    "      [REQ]  you need an answer — ask concrete questions and say so explicitly;",
+    "      [FYI]  information only — the recipient must NOT reply;",
+    "      [DONE] deliverable report — include what changed and the verification you actually ran",
+    "             (commands + outcome); say plainly if a check was NOT run.",
+    "  - Reply ONLY to [REQ] mail or when you are blocked. NEVER send pure acknowledgements",
+    "    (\"got it\", \"ok, starting now\") — they burn the recipient's turn for nothing.",
+    "  - Mail is delivered as [MAIL #N from X]. When replying, pass reply_to: N so the recipient knows",
+    "    exactly which mail you answer. When your mesh works with task slugs, tag outgoing mail with",
+    "    task: \"<slug>\" so parallel threads stay separable.",
+  ].join("\n");
+}
 
 export function buildMeshBriefing(mesh: Mesh, agentId: AgentId): string {
   const me = mesh.agent(agentId);
@@ -55,11 +93,18 @@ export function buildMeshBriefing(mesh: Mesh, agentId: AgentId): string {
       "for AGENT_ROOM_* environment variables, and do not read or write any mailbox file directly.",
   );
   lines.push(
-    `  - send_mail(to, body): delegate work, ask a question, or report a result to another agent. ` +
-      `You may mail: ${myReach.join(", ") || "(no one — you have no outgoing edges)"}.`,
+    `  - send_mail(to, body, reply_to?, task?): delegate work, ask a question, or report a result to ` +
+      `another agent. You may mail: ${myReach.join(", ") || "(no one — you have no outgoing edges)"}.`,
   );
-  lines.push("  - check_mail(): read new mail addressed to you.");
+  lines.push(
+    "  - check_mail(): drain backlogged mail. Only needed when told you have pending mail; new mail " +
+      "is otherwise pushed to you automatically.",
+  );
   lines.push("  - mesh_status(): inspect the live mesh and peer busy/idle activity.");
+  lines.push(
+    "  - mesh_briefing(): re-read this briefing (live roster, norms, charter, your instructions) at " +
+      "any time — for example after context compaction, or whenever you are unsure of the rules.",
+  );
   if (isRouter) {
     lines.push("  - interrupt(target, reason): cancel a member's current turn (router only).");
   }
@@ -91,5 +136,8 @@ export function buildMeshBriefing(mesh: Mesh, agentId: AgentId): string {
     lines.push("Your role-specific instructions — additional guidance for you specifically (only you see this):");
     lines.push(instructions.replace(/^/gm, "  "));
   }
+
+  lines.push("");
+  lines.push(buildNormsCard());
   return lines.join("\n");
 }

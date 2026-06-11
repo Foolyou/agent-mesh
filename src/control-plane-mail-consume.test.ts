@@ -106,7 +106,7 @@ test("check_mail consumes queued mail turns: emits consumed, clears queue, never
     expect(created.member.queue).toHaveLength(1);
 
     // Member reads the mail inside its current turn.
-    expect(await (cp as any).handleCheckMail({ agentId: "member", role: "member" })).toBe("from router: ping");
+    expect(await (cp as any).handleCheckMail({ agentId: "member", role: "member" })).toBe("[MAIL #1 from router]: ping");
 
     const consumed = events.find((e) => e.kind === "agent_turn" && e.phase === "consumed" && e.turn.agent === "member");
     expect(consumed).toBeDefined();
@@ -243,7 +243,7 @@ test("wake skips mail already consumed by check_mail (send/check race)", async (
     // between handleSendMail's mailbox write and its wake()).
     await sendMail({ mailboxPath: join(root, "mailbox.ndjson"), mesh: config.name, from: "router", to: "member", body: "racy" });
     const [mail] = await readMailFor("member", { mailboxPath: join(root, "mailbox.ndjson") });
-    expect(await (cp as any).handleCheckMail({ agentId: "member", role: "member" })).toBe("from router: racy");
+    expect(await (cp as any).handleCheckMail({ agentId: "member", role: "member" })).toBe("[MAIL from router]: racy");
 
     const before = created.member.inFlight.length + created.member.queue.length;
     (cp as any).wake("member", "router", "racy", mail.id);

@@ -12,9 +12,15 @@ export interface MeshToolContext {
   role: AgentRole;
 }
 
+export interface SendMailOptions {
+  replyTo?: number;
+  task?: string;
+}
+
 export interface MeshServicesHandlers {
   meshStatus(ctx: MeshToolContext): Promise<string> | string;
-  sendMail(ctx: MeshToolContext, to: string, body: string): Promise<string> | string;
+  meshBriefing(ctx: MeshToolContext): Promise<string> | string;
+  sendMail(ctx: MeshToolContext, to: string, body: string, opts?: SendMailOptions): Promise<string> | string;
   steerMail(ctx: MeshToolContext, to: string, body: string): Promise<string> | string;
   steerTargets(ctx: MeshToolContext): Promise<string[]> | string[];
   checkMail(ctx: MeshToolContext): Promise<string> | string;
@@ -135,16 +141,33 @@ export function createMeshServicesServer(opts: {
     );
 
     server.registerTool(
+      "mesh_briefing",
+      {
+        description:
+          "Re-read your full mesh briefing: live roster, communication rules, team charter, and your " +
+          "role instructions. Call this whenever you are unsure of the collaboration rules — e.g. after " +
+          "a long session or context compaction. Always reflects the current mesh configuration.",
+      },
+      () => guarded(agentId, "mesh_briefing", () => opts.handlers.meshBriefing(ctx)),
+    );
+
+    server.registerTool(
       "send_mail",
       {
         description:
-          "Send an asynchronous message to another agent in your mesh. Delivery is async; you cannot interrupt the recipient.",
+          "Send a message to another agent in your mesh. Delivery is PUSH: the recipient is woken " +
+          "automatically, and their reply will wake you the same way — so to wait for a reply, end " +
+          "your turn after sending; never poll. Start the body with [REQ] (needs an answer), [FYI] " +
+          "(no reply expected), or [DONE] (deliverable report).",
         inputSchema: {
           to: z.string().describe("recipient agent id"),
-          body: z.string().describe("message body"),
+          body: z.string().describe("message body; start with [REQ], [FYI] or [DONE]"),
+          reply_to: z.number().optional().describe("the #number of the mail you are replying to"),
+          task: z.string().optional().describe("task slug this mail belongs to, when your mesh tracks tasks"),
         },
       },
-      ({ to, body }) => guarded(agentId, "send_mail", () => opts.handlers.sendMail(ctx, to, body)),
+      ({ to, body, reply_to, task }) =>
+        guarded(agentId, "send_mail", () => opts.handlers.sendMail(ctx, to, body, { replyTo: reply_to, task })),
     );
 
     server.registerTool(
@@ -164,7 +187,14 @@ export function createMeshServicesServer(opts: {
 
     server.registerTool(
       "check_mail",
-      { description: "Read messages other agents have sent you since you last checked." },
+      {
+        description:
+          "Drain backlogged mail addressed to you. New mail is normally PUSHED to you as a prompt — " +
+          "you do NOT need to poll this tool, and waiting for a reply means ending your turn, not " +
+          "calling this in a loop. Call it only when told you have pending mail (e.g. right after " +
+          "spawning) or when a previous call reported more messages pending. Unsure of the rules? " +
+          "Call mesh_briefing.",
+      },
       () => guarded(agentId, "check_mail", () => opts.handlers.checkMail(ctx)),
     );
 
