@@ -11,6 +11,7 @@ import {
   type Client,
 } from "@zed-industries/agent-client-protocol";
 import type { AgentTurn, PromptImageRef } from "./types";
+import { HARNESSES } from "../harness";
 
 export type PermissionDecision = { optionId: string } | "cancel";
 
@@ -25,7 +26,7 @@ export function agentEnv(): Record<string, string> {
 }
 
 function isClaudeCommand(command: string | undefined): boolean {
-  return !!command && command.includes("claude");
+  return command === HARNESSES.claude.command;
 }
 
 function claudeRawSdkMeta(): { claudeCode: { emitRawSDKMessages: Array<Record<string, string>> } } {
@@ -234,14 +235,16 @@ export class AcpAgentConnection {
 
   async newSession(mcpServers: any[] = []) {
     const params: any = { cwd: this.opts.cwd, mcpServers };
-    if (isClaudeCommand(this.opts.command)) params._meta = claudeRawSdkMeta();
+    if (isClaudeCommand(this.opts?.command)) params._meta = claudeRawSdkMeta();
     const res = await this.conn!.newSession(params);
     this.sessionId = res.sessionId;
     return res;
   }
 
   async loadSession(sessionId: string, cwd: string, mcpServers: any[] = []) {
-    const res = await this.conn!.loadSession({ sessionId, cwd, mcpServers });
+    const params: any = { sessionId, cwd, mcpServers };
+    if (isClaudeCommand(this.opts?.command)) params._meta = claudeRawSdkMeta();
+    const res = await this.conn!.loadSession(params);
     this.sessionId = sessionId;
     return { ...res, sessionId };
   }

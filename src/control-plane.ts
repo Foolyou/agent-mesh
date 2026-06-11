@@ -84,7 +84,7 @@ function claudeHealthSignal(message: unknown): { signal: AgentHealthSignalKind; 
   if (m.type === "rate_limit_event") {
     const info = m.rate_limit_info ?? m.rateLimitInfo ?? {};
     const status = info.status;
-    if (status !== "warning" && status !== "rejected") return undefined;
+    if (status !== "allowed_warning" && status !== "warning" && status !== "rejected") return undefined;
     return {
       signal: "rate_limited",
       detail: {
@@ -98,9 +98,29 @@ function claudeHealthSignal(message: unknown): { signal: AgentHealthSignalKind; 
   if (m.type === "system" && m.subtype === "status" && (m.status === "compacting" || m.state === "compacting")) {
     return { signal: "compacting", detail: { status: m.status ?? m.state } };
   }
+  if (m.type === "system" && m.subtype === "status" && m.status === null && m.compact_result) {
+    const result = m.compact_result;
+    return {
+      signal: "compact_done",
+      detail: {
+        trigger: result.trigger,
+        preTokens: result.pre_tokens ?? result.preTokens,
+        postTokens: result.post_tokens ?? result.postTokens,
+        durationMs: result.duration_ms ?? result.durationMs,
+      },
+    };
+  }
   if (m.type === "system" && m.subtype === "compact_boundary") {
-    const phase = m.phase ?? m.boundary ?? m.status;
-    return { signal: phase === "start" || phase === "begin" ? "compacting" : "compact_done", detail: { phase } };
+    const meta = m.compact_metadata ?? m.compactMetadata ?? {};
+    return {
+      signal: "compact_done",
+      detail: {
+        trigger: meta.trigger,
+        preTokens: meta.pre_tokens ?? meta.preTokens,
+        postTokens: meta.post_tokens ?? meta.postTokens,
+        durationMs: meta.duration_ms ?? meta.durationMs,
+      },
+    };
   }
   return undefined;
 }

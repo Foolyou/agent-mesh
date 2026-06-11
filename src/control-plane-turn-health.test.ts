@@ -309,18 +309,27 @@ test("claude raw sdk retry and compaction signals emit health events and suppres
     });
     created.router.emitExt("_claude/sdkMessage", {
       type: "rate_limit_event",
-      rate_limit_info: { status: "warning", resetsAt: "2026-06-11T10:00:00.000Z", rateLimitType: "tokens", utilization: 0.92 },
+      rate_limit_info: { status: "allowed", resetsAt: 1781162400000, rateLimitType: "tokens", utilization: 0.5 },
+    });
+    created.router.emitExt("_claude/sdkMessage", {
+      type: "rate_limit_event",
+      rate_limit_info: { status: "allowed_warning", resetsAt: 1781162400000, rateLimitType: "tokens", utilization: 0.92 },
     });
     created.router.emitExt("_claude/sdkMessage", { type: "system", subtype: "status", status: "compacting" });
-    created.router.emitExt("_claude/sdkMessage", { type: "system", subtype: "compact_boundary", phase: "end" });
+    created.router.emitExt("_claude/sdkMessage", {
+      type: "system",
+      subtype: "compact_boundary",
+      compact_metadata: { trigger: "auto", pre_tokens: 120000, post_tokens: 45000, duration_ms: 2200 },
+    });
 
     await new Promise((resolve) => setTimeout(resolve, 35));
     expect(created.router.killed).toBe(false);
     expect((cp as any).mesh.status("router")).toBe("ready");
     expect(events).toContainEqual(expect.objectContaining({ kind: "agent_health_signal", agent: "router", signal: "retrying", detail: expect.objectContaining({ attempt: 2, retryDelayMs: 25000, reason: "rate_limit" }) }));
-    expect(events).toContainEqual(expect.objectContaining({ kind: "agent_health_signal", agent: "router", signal: "rate_limited", detail: expect.objectContaining({ status: "warning", utilization: 0.92 }) }));
+    expect(events).toContainEqual(expect.objectContaining({ kind: "agent_health_signal", agent: "router", signal: "rate_limited", detail: expect.objectContaining({ status: "allowed_warning", resetsAt: 1781162400000, utilization: 0.92 }) }));
+    expect(events.filter((e) => e.kind === "agent_health_signal" && e.signal === "rate_limited")).toHaveLength(1);
     expect(events).toContainEqual(expect.objectContaining({ kind: "agent_health_signal", agent: "router", signal: "compacting" }));
-    expect(events).toContainEqual(expect.objectContaining({ kind: "agent_health_signal", agent: "router", signal: "compact_done" }));
+    expect(events).toContainEqual(expect.objectContaining({ kind: "agent_health_signal", agent: "router", signal: "compact_done", detail: expect.objectContaining({ trigger: "auto", preTokens: 120000, postTokens: 45000, durationMs: 2200 }) }));
     expect(events.some((e) => e.kind === "agent_turn_health" && e.reason === "first_signal_timeout")).toBe(false);
 
     created.router.finish();
