@@ -149,6 +149,42 @@ test("usage_update aggregates per-agent usage without entering transcript", () =
   });
 });
 
+test("effort config option updates are exposed in snapshot and ws", () => {
+  const m = fakeManager();
+  const gw = new WebGateway(m as any);
+  const got: any[] = [];
+  gw.subscribe((msg) => got.push(msg));
+
+  m.emit("demo", {
+    kind: "update",
+    agent: "router",
+    update: {
+      sessionUpdate: "session_config_update",
+      configOption: {
+        category: "effort",
+        id: "thought_level",
+        currentValue: "medium",
+        options: [{ value: "low", name: "Low" }, { value: "max", name: "Max" }],
+      },
+    } as any,
+    ts: "T",
+  });
+
+  expect(gw.snapshot().perMesh.demo.efforts.router).toEqual({
+    configId: "thought_level",
+    current: "medium",
+    available: [{ id: "low", name: "Low" }, { id: "max", name: "Max" }],
+  });
+  expect(got.find((x) => x.t === "agent.efforts")).toEqual({
+    t: "agent.efforts",
+    name: "demo",
+    agent: "router",
+    configId: "thought_level",
+    current: "medium",
+    available: [{ id: "low", name: "Low" }, { id: "max", name: "Max" }],
+  });
+});
+
 test("agent health signal is exposed in snapshot and ws without transcript folding", () => {
   const m = fakeManager();
   const gw = new WebGateway(m as any);

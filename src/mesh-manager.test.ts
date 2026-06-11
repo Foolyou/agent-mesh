@@ -62,6 +62,17 @@ test("setAgentEffort persists the effort and reloads from disk (no restart)", as
   expect(mgr.configOf("echo").agents[0].effort).toBeUndefined();
 });
 
+test("setAgentEffort forwards runtime-only advertised values without persisting them", async () => {
+  await mgr.defineMesh(cfg);
+  const calls: any[] = [];
+  (mgr as any).entries.get("echo").client = { setEffort: (agent: string, effort?: string) => calls.push({ agent, effort }) };
+
+  await mgr.setAgentEffort("echo", "r", "max");
+
+  expect(calls).toEqual([{ agent: "r", effort: "max" }]);
+  expect(mgr.configOf("echo").agents[0].effort).toBeUndefined();
+});
+
 test("setAgentBypass persists bypass and reloads from disk (no restart)", async () => {
   await mgr.defineMesh(cfg);
   await mgr.setAgentBypass("echo", "r", true);

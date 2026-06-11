@@ -2,7 +2,17 @@
 // Deterministic validation of a mesh topology. The control plane runs this over
 // every (possibly LLM-generated) MeshConfig before defining/persisting it.
 import { HARNESSES } from "./harness";
+import { isEffortSupportedByHarness, isThinkingEffort, supportedEffortsForConfig } from "./harness-utils";
 import { normalizeMeshEdge, normalizeMeshEdges, type AgentConfig, type AgentStatus, type MeshConfig, type MeshEdge, type MeshEdgeInput } from "./acp/types";
+
+function validateAgentEffort(agent: AgentConfig): void {
+  if (agent.effort === undefined) return;
+  const options = supportedEffortsForConfig(agent.harness);
+  if (!isThinkingEffort(agent.effort) || !isEffortSupportedByHarness(agent.harness, agent.effort)) {
+    const suffix = options.length > 0 ? `use ${options.join("|")}` : `${agent.harness} does not support effort`;
+    throw new Error(`agent "${agent.id}" has invalid effort "${agent.effort}" for ${agent.harness} (${suffix})`);
+  }
+}
 
 export function validateMeshConfig(config: MeshConfig): void {
   const { name, agents } = config;
@@ -30,9 +40,7 @@ export function validateMeshConfig(config: MeshConfig): void {
     if (!a.project) {
       throw new Error(`agent "${a.id}" project is required`);
     }
-    if (a.effort !== undefined && !["minimal", "low", "medium", "high"].includes(a.effort)) {
-      throw new Error(`agent "${a.id}" has invalid effort "${a.effort}" (use minimal|low|medium|high)`);
-    }
+    validateAgentEffort(a);
     if (a.bypass !== undefined && typeof a.bypass !== "boolean") {
       throw new Error(`agent "${a.id}" bypass must be a boolean`);
     }
@@ -100,9 +108,7 @@ export function validateAddAgent(config: MeshConfig, cfg: AgentConfig): AgentCon
   if (!agent.project) {
     throw new Error(`agent "${agent.id}" project is required`);
   }
-  if (agent.effort !== undefined && !["minimal", "low", "medium", "high"].includes(agent.effort)) {
-    throw new Error(`agent "${agent.id}" has invalid effort "${agent.effort}" (use minimal|low|medium|high)`);
-  }
+  validateAgentEffort(agent);
   if (agent.bypass !== undefined && typeof agent.bypass !== "boolean") {
     throw new Error(`agent "${agent.id}" bypass must be a boolean`);
   }

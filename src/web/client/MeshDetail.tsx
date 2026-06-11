@@ -3,7 +3,8 @@
 // permission-history timelines for the selected mesh.
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import type { Store } from "./store";
-import type { GatewayState, MeshSummary, PerMeshState, ActivityEntry, MailEntry, ResolvedPermission, PermissionReq, AgentModes, AgentModels, ThinkingEffort, HarnessId, StartSessionStrategy } from "../types";
+import type { GatewayState, MeshSummary, PerMeshState, ActivityEntry, MailEntry, ResolvedPermission, PermissionReq, AgentModes, AgentModels, HarnessId, StartSessionStrategy } from "../types";
+import { effortOptionsForHarness, supportsRuntimeEffort } from "../../harness-utils";
 import { Dot, Btn, Empty, ConfirmButton, InfoIcon, fmtTime } from "./ui";
 import { ChatPane } from "./ChatPane";
 import { MeshCanvas } from "./MeshCanvas";
@@ -212,16 +213,17 @@ function ModelControl({ mesh, agent, store, models }: { mesh: string; agent: str
   );
 }
 
-const EFFORTS: ThinkingEffort[] = ["minimal", "low", "medium", "high"];
-
 // Per-agent thinking-effort picker. Claude and Kimi can switch thought level at runtime;
 // Codex remains spawn-time only, and OpenCode is pending binary verification.
 function EffortControl({ m, agent, store }: { m: MeshSummary; agent: string; store: Store }) {
   const { t } = useI18n();
   const a = m.agents.find((x) => x.id === agent);
-  if (!a || a.harness === "opencode") return null;
+  if (!a) return null;
+  const advertised = store.getState().perMesh[m.name]?.efforts?.[agent];
+  const efforts = advertised?.available.length ? advertised.available.map((o) => o.id) : effortOptionsForHarness(a.harness);
+  if (efforts.length === 0) return null;
   const live = m.status === "running" || m.status === "starting";
-  const runtime = a.harness === "claude" || a.harness === "kimi";
+  const runtime = supportsRuntimeEffort(a.harness);
   return (
     <span className="row" style={{ gap: 5 }}>
       <span className="sub" style={{ fontSize: 10 }}>
@@ -229,17 +231,17 @@ function EffortControl({ m, agent, store }: { m: MeshSummary; agent: string; sto
       </span>
       <select
         className="effort-sel select-control"
-        value={a.effort ?? ""}
+        value={a.effort ?? advertised?.current ?? ""}
         disabled={live && !runtime}
         aria-label={t("effort")}
         title={live && runtime ? t("effort.hint.runtime") : live ? t("effort.hint.live") : t("effort.hint")}
         onKeyDown={(e) => e.stopPropagation()}
-        onChange={(e) => void store.setEffort(m.name, agent, (e.target.value || undefined) as ThinkingEffort | undefined)}
+        onChange={(e) => void store.setEffort(m.name, agent, e.target.value || undefined)}
       >
         <option value="">{t("effort.default")}</option>
-        {EFFORTS.map((eff) => (
+        {efforts.map((eff) => (
           <option key={eff} value={eff}>
-            {t(`effort.${eff}`)}
+            {advertised?.available.find((o) => o.id === eff)?.name ?? t(`effort.${eff}`)}
           </option>
         ))}
       </select>

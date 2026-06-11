@@ -20,7 +20,7 @@ function seed(): GatewayState {
     ],
     assistant: { status: "ready", transcript: [] },
     perMesh: {
-      demo: { config: { name: "demo", agents: [], edges: [] }, transcripts: {}, activity: [], mail: [], pending: [], history: [], modes: {}, models: {}, capabilities: {}, usage: {}, health: {}, queues: {} },
+      demo: { config: { name: "demo", agents: [], edges: [] }, transcripts: {}, activity: [], mail: [], pending: [], history: [], modes: {}, models: {}, efforts: {}, capabilities: {}, usage: {}, health: {}, queues: {} },
     },
   };
 }
@@ -93,6 +93,22 @@ test("agent.models stores the agent's model choices; a later one updates current
   expect(s.perMesh.demo.models["codex-1"].available).toHaveLength(2);
   s = applyMsg(s, { t: "agent.models", name: "demo", agent: "codex-1", current: "deepseek-v3", available: [{ id: "kimi-k2", name: "kimi-k2" }, { id: "deepseek-v3", name: "deepseek-v3" }] });
   expect(s.perMesh.demo.models["codex-1"].current).toBe("deepseek-v3");
+});
+
+test("agent.efforts stores advertised runtime effort choices", () => {
+  const s = applyMsg(seed(), {
+    t: "agent.efforts",
+    name: "demo",
+    agent: "router",
+    configId: "thought_level",
+    current: "medium",
+    available: [{ id: "low", name: "Low" }, { id: "max", name: "Max" }],
+  });
+  expect(s.perMesh.demo.efforts.router).toEqual({
+    configId: "thought_level",
+    current: "medium",
+    available: [{ id: "low", name: "Low" }, { id: "max", name: "Max" }],
+  });
 });
 
 test("transcript.upsert then patch on an agent conv", () => {

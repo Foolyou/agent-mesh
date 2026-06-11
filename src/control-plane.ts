@@ -6,7 +6,7 @@ import { mkdir, stat } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { AcpAgentConnection, type AcpConnectionOptions, type PermissionDecision } from "./acp/client";
 import { spawnConfigFor } from "./harness";
-import { runtimeEffortConfig } from "./harness-utils";
+import { isThinkingEffort, runtimeEffortConfig, runtimeEffortOptionsFromSession, type RuntimeEffortOptions } from "./harness-utils";
 import { Mesh } from "./mesh";
 import { buildMeshBriefing, MAIL_WAKE_GUIDANCE } from "./mesh-briefing";
 import { createMeshServicesServer, type MeshServicesHandlers, type MeshServicesServer, type MeshToolContext, type SendMailOptions } from "./mcp/mesh-services";
@@ -184,6 +184,8 @@ export class ControlPlane {
   private sessionModes = new Map<AgentId, { current: string; available: SessionMode[] }>();
   /** Per-agent advertised model choices. */
   private sessionModels = new Map<AgentId, { current: string; available: SessionModel[] }>();
+  /** Per-agent advertised runtime thinking effort choices. */
+  private sessionEfforts = new Map<AgentId, RuntimeEffortOptions>();
   /** Agents that have already received the one-time mesh briefing. */
   private briefed = new Set<AgentId>();
   /** Agents whose current process was attached to a loaded ACP session. */
@@ -540,12 +542,20 @@ export class ControlPlane {
   }
 
   /** Switch an agent's runtime thinking effort where the harness supports it. */
-  async setEffort(id: AgentId, effort?: ThinkingEffort): Promise<void> {
+  async setEffort(id: AgentId, effort?: string): Promise<void> {
     const agent = this.mesh.agent(id);
     if (!agent) throw new Error(`no such agent "${id}"`);
-    const runtime = runtimeEffortConfig(agent.harness, effort);
-    if (runtime && this.conns.has(id)) await this.agent(id).setConfigOption(runtime.configId, runtime.value);
-    await this.persistRuntimeSessionFields(id, { effort });
+    const advertised = this.sessionEfforts.get(id);
+    const runtime = runtimeEffortConfig(agent.harness, effort, advertised);
+    if (runtime && this.conns.has(id) && (!advertised || advertised.available.some((o) => o.id === effort))) {
+      await this.agent(id).setConfigOption(runtime.configId, runtime.value);
+      if (advertised) {
+        const next = { ...advertised, current: effort ?? runtime.value };
+        this.sessionEfforts.set(id, next);
+        this.emit({ kind: "agent_efforts", agent: id, configId: next.configId, current: next.current, available: next.available, ts: now() });
+      }
+    }
+    if (effort === undefined || isThinkingEffort(effort)) await this.persistRuntimeSessionFields(id, { effort });
   }
 
   /** Switch permission bypass where runtime support exists. Codex maps bypass to full-access mode. */
@@ -780,6 +790,7 @@ export class ControlPlane {
         : (configMode?.available ?? [])) as SessionMode[];
       // Apply a configured initial permission/session mode (best-effort) before the first turn.
       let current: string = standardModes?.currentModeId ?? configMode?.current ?? available[0]?.id ?? "";
+      const desiredEffort = saved?.effort ?? a.effort;
       if (desiredMode && available.some((mo: any) => mo.id === desiredMode)) {
         try {
           await conn.setMode(desiredMode);
@@ -815,6 +826,26 @@ export class ControlPlane {
         const eventCurrent = displayModelCurrent(currentModel, displayModel.current, displayModel.available);
         this.sessionModels.set(a.id, { current: eventCurrent, available: displayModel.available });
         this.emit({ kind: "agent_models", agent: a.id, current: eventCurrent, available: displayModel.available, ts: now() });
+      }
+      const configEffort = runtimeEffortOptionsFromSession(a.harness, session);
+      if (configEffort?.available.length) {
+        let currentEffort = configEffort.current;
+        if (desiredEffort && configEffort.available.some((o) => o.id === desiredEffort)) {
+          try {
+            const runtime = runtimeEffortConfig(a.harness, desiredEffort, configEffort);
+            if (runtime) {
+              await conn.setConfigOption(runtime.configId, runtime.value);
+              currentEffort = desiredEffort;
+            }
+          } catch (err) {
+            this.log(`set cached effort ${a.id}=${desiredEffort} failed: ${String(err)}`);
+          }
+        } else if (desiredEffort) {
+          this.log(`skip cached effort ${a.id}=${desiredEffort}: not advertised`);
+        }
+        const next = { ...configEffort, current: currentEffort };
+        this.sessionEfforts.set(a.id, next);
+        this.emit({ kind: "agent_efforts", agent: a.id, configId: next.configId, current: next.current, available: next.available, ts: now() });
       }
       if (this.sessionRunDir && typeof (session as any)?.sessionId === "string") {
         this.sessionState = await updateAgentSession(this.sessionRunDir, this.mesh.name, a.id, {
@@ -1399,7 +1430,7 @@ export class ControlPlane {
   }
 }
 
-function deriveConfigOption(session: unknown, category: "mode" | "model"): { current: string; available: Array<{ id: string; name: string; description?: string }> } | undefined {
+function deriveConfigOption(session: unknown, category: "mode" | "model" | "effort"): { configId: string; current: string; available: Array<{ id: string; name: string; description?: string }> } | undefined {
   const options = (session as any)?.configOptions;
   if (!Array.isArray(options)) return undefined;
   const configOption = options.find((o: any) => o?.category === category);
@@ -1416,7 +1447,7 @@ function deriveConfigOption(session: unknown, category: "mode" | "model"): { cur
         .filter(Boolean)
     : [];
   const current = String(configOption.currentValue ?? available[0]?.id ?? "");
-  return { current, available: available as Array<{ id: string; name: string; description?: string }> };
+  return { configId: String(configOption.id ?? category), current, available: available as Array<{ id: string; name: string; description?: string }> };
 }
 
 function deriveStandardModels(session: unknown): { current: string; available: Array<{ id: string; name: string }> } | undefined {

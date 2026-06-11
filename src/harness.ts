@@ -20,7 +20,7 @@ export function resolveHarness(id: HarnessId): HarnessSpec {
 }
 
 // claude reads MAX_THINKING_TOKENS at session start; map the effort levels to token budgets.
-const CLAUDE_THINK_TOKENS: Record<ThinkingEffort, number> = {
+const CLAUDE_THINK_TOKENS: Record<Extract<ThinkingEffort, "minimal" | "low" | "medium" | "high">, number> = {
   minimal: 1024,
   low: 4096,
   medium: 12000,
@@ -40,7 +40,7 @@ export function spawnConfigFor(a: AgentConfig): { command: string; args: string[
   }
   if (a.harness === "claude") {
     const args = a.bypass ? [...spec.args, "--bypassPermissions"] : spec.args;
-    const env: Record<string, string> = a.effort ? { MAX_THINKING_TOKENS: String(CLAUDE_THINK_TOKENS[a.effort]) } : {};
+    const env: Record<string, string> = a.effort && a.effort in CLAUDE_THINK_TOKENS ? { MAX_THINKING_TOKENS: String(CLAUDE_THINK_TOKENS[a.effort as keyof typeof CLAUDE_THINK_TOKENS]) } : {};
     return { command: spec.command, args, env };
   }
   if (a.harness === "opencode" && a.bypass) {

@@ -1,7 +1,7 @@
 // src/mesh-validate.test.ts
 import { test, expect } from "bun:test";
-import { validateMeshConfig } from "./mesh-validate";
-import type { MeshConfig } from "./acp/types";
+import { validateAddAgent, validateMeshConfig } from "./mesh-validate";
+import type { HarnessId, MeshConfig, ThinkingEffort } from "./acp/types";
 
 const ok: MeshConfig = {
   name: "good",
@@ -20,9 +20,30 @@ test("rejects unsafe names", () => {
   expect(() => validateMeshConfig({ ...ok, name: "../escape" })).toThrow(/name/i);
 });
 
-test("accepts a valid per-agent effort and rejects an invalid one", () => {
-  expect(() => validateMeshConfig({ ...ok, agents: ok.agents.map((a) => ({ ...a, effort: "high" as const })) })).not.toThrow();
+test("validates effort per harness", () => {
+  const accepted: Record<HarnessId, ThinkingEffort[]> = {
+    codex: ["low", "medium", "high", "xhigh"],
+    claude: ["minimal", "low", "medium", "high"],
+    kimi: ["low", "high"],
+    opencode: [],
+  };
+  const all = ["minimal", "low", "medium", "high", "xhigh", "max"] as const;
+
+  for (const harness of Object.keys(accepted) as HarnessId[]) {
+    for (const effort of all) {
+      const cfg = { ...ok, agents: [{ ...ok.agents[0], harness, effort: effort as any }, ok.agents[1]] };
+      const assertion = expect(() => validateMeshConfig(cfg));
+      if ((accepted[harness] as readonly string[]).includes(effort)) assertion.not.toThrow();
+      else assertion.toThrow(new RegExp(`effort.*${harness}`, "i"));
+    }
+  }
   expect(() => validateMeshConfig({ ...ok, agents: [{ ...ok.agents[0], effort: "turbo" as any }, ok.agents[1]] })).toThrow(/effort/i);
+});
+
+test("validates add-agent effort per harness", () => {
+  expect(() => validateAddAgent(ok, { id: "c2", harness: "codex", project: "test_mesh_0", role: "member", effort: "xhigh" })).not.toThrow();
+  expect(() => validateAddAgent(ok, { id: "k2", harness: "kimi", project: "test_mesh_0", role: "member", effort: "medium" })).toThrow(/effort.*kimi/i);
+  expect(() => validateAddAgent(ok, { id: "o2", harness: "opencode", project: "test_mesh_0", role: "member", effort: "low" })).toThrow(/effort.*opencode/i);
 });
 
 test("accepts arbitrary cached mode/model strings", () => {

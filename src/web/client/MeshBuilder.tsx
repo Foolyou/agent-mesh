@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
 import type { Store } from "./store";
 import type { HarnessId, AgentRole, MeshConfig, ThinkingEffort } from "../types";
+import { isEffortSupportedByHarness, supportedEffortsForConfig } from "../../harness-utils";
 import { Btn } from "./ui";
 import { useI18n } from "./i18n";
 
@@ -147,6 +148,7 @@ function validate(name: string, agents: AgentDraft[], edges: EdgeDraft[]): strin
   if (routers.some((a) => a.lazy === true)) return "router agents cannot be lazy";
   for (const a of agents) {
     if (!a.project.trim()) return `agent "${a.id}" needs a project (working dir)`;
+    if (a.effort !== undefined && !isEffortSupportedByHarness(a.harness, a.effort)) return `agent "${a.id}" has invalid effort "${a.effort}" for ${a.harness}`;
     if (a.harness === "kimi" && a.bypass === true) return `agent "${a.id}" cannot enable bypass: kimi has no bypass mechanism`;
     const instructions = a.instructions?.trim();
     if (instructions && instructions.length > 4000) return `agent "${a.id}" instructions are too long (max 4000 chars)`;
@@ -302,6 +304,7 @@ export function MeshBuilder({
 
   const activeIndex = page.kind === "agent" ? agents.findIndex((a) => a.key === page.key) : -1;
   const activeAgent = activeIndex >= 0 ? agents[activeIndex] : undefined;
+  const activeEfforts = activeAgent ? supportedEffortsForConfig(activeAgent.harness) : [];
   const activeModelProbe = activeAgent ? modelProbes[activeAgent.harness] : undefined;
   const activeModelMissing = !!(activeAgent?.model && !(activeModelProbe?.models ?? []).some((m) => m.id === activeAgent.model));
   const activeTabIndex = page.kind === "overview" ? 0 : Math.max(0, agents.findIndex((a) => a.key === page.key) + 1);
@@ -557,7 +560,12 @@ export function MeshBuilder({
                       title={harnessProbeErr ? t("build.harness.refreshFailed") : undefined}
                       onChange={(e) => {
                         const harness = e.target.value as HarnessId;
-                        setAgent(activeIndex, { harness, model: undefined, bypass: harness === "kimi" ? undefined : activeAgent.bypass });
+                        setAgent(activeIndex, {
+                          harness,
+                          model: undefined,
+                          effort: activeAgent.effort && isEffortSupportedByHarness(harness, activeAgent.effort) ? activeAgent.effort : undefined,
+                          bypass: harness === "kimi" ? undefined : activeAgent.bypass,
+                        });
                       }}
                     >
                       {HARNESSES.map((h) => (
@@ -604,19 +612,22 @@ export function MeshBuilder({
                         {t("build.model.retry")}
                       </button>
                     ) : null}
-                    <span className="adv-label">{t("effort")}</span>
-                    <select
-                      className="inp adv-sel select-control"
-                      value={activeAgent.effort ?? ""}
-                      title={t("effort.hint")}
-                      onChange={(e) => setAgent(activeIndex, { effort: (e.target.value || undefined) as ThinkingEffort | undefined })}
-                    >
-                      <option value="">{t("effort.default")}</option>
-                      <option value="minimal">{t("effort.minimal")}</option>
-                      <option value="low">{t("effort.low")}</option>
-                      <option value="medium">{t("effort.medium")}</option>
-                      <option value="high">{t("effort.high")}</option>
-                    </select>
+                    {activeEfforts.length > 0 ? (
+                      <>
+                        <span className="adv-label">{t("effort")}</span>
+                        <select
+                          className="inp adv-sel select-control"
+                          value={activeAgent.effort ?? ""}
+                          title={t("effort.hint")}
+                          onChange={(e) => setAgent(activeIndex, { effort: (e.target.value || undefined) as ThinkingEffort | undefined })}
+                        >
+                          <option value="">{t("effort.default")}</option>
+                          {activeEfforts.map((eff) => (
+                            <option key={eff} value={eff}>{t(`effort.${eff}`)}</option>
+                          ))}
+                        </select>
+                      </>
+                    ) : null}
                     <label className="check-inline" title={t("build.lazy.tooltip")}>
                       <input
                         type="checkbox"

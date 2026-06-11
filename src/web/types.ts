@@ -1,7 +1,7 @@
 // Shared types for the WebUI: aggregated transcript items, gateway state, and the
 // WebSocket wire protocol. These are the contract between WebGateway (server) and
 // the client store.
-import type { AgentConfig, MeshConfig, AgentId, AgentStatus, AgentActivity, AgentRole, HarnessId, SessionMode, SessionModel, PromptImageRef, ThinkingEffort, MeshEdge, AgentTurnSource, AgentHealthSignalKind, AgentTurn } from "../acp/types";
+import type { AgentConfig, MeshConfig, AgentId, AgentStatus, AgentActivity, AgentRole, HarnessId, SessionMode, SessionModel, SessionEffort, PromptImageRef, ThinkingEffort, MeshEdge, AgentTurnSource, AgentHealthSignalKind, AgentTurn } from "../acp/types";
 export type { SessionMode };
 export type { SessionModel };
 export type { PromptImageRef };
@@ -18,6 +18,12 @@ export interface AgentModes {
 export interface AgentModels {
   current: string;
   available: SessionModel[];
+}
+
+export interface AgentEfforts {
+  configId: string;
+  current: string;
+  available: SessionEffort[];
 }
 
 export interface AgentCapabilities {
@@ -150,6 +156,8 @@ export interface PerMeshState {
   modes: Record<AgentId, AgentModes>;
   /** Per-agent model choices (advertised + active), populated while the mesh runs. */
   models: Record<AgentId, AgentModels>;
+  /** Per-agent runtime effort choices (advertised + active), populated while the mesh runs. */
+  efforts: Record<AgentId, AgentEfforts>;
   /** Per-agent prompt capabilities, populated while the mesh runs. */
   capabilities: Record<AgentId, AgentCapabilities>;
   /** Per-agent context/cost waterline folded from usage_update notifications. */
@@ -176,6 +184,7 @@ export type ServerMsg =
   | { t: "agent.activity"; name: string; agent: AgentId; activity: AgentActivity }
   | { t: "agent.modes"; name: string; agent: AgentId; current: string; available: SessionMode[] }
   | { t: "agent.models"; name: string; agent: AgentId; current: string; available: SessionModel[] }
+  | { t: "agent.efforts"; name: string; agent: AgentId; configId: string; current: string; available: SessionEffort[] }
   | { t: "agent.capabilities"; name: string; agent: AgentId; image: boolean }
   | { t: "agent.usage"; name: string; agent: AgentId; usage: AgentUsage }
   | { t: "agent.health"; name: string; agent: AgentId; health: AgentHealthSignalEntry }

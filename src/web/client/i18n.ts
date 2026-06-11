@@ -114,6 +114,8 @@ const DICT: Record<string, Entry> = {
   "effort.low": ["low", "低"],
   "effort.medium": ["medium", "中"],
   "effort.high": ["high", "高"],
+  "effort.xhigh": ["xhigh", "超高"],
+  "effort.max": ["max", "最大"],
   activity: ["activity", "活动"],
   "activity.sub": ["mail · steer · interrupt · permission · log", "邮件 · 引导 · 中断 · 权限 · 日志"],
   mailbox: ["mailbox", "邮箱"],
