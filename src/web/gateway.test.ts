@@ -450,6 +450,38 @@ test("agent_models updates gateway state, summary, and broadcasts", () => {
   });
 });
 
+test("config_option_update syncs model picker state and broadcasts", () => {
+  const m = fakeManager();
+  const gw = new WebGateway(m as any);
+  const got: any[] = [];
+  gw.subscribe((msg) => got.push(msg));
+  m.emit("demo", {
+    kind: "update",
+    agent: "codex-1",
+    update: {
+      sessionUpdate: "config_option_update",
+      option: {
+        category: "model",
+        currentValue: "gpt-5.4",
+        options: [
+          { value: "gpt-5.4", name: "GPT 5.4" },
+          { value: "gpt-5.5", name: "GPT 5.5" },
+        ],
+      },
+    },
+    ts: "T",
+  } as any);
+
+  expect(gw.snapshot().perMesh.demo.models["codex-1"].current).toBe("gpt-5.4");
+  expect(got).toContainEqual({
+    t: "agent.models",
+    name: "demo",
+    agent: "codex-1",
+    current: "gpt-5.4",
+    available: [{ id: "gpt-5.4", name: "GPT 5.4" }, { id: "gpt-5.5", name: "GPT 5.5" }],
+  });
+});
+
 test("setEffort persists the effort into the summary and broadcasts mesh.list (no restart)", async () => {
   const m = fakeManager();
   const gw = new WebGateway(m as any);
