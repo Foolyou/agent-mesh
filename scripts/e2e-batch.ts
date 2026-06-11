@@ -4,12 +4,11 @@
 // (stdout + stderr incl. the [trace] event NDJSON) in e2e-logs/.
 // Usage: ROUNDS=8 bun run scripts/e2e-batch.ts
 import { spawn } from "node:child_process";
-import { rm, mkdir } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 
 const ROUNDS = Number(process.env.ROUNDS ?? 8);
 const E2E_TIMEOUT_MS = 480_000;
 const KILL_GRACE_MS = 15_000;
-const PROBE = "test_mesh_0/e2e-probe.txt";
 const LOG_DIR = "e2e-logs";
 
 interface RunResult {
@@ -29,7 +28,6 @@ function pidsMatching(pattern: string): string[] {
 }
 
 async function runOne(round: number): Promise<RunResult> {
-  await rm(PROBE, { force: true });
   const start = Date.now();
 
   return new Promise((resolveRun) => {
@@ -76,7 +74,6 @@ async function runOne(round: number): Promise<RunResult> {
 }
 
 async function main() {
-  await mkdir("test_mesh_0", { recursive: true });
   await mkdir(LOG_DIR, { recursive: true });
 
   const pre = [...pidsMatching("src/mesh-host.ts"), ...pidsMatching("src/e2e.ts")];
