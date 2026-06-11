@@ -2,7 +2,8 @@
 // the stack navigation (overview ⇄ detail), the segment switcher, the pinned
 // permission cards, and checks there is no horizontal overflow. Run:
 //   bun run src/web/mobile.e2e.ts
-import { chromium, type Page } from "playwright";
+import { type Page } from "playwright";
+import { launchChromium, e2eEnv } from "./e2e-playwright";
 import { mkdirSync } from "node:fs";
 
 const PORT = Number(process.env.E2E_PORT) || 7418;
@@ -27,8 +28,9 @@ async function step(name: string, fn: () => Promise<void>) {
 const server = Bun.spawn(["bun", "run", "src/main.ts", "--fake", "--port", String(PORT)], {
   stdout: "pipe",
   stderr: "pipe",
+  env: e2eEnv(),
 });
-const browser = await chromium.launch({ headless: true });
+const browser = await launchChromium();
 try {
   for (let i = 0; i < 80; i++) {
     try {

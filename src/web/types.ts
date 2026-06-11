@@ -146,7 +146,7 @@ export type AssistantStatus = "absent" | "starting" | "ready" | "stopped";
 export interface GatewayState {
   appVersion?: string;
   meshes: MeshSummary[];
-  assistant: { status: AssistantStatus; working?: boolean; transcript: TranscriptItem[]; capabilities?: AgentCapabilities };
+  assistant: { status: AssistantStatus; working?: boolean; transcript: TranscriptItem[]; capabilities?: AgentCapabilities & { harness?: HarnessId } };
   perMesh: Record<string, PerMeshState>;
 }
 
@@ -160,7 +160,7 @@ export type ServerMsg =
   | { t: "agent.models"; name: string; agent: AgentId; current: string; available: SessionModel[] }
   | { t: "agent.capabilities"; name: string; agent: AgentId; image: boolean }
   | { t: "agent.queue"; name: string; agent: AgentId; summary: QueueSummary }
-  | { t: "assistant.capabilities"; image: boolean }
+  | { t: "assistant.capabilities"; image: boolean; harness?: HarnessId }
   | { t: "transcript.upsert"; conv: ConvRef; item: TranscriptItem }
   | { t: "transcript.patch"; conv: ConvRef; id: string; patch: Partial<TranscriptItem> }
   | { t: "activity"; name: string; entry: ActivityEntry }

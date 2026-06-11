@@ -2,7 +2,7 @@
 // (one binary, two commands) and drives the browser against the web tier — proving the
 // SPA + REST + live WS all work across the proxy boundary. Run:
 //   bun run src/web/split-cli.e2e.ts
-import { chromium } from "playwright";
+import { launchChromium, e2eEnv } from "./e2e-playwright";
 import { mkdirSync } from "node:fs";
 
 const API_PORT = Number(process.env.API_PORT) || 7350;
@@ -38,13 +38,14 @@ async function waitReady(url: string) {
 const backend = Bun.spawn(["bun", "run", "src/main.ts", "backend", "--fake", "--port", String(API_PORT)], {
   stdout: "pipe",
   stderr: "pipe",
+  env: e2eEnv(),
 });
 const web = Bun.spawn(
   ["bun", "run", "src/main.ts", "web", "--port", String(WEB_PORT), "--backend", `http://localhost:${API_PORT}`],
   { stdout: "pipe", stderr: "pipe" },
 );
 
-const browser = await chromium.launch({ headless: true });
+const browser = await launchChromium();
 try {
   const backOk = await waitReady(`http://localhost:${API_PORT}/api/state`);
   const webOk = await waitReady(`${WEB}/api/state`);

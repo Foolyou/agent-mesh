@@ -86,7 +86,7 @@ export function applyMsg(state: GatewayState, msg: ServerMsg): GatewayState {
         queues: { ...pm.queues, [msg.agent]: msg.summary },
       }));
     case "assistant.capabilities":
-      return { ...state, assistant: { ...state.assistant, capabilities: { image: msg.image } } };
+      return { ...state, assistant: { ...state.assistant, capabilities: { image: msg.image, harness: msg.harness } } };
     case "transcript.upsert":
       return withTranscript(state, msg.conv, (items) => upsertItem(items, msg.item));
     case "transcript.patch":

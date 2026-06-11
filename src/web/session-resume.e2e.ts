@@ -4,7 +4,8 @@
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { chromium, type Browser, type Page } from "playwright";
+import { type Browser, type Page } from "playwright";
+import { launchChromium } from "./e2e-playwright";
 
 const PORT = Number(process.env.E2E_PORT) || 10020;
 const BASE = `http://localhost:${PORT}`;
@@ -90,7 +91,7 @@ let backend = Bun.spawn(["bun", "run", "src/main.ts", "--no-assistant", "--port"
 
 try {
   await waitReady();
-  browser = await chromium.launch({ headless: true });
+  browser = await launchChromium();
   page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   const config = { name: mesh, agents: [{ id: "r", harness: "codex", project: ".", role: "router" }], edges: [] };
 

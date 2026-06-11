@@ -1,7 +1,8 @@
 // Browser check for destructive/high-impact buttons that require a second click.
 // Run:
 //   bun run src/web/confirm-buttons.e2e.ts
-import { chromium, type Page } from "playwright";
+import { type Page } from "playwright";
+import { launchChromium, e2eEnv } from "./e2e-playwright";
 
 const PORT = Number(process.env.E2E_PORT) || 7462;
 const BASE = `http://localhost:${PORT}`;
@@ -30,8 +31,9 @@ async function expectNoCallsAfterClick(page: Page, selector: string, count: () =
 const server = Bun.spawn(["bun", "run", "src/main.ts", "--fake", "--port", String(PORT)], {
   stdout: "pipe",
   stderr: "pipe",
+  env: e2eEnv(),
 });
-const browser = await chromium.launch({ headless: true });
+const browser = await launchChromium();
 
 try {
   for (let i = 0; i < 80; i++) {

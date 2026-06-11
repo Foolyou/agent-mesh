@@ -1,5 +1,6 @@
 // Image-upload e2e over the fake server. Run: bun run src/web/images.e2e.ts
-import { chromium, type Page } from "playwright";
+import { type Page } from "playwright";
+import { launchChromium, e2eEnv } from "./e2e-playwright";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -46,8 +47,9 @@ await writeFile(big, Buffer.alloc(10 * 1024 * 1024 + 1));
 const server = Bun.spawn(["bun", "run", "src/main.ts", "--fake", "--port", String(PORT), "--root", root], {
   stdout: "pipe",
   stderr: "pipe",
+  env: e2eEnv(),
 });
-const browser = await chromium.launch({ headless: true });
+const browser = await launchChromium();
 try {
   await waitReady();
   const page: Page = await browser.newPage({ viewport: { width: 1440, height: 900 } });

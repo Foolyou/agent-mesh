@@ -97,6 +97,19 @@ test("GET /api/state returns the snapshot", async () => {
   expect(r.body.meshes[0].name).toBe("demo");
 });
 
+test("GET /api/harnesses probes harness installation on each request", async () => {
+  let calls = 0;
+  const harnessProbe = () => {
+    calls += 1;
+    return [{ id: "codex", installed: calls === 2 }];
+  };
+  const gw = new WebGateway(fakeManager() as any);
+  const first = await handleApi(gw, "GET", "/api/harnesses", undefined, new URLSearchParams(), harnessProbe as any);
+  const second = await handleApi(gw, "GET", "/api/harnesses", undefined, new URLSearchParams(), harnessProbe as any);
+  expect(first).toEqual({ status: 200, body: [{ id: "codex", installed: false }] });
+  expect(second).toEqual({ status: 200, body: [{ id: "codex", installed: true }] });
+});
+
 test("POST /api/meshes/demo/start delegates to startMesh", async () => {
   const m = fakeManager();
   const gw = new WebGateway(m as any);

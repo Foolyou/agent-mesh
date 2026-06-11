@@ -5,7 +5,7 @@
 import { reduceTranscript } from "./transcript";
 import { now } from "../acp/types";
 import { resolve } from "node:path";
-import type { AgentConfig, MeshConfig, MeshEdge, MeshEvent, AgentId, AgentStatus, AgentActivity, AgentTurn, PromptImageRef, ThinkingEffort } from "../acp/types";
+import type { AgentConfig, MeshConfig, MeshEdge, MeshEvent, AgentId, AgentStatus, AgentActivity, AgentTurn, PromptImageRef, ThinkingEffort, HarnessId } from "../acp/types";
 import type { StartMeshOptions } from "../mesh-manager";
 import { readUpload, storeUploads, uploadPath, type UploadFileLike } from "./uploads";
 import { AgentFileError, resolveAgentFile } from "./agent-files";
@@ -628,8 +628,8 @@ export class WebGateway {
     this.broadcast({ t: "assistant.status", status });
   }
 
-  setAssistantCapabilities(caps: { image: boolean }): void {
+  setAssistantCapabilities(caps: { image: boolean; harness?: HarnessId }): void {
     this.state.assistant.capabilities = caps;
-    this.broadcast({ t: "assistant.capabilities", image: caps.image });
+    this.broadcast({ t: "assistant.capabilities", image: caps.image, harness: caps.harness });
   }
 }

@@ -176,6 +176,8 @@ const DICT: Record<string, Entry> = {
   "build.agents": ["agents — exactly one router", "agents —— 恰好一个 router"],
   "build.addAgent": ["+ agent", "+ agent"],
   "build.deleteAgent": ["delete agent", "删除 agent"],
+  "build.harness.notInstalled": ["not installed", "未检测到"],
+  "build.harness.refreshFailed": ["harness detection failed", "harness 检测失败"],
   "build.instructions": ["role-specific instructions (optional)", "专属指令（可选）"],
   "build.instructions.placeholder": [
     "Only this agent sees this. Applies on the next start.",
