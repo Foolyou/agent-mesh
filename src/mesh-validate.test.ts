@@ -34,6 +34,15 @@ test("accepts arbitrary cached mode/model strings", () => {
   ).not.toThrow();
 });
 
+test("accepts bypass for supported harnesses and rejects invalid bypass fields", () => {
+  expect(() => validateMeshConfig({ ...ok, agents: [{ ...ok.agents[0], bypass: true }, { ...ok.agents[1], bypass: false }] })).not.toThrow();
+  expect(() => validateMeshConfig({ ...ok, agents: [{ ...ok.agents[0], bypass: "yes" as any }, ok.agents[1]] })).toThrow(/bypass/i);
+});
+
+test("rejects bypass on kimi because it has no permission bypass mechanism", () => {
+  expect(() => validateMeshConfig({ ...ok, agents: [{ ...ok.agents[0], harness: "kimi", bypass: true }, ok.agents[1]] })).toThrow(/bypass.*kimi/i);
+});
+
 test("rejects names containing '..' (path traversal)", () => {
   expect(() => validateMeshConfig({ ...ok, name: "a..b" })).toThrow(/name/i);
   expect(() => validateMeshConfig({ ...ok, name: ".." })).toThrow(/name/i);

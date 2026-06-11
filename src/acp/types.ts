@@ -42,6 +42,8 @@ export interface AgentConfig {
   lazy?: boolean;
   /** Optional reasoning/thinking effort; runtime-switched when supported, otherwise applied on restart. */
   effort?: ThinkingEffort;
+  /** Permission bypass request. Claude/OpenCode apply this at spawn; Codex maps it to full-access mode. Kimi does not support it. */
+  bypass?: boolean;
   /** Runtime-selected session mode cache. Applied best-effort after spawn when advertised. */
   mode?: string;
   /** Runtime-selected model cache. Applied best-effort after spawn when advertised. */

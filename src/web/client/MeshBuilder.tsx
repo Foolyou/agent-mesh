@@ -14,6 +14,7 @@ interface AgentDraft {
   project: string;
   model?: string;
   effort?: ThinkingEffort;
+  bypass?: boolean;
   lazy?: boolean;
   instructions?: string;
 }
@@ -146,6 +147,7 @@ function validate(name: string, agents: AgentDraft[], edges: EdgeDraft[]): strin
   if (routers.some((a) => a.lazy === true)) return "router agents cannot be lazy";
   for (const a of agents) {
     if (!a.project.trim()) return `agent "${a.id}" needs a project (working dir)`;
+    if (a.harness === "kimi" && a.bypass === true) return `agent "${a.id}" cannot enable bypass: kimi has no bypass mechanism`;
     const instructions = a.instructions?.trim();
     if (instructions && instructions.length > 4000) return `agent "${a.id}" instructions are too long (max 4000 chars)`;
   }
@@ -179,6 +181,7 @@ export function MeshBuilder({
           project: a.project,
           model: a.model,
           effort: a.effort,
+          bypass: a.bypass,
           lazy: a.lazy,
           instructions: a.instructions,
         }))
@@ -286,6 +289,7 @@ export function MeshBuilder({
     try {
       const normalizedAgents = agents.map(({ key: _key, ...a }) => ({
         ...a,
+        bypass: a.bypass === true ? true : undefined,
         instructions: a.instructions?.trim() || undefined,
       }));
       await store.defineMesh({ name, agents: normalizedAgents, edges, charter: charter.trim() || undefined });
@@ -551,7 +555,10 @@ export function MeshBuilder({
                       value={activeAgent.harness}
                       onFocus={() => void refreshHarnesses()}
                       title={harnessProbeErr ? t("build.harness.refreshFailed") : undefined}
-                      onChange={(e) => setAgent(activeIndex, { harness: e.target.value as HarnessId, model: undefined })}
+                      onChange={(e) => {
+                        const harness = e.target.value as HarnessId;
+                        setAgent(activeIndex, { harness, model: undefined, bypass: harness === "kimi" ? undefined : activeAgent.bypass });
+                      }}
                     >
                       {HARNESSES.map((h) => (
                         <option key={h} value={h} disabled={harnessInstalled[h] === false} title={harnessInstalled[h] === false ? t("build.harness.notInstalled") : undefined}>
@@ -618,6 +625,15 @@ export function MeshBuilder({
                         onChange={(e) => setAgent(activeIndex, { lazy: e.target.checked || undefined })}
                       />
                       {t("build.lazy")}
+                    </label>
+                    <label className="check-inline" title={activeAgent.harness === "kimi" ? t("bypass.hint.unsupported") : t("bypass.hint")}>
+                      <input
+                        type="checkbox"
+                        checked={activeAgent.bypass === true}
+                        disabled={activeAgent.harness === "kimi"}
+                        onChange={(e) => setAgent(activeIndex, { bypass: e.target.checked || undefined })}
+                      />
+                      {t("bypass")}
                     </label>
                   </div>
                   <div className="agent-instructions-field">

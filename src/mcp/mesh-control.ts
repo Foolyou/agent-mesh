@@ -66,6 +66,7 @@ const agentSchema = z.object({
   role: z.enum(["router", "member"]).describe("'router' (exactly one per mesh) or 'member'"),
   lazy: z.boolean().optional().describe("optional: start this non-router agent only on first mail or manual wake"),
   effort: z.enum(effortIds).optional().describe("optional: reasoning/thinking effort for this agent"),
+  bypass: z.boolean().optional().describe("optional: request permission bypass where the harness supports it; kimi is not supported"),
   mode: z.string().optional().describe("optional: runtime-selected session mode cache, applied best-effort after spawn"),
   model: z.string().optional().describe("optional: runtime-selected model cache, applied best-effort after spawn"),
   instructions: z

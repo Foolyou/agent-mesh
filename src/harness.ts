@@ -38,8 +38,13 @@ export function spawnConfigFor(a: AgentConfig): { command: string; args: string[
     const effort = a.effort ?? "low";
     return { command: spec.command, args: [...spec.args, "-c", `model_reasoning_effort=${effort}`], env: {} };
   }
-  if (a.harness === "claude" && a.effort) {
-    return { command: spec.command, args: spec.args, env: { MAX_THINKING_TOKENS: String(CLAUDE_THINK_TOKENS[a.effort]) } };
+  if (a.harness === "claude") {
+    const args = a.bypass ? [...spec.args, "--bypassPermissions"] : spec.args;
+    const env: Record<string, string> = a.effort ? { MAX_THINKING_TOKENS: String(CLAUDE_THINK_TOKENS[a.effort]) } : {};
+    return { command: spec.command, args, env };
+  }
+  if (a.harness === "opencode" && a.bypass) {
+    return { command: spec.command, args: spec.args, env: { OPENCODE_PERMISSION: '"allow"' } };
   }
   return { command: spec.command, args: spec.args, env: {} };
 }

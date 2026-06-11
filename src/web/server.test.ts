@@ -32,6 +32,7 @@ function fakeManager() {
     async setMode() {},
     async setModel() {},
     async setAgentEffort() {},
+    async setAgentBypass() {},
     async addEdge() {},
     async addAgent() {},
     interruptAgent() {},

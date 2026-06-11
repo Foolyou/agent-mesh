@@ -665,6 +665,45 @@ test("setEffort dynamically switches supported thought_level config options and 
   }
 });
 
+test("start applies codex bypass by switching to full-access mode", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mesh-control-plane-bypass-"));
+  class BypassModesConnection extends ResumeConnection {
+    async newSession(): Promise<unknown> {
+      return {
+        sessionId: "bypass-session",
+        modes: {
+          currentModeId: "read-only",
+          availableModes: [
+            { id: "read-only", name: "Read Only" },
+            { id: "full-access", name: "Full Access" },
+          ],
+        },
+      };
+    }
+  }
+  const config: MeshConfig = {
+    name: "bypass-start",
+    agents: [{ id: "router", harness: "codex", project: root, role: "router", bypass: true }],
+    edges: [],
+  };
+  let conn: ResumeConnection | undefined;
+  const cp = new ControlPlane(config, {
+    mailboxPath: join(root, "mailbox.ndjson"),
+    connectionFactory: (opts) => {
+      conn = new BypassModesConnection(opts);
+      return conn as unknown as AcpAgentConnection;
+    },
+  });
+  try {
+    await cp.start();
+    expect(conn?.setModes).toEqual(["full-access"]);
+    expect(cp.snapshotEvents()).toContainEqual(expect.objectContaining({ kind: "agent_modes", agent: "router", current: "full-access" }));
+  } finally {
+    await cp.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("start applies codex model plus default low effort and maps UI current to configOptions", async () => {
   const runDir = await mkdtemp(join(tmpdir(), "mesh-control-plane-model-run-"));
   const { root, cp, conn, events } = await startOneAgentWithModel({
