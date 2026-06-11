@@ -52,18 +52,18 @@ export class MeshAssistant {
   }
 
   async start(): Promise<void> {
-    this.mcp = await createMeshControlServer({ handlers: createMeshControlHandlers(this.manager) });
     const cwd = this.opts.cwd
       ? resolve(this.opts.cwd)
       : this.opts.project
         ? resolve(process.cwd(), this.opts.project)
         : resolve(process.cwd(), ".");
-    if (this.opts.cwd) await mkdir(cwd, { recursive: true });
     const connectionFactory = this.opts.connectionFactory ?? ((connOpts: AcpConnectionOptions) => new AcpAgentConnection(connOpts));
     const installed = this.opts.installedHarnesses ?? probeHarnesses();
     const installedIds = new Set(installed.filter((h) => h.installed).map((h) => h.id));
     const failures: string[] = [];
     try {
+      if (this.opts.cwd) await mkdir(cwd, { recursive: true });
+      this.mcp = await createMeshControlServer({ handlers: createMeshControlHandlers(this.manager) });
       for (const harness of assistantHarnessFallbackOrder(this.opts.harness)) {
         if (!installedIds.has(harness)) {
           failures.push(`${harness}: not installed`);
@@ -104,7 +104,7 @@ export class MeshAssistant {
       this.conn?.kill();
       this.conn = undefined;
       this.selectedHarness = undefined;
-      this.mcp.close();
+      this.mcp?.close();
       this.mcp = undefined;
       throw err;
     }

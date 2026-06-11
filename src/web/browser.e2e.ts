@@ -898,7 +898,7 @@ try {
     await page.locator('.modal .field:has(label:has-text("mesh name")) input').fill("squad-x");
     await page.locator('.modal .builder-tab:has-text("router")').click();
     const harnessSelect = page.locator(".modal .agent-block .agrow select").nth(0);
-    await harnessSelect.locator('option[value="kimi"]:has-text("not installed")').waitFor({ timeout: 4000 });
+    await harnessSelect.locator('option[value="kimi"]:has-text("not installed")').waitFor({ state: "attached", timeout: 4000 });
     if (!(await harnessSelect.locator('option[value="kimi"]').isDisabled())) throw new Error("uninstalled harness option was not disabled");
     const harnessOpts = await harnessSelect.locator("option").allTextContents();
     if (!harnessOpts.some((opt) => opt.includes("kimi"))) throw new Error(`builder harness options missing kimi: ${harnessOpts.join(",")}`);
