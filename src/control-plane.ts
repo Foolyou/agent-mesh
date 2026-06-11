@@ -563,21 +563,26 @@ export class ControlPlane {
         this.emit({ kind: "agent_modes", agent: a.id, current, available, ts: now() });
       }
       const configModel = deriveConfigOption(session, "model");
+      const standardModel = deriveStandardModels(session);
+      const displayModel = configModel?.available.length ? configModel : standardModel;
       let currentModel: string | undefined = desiredModel;
-      if (configModel?.available.length) {
-        currentModel = configModel.current;
-        if (desiredModel && configModel.available.some((mo) => mo.id === desiredModel)) {
+      if (displayModel?.available.length) {
+        currentModel = displayModel.current;
+        const desiredSetModel = desiredModel ? resolveDesiredModel(a, desiredModel, standardModel, configModel) : undefined;
+        if (desiredSetModel) {
           try {
-            await conn.setModel(desiredModel);
-            currentModel = desiredModel;
+            await conn.setModel(desiredSetModel);
+            currentModel = desiredSetModel;
           } catch (err) {
-            this.log(`set cached model ${a.id}=${desiredModel} failed: ${String(err)}`);
+            this.log(`set cached model ${a.id}=${desiredSetModel} failed: ${String(err)}`);
           }
         } else if (desiredModel) {
+          console.warn(`skip cached model ${a.id}=${desiredModel}: not advertised`);
           this.log(`skip cached model ${a.id}=${desiredModel}: not advertised`);
         }
-        this.sessionModels.set(a.id, { current: currentModel, available: configModel.available });
-        this.emit({ kind: "agent_models", agent: a.id, current: currentModel, available: configModel.available, ts: now() });
+        const eventCurrent = currentModel;
+        this.sessionModels.set(a.id, { current: eventCurrent, available: displayModel.available });
+        this.emit({ kind: "agent_models", agent: a.id, current: eventCurrent, available: displayModel.available, ts: now() });
       }
       if (this.sessionRunDir && typeof (session as any)?.sessionId === "string") {
         this.sessionState = await updateAgentSession(this.sessionRunDir, this.mesh.name, a.id, {
@@ -1114,6 +1119,39 @@ function deriveConfigOption(session: unknown, category: "mode" | "model"): { cur
     : [];
   const current = String(configOption.currentValue ?? available[0]?.id ?? "");
   return { current, available: available as Array<{ id: string; name: string; description?: string }> };
+}
+
+function deriveStandardModels(session: unknown): { current: string; available: Array<{ id: string; name: string }> } | undefined {
+  const models = (session as any)?.models;
+  const available = Array.isArray(models?.availableModels)
+    ? models.availableModels
+        .map((m: any) => {
+          const id = String(m?.modelId ?? "");
+          if (!id) return undefined;
+          return { id, name: String(m?.name ?? m?.modelId ?? id) };
+        })
+        .filter(Boolean)
+    : [];
+  if (!available.length) return undefined;
+  const current = String(models?.currentModelId ?? available[0]?.id ?? "");
+  return { current, available: available as Array<{ id: string; name: string }> };
+}
+
+function resolveDesiredModel(
+  agent: AgentConfig,
+  desiredModel: string,
+  standardModel: { available: Array<{ id: string }> } | undefined,
+  configModel: { available: Array<{ id: string }> } | undefined,
+): string | undefined {
+  const standardIds = new Set((standardModel?.available ?? []).map((m) => m.id));
+  const configIds = new Set((configModel?.available ?? []).map((m) => m.id));
+  if (agent.harness === "codex" && agent.effort) {
+    const combined = `${desiredModel}/${agent.effort}`;
+    if (standardIds.has(combined)) return combined;
+  }
+  if (standardIds.has(desiredModel)) return desiredModel;
+  if (!standardIds.size && configIds.has(desiredModel)) return desiredModel;
+  return undefined;
 }
 
 function edgeKey(from: AgentId, to: AgentId): string {
