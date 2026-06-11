@@ -8,7 +8,9 @@ export const DEMO_MESH: MeshConfig = {
   agents: [
     { id: "router", harness: "claude", project: "test_mesh_0", role: "router" },
     { id: "codex-1", harness: "codex", project: "test_mesh_0", role: "member" },
-    { id: "opencode-1", harness: "opencode", project: "test_mesh_0", role: "member" },
+    // Pin a live model: opencode's ACP default (opencode/big-pickle) is no longer
+    // served and prompts to it hang forever without an error.
+    { id: "opencode-1", harness: "opencode", project: "test_mesh_0", role: "member", model: "deepseek/deepseek-v4-flash" },
   ],
   edges: [
     { from: "codex-1", to: "opencode-1" },

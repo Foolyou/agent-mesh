@@ -3,18 +3,27 @@
 // fire-and-forget and assertions key off emitted events. Headless: permissions
 // are auto-resolved (simulating the human). Prints a pass/fail table and exits
 // non-zero on any failure.
-import { resolve } from "node:path";
-import { rm, stat } from "node:fs/promises";
+import { join, resolve } from "node:path";
+import { tmpdir } from "node:os";
+import { mkdtemp, rm, stat } from "node:fs/promises";
 import { MeshManager } from "./mesh-manager";
 import { DEMO_MESH } from "./config";
 
 const probe = resolve(process.cwd(), "test_mesh_0", "e2e-probe.txt");
 await rm(probe, { force: true });
 
-const manager = new MeshManager();
+// Isolated throwaway root: persisted sessions / mailbox / daemon registry from
+// earlier runs replay stale events (false mailSeen, resumed agents with stale
+// context) and a shared registry lets concurrent e2e runs SIGTERM each other.
+const root = await mkdtemp(join(tmpdir(), "mesh-e2e-"));
+
+const manager = new MeshManager({ root, debug: process.env.E2E_DEBUG === "1" });
 await manager.defineMesh(DEMO_MESH);
 
 const ready = new Set<string>();
+// Assertion flags only arm after startMesh completes: spawn-time events (mailbox
+// replay, session/load history replay) must not produce false positives.
+let live = false;
 let mailSeen = false;
 let recipientActivity = false;
 let permSeen = false;
@@ -25,16 +34,34 @@ let codexStreaming = false;
 const isChunk = (u: any) =>
   ["agent_message_chunk", "agent_thought_chunk", "tool_call"].includes(u?.sessionUpdate);
 
+// E2E_DEBUG=1: dump a compact NDJSON trace of every mesh event to stderr so flaky
+// failures can be diagnosed from timing (wake turn queued/started, log events, chunks).
+const t0 = Date.now();
+const traceEvent = (e: any) => {
+  const rec: Record<string, unknown> = { t: ((Date.now() - t0) / 1000).toFixed(1), kind: e.kind };
+  if (e.agent) rec.agent = e.agent;
+  if (e.kind === "update") rec.su = e.update?.sessionUpdate;
+  if (e.kind === "log") rec.text = e.text;
+  if (e.kind === "mail" || e.kind === "steer") { rec.from = e.from; rec.to = e.to; }
+  if (e.kind === "agent_turn") { rec.phase = e.phase; rec.agent = e.turn?.agent; rec.source = e.turn?.source; }
+  if (e.kind === "agent_status") { rec.status = e.status; if (e.detail) rec.detail = e.detail; }
+  if (e.kind === "agent_activity") rec.activity = e.activity;
+  if (e.kind === "permission" || e.kind === "permission_resolved") rec.req = (e as any).requestId;
+  console.error(`[trace] ${JSON.stringify(rec)}`);
+};
+
 manager.on((_name, e) => {
+  if (process.env.E2E_DEBUG === "1") traceEvent(e);
   if (e.kind === "agent_status" && e.status === "ready") ready.add(e.agent);
-  if (e.kind === "mail" && e.from === "codex-1" && e.to === "opencode-1") mailSeen = true;
-  if (mailSeen && e.kind === "update" && e.agent === "opencode-1" && isChunk(e.update)) recipientActivity = true;
-  if (e.kind === "update" && e.agent === "codex-1" && isChunk(e.update)) codexStreaming = true;
   if (e.kind === "permission") {
-    permSeen = true;
+    if (live) permSeen = true;
     const allow = e.options.find((o) => o.kind === "allow_once") ?? e.options[0];
     if (allow) setTimeout(() => manager.resolvePermission(DEMO_MESH.name, e.requestId, allow.id), 500);
   }
+  if (!live) return;
+  if (e.kind === "mail" && e.from === "codex-1" && e.to === "opencode-1") mailSeen = true;
+  if (mailSeen && e.kind === "update" && e.agent === "opencode-1" && isChunk(e.update)) recipientActivity = true;
+  if (e.kind === "update" && e.agent === "codex-1" && isChunk(e.update)) codexStreaming = true;
   if (e.kind === "permission_resolved" && e.by === "human") permResolvedHuman = true;
   if (e.kind === "interrupt" && e.target === "codex-1") interruptSeen = true;
 });
@@ -63,7 +90,9 @@ function printReport(): boolean {
 const watchdog = setTimeout(() => {
   console.error("\n[e2e] GLOBAL WATCHDOG fired — forcing report with partial results");
   printReport();
-  manager.stopAll().finally(() => process.exit(1));
+  manager.stopAll()
+    .finally(() => rm(root, { recursive: true, force: true }))
+    .finally(() => process.exit(1));
 }, 420_000);
 
 try {
@@ -75,6 +104,7 @@ try {
     ok: ready.size === DEMO_MESH.agents.length,
     detail: `ready: ${[...ready].join(", ")}`,
   });
+  live = true;
 
   // Point 3: inter-agent mailbox A -> B.
   hostPrompt(
@@ -131,6 +161,7 @@ try {
 } finally {
   clearTimeout(watchdog);
   await manager.stopAll();
+  await rm(root, { recursive: true, force: true });
 }
 
 const allOk = printReport();
