@@ -178,6 +178,11 @@ const DICT: Record<string, Entry> = {
   "build.deleteAgent": ["delete agent", "删除 agent"],
   "build.harness.notInstalled": ["not installed", "未检测到"],
   "build.harness.refreshFailed": ["harness detection failed", "harness 检测失败"],
+  "build.model.default": ["harness default", "harness 默认"],
+  "build.model.hint": ["model to apply when this agent starts", "该 agent 启动时应用的模型"],
+  "build.model.loading": ["loading models…", "正在加载模型…"],
+  "build.model.notAdvertised": ["not in probed list", "未在探测列表"],
+  "build.model.retry": ["model probe failed · retry", "模型探测失败 · 重试"],
   "build.instructions": ["role-specific instructions (optional)", "专属指令（可选）"],
   "build.instructions.placeholder": [
     "Only this agent sees this. Applies on the next start.",

@@ -64,6 +64,29 @@ try {
     if (m.type() === "error" && !/Failed to load resource/.test(m.text())) errors.push(m.text());
   });
   page.on("pageerror", (e) => errors.push(String(e)));
+  await page.route("**/api/harnesses/*/models**", (route) => {
+    const harness = route.request().url().match(/\/api\/harnesses\/([^/]+)\/models/)?.[1] ?? "unknown";
+    const models: Record<string, Array<{ id: string; name: string }>> = {
+      claude: [
+        { id: "claude-sonnet-4.5", name: "Claude Sonnet 4.5" },
+        { id: "claude-opus-4.1", name: "Claude Opus 4.1" },
+      ],
+      codex: [
+        { id: "gpt-5.4", name: "GPT 5.4" },
+        { id: "gpt-5.5", name: "GPT 5.5" },
+      ],
+      opencode: [
+        { id: "kimi-k2", name: "kimi-k2" },
+        { id: "deepseek-v3", name: "deepseek-v3" },
+      ],
+      kimi: [],
+    };
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ models: models[harness] ?? [], probedAt: 1234 }),
+    });
+  });
   await page.route("**/api/harnesses", (route) =>
     route.fulfill({
       status: 200,
@@ -918,11 +941,13 @@ try {
     await page
       .locator('.modal .field:has(label:has-text("team charter")) textarea')
       .fill("Goal: build a tiny CLI. Norms: be concise, write a test.");
-    // set the (claude) agent's thinking effort; mode/model are runtime-only pickers now.
+    // set the (claude) agent's startup model and thinking effort.
     await page.locator('.modal .builder-tab:has-text("router")').click();
     const adv = page.locator(".modal .agrow-adv .adv-sel");
-    if ((await adv.count()) !== 1) throw new Error("builder should render one effort selector on the active agent page and no mode/model selectors");
-    await adv.first().selectOption("high"); // effort
+    if ((await adv.count()) !== 2) throw new Error("builder should render model and effort selectors on the active agent page");
+    await adv.nth(0).locator('option[value="claude-sonnet-4.5"]').waitFor({ state: "attached", timeout: 4000 });
+    await adv.nth(0).selectOption("claude-sonnet-4.5"); // model
+    await adv.nth(1).selectOption("high"); // effort
     await page.locator('.modal .builder-tab:has-text("worker")').click();
     await page.locator(".modal .agent-block").locator('label:has-text("lazy start") input').check();
     await page.locator('.modal .builder-tab:has-text("overview")').click();
@@ -989,11 +1014,13 @@ try {
     if ((await page.locator('.modal .field:has(label:has-text("team charter")) textarea').inputValue()) !== longCharter) {
       throw new Error("expanded charter editor did not save back to the charter field");
     }
-    // effort round-trips from the saved config; mode/model are not editable in the builder.
+    // model and effort round-trip from the saved config.
     await page.locator('.modal .builder-tab:has-text("router")').click();
     const adv2 = page.locator(".modal .agrow-adv .adv-sel");
-    if ((await adv2.count()) !== 1) throw new Error("edit builder should render one effort selector on the active agent page and no mode/model selectors");
-    if ((await adv2.first().inputValue()) !== "high") throw new Error("effort not prefilled");
+    if ((await adv2.count()) !== 2) throw new Error("edit builder should render model and effort selectors on the active agent page");
+    await adv2.nth(0).locator('option[value="claude-sonnet-4.5"]').waitFor({ state: "attached", timeout: 4000 });
+    if ((await adv2.nth(0).inputValue()) !== "claude-sonnet-4.5") throw new Error("model not prefilled");
+    if ((await adv2.nth(1).inputValue()) !== "high") throw new Error("effort not prefilled");
     await page.locator('.modal .builder-tab:has-text("worker")').click();
     if (!(await page.locator(".modal .agent-block").locator('label:has-text("lazy start") input').isChecked())) {
       throw new Error("lazy checkbox not prefilled");
