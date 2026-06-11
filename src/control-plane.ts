@@ -550,7 +550,7 @@ export class ControlPlane {
     if (runtime && this.conns.has(id) && (!advertised || advertised.available.some((o) => o.id === effort))) {
       await this.agent(id).setConfigOption(runtime.configId, runtime.value);
       if (advertised) {
-        const next = { ...advertised, current: runtime.value };
+        const next = { ...advertised, current: effort ?? runtime.value };
         this.sessionEfforts.set(id, next);
         this.emit({ kind: "agent_efforts", agent: id, configId: next.configId, current: next.current, available: next.available, ts: now() });
       }
@@ -833,8 +833,10 @@ export class ControlPlane {
         if (desiredEffort && configEffort.available.some((o) => o.id === desiredEffort)) {
           try {
             const runtime = runtimeEffortConfig(a.harness, desiredEffort, configEffort);
-            if (runtime) await conn.setConfigOption(runtime.configId, runtime.value);
-            currentEffort = desiredEffort;
+            if (runtime) {
+              await conn.setConfigOption(runtime.configId, runtime.value);
+              currentEffort = desiredEffort;
+            }
           } catch (err) {
             this.log(`set cached effort ${a.id}=${desiredEffort} failed: ${String(err)}`);
           }

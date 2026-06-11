@@ -710,6 +710,58 @@ test("start emits advertised runtime effort options and setEffort uses their con
   }
 });
 
+test("claude runtime effort can select advertised values outside static config support", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mesh-control-plane-claude-xhigh-effort-"));
+  class ClaudeXhighConnection extends ConfigOptionsConnection {
+    async newSession(): Promise<unknown> {
+      return {
+        sessionId: "claude-xhigh-session",
+        configOptions: [
+          {
+            id: "thought_level",
+            currentValue: "low",
+            options: [{ value: "low", name: "Low" }, { value: "xhigh", name: "X High" }],
+          },
+        ],
+      };
+    }
+  }
+  const config: MeshConfig = {
+    name: "claude-xhigh-effort",
+    agents: [{ id: "claude", harness: "claude", project: root, role: "router" }],
+    edges: [],
+  };
+  const events: any[] = [];
+  let created: ClaudeXhighConnection | undefined;
+  const cp = new ControlPlane(config, {
+    mailboxPath: join(root, "mailbox.ndjson"),
+    connectionFactory: (opts) => {
+      created = new ClaudeXhighConnection(opts);
+      return created as unknown as AcpAgentConnection;
+    },
+  });
+  cp.on((e) => events.push(e));
+
+  try {
+    await cp.start();
+    expect(events.find((e) => e.kind === "agent_efforts" && e.agent === "claude")).toMatchObject({
+      configId: "thought_level",
+      current: "low",
+      available: [{ id: "low", name: "Low" }, { id: "xhigh", name: "X High" }],
+    });
+
+    await cp.setEffort("claude", "xhigh" as any);
+    expect(created?.setConfigOptions).toContainEqual({ configId: "thought_level", value: "xhigh" });
+    expect(events.filter((e) => e.kind === "agent_efforts" && e.agent === "claude").at(-1)).toMatchObject({
+      current: "xhigh",
+      available: [{ id: "low", name: "Low" }, { id: "xhigh", name: "X High" }],
+    });
+  } finally {
+    await cp.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("kimi runtime effort uses advertised thinking values behind low/high UI options", async () => {
   const root = await mkdtemp(join(tmpdir(), "mesh-control-plane-kimi-effort-options-"));
   class KimiThinkingConnection extends ConfigOptionsConnection {
@@ -753,6 +805,10 @@ test("kimi runtime effort uses advertised thinking values behind low/high UI opt
 
     await cp.setEffort("kimi", "low");
     expect(created?.setConfigOptions).toContainEqual({ configId: "thinking", value: "disabled" });
+    expect(events.filter((e) => e.kind === "agent_efforts" && e.agent === "kimi").at(-1)).toMatchObject({
+      current: "low",
+      available: [{ id: "low", name: "low" }, { id: "high", name: "high" }],
+    });
   } finally {
     await cp.stop();
     await rm(root, { recursive: true, force: true });
