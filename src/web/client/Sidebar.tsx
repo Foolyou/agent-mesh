@@ -1,4 +1,4 @@
-// Left column = the TUI "top context": the mesh list (lifecycle) + master-agent chat.
+// Left column = the TUI "top context": the mesh list (lifecycle) + mesh-assistant chat.
 import { useEffect, useState } from "react";
 import type { Store } from "./store";
 import type { GatewayState, MeshSummary } from "../types";
@@ -130,7 +130,7 @@ function MeshList({
   );
 }
 
-function MasterChat({
+function AssistantChat({
   state,
   store,
   isFullscreen,
@@ -142,11 +142,11 @@ function MasterChat({
   onToggleFull: () => void;
 }) {
   const { t } = useI18n();
-  const st = state.master.status;
+  const st = state.assistant.status;
   const absent = st === "absent";
   const fullLabel = isFullscreen ? t("exit") : t("full");
   return (
-    <div className={`panel master-chat ${isFullscreen ? "master-full" : ""}`}>
+    <div className={`panel assistant-chat ${isFullscreen ? "assistant-full" : ""}`}>
       <div className="head">
         <span className="ttl">{t("conductor")}</span>
         <span className="row" style={{ gap: 6 }}>
@@ -165,16 +165,16 @@ function MasterChat({
           <Empty>{t("conductor.absent")}</Empty>
         ) : (
           <ChatPane
-            items={state.master.transcript}
+            items={state.assistant.transcript}
             placeholder={st === "ready" ? t("conductor.placeholder") : t("conductor.starting")}
             disabled={st !== "ready"}
-            working={!!state.master.working}
-            imageEnabled={!!state.master.capabilities?.image}
-            imageDisabledReason="The master agent does not advertise image input support"
-            onUploadImages={(files) => store.uploadImages("master", files)}
-            onInterrupt={st === "ready" ? () => store.interruptMaster() : undefined}
+            working={!!state.assistant.working}
+            imageEnabled={!!state.assistant.capabilities?.image}
+            imageDisabledReason="The Mesh Assistant does not advertise image input support"
+            onUploadImages={(files) => store.uploadImages("assistant", files)}
+            onInterrupt={st === "ready" ? () => store.interruptAssistant() : undefined}
             onSend={(msg, images, opts) =>
-              opts?.steer ? void store.promptMaster(msg, images) : void store.promptMaster(msg, images)
+              opts?.steer ? void store.promptAssistant(msg, images) : void store.promptAssistant(msg, images)
             }
           />
         )}
@@ -189,21 +189,21 @@ export function Sidebar({
   selected,
   onSelect,
   onNewMesh,
-  masterFullscreen,
-  onToggleMasterFull,
+  assistantFullscreen,
+  onToggleAssistantFull,
 }: {
   state: GatewayState;
   store: Store;
   selected: string | null;
   onSelect: (n: string) => void;
   onNewMesh: () => void;
-  masterFullscreen: boolean;
-  onToggleMasterFull: () => void;
+  assistantFullscreen: boolean;
+  onToggleAssistantFull: () => void;
 }) {
   return (
     <div className="sidebar">
       <MeshList state={state} store={store} selected={selected} onSelect={onSelect} onNewMesh={onNewMesh} />
-      <MasterChat state={state} store={store} isFullscreen={masterFullscreen} onToggleFull={onToggleMasterFull} />
+      <AssistantChat state={state} store={store} isFullscreen={assistantFullscreen} onToggleFull={onToggleAssistantFull} />
     </div>
   );
 }

@@ -18,7 +18,7 @@ function seed(): GatewayState {
         edges: [{ from: "router", to: "codex-1" }],
       },
     ],
-    master: { status: "ready", transcript: [] },
+    assistant: { status: "ready", transcript: [] },
     perMesh: {
       demo: { config: { name: "demo", agents: [], edges: [] }, transcripts: {}, activity: [], mail: [], pending: [], history: [], modes: {}, models: {}, capabilities: {}, queues: {} },
     },
@@ -112,13 +112,13 @@ test("transcript.upsert then patch on an agent conv", () => {
   expect((s.perMesh.demo.transcripts.router[0] as any).text).toBe("hi there");
 });
 
-test("transcript op on master conv targets the master transcript", () => {
+test("transcript op on assistant conv targets the assistant transcript", () => {
   const s = applyMsg(seed(), {
     t: "transcript.upsert",
-    conv: { scope: "master" },
+    conv: { scope: "assistant" },
     item: { id: "m1", kind: "message", role: "user", text: "go", ts: "T", complete: true },
   });
-  expect((s.master.transcript[0] as any).text).toBe("go");
+  expect((s.assistant.transcript[0] as any).text).toBe("go");
 });
 
 test("activity and mail append to lists", () => {
@@ -172,9 +172,9 @@ test("permission add then remove updates pending + history", () => {
   expect(s.perMesh.demo.history).toHaveLength(1);
 });
 
-test("master.status updates", () => {
-  const s = applyMsg(seed(), { t: "master.status", status: "absent" });
-  expect(s.master.status).toBe("absent");
+test("assistant.status updates", () => {
+  const s = applyMsg(seed(), { t: "assistant.status", status: "absent" });
+  expect(s.assistant.status).toBe("absent");
 });
 
 test("events for an unknown mesh auto-create a perMesh container", () => {

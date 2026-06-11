@@ -79,7 +79,7 @@ const shim = join(bin, "codex-acp");
 await writeFile(shim, `#!/usr/bin/env bash\nexec bun ${JSON.stringify(resolve(REPO, "src", "fixtures", "resume-acp.ts"))}\n`, "utf8");
 await chmod(shim, 0o700);
 
-let backend = Bun.spawn(["bun", "run", "src/main.ts", "backend", "--no-master", "--port", String(PORT), "--root", ROOT], {
+let backend = Bun.spawn(["bun", "run", "src/main.ts", "backend", "--no-assistant", "--port", String(PORT), "--root", ROOT], {
   cwd: REPO,
   env: {
     ...process.env,

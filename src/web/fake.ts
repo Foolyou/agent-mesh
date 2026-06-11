@@ -1,4 +1,4 @@
-// In-memory fake manager + master for `--fake` mode: drives a scripted scenario
+// In-memory fake manager + assistant for `--fake` mode: drives a scripted scenario
 // (streamed messages, a thought, a tool call with status transitions, inter-agent
 // mail, a permission escalation, and an interrupt) so every widget can be exercised
 // in the browser without spawning real agents. Doubles as a zero-dependency demo.
@@ -319,7 +319,7 @@ export class FakeManager {
   }
 }
 
-export class FakeMaster {
+export class FakeAssistant {
   private listeners = new Set<(u: any) => void>();
   on(l: (u: any) => void): () => void {
     this.listeners.add(l);

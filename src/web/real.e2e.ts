@@ -44,7 +44,7 @@ async function getState(): Promise<any> {
   return (await fetch(BASE + "/api/state")).json();
 }
 
-const server = Bun.spawn(["bun", "run", "src/main.ts", "--no-master", "--port", String(PORT)], {
+const server = Bun.spawn(["bun", "run", "src/main.ts", "--no-assistant", "--port", String(PORT)], {
   stdout: "inherit",
   stderr: "inherit",
 });

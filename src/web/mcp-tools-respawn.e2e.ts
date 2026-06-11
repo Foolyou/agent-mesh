@@ -120,7 +120,7 @@ const shim = join(bin, "codex-acp");
 await writeFile(shim, `#!/usr/bin/env bash\nexec bun ${JSON.stringify(resolve(REPO, "src", "fixtures", "mcp-probe-acp.ts"))}\n`, "utf8");
 await chmod(shim, 0o700);
 
-const backend = Bun.spawn(["bun", "run", "src/main.ts", "backend", "--no-master", "--port", String(PORT), "--root", ROOT], {
+const backend = Bun.spawn(["bun", "run", "src/main.ts", "backend", "--no-assistant", "--port", String(PORT), "--root", ROOT], {
   cwd: REPO,
   env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}`, MESH_API_PORT: "" },
   stdout: "pipe",

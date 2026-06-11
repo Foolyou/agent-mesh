@@ -1,4 +1,4 @@
-// src/master-agent.ts
+// src/mesh-assistant.ts
 // Optional LLM control layer: a configurable ACP agent whose only tools are the
 // mesh-control lifecycle tools. The system runs fully without it.
 import { mkdir } from "node:fs/promises";
@@ -6,15 +6,15 @@ import { resolve } from "node:path";
 import { AcpAgentConnection, type AcpConnectionOptions } from "./acp/client";
 import type { HarnessId, PromptImageRef } from "./acp/types";
 import { resolveHarness } from "./harness";
-import { buildMasterBriefing } from "./master-briefing";
+import { buildMeshAssistantBriefing } from "./mesh-assistant-briefing";
 import { createMeshControlHandlers, createMeshControlServer, type MeshControlServer } from "./mcp/mesh-control";
 import type { MeshManager } from "./mesh-manager";
 
-export class MasterAgent {
+export class MeshAssistant {
   private conn?: AcpAgentConnection;
   private mcp?: MeshControlServer;
   private listeners = new Set<(u: any) => void>();
-  /** Whether the master agent advertised image input (promptCapabilities.image). */
+  /** Whether the Mesh Assistant advertised image input (promptCapabilities.image). */
   private imageCap = false;
   private _busy = false;
   private briefed = false;
@@ -33,12 +33,12 @@ export class MasterAgent {
     } = {},
   ) {}
 
-  /** Whether the master agent has an in-flight turn. */
+  /** Whether the Mesh Assistant has an in-flight turn. */
   get busy(): boolean {
     return this._busy;
   }
 
-  /** Subscribe to the master agent's streamed session updates. */
+  /** Subscribe to the Mesh Assistant's streamed session updates. */
   on(listener: (u: any) => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
@@ -56,7 +56,7 @@ export class MasterAgent {
       if (this.opts.cwd) await mkdir(cwd, { recursive: true });
       const connectionFactory = this.opts.connectionFactory ?? ((connOpts: AcpConnectionOptions) => new AcpAgentConnection(connOpts));
       this.conn = connectionFactory({
-        id: "master",
+        id: "assistant",
         command: spec.command,
         args: spec.args,
         cwd,
@@ -82,10 +82,10 @@ export class MasterAgent {
     }
   }
 
-  /** Feed a natural-language instruction to the master agent. Image blocks are dropped if the
-   *  master agent did not advertise image input (otherwise the turn would be rejected). */
+  /** Feed a natural-language instruction to the Mesh Assistant. Image blocks are dropped if the
+   *  Mesh Assistant did not advertise image input (otherwise the turn would be rejected). */
   prompt(text: string, images: PromptImageRef[] = []): Promise<unknown> {
-    if (!this.conn) throw new Error("master agent not started");
+    if (!this.conn) throw new Error("Mesh Assistant not started");
     this._busy = true;
     const imgs = this.imageCap ? images : [];
     const promptText = this.compose(text);
@@ -97,10 +97,10 @@ export class MasterAgent {
   private compose(text: string): string {
     if (this.briefed) return text;
     this.briefed = true;
-    return `${buildMasterBriefing()}\n\n---\n\nUser request:\n\n${text}`;
+    return `${buildMeshAssistantBriefing()}\n\n---\n\nUser request:\n\n${text}`;
   }
 
-  /** Cancel the master agent's current in-flight turn. No-op when idle. */
+  /** Cancel the Mesh Assistant's current in-flight turn. No-op when idle. */
   cancel(): void {
     if (!this.conn || !this._busy) return;
     this.conn.cancel().catch(() => {});

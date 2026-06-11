@@ -166,7 +166,7 @@ body::after {
 .sidebar {
   border-right: 1px solid var(--line);
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr); /* mesh list (≤4 + pager) sizes to content; master fills */
+  grid-template-rows: auto minmax(0, 1fr); /* mesh list (≤4 + pager) sizes to content; assistant fills */
   min-height: 0;
   min-width: 0;
   overflow: hidden;
@@ -259,7 +259,7 @@ body::after {
   flex-direction: column;
   overflow: hidden;
 }
-.master-chat.master-full {
+.assistant-chat.assistant-full {
   position: fixed;
   inset: 0;
   z-index: 121;
@@ -268,10 +268,10 @@ body::after {
   height: var(--mesh-vvh, 100dvh);
   width: 100vw;
 }
-.master-chat.master-full > .head {
+.assistant-chat.assistant-full > .head {
   flex: none;
 }
-.master-chat.master-full > .scroll-pane {
+.assistant-chat.assistant-full > .scroll-pane {
   min-height: 0;
   flex: 1;
   overflow: hidden;
@@ -2193,7 +2193,7 @@ select.inp {
     flex: 1 1 auto;
     min-height: 0;
   }
-  /* overview: mesh list sizes to content, master chat takes the rest */
+  /* overview: mesh list sizes to content, assistant chat takes the rest */
   .sidebar {
     border-right: none;
     grid-template-rows: auto minmax(160px, 1fr);

@@ -1,5 +1,5 @@
 // e2e for the built-in service manager (`mesh up/down/status/restart`). Drives the source
-// CLI with --fake --no-master (no real agents) so it's fast, and asserts the backend is
+// CLI with --fake --no-assistant (no real agents) so it's fast, and asserts the backend is
 // background-started, reported, restarted, and stopped under a base dir.
 // Run: bun run src/web/service.e2e.ts
 import { mkdtemp, rm, readFile } from "node:fs/promises";
@@ -37,7 +37,7 @@ async function mesh(...args: string[]): Promise<{ code: number; out: string }> {
   ]);
   return { code, out: out + err };
 }
-const SVC = ["--fake", "--no-master"];
+const SVC = ["--fake", "--no-assistant"];
 const healthy = async () => {
   try {
     return (await fetch(`http://127.0.0.1:${PORT}/api/state`, { signal: AbortSignal.timeout(2000) })).ok;

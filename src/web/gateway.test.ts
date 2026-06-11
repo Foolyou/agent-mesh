@@ -545,11 +545,11 @@ test("agent_activity updates the mesh summary agent row and broadcasts", () => {
   expect(got).toContainEqual({ t: "agent.activity", name: "demo", agent: "codex-1", activity: "working" });
 });
 
-test("promptMaster throws when no master is configured", () => {
+test("promptAssistant throws when no assistant is configured", () => {
   const m = fakeManager();
   const gw = new WebGateway(m as any);
-  expect(gw.snapshot().master.status).toBe("absent");
-  expect(gw.promptMaster("hi")).rejects.toThrow();
+  expect(gw.snapshot().assistant.status).toBe("absent");
+  expect(gw.promptAssistant("hi")).rejects.toThrow();
 });
 
 test("deleteMesh delegates and prunes perMesh state", async () => {

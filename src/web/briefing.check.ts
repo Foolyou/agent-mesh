@@ -18,7 +18,7 @@ async function post(path: string, body?: unknown) {
   return { status: r.status, body: await r.json().catch(() => ({})) };
 }
 
-const server = Bun.spawn(["bun", "run", "src/main.ts", "--no-master", "--port", String(PORT)], {
+const server = Bun.spawn(["bun", "run", "src/main.ts", "--no-assistant", "--port", String(PORT)], {
   stdout: "ignore",
   stderr: "ignore",
 });

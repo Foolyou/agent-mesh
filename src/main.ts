@@ -3,20 +3,20 @@
 //   mesh backend [--port] headless control plane: REST API + WS only
 //   mesh web [--port] [--backend URL]   SPA + reverse-proxy /api + /ws to a backend
 //
-// Flags: --fake (scripted demo, no real agents), --no-master (skip the master agent),
-//        --master-harness <codex|claude|opencode|kimi> (Mesh Assistant harness).
+// Flags: --fake (scripted demo, no real agents), --no-assistant (skip the Mesh Assistant),
+//        --assistant-harness <codex|claude|opencode|kimi> (Mesh Assistant harness).
 // The subprocess-per-mesh model is unchanged; the backend (or combined) process owns
 // MeshManager and reaps the whole mesh-host subprocess tree on exit.
 import { MeshManager } from "./mesh-manager";
-import { MasterAgent } from "./master-agent";
+import { MeshAssistant } from "./mesh-assistant";
 import { WebGateway } from "./web/gateway";
 import { startWebServer } from "./web/server";
 import { startApiServer } from "./web/api-server";
-import { FakeManager, FakeMaster } from "./web/fake";
+import { FakeManager, FakeAssistant } from "./web/fake";
 import { runMeshHost } from "./mesh-host";
 import { resolveRoot, expandHome } from "./root";
 import { uploadRoot } from "./web/uploads";
-import { masterHarnessPassthrough, parseMasterHarness } from "./cli-options";
+import { assistantCliDeprecationWarnings, assistantHarnessPassthrough, noAssistantSelected, parseAssistantHarness } from "./cli-options";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import * as service from "./service";
@@ -39,8 +39,9 @@ const has = (f: string) => process.argv.includes(f);
 const sub = process.argv[2];
 const cmd = sub && !sub.startsWith("-") ? sub : "all";
 const fake = has("--fake");
-const noMaster = has("--no-master");
-const masterHarness = parseMasterHarness(process.argv);
+const noAssistant = noAssistantSelected(process.argv);
+for (const warning of assistantCliDeprecationWarnings(process.argv)) console.warn(warning);
+const assistantHarness = parseAssistantHarness(process.argv);
 
 const root = resolveRoot();
 // the base dir we'd pass back as --root so a re-spawned backend resolves to the same root
@@ -55,12 +56,12 @@ async function buildGateway() {
   // the UI's empty state guides first-run mesh creation. `--fake` provides the demo.)
   if (!fake) await manager.loadDefinitions();
   let gateway: WebGateway;
-  const master: any = fake
-    ? new FakeMaster()
-    : noMaster
+  const assistant: any = fake
+    ? new FakeAssistant()
+    : noAssistant
       ? undefined
-      : new MasterAgent(manager, { cwd: join(root, "assistant"), harness: masterHarness, uploadRoot: uploadRoot(root), onCapabilities: (caps) => gateway?.setMasterCapabilities(caps) });
-  gateway = new WebGateway(manager, master, { root });
+      : new MeshAssistant(manager, { cwd: join(root, "assistant"), harness: assistantHarness, uploadRoot: uploadRoot(root), onCapabilities: (caps) => gateway?.setAssistantCapabilities(caps) });
+  gateway = new WebGateway(manager, assistant, { root });
   if (!fake) {
     // Reconnect to any mesh daemons that outlived a previous backend (the whole point of
     // the daemon model): their agents kept running; we re-attach and the daemon replays
@@ -69,15 +70,15 @@ async function buildGateway() {
     if (back.length) console.log(`  reattached to running mesh(es): ${back.join(", ")}`);
   }
   if (fake) {
-    gateway.setMasterStatus("ready");
-    gateway.setMasterCapabilities({ image: true });
-  } else if (master) {
-    master
+    gateway.setAssistantStatus("ready");
+    gateway.setAssistantCapabilities({ image: true });
+  } else if (assistant) {
+    assistant
       .start()
-      .then(() => gateway.setMasterStatus("ready"))
-      .catch(() => gateway.setMasterStatus("absent"));
+      .then(() => gateway.setAssistantStatus("ready"))
+      .catch(() => gateway.setAssistantStatus("absent"));
   }
-  return { manager, master, gateway };
+  return { manager, assistant, gateway };
 }
 
 function reapOnExit(stop: () => Promise<void> | void) {
@@ -98,8 +99,8 @@ function reapOnExit(stop: () => Promise<void> | void) {
 // ── service management (background backend under a root) ─────────────────────────
 const svcPort = Number(process.env.MESH_PORT) || Number(argVal("--port")) || 10010;
 const svcCold = has("--cold");
-// flags forwarded to the spawned backend (so `mesh up --fake --no-master` works)
-const svcPass = [...(fake ? ["--fake"] : []), ...(noMaster ? ["--no-master"] : []), ...masterHarnessPassthrough(masterHarness)];
+// flags forwarded to the spawned backend (so `mesh up --fake --no-assistant` works)
+const svcPass = [...(fake ? ["--fake"] : []), ...(noAssistant ? ["--no-assistant"] : []), ...assistantHarnessPassthrough(assistantHarness)];
 if (cmd === "up" || cmd === "start") {
   await service.up(base, root, svcPort, { cold: svcCold, passthrough: svcPass });
 } else if (cmd === "down" || cmd === "stop") {
@@ -131,14 +132,14 @@ if (cmd === "up" || cmd === "start") {
   }
 } else if (cmd === "backend") {
   const port = Number(process.env.MESH_API_PORT) || Number(argVal("--port")) || 7300;
-  const { manager, master, gateway } = await buildGateway();
+  const { manager, assistant, gateway } = await buildGateway();
   const server = startApiServer(gateway, { port, hostname });
   console.log(`\n  mesh backend (REST + WS) → ${server.url}${fake ? "  (fake)" : `  · root: ${root}`}\n`);
   reapOnExit(async () => {
     server.stop();
     gateway.dispose();
     manager.disconnectAll?.(); // leave mesh daemons running for the next backend to reattach
-    await master?.stop?.();
+    await assistant?.stop?.();
   });
 } else if (cmd === "web") {
   const port = Number(process.env.MESH_WEB_PORT) || Number(argVal("--port")) || 7317;
@@ -149,14 +150,14 @@ if (cmd === "up" || cmd === "start") {
 } else {
   // default: combined single process
   const port = Number(process.env.MESH_WEB_PORT) || Number(argVal("--port")) || 7317;
-  const { manager, master, gateway } = await buildGateway();
+  const { manager, assistant, gateway } = await buildGateway();
   const server = startWebServer({ port, gateway, hostname });
   console.log(`\n  agent-mesh web console → ${server.url}${fake ? "  (fake mode)" : `  · root: ${root}`}\n`);
   reapOnExit(async () => {
     server.stop();
     gateway.dispose();
     manager.disconnectAll?.(); // leave mesh daemons running for the next backend to reattach
-    await master?.stop?.();
+    await assistant?.stop?.();
   });
   }
 }

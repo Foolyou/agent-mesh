@@ -269,10 +269,22 @@ test("unknown route returns 404", async () => {
   expect(r.status).toBe(404);
 });
 
-test("POST /api/master/prompt returns 409 when master absent", async () => {
+test("POST /api/assistant/prompt returns 409 when assistant absent", async () => {
+  const gw = new WebGateway(fakeManager() as any);
+  const r = await handleApi(gw, "POST", "/api/assistant/prompt", { text: "hi" });
+  expect(r.status).toBe(409);
+});
+
+test("POST /api/master/prompt remains a legacy alias for assistant prompt", async () => {
   const gw = new WebGateway(fakeManager() as any);
   const r = await handleApi(gw, "POST", "/api/master/prompt", { text: "hi" });
   expect(r.status).toBe(409);
+});
+
+test("POST /api/master/interrupt remains a legacy alias for assistant interrupt", async () => {
+  const gw = new WebGateway(fakeManager() as any);
+  const r = await handleApi(gw, "POST", "/api/master/interrupt", {});
+  expect(r.status).toBe(200);
 });
 
 test("POST and GET /api/uploads store and serve safe image files", async () => {

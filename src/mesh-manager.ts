@@ -1,6 +1,6 @@
 // src/mesh-manager.ts
 // The deterministic global control plane. Owns mesh definitions (via MeshStore)
-// and supervises one MeshHostClient per running mesh. Independent of the master
+// and supervises one MeshHostClient per running mesh. Independent of the assistant
 // agent: callable from the TUI, tests, and e2e.
 import { resolve, join } from "node:path";
 import { rm } from "node:fs/promises";

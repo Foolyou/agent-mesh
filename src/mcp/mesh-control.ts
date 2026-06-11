@@ -1,5 +1,5 @@
 // src/mcp/mesh-control.ts
-// MCP server injected into the master agent: lifecycle tools that wrap the
+// MCP server injected into the Mesh Assistant: lifecycle tools that wrap the
 // deterministic MeshManager. Errors are returned as text so the LLM can correct.
 import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -57,11 +57,21 @@ export function createMeshControlHandlers(manager: MeshManager): MeshControlHand
   };
 }
 
+const effortIds = ["minimal", "low", "medium", "high"] as const;
+
 const agentSchema = z.object({
   id: z.string(),
   harness: z.enum(harnessIds).describe("agent harness type"),
   project: z.string().describe("working directory"),
   role: z.enum(["router", "member"]).describe("'router' (exactly one per mesh) or 'member'"),
+  lazy: z.boolean().optional().describe("optional: start this non-router agent only on first mail or manual wake"),
+  effort: z.enum(effortIds).optional().describe("optional: reasoning/thinking effort for this agent"),
+  mode: z.string().optional().describe("optional: runtime-selected session mode cache, applied best-effort after spawn"),
+  model: z.string().optional().describe("optional: runtime-selected model cache, applied best-effort after spawn"),
+  instructions: z
+    .string()
+    .optional()
+    .describe("optional role-specific instructions injected only into this agent's briefing"),
 });
 const edgeSchema = z.union([
   z.tuple([z.string(), z.string()]),

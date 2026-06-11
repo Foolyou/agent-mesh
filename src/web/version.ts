@@ -1,6 +1,8 @@
 import { readFileSync, statSync } from "node:fs";
 import { basename } from "node:path";
 
+const WIRE_PROTOCOL_VERSION = "assistant-wire-v1";
+
 export function appVersionFrom(input: { env?: Record<string, string | undefined>; candidates?: (string | undefined)[] } = {}): string {
   const env = input.env ?? process.env;
   const explicit = env.MESH_BUILD_ID || env.MESH_VERSION;
@@ -28,5 +30,9 @@ export function appVersionFrom(input: { env?: Record<string, string | undefined>
 
 export function defaultAppVersion(): string {
   const main = (globalThis.Bun as typeof Bun | undefined)?.main;
-  return appVersionFrom({ candidates: [process.argv[1], main] });
+  return defaultAppVersionFrom(appVersionFrom({ candidates: [process.argv[1], main] }));
+}
+
+export function defaultAppVersionFrom(base: string): string {
+  return `${base}:${WIRE_PROTOCOL_VERSION}`;
 }

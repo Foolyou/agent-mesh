@@ -78,9 +78,9 @@ test("jump-to-bottom control keeps a touch-sized target clear of scrollbars", ()
 test("root layout height follows the visual viewport variable", () => {
   const root = blockFor("html,\nbody,\n#root");
   const app = blockFor(".app");
-  const fullscreenMaster = blockFor(".master-chat.master-full");
+  const fullscreenAssistant = blockFor(".assistant-chat.assistant-full");
 
   expect(root).toContain("height: var(--mesh-vvh, 100dvh)");
   expect(app).toContain("height: var(--mesh-vvh, 100dvh)");
-  expect(fullscreenMaster).toContain("height: var(--mesh-vvh, 100dvh)");
+  expect(fullscreenAssistant).toContain("height: var(--mesh-vvh, 100dvh)");
 });

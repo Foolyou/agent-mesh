@@ -106,6 +106,23 @@ test("create and update mesh expose simple object-edge schemas for ACP harness c
   }
 });
 
+test("create and update mesh expose optional per-agent configuration fields", async () => {
+  server = await createMeshControlServer({ handlers: createMeshControlHandlers(mgr) });
+  const session = await initialize(server.url);
+  const schemas = await listToolSchemas(server.url, session);
+
+  for (const name of ["create_mesh", "update_mesh"]) {
+    const tool = schemas.find((t) => t.name === name);
+    expect(tool).toBeTruthy();
+    const agentProps = tool!.inputSchema.properties.agents.items.properties;
+    expect(agentProps.instructions.type).toBe("string");
+    expect(agentProps.lazy.type).toBe("boolean");
+    expect(agentProps.effort.enum).toEqual(["minimal", "low", "medium", "high"]);
+    expect(agentProps.mode.type).toBe("string");
+    expect(agentProps.model.type).toBe("string");
+  }
+});
+
 test("startMesh can request fresh sessions via handlers", async () => {
   const h = createMeshControlHandlers(mgr);
   await h.createMesh(cfg);

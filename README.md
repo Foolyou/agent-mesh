@@ -76,8 +76,8 @@ Common options:
 |---|---|
 | `bun run mesh` | Run the combined web console and backend. |
 | `bun run mesh --fake` | Run a scripted demo with fake agents. |
-| `bun run mesh --no-master` | Skip the natural-language Mesh Assistant. |
-| `bun run mesh --master-harness claude` | Choose the Mesh Assistant harness. Supported: `codex`, `claude`, `opencode`, `kimi`. |
+| `bun run mesh --no-assistant` | Skip the natural-language Mesh Assistant. |
+| `bun run mesh --assistant-harness claude` | Choose the Mesh Assistant harness. Supported: `codex`, `claude`, `opencode`, `kimi`. |
 | `bun run mesh --port 8080` | Serve the console on another port. |
 | `bun run mesh --root ~/work/mesh` | Store mesh data under another base directory. |
 

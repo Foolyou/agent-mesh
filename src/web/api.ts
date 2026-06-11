@@ -59,17 +59,18 @@ export async function handleApi(
       }
     }
 
-    if (p[0] === "master" && method === "POST" && p[1] === "prompt") {
+    const assistantRoute = p[0] === "assistant" || p[0] === "master";
+    if (assistantRoute && method === "POST" && p[1] === "prompt") {
       try {
-        await gw.promptMaster(str(body?.text), imagesOf(body));
+        await gw.promptAssistant(str(body?.text), imagesOf(body));
         return ok();
       } catch (e: any) {
         const msg = str(e?.message ?? e);
         return fail(/not configured/.test(msg) ? 409 : 400, msg);
       }
     }
-    if (p[0] === "master" && method === "POST" && p[1] === "interrupt") {
-      gw.interruptMaster();
+    if (assistantRoute && method === "POST" && p[1] === "interrupt") {
+      gw.interruptAssistant();
       return ok();
     }
 

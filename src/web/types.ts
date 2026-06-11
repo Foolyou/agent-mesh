@@ -66,7 +66,7 @@ export type MeshStatus = "stopped" | "starting" | "running" | "dead";
 
 /** Identifies which conversation transcript an op belongs to. Router chat is just
  *  the router agent's transcript. */
-export type ConvRef = { scope: "master" } | { scope: "agent"; mesh: string; agent: AgentId };
+export type ConvRef = { scope: "assistant" } | { scope: "agent"; mesh: string; agent: AgentId };
 
 export interface MeshSummary {
   name: string;
@@ -141,12 +141,12 @@ export interface PerMeshState {
   queues: Record<AgentId, QueueSummary>;
 }
 
-export type MasterStatus = "absent" | "starting" | "ready" | "stopped";
+export type AssistantStatus = "absent" | "starting" | "ready" | "stopped";
 
 export interface GatewayState {
   appVersion?: string;
   meshes: MeshSummary[];
-  master: { status: MasterStatus; working?: boolean; transcript: TranscriptItem[]; capabilities?: AgentCapabilities };
+  assistant: { status: AssistantStatus; working?: boolean; transcript: TranscriptItem[]; capabilities?: AgentCapabilities };
   perMesh: Record<string, PerMeshState>;
 }
 
@@ -160,13 +160,13 @@ export type ServerMsg =
   | { t: "agent.models"; name: string; agent: AgentId; current: string; available: SessionModel[] }
   | { t: "agent.capabilities"; name: string; agent: AgentId; image: boolean }
   | { t: "agent.queue"; name: string; agent: AgentId; summary: QueueSummary }
-  | { t: "master.capabilities"; image: boolean }
+  | { t: "assistant.capabilities"; image: boolean }
   | { t: "transcript.upsert"; conv: ConvRef; item: TranscriptItem }
   | { t: "transcript.patch"; conv: ConvRef; id: string; patch: Partial<TranscriptItem> }
   | { t: "activity"; name: string; entry: ActivityEntry }
   | { t: "mail"; name: string; entry: MailEntry }
   | { t: "permission.add"; name: string; req: PermissionReq }
   | { t: "permission.remove"; name: string; resolved: ResolvedPermission }
-  | { t: "master.status"; status: MasterStatus; working?: boolean };
+  | { t: "assistant.status"; status: AssistantStatus; working?: boolean };
 
 export type { MeshConfig, MeshEdge, AgentId, AgentStatus, AgentActivity, AgentRole, HarnessId };

@@ -12,7 +12,7 @@ import { Dot, Btn, ConfirmButton } from "./ui";
 import { FileViewer, parseFileRoute, type FileRoute } from "./FileViewer";
 
 const SEL_KEY = "mesh.selected";
-type FullView = "agent" | "master" | null;
+type FullView = "agent" | "assistant" | null;
 
 function Toaster({ store }: { store: Store }) {
   const toasts = useToasts(store);
@@ -128,12 +128,12 @@ export function App() {
     setFullView(null);
   }, [selectedMesh]);
 
-  const masterDotStatus =
-    state.master.status === "ready"
+  const assistantDotStatus =
+    state.assistant.status === "ready"
       ? "ready"
-      : state.master.status === "starting"
+      : state.assistant.status === "starting"
         ? "spawning"
-        : state.master.status === "absent"
+        : state.assistant.status === "absent"
           ? "dead"
           : "stopped";
 
@@ -165,8 +165,8 @@ export function App() {
       selected={selectedMesh}
       onSelect={setSelectedMesh}
       onNewMesh={openNew}
-      masterFullscreen={fullView === "master"}
-      onToggleMasterFull={() => setFullView((v) => (v === "master" ? null : "master"))}
+      assistantFullscreen={fullView === "assistant"}
+      onToggleAssistantFull={() => setFullView((v) => (v === "assistant" ? null : "assistant"))}
     />
   );
 
@@ -185,12 +185,12 @@ export function App() {
         <span className="brand">
           <span className="glyph">▰▰</span> agent-mesh
         </span>
-        <span className="stat" title={`${t("conductor")} ${tStatus(t, state.master.status)}`}>
-          <Dot status={masterDotStatus} />
+        <span className="stat" title={`${t("conductor")} ${tStatus(t, state.assistant.status)}`}>
+          <Dot status={assistantDotStatus} />
           {!mobile ? (
             <>
               {" "}
-              {t("conductor")} {tStatus(t, state.master.status)}
+              {t("conductor")} {tStatus(t, state.assistant.status)}
             </>
           ) : null}
         </span>

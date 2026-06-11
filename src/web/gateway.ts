@@ -1,5 +1,5 @@
 // WebGateway: the testable core of the WebUI server. It wraps a MeshManager (and an
-// optional MasterAgent), folds their event streams into authoritative state — including
+// optional MeshAssistant), folds their event streams into authoritative state — including
 // aggregated per-agent transcripts — and fans out a snapshot + deltas to subscribers.
 // It has no HTTP/WS dependency: server.ts adapts it to Bun.serve, tests drive it directly.
 import { reduceTranscript } from "./transcript";
@@ -20,7 +20,7 @@ import type {
   PermissionReq,
   ResolvedPermission,
   MailEntry,
-  MasterStatus,
+  AssistantStatus,
   PerMeshState,
   QueueItem,
   QueueSummary,
@@ -56,8 +56,8 @@ export interface ManagerLike {
   stopAll(): Promise<void>;
 }
 
-/** The MasterAgent surface the gateway depends on. */
-export interface MasterLike {
+/** The MeshAssistant surface the gateway depends on. */
+export interface AssistantLike {
   on(l: (u: any) => void): () => void;
   prompt(text: string, images?: PromptImageRef[]): Promise<unknown>;
   cancel(): void;
@@ -87,27 +87,27 @@ export class WebGateway {
   private queues = new Map<string, Map<AgentId, AgentTurn[]>>();
   private uidc = 0;
   private unsubMgr?: () => void;
-  private unsubMaster?: () => void;
+  private unsubAssistant?: () => void;
 
   constructor(
     private manager: ManagerLike,
-    private master?: MasterLike,
+    private assistant?: AssistantLike,
     private opts: { root?: string; appVersion?: string } = {},
   ) {
     this.state = {
       appVersion: opts.appVersion ?? defaultAppVersion(),
       meshes: [],
-      master: { status: master ? "starting" : "absent", working: false, transcript: [], capabilities: { image: false } },
+      assistant: { status: assistant ? "starting" : "absent", working: false, transcript: [], capabilities: { image: false } },
       perMesh: {},
     };
     this.refreshMeshes();
     this.unsubMgr = manager.on((name, e) => this.ingest(name, e));
-    if (master) this.unsubMaster = master.on((u) => this.ingestMaster(u));
+    if (assistant) this.unsubAssistant = assistant.on((u) => this.ingestAssistant(u));
   }
 
   dispose(): void {
     this.unsubMgr?.();
-    this.unsubMaster?.();
+    this.unsubAssistant?.();
   }
 
   // ── Fan-out ────────────────────────────────────────────────────────────────
@@ -244,9 +244,9 @@ export class WebGateway {
     return { id: this.uid(), ts, kind, text };
   }
   private foldConv(conv: ConvRef, update: any, ts: string): void {
-    if (conv.scope === "master") {
-      const r = reduceTranscript(this.state.master.transcript, update, ts);
-      this.state.master.transcript = cap(r.items, TR_CAP);
+    if (conv.scope === "assistant") {
+      const r = reduceTranscript(this.state.assistant.transcript, update, ts);
+      this.state.assistant.transcript = cap(r.items, TR_CAP);
       for (const op of r.ops) this.broadcastOp(conv, op);
       return;
     }
@@ -414,11 +414,11 @@ export class WebGateway {
     this.refreshMeshes();
   }
 
-  private ingestMaster(u: any): void {
-    this.foldConv({ scope: "master" }, u, now());
+  private ingestAssistant(u: any): void {
+    this.foldConv({ scope: "assistant" }, u, now());
   }
 
-  // ── Commands (delegate to manager / master; echo user turns) ───────────────────
+  // ── Commands (delegate to manager / assistant; echo user turns) ───────────────────
   async startMesh(name: string, opts?: StartMeshOptions): Promise<void> {
     await this.manager.startMesh(name, opts);
     this.refreshMeshes();
@@ -514,23 +514,23 @@ export class WebGateway {
     await this.manager.newAllSessions(name);
     this.refreshMeshes();
   }
-  async promptMaster(text: string, images: PromptImageRef[] = []): Promise<void> {
-    if (!this.master) throw new Error("master agent is not configured");
-    const refs = images.map((i) => this.withBucket("master", i));
-    this.foldConv({ scope: "master" }, { sessionUpdate: "user_message_chunk", content: { text }, images: refs.map(publicImageRef) }, now());
-    this.state.master.working = true;
-    this.broadcast({ t: "master.status", status: this.state.master.status, working: true });
+  async promptAssistant(text: string, images: PromptImageRef[] = []): Promise<void> {
+    if (!this.assistant) throw new Error("Mesh Assistant is not configured");
+    const refs = images.map((i) => this.withBucket("assistant", i));
+    this.foldConv({ scope: "assistant" }, { sessionUpdate: "user_message_chunk", content: { text }, images: refs.map(publicImageRef) }, now());
+    this.state.assistant.working = true;
+    this.broadcast({ t: "assistant.status", status: this.state.assistant.status, working: true });
     try {
-      await this.master.prompt(text, refs);
+      await this.assistant.prompt(text, refs);
     } finally {
-      this.state.master.working = false;
-      this.broadcast({ t: "master.status", status: this.state.master.status, working: false });
+      this.state.assistant.working = false;
+      this.broadcast({ t: "assistant.status", status: this.state.assistant.status, working: false });
     }
   }
 
-  interruptMaster(): void {
-    if (!this.master) return;
-    this.master.cancel();
+  interruptAssistant(): void {
+    if (!this.assistant) return;
+    this.assistant.cancel();
   }
 
   async upload(bucket: string, files: UploadFileLike[]): Promise<PromptImageRef[]> {
@@ -599,7 +599,7 @@ export class WebGateway {
   }
 
   private validateBucket(bucket: string): void {
-    if (bucket === "master") return;
+    if (bucket === "assistant") return;
     if (!this.manager.listMeshes().some((m) => m.name === bucket)) throw new Error("unknown upload bucket");
   }
 
@@ -622,14 +622,14 @@ export class WebGateway {
     return { id: image.id, mimeType: image.mimeType, name: image.name, bucket, url, path };
   }
 
-  // ── Master lifecycle status (set by main.ts around master.start/stop) ──────────
-  setMasterStatus(status: MasterStatus): void {
-    this.state.master.status = status;
-    this.broadcast({ t: "master.status", status });
+  // ── Assistant lifecycle status (set by main.ts around assistant.start/stop) ──────────
+  setAssistantStatus(status: AssistantStatus): void {
+    this.state.assistant.status = status;
+    this.broadcast({ t: "assistant.status", status });
   }
 
-  setMasterCapabilities(caps: { image: boolean }): void {
-    this.state.master.capabilities = caps;
-    this.broadcast({ t: "master.capabilities", image: caps.image });
+  setAssistantCapabilities(caps: { image: boolean }): void {
+    this.state.assistant.capabilities = caps;
+    this.broadcast({ t: "assistant.capabilities", image: caps.image });
   }
 }

@@ -93,7 +93,7 @@ async function waitGone(pid: number, ms: number): Promise<void> {
 
 export interface UpOpts {
   cold?: boolean;
-  /** extra flags to forward to the spawned backend (e.g. --fake, --no-master) */
+  /** extra flags to forward to the spawned backend (e.g. --fake, --no-assistant) */
   passthrough?: string[];
 }
 

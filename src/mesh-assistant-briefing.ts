@@ -2,7 +2,7 @@
 // briefings because this assistant manages meshes from outside; it is not part
 // of any team's roster.
 
-export function buildMasterBriefing(): string {
+export function buildMeshAssistantBriefing(): string {
   return [
     "[MESH ASSISTANT BRIEFING]",
     "You are the external Mesh Assistant for the Agent Mesh control plane. You are not a member agent inside any mesh, and you are not a router for a running mesh.",

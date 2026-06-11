@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { appVersionFrom } from "./version";
+import { appVersionFrom, defaultAppVersionFrom } from "./version";
 
 test("appVersionFrom prefers an explicit env build id", async () => {
   expect(appVersionFrom({ env: { MESH_BUILD_ID: "env-build" }, candidates: [] })).toBe("env-build");
@@ -18,4 +18,8 @@ test("appVersionFrom reads the deployed binary sidecar build id", async () => {
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("defaultAppVersionFrom includes the assistant wire protocol version", () => {
+  expect(defaultAppVersionFrom("binary:1:2")).toBe("binary:1:2:assistant-wire-v1");
 });

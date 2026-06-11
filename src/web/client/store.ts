@@ -11,7 +11,7 @@ function cap<T>(a: T[], n: number): T[] {
 }
 
 export function emptyState(): GatewayState {
-  return { meshes: [], master: { status: "absent", transcript: [], capabilities: { image: false } }, perMesh: {} };
+  return { meshes: [], assistant: { status: "absent", transcript: [], capabilities: { image: false } }, perMesh: {} };
 }
 
 function emptyPerMesh(name: string): PerMeshState {
@@ -29,8 +29,8 @@ function patchItem(items: TranscriptItem[], id: string, p: Partial<TranscriptIte
   return items.map((it) => (it.id === id ? ({ ...it, ...p } as TranscriptItem) : it));
 }
 function withTranscript(state: GatewayState, conv: ConvRef, fn: (items: TranscriptItem[]) => TranscriptItem[]): GatewayState {
-  if (conv.scope === "master") {
-    return { ...state, master: { ...state.master, transcript: fn(state.master.transcript) } };
+  if (conv.scope === "assistant") {
+    return { ...state, assistant: { ...state.assistant, transcript: fn(state.assistant.transcript) } };
   }
   return withPerMesh(state, conv.mesh, (pm) => ({
     ...pm,
@@ -85,8 +85,8 @@ export function applyMsg(state: GatewayState, msg: ServerMsg): GatewayState {
         ...pm,
         queues: { ...pm.queues, [msg.agent]: msg.summary },
       }));
-    case "master.capabilities":
-      return { ...state, master: { ...state.master, capabilities: { image: msg.image } } };
+    case "assistant.capabilities":
+      return { ...state, assistant: { ...state.assistant, capabilities: { image: msg.image } } };
     case "transcript.upsert":
       return withTranscript(state, msg.conv, (items) => upsertItem(items, msg.item));
     case "transcript.patch":
@@ -103,8 +103,8 @@ export function applyMsg(state: GatewayState, msg: ServerMsg): GatewayState {
         pending: pm.pending.filter((p) => p.requestId !== msg.resolved.requestId),
         history: cap([...pm.history, msg.resolved], CAP),
       }));
-    case "master.status":
-      return { ...state, master: { ...state.master, status: msg.status, working: msg.working ?? state.master.working } };
+    case "assistant.status":
+      return { ...state, assistant: { ...state.assistant, status: msg.status, working: msg.working ?? state.assistant.working } };
     default:
       return state;
   }
@@ -143,7 +143,7 @@ export interface Store {
   promptAgent(name: string, agentId: string, text: string, images?: PromptImageRef[]): Promise<any>;
   removeQueuedTurn(name: string, agentId: string, turnId: string): Promise<any>;
   steerAgent(name: string, agentId: string, text: string, images?: PromptImageRef[]): Promise<any>;
-  promptMaster(text: string, images?: PromptImageRef[]): Promise<any>;
+  promptAssistant(text: string, images?: PromptImageRef[]): Promise<any>;
   resolvePermission(name: string, requestId: string, optionId: string): Promise<any>;
   setMode(name: string, agentId: string, modeId: string): Promise<any>;
   setModel(name: string, agentId: string, modelId: string): Promise<any>;
@@ -154,7 +154,7 @@ export interface Store {
   wakeAgent(name: string, agentId: string): Promise<any>;
   newAgentSession(name: string, agentId: string): Promise<any>;
   newAllSessions(name: string): Promise<any>;
-  interruptMaster(): Promise<any>;
+  interruptAssistant(): Promise<any>;
 }
 
 export function createStore(): Store {
@@ -289,8 +289,8 @@ export function createStore(): Store {
     promptAgent: (n, a, t, images) => guard(post(`/api/meshes/${enc(n)}/agents/${enc(a)}/prompt`, { text: t, images }), `prompt ${a}`),
     removeQueuedTurn: (n, a, turnId) => guard(send("DELETE", `/api/meshes/${enc(n)}/agents/${enc(a)}/queue/${enc(turnId)}`), `remove queued message`),
     steerAgent: (n, a, t, images) => guard(post(`/api/meshes/${enc(n)}/agents/${enc(a)}/steer`, { text: t, images }), `steer ${a}`),
-    promptMaster: (t, images) => guard(post(`/api/master/prompt`, { text: t, images }), "master"),
-    interruptMaster: () => guard(post(`/api/master/interrupt`), "interrupt master"),
+    promptAssistant: (t, images) => guard(post(`/api/assistant/prompt`, { text: t, images }), "assistant"),
+    interruptAssistant: () => guard(post(`/api/assistant/interrupt`), "interrupt assistant"),
     resolvePermission: (n, r, o) => guard(post(`/api/meshes/${enc(n)}/permissions/${enc(r)}/resolve`, { optionId: o }), "resolve permission"),
     setMode: (n, a, m) => guard(post(`/api/meshes/${enc(n)}/agents/${enc(a)}/mode`, { modeId: m }), `set mode ${a}`),
     setModel: (n, a, m) => guard(post(`/api/meshes/${enc(n)}/agents/${enc(a)}/model`, { modelId: m }), `set model ${a}`),

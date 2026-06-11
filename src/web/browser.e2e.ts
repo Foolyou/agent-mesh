@@ -452,7 +452,7 @@ try {
     await page.waitForSelector('.drail .panel .tx:has-text("operator")', { timeout: 6000 });
   });
 
-  await step("master chat: send instruction → user bubble + streamed reply", async () => {
+  await step("assistant chat: send instruction → user bubble + streamed reply", async () => {
     const input = page.locator('.panel:has(.head:has-text("Mesh Assistant")) .composer textarea');
     await input.fill("create a build squad mesh");
     await input.press("Enter");
@@ -460,37 +460,37 @@ try {
     await page.waitForSelector('.panel:has(.head:has-text("Mesh Assistant")) .msg.agent', { timeout: 8000 });
   });
 
-  await step("master chat fullscreens on desktop and exits via button without hiding composer", async () => {
-    const panel = page.locator(".master-chat");
+  await step("assistant chat fullscreens on desktop and exits via button without hiding composer", async () => {
+    const panel = page.locator(".assistant-chat");
     const toggle = panel.locator('button[aria-label*="Mesh Assistant"]');
     await toggle.click();
     await panel.evaluate((el) => {
       const box = (el as HTMLElement).getBoundingClientRect();
       if (box.left > 1 || box.top > 1 || Math.abs(box.width - window.innerWidth) > 2 || Math.abs(box.height - window.innerHeight) > 2) {
-        throw new Error(`master chat was not fullscreen: ${box.left},${box.top},${box.width}x${box.height}`);
+        throw new Error(`assistant chat was not fullscreen: ${box.left},${box.top},${box.width}x${box.height}`);
       }
     });
     await panel.locator(".composer textarea").waitFor({ timeout: 4000 });
     await toggle.click();
-    await page.waitForFunction(() => !document.querySelector(".master-chat")?.classList.contains("master-full"), { timeout: 4000 });
+    await page.waitForFunction(() => !document.querySelector(".assistant-chat")?.classList.contains("assistant-full"), { timeout: 4000 });
   });
 
-  await step("master chat fullscreens on mobile and exits via button without hiding composer", async () => {
+  await step("assistant chat fullscreens on mobile and exits via button without hiding composer", async () => {
     await page.setViewportSize({ width: 375, height: 667 });
     const back = page.locator('.topbar .btn:has-text("back")');
     await back.waitFor({ timeout: 4000 }).then(() => back.click()).catch(() => {});
-    const panel = page.locator(".master-chat");
+    const panel = page.locator(".assistant-chat");
     const toggle = panel.locator('button[aria-label*="Mesh Assistant"]');
     await toggle.click();
     await panel.evaluate((el) => {
       const box = (el as HTMLElement).getBoundingClientRect();
       if (box.left > 1 || box.top > 1 || Math.abs(box.width - window.innerWidth) > 2 || Math.abs(box.height - window.innerHeight) > 2) {
-        throw new Error(`mobile master chat was not fullscreen: ${box.left},${box.top},${box.width}x${box.height}`);
+        throw new Error(`mobile assistant chat was not fullscreen: ${box.left},${box.top},${box.width}x${box.height}`);
       }
     });
     await panel.locator(".composer textarea").waitFor({ timeout: 4000 });
     await toggle.click();
-    await page.waitForFunction(() => !document.querySelector(".master-chat")?.classList.contains("master-full"), { timeout: 4000 });
+    await page.waitForFunction(() => !document.querySelector(".assistant-chat")?.classList.contains("assistant-full"), { timeout: 4000 });
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.locator('.mrow:has-text("demo")').click();
   });
@@ -588,7 +588,7 @@ try {
     for (const id of agentIds) {
       if ((await canvas.locator(`.canvas-window[data-agent="${id}"]`).count()) !== 1) throw new Error(`missing canvas window for ${id}`);
     }
-    if (await canvas.locator('.canvas-window:has-text("Mesh Assistant")').count()) throw new Error("master appeared on mesh canvas");
+    if (await canvas.locator('.canvas-window:has-text("Mesh Assistant")').count()) throw new Error("assistant appeared on mesh canvas");
     await canvas.locator('.canvas-window[data-agent="router"] .canvas-window-head .pin').waitFor({ timeout: 4000 });
     await canvas.locator('.canvas-window[data-agent="codex-1"] .composer textarea[placeholder*="codex-1"]').waitFor({ timeout: 4000 });
 

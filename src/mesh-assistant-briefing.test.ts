@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
-import { buildMasterBriefing } from "./master-briefing";
+import { buildMeshAssistantBriefing } from "./mesh-assistant-briefing";
 
-test("master briefing describes external mesh-control identity and tools", () => {
-  const text = buildMasterBriefing();
+test("Mesh Assistant briefing describes external mesh-control identity and tools", () => {
+  const text = buildMeshAssistantBriefing();
 
   expect(text).toContain("external Mesh Assistant");
   expect(text).toContain("not a member agent");
@@ -12,8 +12,8 @@ test("master briefing describes external mesh-control identity and tools", () =>
   expect(text).toContain("Respond in the user's language");
 });
 
-test("master briefing requires safe mesh-management workflows", () => {
-  const text = buildMasterBriefing();
+test("Mesh Assistant briefing requires safe mesh-management workflows", () => {
+  const text = buildMeshAssistantBriefing();
 
   expect(text).toContain("read the current full definition with get_mesh");
   expect(text).toContain("write back the complete updated spec with update_mesh");
@@ -23,8 +23,8 @@ test("master briefing requires safe mesh-management workflows", () => {
   expect(text).toContain("explicit user confirmation");
 });
 
-test("master briefing confines scope, cwd, and mesh operations", () => {
-  const text = buildMasterBriefing();
+test("Mesh Assistant briefing confines scope, cwd, and mesh operations", () => {
+  const text = buildMeshAssistantBriefing();
 
   expect(text).toContain("NOT a general-purpose coding assistant");
   expect(text).toContain("member agents in a mesh for coding work");
