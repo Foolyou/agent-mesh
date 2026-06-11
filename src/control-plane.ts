@@ -229,6 +229,7 @@ export class ControlPlane {
   }
 
   private noteTurnQueued(turn: AgentTurn): void {
+    if (this.startedTurnIds.has(turn.id)) return;
     const q = this.queuedTurns.get(turn.agent) ?? [];
     if (!q.some((queued) => queued.id === turn.id)) q.push(turn);
     this.queuedTurns.set(turn.agent, q);

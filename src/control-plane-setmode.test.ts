@@ -913,6 +913,10 @@ test("first prompt after load failure fresh-starts and retries the same prompt o
     expect(created[1].prompts[0]).toContain("[MESH BRIEFING]");
     expect(created[1].prompts[0]).toContain("do not lose this");
     expect(events.filter((e) => e.kind === "agent_turn" && e.phase === "started" && e.turn.agent === "router")).toHaveLength(1);
+    const phases = events.filter((e) => e.kind === "agent_turn" && e.turn.agent === "router").map((e) => e.phase);
+    expect(phases).toEqual(["queued", "started"]);
+    expect((cp as any).queuedTurns.get("router") ?? []).toEqual([]);
+    expect(cp.snapshotEvents()).not.toContainEqual(expect.objectContaining({ kind: "agent_turn", phase: "queued" }));
   } finally {
     await cp.stop();
     await rm(root, { recursive: true, force: true });
