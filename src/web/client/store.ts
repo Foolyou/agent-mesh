@@ -3,7 +3,7 @@
 // the client. createStore() owns the socket + REST command helpers; useStore wires it
 // into React via useSyncExternalStore.
 import { useSyncExternalStore } from "react";
-import type { AgentConfig, GatewayState, ServerMsg, PerMeshState, TranscriptItem, ConvRef, MeshConfig, MeshEdge, PromptImageRef, ThinkingEffort, StartSessionStrategy } from "../types";
+import type { AgentConfig, GatewayState, ServerMsg, PerMeshState, TranscriptItem, ConvRef, MeshConfig, MeshEdge, PromptImageRef, StartSessionStrategy } from "../types";
 
 const CAP = 500;
 function cap<T>(a: T[], n: number): T[] {
@@ -165,7 +165,7 @@ export interface Store {
   resolvePermission(name: string, requestId: string, optionId: string): Promise<any>;
   setMode(name: string, agentId: string, modeId: string): Promise<any>;
   setModel(name: string, agentId: string, modelId: string): Promise<any>;
-  setEffort(name: string, agentId: string, effort?: ThinkingEffort): Promise<any>;
+  setEffort(name: string, agentId: string, effort?: string): Promise<any>;
   setBypass(name: string, agentId: string, bypass?: boolean): Promise<any>;
   addEdge(name: string, edge: MeshEdge): Promise<any>;
   addAgent(name: string, agent: AgentConfig, edges?: MeshEdge[]): Promise<any>;

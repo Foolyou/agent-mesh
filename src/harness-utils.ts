@@ -1,6 +1,6 @@
 import type { HarnessId, SessionEffort, ThinkingEffort } from "./acp/types";
 
-export const ALL_THINKING_EFFORTS = ["minimal", "low", "medium", "high", "xhigh", "max"] as const satisfies readonly ThinkingEffort[];
+export const ALL_THINKING_EFFORTS = ["minimal", "low", "medium", "high", "xhigh"] as const satisfies readonly ThinkingEffort[];
 
 export interface HarnessEffortCapability {
   options: readonly ThinkingEffort[];
@@ -9,7 +9,7 @@ export interface HarnessEffortCapability {
 
 export const HARNESS_EFFORT_CAPABILITIES: Record<HarnessId, HarnessEffortCapability> = {
   codex: { options: ["low", "medium", "high", "xhigh"], runtimeSwitchable: false },
-  claude: { options: ["minimal", "low", "medium", "high", "max"], runtimeSwitchable: true },
+  claude: { options: ["minimal", "low", "medium", "high"], runtimeSwitchable: true },
   kimi: { options: ["low", "high"], runtimeSwitchable: true },
   opencode: { options: [], runtimeSwitchable: false },
 };
@@ -23,7 +23,7 @@ export interface RuntimeEffortOptions {
   configId: string;
   current: string;
   available: SessionEffort[];
-  values?: Partial<Record<ThinkingEffort, string>>;
+  values?: Partial<Record<string, string>>;
 }
 
 export function effortOptionsForHarness(harness: HarnessId): readonly ThinkingEffort[] {
@@ -93,9 +93,11 @@ export function runtimeEffortOptionsFromSession(harness: HarnessId, session: unk
   return undefined;
 }
 
-export function runtimeEffortConfig(harness: HarnessId, effort?: ThinkingEffort, runtime?: string | RuntimeEffortOptions): RuntimeEffortConfig | undefined {
+export function runtimeEffortConfig(harness: HarnessId, effort?: string, runtime?: string | RuntimeEffortOptions): RuntimeEffortConfig | undefined {
   if (!effort) return undefined;
-  if (!isEffortSupportedByHarness(harness, effort)) return undefined;
+  const advertised = typeof runtime === "object" ? runtime : undefined;
+  if (advertised && !advertised.available.some((o) => o.id === effort)) return undefined;
+  if (!advertised && !isEffortSupportedByHarness(harness, effort as ThinkingEffort)) return undefined;
   const advertisedConfigId = typeof runtime === "string" ? runtime : runtime?.configId;
   if (harness === "claude") return { configId: advertisedConfigId ?? "thought_level", value: effort };
   if (harness === "kimi") return { configId: advertisedConfigId ?? "thinking", value: (typeof runtime === "object" ? runtime.values?.[effort] : undefined) ?? (effort === "low" ? "off" : "on") };

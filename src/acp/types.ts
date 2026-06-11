@@ -30,7 +30,7 @@ export function normalizeMeshEdges(edges: readonly MeshEdgeInput[] = []): MeshEd
 /** Reasoning / thinking effort for an agent. Some harnesses apply it at spawn
  *  (codex: model_reasoning_effort; claude: MAX_THINKING_TOKENS) and some can
  *  switch compatible runtime thought-level config options. `undefined` = default. */
-export type ThinkingEffort = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+export type ThinkingEffort = "minimal" | "low" | "medium" | "high" | "xhigh";
 
 export interface AgentConfig {
   id: AgentId;

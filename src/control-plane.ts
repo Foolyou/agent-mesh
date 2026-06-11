@@ -6,7 +6,7 @@ import { mkdir, stat } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { AcpAgentConnection, type AcpConnectionOptions, type PermissionDecision } from "./acp/client";
 import { spawnConfigFor } from "./harness";
-import { runtimeEffortConfig, runtimeEffortOptionsFromSession, type RuntimeEffortOptions } from "./harness-utils";
+import { isThinkingEffort, runtimeEffortConfig, runtimeEffortOptionsFromSession, type RuntimeEffortOptions } from "./harness-utils";
 import { Mesh } from "./mesh";
 import { buildMeshBriefing, MAIL_WAKE_GUIDANCE } from "./mesh-briefing";
 import { createMeshServicesServer, type MeshServicesHandlers, type MeshServicesServer, type MeshToolContext, type SendMailOptions } from "./mcp/mesh-services";
@@ -542,7 +542,7 @@ export class ControlPlane {
   }
 
   /** Switch an agent's runtime thinking effort where the harness supports it. */
-  async setEffort(id: AgentId, effort?: ThinkingEffort): Promise<void> {
+  async setEffort(id: AgentId, effort?: string): Promise<void> {
     const agent = this.mesh.agent(id);
     if (!agent) throw new Error(`no such agent "${id}"`);
     const advertised = this.sessionEfforts.get(id);
@@ -555,7 +555,7 @@ export class ControlPlane {
         this.emit({ kind: "agent_efforts", agent: id, configId: next.configId, current: next.current, available: next.available, ts: now() });
       }
     }
-    await this.persistRuntimeSessionFields(id, { effort });
+    if (effort === undefined || isThinkingEffort(effort)) await this.persistRuntimeSessionFields(id, { effort });
   }
 
   /** Switch permission bypass where runtime support exists. Codex maps bypass to full-access mode. */

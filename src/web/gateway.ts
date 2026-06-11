@@ -5,7 +5,7 @@
 import { reduceTranscript } from "./transcript";
 import { now } from "../acp/types";
 import { resolve } from "node:path";
-import type { AgentConfig, MeshConfig, MeshEdge, MeshEvent, AgentId, AgentStatus, AgentActivity, AgentTurn, PromptImageRef, ThinkingEffort, HarnessId } from "../acp/types";
+import type { AgentConfig, MeshConfig, MeshEdge, MeshEvent, AgentId, AgentStatus, AgentActivity, AgentTurn, PromptImageRef, HarnessId } from "../acp/types";
 import type { StartMeshOptions } from "../mesh-manager";
 import { readUpload, storeUploads, uploadPath, type UploadFileLike } from "./uploads";
 import { AgentFileError, resolveAgentFile } from "./agent-files";
@@ -44,7 +44,7 @@ export interface ManagerLike {
   resolvePermission(name: string, requestId: string, optionId: string): void;
   setMode(name: string, agentId: string, modeId: string): Promise<void>;
   setModel(name: string, agentId: string, modelId: string): Promise<void>;
-  setAgentEffort(name: string, agentId: string, effort?: ThinkingEffort): Promise<void>;
+  setAgentEffort(name: string, agentId: string, effort?: string): Promise<void>;
   setAgentBypass(name: string, agentId: string, bypass?: boolean): Promise<void>;
   addEdge(name: string, edge: MeshEdge): Promise<void>;
   addAgent(name: string, agent: AgentConfig, edges?: MeshEdge[]): Promise<void>;
@@ -546,7 +546,7 @@ export class WebGateway {
   resolvePermission(name: string, requestId: string, optionId: string): void {
     this.manager.resolvePermission(name, requestId, optionId);
   }
-  async setEffort(name: string, agentId: string, effort?: ThinkingEffort): Promise<void> {
+  async setEffort(name: string, agentId: string, effort?: string): Promise<void> {
     await this.manager.setAgentEffort(name, agentId, effort);
     this.refreshMeshes(); // re-broadcast the summary so the picker reflects the new value
   }

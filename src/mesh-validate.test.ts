@@ -23,17 +23,17 @@ test("rejects unsafe names", () => {
 test("validates effort per harness", () => {
   const accepted: Record<HarnessId, ThinkingEffort[]> = {
     codex: ["low", "medium", "high", "xhigh"],
-    claude: ["minimal", "low", "medium", "high", "max"],
+    claude: ["minimal", "low", "medium", "high"],
     kimi: ["low", "high"],
     opencode: [],
   };
-  const all: ThinkingEffort[] = ["minimal", "low", "medium", "high", "xhigh", "max"];
+  const all = ["minimal", "low", "medium", "high", "xhigh", "max"] as const;
 
   for (const harness of Object.keys(accepted) as HarnessId[]) {
     for (const effort of all) {
-      const cfg = { ...ok, agents: [{ ...ok.agents[0], harness, effort }, ok.agents[1]] };
+      const cfg = { ...ok, agents: [{ ...ok.agents[0], harness, effort: effort as any }, ok.agents[1]] };
       const assertion = expect(() => validateMeshConfig(cfg));
-      if (accepted[harness].includes(effort)) assertion.not.toThrow();
+      if ((accepted[harness] as readonly string[]).includes(effort)) assertion.not.toThrow();
       else assertion.toThrow(new RegExp(`effort.*${harness}`, "i"));
     }
   }

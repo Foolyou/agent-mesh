@@ -10,7 +10,7 @@ import { resolve } from "node:path";
 import { existsSync } from "node:fs";
 import { killTree } from "./acp/client";
 import { LineBuffer, encodeFrame, PROTO_VERSION, type ChildMsg, type ParentMsg } from "./protocol";
-import type { AgentConfig, MeshConfig, MeshEdge, MeshEvent, ThinkingEffort } from "./acp/types";
+import type { AgentConfig, MeshConfig, MeshEdge, MeshEvent } from "./acp/types";
 import type { PromptImageRef } from "./acp/types";
 
 export interface MeshHostClientOptions {
@@ -210,7 +210,7 @@ export class MeshHostClient {
   resolve(requestId: string, optionId: string): void { this.send({ t: "resolve", requestId, optionId }); }
   setMode(target: string, modeId: string): void { this.send({ t: "setMode", target, modeId }); }
   setModel(target: string, modelId: string): void { this.send({ t: "setModel", target, modelId }); }
-  setEffort(target: string, effort?: ThinkingEffort): void { this.send({ t: "setEffort", target, effort }); }
+  setEffort(target: string, effort?: string): void { this.send({ t: "setEffort", target, effort }); }
   setBypass(target: string, bypass?: boolean): void { this.send({ t: "setBypass", target, bypass }); }
   interrupt(target: string): void { this.send({ t: "interrupt", target }); }
   newSession(target: string): void { this.send({ t: "newSession", target }); }

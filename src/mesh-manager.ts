@@ -11,6 +11,7 @@ import { Mesh } from "./mesh";
 import { validateAddAgent, validateAddEdge } from "./mesh-validate";
 import { now } from "./acp/types";
 import type { AgentConfig, AgentStatus, MeshConfig, MeshEdge, MeshEvent, ThinkingEffort } from "./acp/types";
+import { isEffortSupportedByHarness, isThinkingEffort } from "./harness-utils";
 import type { PromptImageRef } from "./acp/types";
 import { deleteUploadBucket } from "./web/uploads";
 import { clearAgentSession, clearAllAgentSessions, setMeshExpectedAlive } from "./session-storage";
@@ -94,15 +95,22 @@ export class MeshManager {
     this.entries.set(config.name, { config, status: "stopped" });
   }
 
-  /** Update one agent's thinking effort and persist it. Running agents apply it immediately
-   *  when their harness supports runtime thought-level switching; others keep it for next start. */
-  async setAgentEffort(name: string, agentId: string, effort?: ThinkingEffort): Promise<void> {
+  /** Update one agent's thinking effort. Known config-safe values are persisted for the
+   *  next start; advertised runtime-only values are forwarded live and not stored. */
+  async setAgentEffort(name: string, agentId: string, effort?: string): Promise<void> {
     const entry = this.require(name);
-    if (!entry.config.agents.some((a) => a.id === agentId)) throw new Error(`no agent "${agentId}" in mesh "${name}"`);
-    const patched: MeshConfig = { ...entry.config, agents: entry.config.agents.map((a) => (a.id === agentId ? { ...a, effort } : a)) };
+    const target = entry.config.agents.find((a) => a.id === agentId);
+    if (!target) throw new Error(`no agent "${agentId}" in mesh "${name}"`);
+    if (effort !== undefined && (!isThinkingEffort(effort) || !isEffortSupportedByHarness(target.harness, effort))) {
+      if (!entry.client) throw new Error(`agent "${agentId}" effort "${effort}" is runtime-only and mesh "${name}" is not running`);
+      entry.client.setEffort(agentId, effort);
+      return;
+    }
+    const persistedEffort = effort as ThinkingEffort | undefined;
+    const patched: MeshConfig = { ...entry.config, agents: entry.config.agents.map((a) => (a.id === agentId ? { ...a, effort: persistedEffort } : a)) };
     await this.store.define(patched); // validates + persists
     entry.config = patched;
-    entry.client?.setEffort(agentId, effort);
+    entry.client?.setEffort(agentId, persistedEffort);
   }
 
   /** Update one agent's bypass setting and persist it. Codex applies it live; spawn-only harnesses keep it for next start. */

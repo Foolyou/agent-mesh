@@ -3,7 +3,7 @@
 // permission-history timelines for the selected mesh.
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import type { Store } from "./store";
-import type { GatewayState, MeshSummary, PerMeshState, ActivityEntry, MailEntry, ResolvedPermission, PermissionReq, AgentModes, AgentModels, ThinkingEffort, HarnessId, StartSessionStrategy } from "../types";
+import type { GatewayState, MeshSummary, PerMeshState, ActivityEntry, MailEntry, ResolvedPermission, PermissionReq, AgentModes, AgentModels, HarnessId, StartSessionStrategy } from "../types";
 import { effortOptionsForHarness, supportsRuntimeEffort } from "../../harness-utils";
 import { Dot, Btn, Empty, ConfirmButton, InfoIcon, fmtTime } from "./ui";
 import { ChatPane } from "./ChatPane";
@@ -236,7 +236,7 @@ function EffortControl({ m, agent, store }: { m: MeshSummary; agent: string; sto
         aria-label={t("effort")}
         title={live && runtime ? t("effort.hint.runtime") : live ? t("effort.hint.live") : t("effort.hint")}
         onKeyDown={(e) => e.stopPropagation()}
-        onChange={(e) => void store.setEffort(m.name, agent, (e.target.value || undefined) as ThinkingEffort | undefined)}
+        onChange={(e) => void store.setEffort(m.name, agent, e.target.value || undefined)}
       >
         <option value="">{t("effort.default")}</option>
         {efforts.map((eff) => (
