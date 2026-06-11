@@ -155,6 +155,24 @@ test("agent.queue updates the per-agent queue summary", () => {
   });
 });
 
+test("compact_done clears the agent's active health signal", () => {
+  let s = applyMsg(seed(), {
+    t: "agent.health",
+    name: "demo",
+    agent: "codex-1",
+    health: { signal: "compacting", detail: { status: "compacting" }, ts: "T1" },
+  });
+  expect(s.perMesh.demo.health["codex-1"]?.signal).toBe("compacting");
+
+  s = applyMsg(s, {
+    t: "agent.health",
+    name: "demo",
+    agent: "codex-1",
+    health: { signal: "compact_done", detail: { durationMs: 2200 }, ts: "T2" },
+  });
+  expect(s.perMesh.demo.health["codex-1"]).toBeUndefined();
+});
+
 test("permission add then remove updates pending + history", () => {
   let s = seed();
   s = applyMsg(s, {

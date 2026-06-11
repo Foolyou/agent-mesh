@@ -8,6 +8,7 @@ import { Dot, Btn, Empty, ConfirmButton, InfoIcon, fmtTime } from "./ui";
 import { ChatPane } from "./ChatPane";
 import { MeshCanvas } from "./MeshCanvas";
 import { Topology } from "./Topology";
+import { ContextWaterline } from "./health";
 import { useI18n, tStatus } from "./i18n";
 import { VirtualList } from "./VirtualList";
 
@@ -666,7 +667,8 @@ export function MeshDetail({
       </div>
       <div className="body-scroll">
         {topologyControls}
-        <Topology summary={m} selectedAgent={activeAgent} onSelect={onSelectAgent} flashId={flashId} />
+        <ContextWaterline agents={m.agents.map((a) => a.id)} usage={pm.usage} />
+        <Topology summary={m} selectedAgent={activeAgent} onSelect={onSelectAgent} flashId={flashId} health={pm.health} />
       </div>
     </div>
   );
@@ -758,7 +760,8 @@ export function MeshDetail({
       </div>
       <div className="body-scroll">
         {topologyControls}
-        <Topology summary={m} selectedAgent={activeAgent} onSelect={onSelectAgent} flashId={flashId} maxHeight={230} />
+        <ContextWaterline agents={m.agents.map((a) => a.id)} usage={pm.usage} />
+        <Topology summary={m} selectedAgent={activeAgent} onSelect={onSelectAgent} flashId={flashId} health={pm.health} maxHeight={230} />
       </div>
     </div>
   );
