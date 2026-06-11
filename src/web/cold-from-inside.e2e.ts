@@ -3,10 +3,11 @@
 // → killTree of its agents) kills the agent + the shell running the restart script. Without
 // detaching the restart worker, the script dies after stopping the backend but before
 // restarting it, so the backend never comes back (10010 "permanently inaccessible").
-// restart-work.sh now double-forks the worker to init so it survives the reap.
+// The built-in `mesh restart --cold` path dispatches a detached worker so it survives
+// the reap.
 //
 // This drives the real backend + a selfkill daemon fixture whose "agent" runs the actual
-// restart-work.sh --cold, and asserts the backend comes back UP + the mesh is reaped.
+// service restart command, and asserts the backend comes back UP + the mesh is reaped.
 // Run: bun run src/web/cold-from-inside.e2e.ts
 import { mkdtemp, rm, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -43,17 +44,15 @@ async function regPid(name: string): Promise<number | null> {
   }
 }
 
-// the simulated agent runs the REAL restart script (cold) from inside the mesh
-const AGENT_CMD = `exec bash ${join(REPO, "scripts", "restart-work.sh")} --cold > ${ROOT}/agent.log 2>&1`;
+// the simulated agent runs the REAL service restart command (cold) from inside the mesh.
+// Strip mesh-host control env first, or src/main.ts would re-enter host mode.
+const AGENT_CMD = `cd ${REPO} && exec env -u MESH_SOCK -u MESH_CONFIG -u MESH_HOST_SCRIPT -u MESH_LEASE_MS bun run src/main.ts restart --root ${ROOT} --port ${PORT} --cold > ${ROOT}/agent.log 2>&1`;
 const backend = Bun.spawn(["bun", "run", "src/main.ts", "backend", "--port", String(PORT), "--root", ROOT], {
   cwd: REPO,
   env: {
     ...process.env,
     MESH_HOST_SCRIPT: SELFKILL,
     MESH_AGENT_CMD: AGENT_CMD,
-    MESH_WORK_ROOT: ROOT,
-    MESH_WORK_PORT: String(PORT),
-    MESH_LAUNCH_CMD: "bun run src/main.ts backend",
     MESH_API_PORT: "",
   },
   stdout: "pipe",
@@ -67,7 +66,7 @@ try {
   }
 
   let daemonPid: number | null = null;
-  await step("start a mesh → its daemon spawns the agent that runs `restart-work.sh --cold`", async () => {
+  await step("start a mesh → its daemon spawns the agent that runs `mesh restart --cold`", async () => {
     await post("/api/meshes", { name: "x", agents: [{ id: "r", harness: "claude", project: "test_mesh_0", role: "router" }], edges: [] });
     await post("/api/meshes/x/start");
     for (let i = 0; i < 40; i++) {

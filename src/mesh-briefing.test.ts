@@ -131,7 +131,7 @@ test("briefing tells agents to write Markdown file references with paths relativ
   const b = buildMeshBriefing(new Mesh(cfg), "codex-1");
   expect(b).toMatch(/file references in Markdown/i);
   expect(b).toMatch(/relative to your CWD/i);
-  expect(b).toContain("docs/analysis.md"); // example using a subdir prefix
+  expect(b).toContain("artifacts/analysis.md"); // example using a subdir prefix
   expect(b).toMatch(/absolute paths/i); // explicit warning that absolute paths are stripped
 });
 

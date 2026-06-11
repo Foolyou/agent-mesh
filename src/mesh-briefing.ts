@@ -75,7 +75,7 @@ export function buildMeshBriefing(mesh: Mesh, agentId: AgentId): string {
       "your CWD to render it inline. Bare filenames only work if the file sits at the cwd root; " +
       "absolute paths (/home/...) are stripped for security and will not load.",
   );
-  lines.push("  good:  [analysis](docs/analysis.md)        # file at <cwd>/docs/analysis.md");
+  lines.push("  good:  [analysis](artifacts/analysis.md)   # file at <cwd>/artifacts/analysis.md");
   lines.push("  good:  ![](screenshots/diagram.png)        # file at <cwd>/screenshots/diagram.png");
   lines.push("  bad:   [analysis](analysis.md)             # broken unless file is at <cwd>/analysis.md");
 

@@ -231,9 +231,6 @@ mesh restart --cold
 mesh down --cold
 ```
 
-See [docs/dev-workflow.md](docs/dev-workflow.md) for the development vs.
-production workflow, root conventions, and service-control details.
-
 ## Verification
 
 Primary check:
@@ -272,12 +269,3 @@ The original proof-of-concept goals are implemented and covered by tests:
 The project is still actively evolving. Current work focuses on making the
 controller more durable, making agent outputs easier to inspect, and tightening
 the operator experience.
-
-## Design Docs
-
-- Original PoC spec: [docs/superpowers/specs/2026-06-06-agent-mesh-poc-design.md](docs/superpowers/specs/2026-06-06-agent-mesh-poc-design.md)
-- Original PoC plan: [docs/superpowers/plans/2026-06-06-agent-mesh-poc.md](docs/superpowers/plans/2026-06-06-agent-mesh-poc.md)
-- Multi-mesh spec: [docs/superpowers/specs/2026-06-06-control-agent-multi-mesh-design.md](docs/superpowers/specs/2026-06-06-control-agent-multi-mesh-design.md)
-- Multi-mesh plan: [docs/superpowers/plans/2026-06-06-control-agent-multi-mesh.md](docs/superpowers/plans/2026-06-06-control-agent-multi-mesh.md)
-- Web console spec: [docs/superpowers/specs/2026-06-07-mesh-webui-design.md](docs/superpowers/specs/2026-06-07-mesh-webui-design.md)
-- Web console plan: [docs/superpowers/plans/2026-06-07-mesh-webui.md](docs/superpowers/plans/2026-06-07-mesh-webui.md)
