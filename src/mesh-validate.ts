@@ -2,12 +2,12 @@
 // Deterministic validation of a mesh topology. The control plane runs this over
 // every (possibly LLM-generated) MeshConfig before defining/persisting it.
 import { HARNESSES } from "./harness";
-import { effortOptionsForHarness, isEffortSupportedByHarness, isThinkingEffort } from "./harness-utils";
+import { isEffortSupportedByHarness, isThinkingEffort, supportedEffortsForConfig } from "./harness-utils";
 import { normalizeMeshEdge, normalizeMeshEdges, type AgentConfig, type AgentStatus, type MeshConfig, type MeshEdge, type MeshEdgeInput } from "./acp/types";
 
 function validateAgentEffort(agent: AgentConfig): void {
   if (agent.effort === undefined) return;
-  const options = effortOptionsForHarness(agent.harness);
+  const options = supportedEffortsForConfig(agent.harness);
   if (!isThinkingEffort(agent.effort) || !isEffortSupportedByHarness(agent.harness, agent.effort)) {
     const suffix = options.length > 0 ? `use ${options.join("|")}` : `${agent.harness} does not support effort`;
     throw new Error(`agent "${agent.id}" has invalid effort "${agent.effort}" for ${agent.harness} (${suffix})`);

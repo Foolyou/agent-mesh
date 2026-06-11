@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
 import type { Store } from "./store";
 import type { HarnessId, AgentRole, MeshConfig, ThinkingEffort } from "../types";
-import { effortOptionsForHarness, isEffortSupportedByHarness } from "../../harness-utils";
+import { isEffortSupportedByHarness, supportedEffortsForConfig } from "../../harness-utils";
 import { Btn } from "./ui";
 import { useI18n } from "./i18n";
 
@@ -304,7 +304,7 @@ export function MeshBuilder({
 
   const activeIndex = page.kind === "agent" ? agents.findIndex((a) => a.key === page.key) : -1;
   const activeAgent = activeIndex >= 0 ? agents[activeIndex] : undefined;
-  const activeEfforts = activeAgent ? effortOptionsForHarness(activeAgent.harness) : [];
+  const activeEfforts = activeAgent ? supportedEffortsForConfig(activeAgent.harness) : [];
   const activeModelProbe = activeAgent ? modelProbes[activeAgent.harness] : undefined;
   const activeModelMissing = !!(activeAgent?.model && !(activeModelProbe?.models ?? []).some((m) => m.id === activeAgent.model));
   const activeTabIndex = page.kind === "overview" ? 0 : Math.max(0, agents.findIndex((a) => a.key === page.key) + 1);

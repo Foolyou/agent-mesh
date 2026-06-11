@@ -6,14 +6,14 @@ import { mkdir, stat } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { AcpAgentConnection, type AcpConnectionOptions, type PermissionDecision } from "./acp/client";
 import { spawnConfigFor } from "./harness";
-import { runtimeEffortConfig } from "./harness-utils";
+import { runtimeEffortConfig, runtimeEffortOptionsFromSession, type RuntimeEffortOptions } from "./harness-utils";
 import { Mesh } from "./mesh";
 import { buildMeshBriefing, MAIL_WAKE_GUIDANCE } from "./mesh-briefing";
 import { createMeshServicesServer, type MeshServicesHandlers, type MeshServicesServer, type MeshToolContext, type SendMailOptions } from "./mcp/mesh-services";
 import { compactMailbox, sendMail, readMailFor, readMailboxEvents, readRecentAddressedMail, readUnreadAddressedMail, type MailMeta } from "./mailbox";
 import { validateAddAgent, validateAddEdge } from "./mesh-validate";
 import { readSessionState, setMeshExpectedAlive, updateAgentMailCursor, updateAgentSession, clearAgentSession, type MeshSessionState } from "./session-storage";
-import { now, type AgentActivity, type AgentConfig, type AgentHealthSignalKind, type AgentId, type AgentTurn, type MeshConfig, type MeshEdge, type MeshEvent, type PromptImageRef, type SessionEffort, type SessionMode, type SessionModel, type ThinkingEffort, type TurnHealthReason } from "./acp/types";
+import { now, type AgentActivity, type AgentConfig, type AgentHealthSignalKind, type AgentId, type AgentTurn, type MeshConfig, type MeshEdge, type MeshEvent, type PromptImageRef, type SessionMode, type SessionModel, type ThinkingEffort, type TurnHealthReason } from "./acp/types";
 
 interface PendingDecision {
   resolve: (decision: PermissionDecision) => void;
@@ -185,7 +185,7 @@ export class ControlPlane {
   /** Per-agent advertised model choices. */
   private sessionModels = new Map<AgentId, { current: string; available: SessionModel[] }>();
   /** Per-agent advertised runtime thinking effort choices. */
-  private sessionEfforts = new Map<AgentId, { configId: string; current: string; available: SessionEffort[] }>();
+  private sessionEfforts = new Map<AgentId, RuntimeEffortOptions>();
   /** Agents that have already received the one-time mesh briefing. */
   private briefed = new Set<AgentId>();
   /** Agents whose current process was attached to a loaded ACP session. */
@@ -545,9 +545,9 @@ export class ControlPlane {
   async setEffort(id: AgentId, effort?: ThinkingEffort): Promise<void> {
     const agent = this.mesh.agent(id);
     if (!agent) throw new Error(`no such agent "${id}"`);
-    const advertised = agent.harness === "claude" ? this.sessionEfforts.get(id) : undefined;
-    const runtime = runtimeEffortConfig(agent.harness, effort, advertised?.configId);
-    if (runtime && this.conns.has(id) && (!advertised || advertised.available.some((o) => o.id === runtime.value))) {
+    const advertised = this.sessionEfforts.get(id);
+    const runtime = runtimeEffortConfig(agent.harness, effort, advertised);
+    if (runtime && this.conns.has(id) && (!advertised || advertised.available.some((o) => o.id === effort))) {
       await this.agent(id).setConfigOption(runtime.configId, runtime.value);
       if (advertised) {
         const next = { ...advertised, current: runtime.value };
@@ -827,12 +827,13 @@ export class ControlPlane {
         this.sessionModels.set(a.id, { current: eventCurrent, available: displayModel.available });
         this.emit({ kind: "agent_models", agent: a.id, current: eventCurrent, available: displayModel.available, ts: now() });
       }
-      const configEffort = a.harness === "claude" ? deriveConfigOption(session, "effort") : undefined;
+      const configEffort = runtimeEffortOptionsFromSession(a.harness, session);
       if (configEffort?.available.length) {
         let currentEffort = configEffort.current;
         if (desiredEffort && configEffort.available.some((o) => o.id === desiredEffort)) {
           try {
-            await conn.setConfigOption(configEffort.configId, desiredEffort);
+            const runtime = runtimeEffortConfig(a.harness, desiredEffort, configEffort);
+            if (runtime) await conn.setConfigOption(runtime.configId, runtime.value);
             currentEffort = desiredEffort;
           } catch (err) {
             this.log(`set cached effort ${a.id}=${desiredEffort} failed: ${String(err)}`);
@@ -840,8 +841,9 @@ export class ControlPlane {
         } else if (desiredEffort) {
           this.log(`skip cached effort ${a.id}=${desiredEffort}: not advertised`);
         }
-        this.sessionEfforts.set(a.id, { configId: configEffort.configId, current: currentEffort, available: configEffort.available });
-        this.emit({ kind: "agent_efforts", agent: a.id, configId: configEffort.configId, current: currentEffort, available: configEffort.available, ts: now() });
+        const next = { ...configEffort, current: currentEffort };
+        this.sessionEfforts.set(a.id, next);
+        this.emit({ kind: "agent_efforts", agent: a.id, configId: next.configId, current: next.current, available: next.available, ts: now() });
       }
       if (this.sessionRunDir && typeof (session as any)?.sessionId === "string") {
         this.sessionState = await updateAgentSession(this.sessionRunDir, this.mesh.name, a.id, {

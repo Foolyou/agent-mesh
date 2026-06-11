@@ -710,6 +710,55 @@ test("start emits advertised runtime effort options and setEffort uses their con
   }
 });
 
+test("kimi runtime effort uses advertised thinking values behind low/high UI options", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mesh-control-plane-kimi-effort-options-"));
+  class KimiThinkingConnection extends ConfigOptionsConnection {
+    async newSession(): Promise<unknown> {
+      return {
+        sessionId: "kimi-session",
+        configOptions: [
+          {
+            category: "effort",
+            id: "thinking",
+            currentValue: "enabled",
+            options: [{ value: "disabled", name: "Off" }, { value: "enabled", name: "On" }],
+          },
+        ],
+      };
+    }
+  }
+  const config: MeshConfig = {
+    name: "kimi-effort-options",
+    agents: [{ id: "kimi", harness: "kimi", project: root, role: "router" }],
+    edges: [],
+  };
+  const events: any[] = [];
+  let created: KimiThinkingConnection | undefined;
+  const cp = new ControlPlane(config, {
+    mailboxPath: join(root, "mailbox.ndjson"),
+    connectionFactory: (opts) => {
+      created = new KimiThinkingConnection(opts);
+      return created as unknown as AcpAgentConnection;
+    },
+  });
+  cp.on((e) => events.push(e));
+
+  try {
+    await cp.start();
+    expect(events.find((e) => e.kind === "agent_efforts" && e.agent === "kimi")).toMatchObject({
+      configId: "thinking",
+      current: "high",
+      available: [{ id: "low", name: "low" }, { id: "high", name: "high" }],
+    });
+
+    await cp.setEffort("kimi", "low");
+    expect(created?.setConfigOptions).toContainEqual({ configId: "thinking", value: "disabled" });
+  } finally {
+    await cp.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("start applies codex bypass by switching to full-access mode", async () => {
   const root = await mkdtemp(join(tmpdir(), "mesh-control-plane-bypass-"));
   class BypassModesConnection extends ResumeConnection {
