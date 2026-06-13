@@ -167,6 +167,68 @@ test("spawn creates a missing project cwd before starting the connection", async
   }
 });
 
+test("spawn injects AGENT_MESH_ARTIFACTS for eager and lazy agents and creates the directories", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mesh-artifact-env-"));
+  const artifactsRoot = root;
+  const created: Record<string, RecordingConnection> = {};
+  const cp = new ControlPlane(lazyConfig, {
+    mailboxPath: join(root, "mailbox.ndjson"),
+    artifactsRoot,
+    connectionFactory: (opts) => {
+      const conn = new RecordingConnection(opts);
+      created[opts.id] = conn;
+      return conn as unknown as AcpAgentConnection;
+    },
+  });
+
+  try {
+    await cp.start();
+    expect(created.router.opts.extraEnv?.AGENT_MESH_ARTIFACTS).toBe(join(artifactsRoot, "artifacts", "lazy", "router"));
+    expect((await stat(join(artifactsRoot, "artifacts", "lazy", "router"))).isDirectory()).toBe(true);
+    expect(created["lazy-1"]).toBeUndefined();
+
+    await cp.wakeAgent("lazy-1");
+    expect(created["lazy-1"].opts.extraEnv?.AGENT_MESH_ARTIFACTS).toBe(join(artifactsRoot, "artifacts", "lazy", "lazy-1"));
+    expect((await stat(join(artifactsRoot, "artifacts", "lazy", "lazy-1"))).isDirectory()).toBe(true);
+  } finally {
+    await cp.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("newSession respawn preserves AGENT_MESH_ARTIFACTS", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mesh-artifact-env-respawn-"));
+  const artifactsRoot = root;
+  const config: MeshConfig = {
+    name: "respawn",
+    agents: [{ id: "router", harness: "codex", project: root, role: "router" }],
+    edges: [],
+  };
+  const created: RecordingConnection[] = [];
+  const cp = new ControlPlane(config, {
+    mailboxPath: join(root, "mailbox.ndjson"),
+    sessionRunDir: join(root, "run"),
+    artifactsRoot,
+    connectionFactory: (opts) => {
+      const conn = new RecordingConnection(opts);
+      created.push(conn);
+      return conn as unknown as AcpAgentConnection;
+    },
+  });
+
+  try {
+    await cp.start();
+    await cp.newSession("router");
+    expect(created).toHaveLength(2);
+    expect(created[0].opts.extraEnv?.AGENT_MESH_ARTIFACTS).toBe(join(artifactsRoot, "artifacts", "respawn", "router"));
+    expect(created[1].opts.extraEnv?.AGENT_MESH_ARTIFACTS).toBe(join(artifactsRoot, "artifacts", "respawn", "router"));
+    expect((await stat(join(artifactsRoot, "artifacts", "respawn", "router"))).isDirectory()).toBe(true);
+  } finally {
+    await cp.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("stopAgent kills a ready agent and leaves it manually stopped", async () => {
   const root = await mkdtemp(join(tmpdir(), "mesh-stop-agent-ready-"));
   const created: Record<string, RecordingConnection> = {};

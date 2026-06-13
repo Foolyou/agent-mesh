@@ -31,3 +31,22 @@ test("encoded paths are preserved rather than double-encoded", () => {
   expect(rewriteAgentHref("dir/a%20b.md", author)).toBe("/mesh/dev/agent/codex-1/file/dir/a%20b.md");
   expect(rewriteAgentImageSrc("dir/%E5%9B%BE.png", author)).toBe("/api/agents/codex-1/files/dir/%E5%9B%BE.png");
 });
+
+test("artifact refs rewrite through AuthorContext", () => {
+  expect(rewriteAgentImageSrc("artifact:foo.png", author)).toBe("/api/meshes/dev/agents/codex-1/artifacts/foo.png");
+  expect(rewriteAgentHref("artifact:report.md", author)).toBe("/mesh/dev/agent/codex-1/artifact/report.md");
+});
+
+test("artifact explicit owner refs rewrite through the current mesh", () => {
+  expect(rewriteAgentImageSrc("artifact://builder/x.png", author)).toBe("/api/meshes/dev/agents/builder/artifacts/x.png");
+  expect(rewriteAgentHref("artifact://builder/docs/a%20b.md", author)).toBe("/mesh/dev/agent/builder/artifact/docs/a%20b.md");
+});
+
+test("unsafe artifact refs are dropped", () => {
+  expect(rewriteAgentImageSrc("artifact://bad..name/x.png", author)).toBeUndefined();
+  expect(rewriteAgentImageSrc("artifact:/abs/path", author)).toBeUndefined();
+  expect(rewriteAgentImageSrc("artifact://evil.com/x", author)).toBeUndefined();
+  expect(rewriteAgentImageSrc("artifact://builder//x.png", author)).toBeUndefined();
+  expect(rewriteAgentImageSrc("artifact://builder/..%2Fx.png", author)).toBeUndefined();
+  expect(rewriteAgentImageSrc("artifact:foo.png", undefined)).toBeUndefined();
+});

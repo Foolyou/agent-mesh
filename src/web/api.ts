@@ -209,6 +209,17 @@ export async function handleApi(
         gw.removeQueuedTurn(name, str(p[3]), str(p[5]));
         return ok();
       }
+      // GET /api/meshes/:name/agents/:id/artifacts/:relPath
+      if (method === "GET" && p.length >= 6 && p[2] === "agents" && p[4] === "artifacts") {
+        try {
+          return { status: 200, body: await gw.serveAgentArtifact(name, str(p[3]), p.slice(5).join("/")) };
+        } catch (err: any) {
+          if (err instanceof AgentFileError || typeof err?.code === "string") {
+            return fail(agentFileStatus(err.code), "agent artifact not found");
+          }
+          throw err;
+        }
+      }
     }
 
     return fail(404, `no route: ${method} ${path}`);

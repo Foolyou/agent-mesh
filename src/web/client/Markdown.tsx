@@ -25,9 +25,13 @@ function isImageSrc(value: string): boolean {
   return /^data:image\/(?:png|jpe?g|gif|webp);base64,/i.test(value.trim());
 }
 
+function isArtifactRef(value: string): boolean {
+  return value.trim().startsWith("artifact:");
+}
+
 const urlTransform: UrlTransform = (url, key) => {
-  if (key === "href") return isHttpUrl(url) || isRelativeRef(url) ? url : null;
-  if (key === "src") return isImageSrc(url) || isRelativeRef(url) ? url : null;
+  if (key === "href") return isHttpUrl(url) || isRelativeRef(url) || isArtifactRef(url) ? url : null;
+  if (key === "src") return isImageSrc(url) || isRelativeRef(url) || isArtifactRef(url) ? url : null;
   return null;
 };
 
@@ -39,8 +43,8 @@ const sanitizeSchema = {
   ...defaultSchema,
   protocols: {
     ...defaultSchema.protocols,
-    src: [...(defaultSchema.protocols?.src ?? []), "data"],
-    href: [...(defaultSchema.protocols?.href ?? []), "tel"],
+    src: [...(defaultSchema.protocols?.src ?? []), "data", "artifact"],
+    href: [...(defaultSchema.protocols?.href ?? []), "tel", "artifact"],
   },
   attributes: {
     ...defaultSchema.attributes,
@@ -119,14 +123,54 @@ export function Markdown({ text }: { text: string }) {
 
 export function rewriteAgentHref(href: string, author: AuthorRef | undefined): string | undefined {
   if (isHttpUrl(href)) return href;
+  const artifact = rewriteArtifactRef(href, author, "viewer");
+  if (artifact !== undefined || isArtifactRef(href)) return artifact;
   if (!isRelativeRef(href) || !author) return undefined;
   return `/mesh/${encodeURIComponent(author.meshId)}/agent/${encodeURIComponent(author.agent)}/file/${encodeRelPath(href)}`;
 }
 
 export function rewriteAgentImageSrc(src: string, author: AuthorRef | undefined): string | undefined {
   if (isImageSrc(src)) return src;
+  const artifact = rewriteArtifactRef(src, author, "api");
+  if (artifact !== undefined || isArtifactRef(src)) return artifact;
   if (!isRelativeRef(src) || !author) return undefined;
   return `/api/agents/${encodeURIComponent(author.agent)}/files/${encodeRelPath(src)}`;
+}
+
+function rewriteArtifactRef(ref: string, author: AuthorRef | undefined, target: "api" | "viewer"): string | undefined {
+  if (!isArtifactRef(ref) || !author) return undefined;
+  const raw = ref.trim().slice("artifact:".length);
+  let agent = author.agent;
+  let rest = raw;
+  if (raw.startsWith("//")) {
+    const afterSlashes = raw.slice(2);
+    const slash = afterSlashes.indexOf("/");
+    if (slash <= 0) return undefined;
+    agent = afterSlashes.slice(0, slash);
+    rest = afterSlashes.slice(slash + 1);
+    // Avoid treating ordinary host-looking URLs as agent ids in markdown.
+    if (agent.includes(".")) return undefined;
+  }
+  if (!isSafeArtifactAgent(agent) || !isSafeArtifactRest(rest)) return undefined;
+  return target === "api"
+    ? `/api/meshes/${encodeURIComponent(author.meshId)}/agents/${encodeURIComponent(agent)}/artifacts/${encodeRelPath(rest)}`
+    : `/mesh/${encodeURIComponent(author.meshId)}/agent/${encodeURIComponent(agent)}/artifact/${encodeRelPath(rest)}`;
+}
+
+function isSafeArtifactAgent(agent: string): boolean {
+  return !!agent && !agent.includes("..") && /^[A-Za-z0-9._-]+$/.test(agent);
+}
+
+function isSafeArtifactRest(rest: string): boolean {
+  if (!rest || rest.startsWith("/") || rest.startsWith("\\") || rest.startsWith("://")) return false;
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(rest);
+  } catch {
+    return false;
+  }
+  if (!decoded || decoded.includes("\0") || decoded.startsWith("/") || decoded.startsWith("\\") || decoded.startsWith("://")) return false;
+  return !decoded.split(/[\\/]+/).some((part) => part === "..");
 }
 
 function encodeRelPath(value: string): string {

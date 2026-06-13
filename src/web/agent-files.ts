@@ -38,9 +38,10 @@ export function pickContentType(ext: string): string | undefined {
   return undefined;
 }
 
-export async function resolveAgentFile(cwd: string, relPath: string): Promise<ResolvedAgentFile> {
+export async function resolveAgentFile(cwd: string, relPath: string, opts: { fuzzyBasename?: boolean } = {}): Promise<ResolvedAgentFile> {
   const base = resolve(cwd);
   const decoded = decodeRelPath(relPath);
+  const fuzzyBasename = opts.fuzzyBasename ?? true;
 
   try {
     return await readExact(base, decoded);
@@ -51,6 +52,7 @@ export async function resolveAgentFile(cwd: string, relPath: string): Promise<Re
     // with that basename. Any other error (traversal/symlink/toobig/wrong-magic-bytes) is
     // surfaced as-is — we never use the fallback to bypass a security or whitelist gate.
     if (!(err instanceof AgentFileError) || err.code !== "enotfound") throw err;
+    if (!fuzzyBasename) throw err;
     if (!isBareBasename(decoded)) throw err;
     const ext = extname(decoded).toLowerCase();
     if (!pickContentType(ext)) throw err;

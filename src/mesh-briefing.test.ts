@@ -127,12 +127,14 @@ test("per-agent instructions can appear without a team charter", () => {
   expect(b).toContain("  Solo private guidance.");
 });
 
-test("briefing tells agents to write Markdown file references with paths relative to cwd", () => {
+test("briefing tells agents to attach user-visible artifacts through the official artifact directory", () => {
   const b = buildMeshBriefing(new Mesh(cfg), "codex-1");
-  expect(b).toMatch(/file references in Markdown/i);
-  expect(b).toMatch(/relative to your CWD/i);
-  expect(b).toContain("artifacts/analysis.md"); // example using a subdir prefix
-  expect(b).toMatch(/absolute paths/i); // explicit warning that absolute paths are stripped
+  expect(b).toMatch(/Attaching images\/documents/i);
+  expect(b).toContain("$AGENT_MESH_ARTIFACTS/<file>");
+  expect(b).toContain("artifact:<file>");
+  expect(b).toContain("artifact://<owner-agent>/<file>");
+  expect(b).toMatch(/outside your worktree/i);
+  expect(b).not.toMatch(/relative to your CWD/i);
 });
 
 test("unknown agent yields an empty briefing", () => {
@@ -149,7 +151,7 @@ test("briefing embeds the communication norms card at the end (push model, inten
   expect(b).toContain("[DONE]");
   expect(b).toMatch(/NEVER send pure acknowledgements/);
   // The norms card is the LAST section so it sits closest to the model's attention.
-  expect(b.indexOf("Mesh communication rules")).toBeGreaterThan(b.indexOf("file references in Markdown"));
+  expect(b.indexOf("Mesh communication rules")).toBeGreaterThan(b.indexOf("Attaching images/documents"));
 });
 
 test("norms card and wake guidance agree on the core rules (single source, no drift)", () => {
