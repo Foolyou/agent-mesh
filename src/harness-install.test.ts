@@ -165,3 +165,23 @@ test("startHarnessInstall drops npm auth token-looking output lines", async () =
   expect(text).not.toContain("npm_token");
   expect(text).not.toContain("_password");
 });
+
+test("startHarnessInstall keeps node_modules log lines while dropping NODE_AUTH output", async () => {
+  resetHarnessInstallJobsForTests();
+  const job = await startHarnessInstall("codex", {
+    prefix: "/tmp/mesh-home/.agent-mesh/npm-global",
+    home: "/tmp/mesh-home",
+    which: () => "/usr/bin/npm",
+    spawn: () => ({
+      exited: Promise.resolve(0),
+      stdout: streamOf("added 42 packages to node_modules in 3.5s\nNODE_AUTH_TOKEN=abc\n"),
+      stderr: streamOf("audited 42 packages in node_modules\n"),
+    }),
+    reprobe: async () => [],
+  });
+  await job.done;
+  const text = job.events.map((e) => `${(e as any).stdoutLine ?? ""}${(e as any).stderrLine ?? ""}`).join("\n");
+  expect(text).toContain("added 42 packages to node_modules in 3.5s");
+  expect(text).toContain("audited 42 packages in node_modules");
+  expect(text).not.toContain("NODE_AUTH_TOKEN");
+});
