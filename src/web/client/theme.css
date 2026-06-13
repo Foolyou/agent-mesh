@@ -1582,6 +1582,20 @@ body::after {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+.stale-harness-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: min(100%, 260px);
+  max-width: 100%;
+  color: var(--warn);
+  border: 1px solid color-mix(in srgb, var(--warn) 45%, var(--line));
+  background: color-mix(in srgb, var(--warn) 9%, transparent);
+  padding: 3px 6px;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
 
 /* ── mesh canvas ───────────────────────────────────────────────────────── */
 .mesh-canvas {
