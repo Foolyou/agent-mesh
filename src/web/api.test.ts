@@ -17,6 +17,8 @@ const CFG: MeshConfig = {
   edges: [{ from: "router", to: "codex-1" }],
 };
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]);
+const SAME_ORIGIN = "http://localhost:7317";
+const sameOriginCtx = () => ({ headers: new Headers({ origin: SAME_ORIGIN }), expectedOrigin: SAME_ORIGIN });
 
 function fakeManager(config: MeshConfig = CFG) {
   const calls: any[] = [];
@@ -189,14 +191,15 @@ test("POST /api/harnesses/claude/install starts an install job", async () => {
     undefined,
     undefined,
     async (id) => ({ id: "job-1", harnessId: id, pkgSpec: "@agentclientprotocol/claude-agent-acp@0.44.0", status: "running" }) as any,
+    sameOriginCtx(),
   );
   expect(r).toEqual({ status: 200, body: { jobId: "job-1", status: "running", harnessId: "claude", pkgSpec: "@agentclientprotocol/claude-agent-acp@0.44.0" } });
 });
 
 test("POST /api/harnesses/:id/install rejects non-npm and unknown harnesses", async () => {
   const gw = new WebGateway(fakeManager() as any);
-  const opencode = await handleApi(gw, "POST", "/api/harnesses/opencode/install", {});
-  const unknown = await handleApi(gw, "POST", "/api/harnesses/unknown/install", {});
+  const opencode = await handleApi(gw, "POST", "/api/harnesses/opencode/install", {}, new URLSearchParams(), undefined, undefined, undefined, sameOriginCtx());
+  const unknown = await handleApi(gw, "POST", "/api/harnesses/unknown/install", {}, new URLSearchParams(), undefined, undefined, undefined, sameOriginCtx());
   expect(opencode.status).toBe(400);
   expect(opencode.body.error.message).toContain("not npm-installable");
   expect(unknown.status).toBe(400);
@@ -216,6 +219,7 @@ test("POST /api/harnesses/:id/install returns 409 when npm is missing", async ()
     async () => {
       throw new HarnessInstallError("missing-npm", "Install Node.js first");
     },
+    sameOriginCtx(),
   );
   expect(r).toEqual({ status: 409, body: { error: "missing-npm", hint: "Install Node.js first" } });
 });
@@ -230,10 +234,31 @@ test("POST /api/harnesses/:id/install returns the active job for duplicate start
     which: () => "/usr/bin/npm",
     spawn: () => ({ exited: new Promise<number>((resolve) => { resolveExit = resolve; }), stdout: new Response("").body, stderr: new Response("").body }),
   });
-  const first = await handleApi(gw, "POST", "/api/harnesses/codex/install", {}, new URLSearchParams(), undefined, undefined, install);
-  const second = await handleApi(gw, "POST", "/api/harnesses/codex/install", {}, new URLSearchParams(), undefined, undefined, install);
+  const first = await handleApi(gw, "POST", "/api/harnesses/codex/install", {}, new URLSearchParams(), undefined, undefined, install, sameOriginCtx());
+  const second = await handleApi(gw, "POST", "/api/harnesses/codex/install", {}, new URLSearchParams(), undefined, undefined, install, sameOriginCtx());
   expect(second.body.jobId).toBe(first.body.jobId);
   resolveExit(0);
+});
+
+test("harness install endpoints require same-origin request headers", async () => {
+  const gw = new WebGateway(fakeManager() as any);
+  const installer = async (id: any) => ({ id: "job-1", harnessId: id, pkgSpec: "@agentclientprotocol/claude-agent-acp@0.44.0", status: "running" }) as any;
+  const missing = await handleApi(gw, "POST", "/api/harnesses/claude/install", {}, new URLSearchParams(), undefined, undefined, installer);
+  const cross = await handleApi(
+    gw,
+    "POST",
+    "/api/harnesses/claude/install",
+    {},
+    new URLSearchParams(),
+    undefined,
+    undefined,
+    installer,
+    { headers: new Headers({ origin: "http://evil.test" }), expectedOrigin: SAME_ORIGIN },
+  );
+  const ok = await handleApi(gw, "POST", "/api/harnesses/claude/install", {}, new URLSearchParams(), undefined, undefined, installer, sameOriginCtx());
+  expect(missing.status).toBe(403);
+  expect(cross.status).toBe(403);
+  expect(ok.status).toBe(200);
 });
 
 test("POST /api/meshes/demo/start delegates to startMesh", async () => {

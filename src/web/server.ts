@@ -67,7 +67,8 @@ export function startWebServer(opts: WebServerOptions = {}): WebServerHandle {
         const hasBody = req.method !== "GET" && req.method !== "HEAD";
         if (gw) {
           const body = hasBody ? await requestBody(req) : undefined;
-          const r = await handleApi(gw, req.method, url.pathname, body, url.searchParams);
+          const expectedOrigin = `http://${req.headers.get("host") ?? url.host}`;
+          const r = await handleApi(gw, req.method, url.pathname, body, url.searchParams, undefined, undefined, undefined, { headers: req.headers, expectedOrigin });
           if (r.body instanceof Response) return r.body;
           return Response.json(r.body, { status: r.status });
         }

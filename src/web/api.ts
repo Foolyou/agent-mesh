@@ -19,6 +19,10 @@ export interface ApiResult {
 
 type HarnessModelProbe = typeof probeHarnessModels;
 type HarnessInstaller = typeof startHarnessInstall;
+export interface ApiRequestContext {
+  headers?: Headers;
+  expectedOrigin?: string;
+}
 
 const ok = (body: any = { ok: true }): ApiResult => ({ status: 200, body });
 const fail = (status: number, message: string): ApiResult => ({ status, body: { error: { message } } });
@@ -32,6 +36,7 @@ export async function handleApi(
   harnessProbe = probeHarnesses,
   harnessModelProbe: HarnessModelProbe = probeHarnessModels,
   harnessInstaller: HarnessInstaller = startHarnessInstall,
+  ctx: ApiRequestContext = {},
 ): Promise<ApiResult> {
   const seg = path
     .replace(/^\/+|\/+$/g, "")
@@ -43,6 +48,10 @@ export async function handleApi(
   const str = (v: unknown) => (v == null ? "" : String(v));
 
   try {
+    if (isHarnessMutationRoute(method, p)) {
+      const csrf = sameOriginCheck(ctx.headers, ctx.expectedOrigin);
+      if (!csrf.ok) return { status: 403, body: { error: { message: "forbidden" } } };
+    }
     if (method === "GET" && p.length === 1 && p[0] === "state") return ok(gw.snapshot());
     if (method === "GET" && p.length === 1 && p[0] === "harnesses") return ok(await harnessProbe());
     if (method === "POST" && p.length === 3 && p[0] === "harnesses" && p[2] === "install") {
@@ -245,6 +254,26 @@ export async function handleApi(
   } catch (e: any) {
     return fail(400, str(e?.message ?? e));
   }
+}
+
+function isHarnessMutationRoute(method: string, p: string[]): boolean {
+  if (p[0] !== "harnesses") return false;
+  if (method === "POST" && p.length === 3 && p[2] === "install") return true;
+  if (method === "GET" && p.length === 5 && p[2] === "install" && p[4] === "stream") return true;
+  if (method === "POST" && p.length === 3 && p[2] === "reprobe") return true;
+  return false;
+}
+
+export function assertSameOrigin(headers: Headers | undefined, expectedOrigin: string | undefined): void {
+  if (!sameOriginCheck(headers, expectedOrigin).ok) throw new Error("forbidden");
+}
+
+function sameOriginCheck(headers: Headers | undefined, expectedOrigin: string | undefined): { ok: boolean } {
+  const site = headers?.get("sec-fetch-site")?.toLowerCase();
+  if (site === "same-origin") return { ok: true };
+  const origin = headers?.get("origin");
+  if (origin && expectedOrigin && origin === expectedOrigin) return { ok: true };
+  return { ok: false };
 }
 
 function agentFileStatus(code: string): number {
