@@ -37,6 +37,13 @@ export interface AgentUsage {
   ts: string;
 }
 
+export interface AgentSelfAwareness {
+  silentTaskCompletes?: { count: number; lastAt: number | null };
+  nearLimit?: { usagePercent: number; ts: number };
+  lastCompactAt?: number | null;
+  lastNearLimitWarnedAt?: number | null;
+}
+
 export interface AgentHealthSignalEntry {
   signal: AgentHealthSignalKind;
   detail?: Record<string, unknown>;
@@ -75,6 +82,7 @@ export type TranscriptItem =
     }
   | { id: string; kind: "plan"; entries: PlanEntry[]; ts: string; updatedTs: string }
   | { id: string; kind: "mail"; from: AgentId; to: AgentId; body: string; ts: string }
+  | { id: string; kind: "compact"; status: "started" | "completed" | "failed"; reason?: string; error?: string; ts: string }
   | { id: string; kind: "divider"; label: string; ts: string };
 
 export type TranscriptOp =
@@ -135,7 +143,7 @@ export type RespawnMode = "after-idle" | "force" | "cancel";
 export interface ActivityEntry {
   id: string;
   ts: string;
-  kind: "mail" | "steer" | "interrupt" | "permission_resolved" | "log";
+  kind: "mail" | "steer" | "interrupt" | "permission_resolved" | "log" | "compact" | "warning";
   text: string;
 }
 
@@ -198,6 +206,8 @@ export interface PerMeshState {
   usage: Record<AgentId, AgentUsage>;
   /** Latest per-agent silence/health signal for UI status surfaces. */
   health: Record<AgentId, AgentHealthSignalEntry>;
+  /** Per-agent mesh-host self-awareness diagnostics. */
+  selfAwareness: Record<AgentId, AgentSelfAwareness>;
   queues: Record<AgentId, QueueSummary>;
 }
 
@@ -222,6 +232,7 @@ export type ServerMsg =
   | { t: "agent.capabilities"; name: string; agent: AgentId; image: boolean }
   | { t: "agent.usage"; name: string; agent: AgentId; usage: AgentUsage }
   | { t: "agent.health"; name: string; agent: AgentId; health: AgentHealthSignalEntry }
+  | { t: "agent.selfAwareness"; name: string; agent: AgentId; selfAwareness: AgentSelfAwareness }
   | { t: "agent.queue"; name: string; agent: AgentId; summary: QueueSummary }
   | { t: "assistant.capabilities"; image: boolean; harness?: HarnessId }
   | { t: "transcript.upsert"; conv: ConvRef; item: TranscriptItem }

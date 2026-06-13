@@ -4,6 +4,7 @@
 import { HARNESSES } from "./harness";
 import { isEffortSupportedByHarness, isThinkingEffort, supportedEffortsForConfig } from "./harness-utils";
 import { normalizeMeshEdge, normalizeMeshEdges, type AgentConfig, type AgentStatus, type MeshConfig, type MeshEdge, type MeshEdgeInput } from "./acp/types";
+import { parseCompactThreshold } from "./auto-compact";
 
 function validateAgentEffort(agent: AgentConfig): void {
   if (agent.effort === undefined) return;
@@ -78,6 +79,20 @@ export function validateMeshConfig(config: MeshConfig): void {
   if (config.charter !== undefined) {
     if (typeof config.charter !== "string") throw new Error("mesh charter must be a string");
     if (config.charter.length > 4000) throw new Error("mesh charter is too long (max 4000 chars)");
+  }
+
+  if (config.autoCompact !== undefined) {
+    if (typeof config.autoCompact !== "object" || config.autoCompact === null || Array.isArray(config.autoCompact)) {
+      throw new Error("mesh autoCompact must be an object");
+    }
+    if (typeof config.autoCompact.enabled !== "boolean") throw new Error("mesh autoCompact.enabled must be a boolean");
+    if (typeof config.autoCompact.threshold !== "string") throw new Error("mesh autoCompact.threshold must be a string");
+    if (config.autoCompact.enabled === false) return;
+    try {
+      parseCompactThreshold(config.autoCompact.threshold);
+    } catch (err) {
+      throw new Error(`mesh autoCompact.threshold is invalid: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 }
 

@@ -12,6 +12,7 @@ import {
 } from "@zed-industries/agent-client-protocol";
 import type { AgentTurn, PromptImageRef } from "./types";
 import { HARNESSES } from "../harness";
+import { parseAvailableCommands, parseTokenCount, parseUsageUpdate } from "./usage-compat";
 
 export type PermissionDecision = { optionId: string } | "cancel";
 
@@ -157,6 +158,8 @@ export interface AcpConnectionOptions {
   onPromptStarted?: (turn: AgentTurn) => void;
   onPromptSignal?: (turn: AgentTurn | undefined, signal: unknown) => void;
   onExtNotification?: (method: string, params: unknown, turn: AgentTurn | undefined) => void;
+  onContextUsage?: (usage: { used: number; size: number; percent: number }) => void;
+  onAvailableCommands?: (commands: string[]) => void;
 }
 
 type PromptPlacement = "back" | "front";
@@ -174,6 +177,8 @@ export class AcpAgentConnection {
   sessionId?: string;
   supportsLoadSession = false;
   alive = false;
+  contextUsage: { used: number; size: number; percent: number } | null = null;
+  advertisedCommands = new Set<string>();
   private child?: ReturnType<typeof Bun.spawn>;
   private conn?: ClientSideConnection;
   private rawRequestSeq = 0;
@@ -213,6 +218,7 @@ export class AcpAgentConnection {
       },
     });
     const input = filterUsageUpdates(child.stdout as ReadableStream<Uint8Array>, (update) => {
+      this.recordStreamState(update);
       this.opts.onPromptSignal?.(this.activeJob?.turn, update);
       this.opts.onUpdate?.(update);
     });
@@ -241,6 +247,7 @@ export class AcpAgentConnection {
   private clientHandlers(): Client & { extNotification?: (notification: any, params?: unknown) => Promise<void> } {
     return {
       sessionUpdate: async (params: any) => {
+        this.recordStreamState(params.update);
         this.opts.onPromptSignal?.(this.activeJob?.turn, params.update);
         this.opts.onUpdate?.(params.update);
       },
@@ -278,6 +285,32 @@ export class AcpAgentConnection {
         return { content };
       },
     };
+  }
+
+  private recordStreamState(update: unknown): void {
+    const usage = parseUsageUpdate(update);
+    if (usage) {
+      const contextUsage = { used: usage.used, size: usage.size, percent: usage.usagePercent };
+      this.contextUsage = contextUsage;
+      this.opts.onContextUsage?.(contextUsage);
+    }
+
+    const tokenCount = parseTokenCount(update);
+    if (tokenCount && tokenCount.contextWindow > 0) {
+      const contextUsage = {
+        used: tokenCount.lastTokens,
+        size: tokenCount.contextWindow,
+        percent: tokenCount.lastTokens / tokenCount.contextWindow,
+      };
+      this.contextUsage = contextUsage;
+      this.opts.onContextUsage?.(contextUsage);
+    }
+
+    const commands = parseAvailableCommands(update);
+    if (commands) {
+      this.advertisedCommands = new Set(commands);
+      this.opts.onAvailableCommands?.(commands);
+    }
   }
 
   async newSession(mcpServers: any[] = []) {

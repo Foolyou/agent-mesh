@@ -116,6 +116,23 @@ test("accepts an optional charter and rejects an overly long one", () => {
   expect(() => validateMeshConfig({ ...ok, charter: "x".repeat(4001) })).toThrow(/too long/i);
 });
 
+test("accepts optional autoCompact settings", () => {
+  expect(() => validateMeshConfig({ ...ok, autoCompact: { enabled: true, threshold: "90%" } })).not.toThrow();
+  expect(() => validateMeshConfig({ ...ok, autoCompact: { enabled: false, threshold: "-20000" } })).not.toThrow();
+  expect(() => validateMeshConfig({ ...ok, autoCompact: { enabled: false, threshold: "" } })).not.toThrow();
+  expect(() => validateMeshConfig({ ...ok, autoCompact: { enabled: false, threshold: "abc" } })).not.toThrow();
+});
+
+test("accepts missing autoCompact for old mesh configs", () => {
+  expect(() => validateMeshConfig(ok)).not.toThrow();
+});
+
+test("rejects invalid autoCompact settings", () => {
+  expect(() => validateMeshConfig({ ...ok, autoCompact: { enabled: true, threshold: "0%" } })).toThrow(/autoCompact/i);
+  expect(() => validateMeshConfig({ ...ok, autoCompact: { enabled: "yes" as any, threshold: "90%" } })).toThrow(/autoCompact/i);
+  expect(() => validateMeshConfig({ ...ok, autoCompact: { enabled: true, threshold: "" } })).toThrow(/autoCompact/i);
+});
+
 test("accepts optional per-agent instructions and ignores blank ones", () => {
   expect(() =>
     validateMeshConfig({

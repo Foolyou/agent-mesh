@@ -149,6 +149,19 @@ function Divider() {
   );
 }
 
+function CompactEntry({ item }: { item: Extract<TranscriptItem, { kind: "compact" }> }) {
+  const detail = item.status === "failed" ? item.error : item.reason;
+  return (
+    <details className={`compact-entry ${item.status}`}>
+      <summary>
+        <span>--- Context Compacted ---</span>
+        <span className="compact-status">{item.status}</span>
+      </summary>
+      {detail ? <div className="compact-meta">{detail}</div> : null}
+    </details>
+  );
+}
+
 function MailBubble({ item, meshId }: { item: Extract<TranscriptItem, { kind: "mail" }>; meshId?: string }) {
   const { t } = useI18n();
   const author = meshId ? { meshId, agent: item.from } : undefined;
@@ -220,6 +233,8 @@ export function Transcript({ items, author }: { items: TranscriptItem[]; author?
             <ToolCard key={it.id} item={it} />
           ) : it.kind === "mail" ? (
             <MailBubble key={it.id} item={it} meshId={author?.meshId} />
+          ) : it.kind === "compact" ? (
+            <CompactEntry key={it.id} item={it} />
           ) : it.kind === "divider" ? (
             <Divider key={it.id} />
           ) : (

@@ -56,6 +56,11 @@ export interface AgentConfig {
   instructions?: string;
 }
 
+export interface AutoCompactSettings {
+  enabled: boolean;
+  threshold: string;
+}
+
 export interface MeshConfig {
   name: string;
   agents: AgentConfig[];
@@ -64,6 +69,9 @@ export interface MeshConfig {
   /** Optional team charter — shared goal + working norms injected into every
    *  agent's mesh briefing. Free text. */
   charter?: string;
+  /** Optional per-mesh automatic context compaction settings. Missing means
+   *  DEFAULT_AUTO_COMPACT_SETTINGS ({ enabled: true, threshold: "90%" }). */
+  autoCompact?: AutoCompactSettings;
 }
 
 export type AgentStatus = "cold" | "spawning" | "ready" | "dead" | "stopped";
@@ -97,7 +105,7 @@ export interface PromptImageRef {
   path?: string;
 }
 
-export type AgentTurnSource = "operator" | "mail" | "steer";
+export type AgentTurnSource = "operator" | "mail" | "steer" | "system";
 
 export interface AgentTurn {
   id: string;
@@ -132,6 +140,12 @@ export type MeshEvent =
   | { kind: "agent_turn"; phase: "queued" | "started" | "consumed" | "removed"; turn: AgentTurn; ts: string }
   | { kind: "agent_turn_health"; agent: AgentId; turn?: AgentTurn; level: "warning" | "failed"; reason: TurnHealthReason; detail: string; ts: string }
   | { kind: "agent_health_signal"; agent: AgentId; signal: AgentHealthSignalKind; detail?: Record<string, unknown>; turn?: AgentTurn; ts: string }
+  | { kind: "silent_task_complete"; agent: AgentId; turnId: string; ts: number }
+  | { kind: "bare_prompt"; agent: AgentId; reason: string; ts: number }
+  | { kind: "compact_started"; agent: AgentId; reason: string; ts: number }
+  | { kind: "compact_completed"; agent: AgentId; ts: number }
+  | { kind: "compact_failed"; agent: AgentId; error: string; ts: number }
+  | { kind: "near_context_limit_no_compact"; agent: AgentId; usagePercent: number; ts: number }
   | { kind: "mail"; from: AgentId; to: AgentId; body: string; ts: string; id?: string }
   | { kind: "steer"; from: AgentId | "operator"; to: AgentId; body: string; ts: string }
   | {

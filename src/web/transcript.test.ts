@@ -339,3 +339,9 @@ test("unknown update kinds are ignored (no items, no ops)", () => {
   expect(r.items).toHaveLength(0);
   expect(r.ops).toHaveLength(0);
 });
+
+test("compact synthetic updates create compact transcript entries", () => {
+  const r = reduceTranscript([], { sessionUpdate: "__compact__", status: "started", reason: "auto-threshold" }, T);
+  expect(r.items[0]).toMatchObject({ kind: "compact", status: "started", reason: "auto-threshold" });
+  expect(r.ops[0]).toMatchObject({ op: "upsert", item: expect.objectContaining({ kind: "compact" }) });
+});

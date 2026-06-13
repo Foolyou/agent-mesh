@@ -145,6 +145,39 @@ test("usage_update aggregates per-agent usage without entering transcript", () =
   });
 });
 
+test("compact events fold into transcript and activity", () => {
+  const m = fakeManager();
+  const gw = new WebGateway(m as any);
+  const got: any[] = [];
+  gw.subscribe((msg) => got.push(msg));
+
+  m.emit("demo", { kind: "compact_started", agent: "codex-1", reason: "auto-threshold", ts: 1000 } as any);
+  m.emit("demo", { kind: "compact_completed", agent: "codex-1", ts: 2000 } as any);
+
+  const items = gw.snapshot().perMesh.demo.transcripts["codex-1"];
+  expect(items.filter((i: any) => i.kind === "compact")).toHaveLength(2);
+  expect(items[0]).toMatchObject({ kind: "compact", status: "started", reason: "auto-threshold" });
+  expect(got.some((x) => x.t === "transcript.upsert" && x.item.kind === "compact")).toBe(true);
+  expect(got.some((x) => x.t === "activity" && x.entry.kind === "compact")).toBe(true);
+});
+
+test("near-limit and silent-stop events update self-awareness state", () => {
+  const m = fakeManager();
+  const gw = new WebGateway(m as any);
+  const got: any[] = [];
+  gw.subscribe((msg) => got.push(msg));
+
+  m.emit("demo", { kind: "near_context_limit_no_compact", agent: "codex-1", usagePercent: 0.9, ts: 1000 } as any);
+  m.emit("demo", { kind: "silent_task_complete", agent: "codex-1", turnId: "t1", ts: 2000 } as any);
+
+  const self = gw.snapshot().perMesh.demo.selfAwareness["codex-1"];
+  expect(self.nearLimit).toEqual({ usagePercent: 0.9, ts: 1000 });
+  expect(self.silentTaskCompletes).toEqual({ count: 1, lastAt: 2000 });
+  expect(got.some((x) => x.t === "agent.selfAwareness" && x.agent === "codex-1")).toBe(true);
+  expect(got.some((x) => x.t === "activity" && x.entry.kind === "warning")).toBe(true);
+});
+
+
 test("effort config option updates are exposed in snapshot and ws", () => {
   const m = fakeManager();
   const gw = new WebGateway(m as any);

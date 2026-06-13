@@ -65,3 +65,11 @@ test("transcript stream is programmatically focusable for jump-to-bottom", () =>
   expect(html).toContain('class="stream"');
   expect(html).toContain('tabindex="-1"');
 });
+
+test("transcript renders compact entries as dim infrastructure markers", () => {
+  const html = render([{ id: "c1", kind: "compact", status: "completed", reason: "auto-threshold", ts: T }]);
+
+  expect(html).toContain("compact-entry completed");
+  expect(html).toContain("--- Context Compacted ---");
+  expect(html).toContain("completed");
+});

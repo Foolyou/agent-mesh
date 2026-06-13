@@ -557,6 +557,19 @@ try {
     if ((await user.locator("strong").count()) < 1) throw new Error("user message did not render markdown");
   });
 
+  await step("compact event renders context compacted marker", async () => {
+    await page.locator(".conv-router-tab").click();
+    await page.evaluate(() => {
+      const store = (window as any).__meshStore;
+      store.apply({
+        t: "transcript.upsert",
+        conv: { scope: "agent", mesh: "demo", agent: "router" },
+        item: { id: "compact-e2e", kind: "compact", status: "completed", reason: "auto-threshold", ts: new Date().toISOString() },
+      });
+    });
+    await page.locator(".conv-panel .compact-entry", { hasText: "--- Context Compacted ---" }).waitFor({ timeout: 4000 });
+  });
+
   await step("unclosed fence streams without breaking and resolves when closed", async () => {
     await page.locator(".conv-router-tab").click();
     await page.evaluate(() => {
@@ -933,6 +946,11 @@ try {
     // name empty + only one router but blank name → error
     await page.locator('.modal .btn:has-text("define mesh")').click();
     await page.waitForSelector(".modal .err", { timeout: 4000 });
+    await page.locator('.modal .field:has(label:has-text("mesh name")) input').fill("bad-threshold");
+    await page.locator("#mesh-auto-compact-threshold").fill("abc");
+    await page.locator('.modal .btn:has-text("define mesh")').click();
+    await page.waitForSelector('#mesh-auto-compact-error:has-text("invalid compact threshold")', { timeout: 4000 });
+    await page.locator("#mesh-auto-compact-threshold").fill("90%");
   });
 
   await step("mesh builder: valid config creates a mesh", async () => {
@@ -954,6 +972,7 @@ try {
     await page.locator('.modal .field:has(label:has-text("mail edges")) .row').last().locator("select").nth(0).selectOption("router");
     await page.locator('.modal .field:has(label:has-text("mail edges")) .row').last().locator("select").nth(1).selectOption("worker");
     await page.locator('.modal .field:has(label:has-text("mail edges")) .row').last().locator('input[type="checkbox"]').check();
+    await page.locator('#mesh-auto-compact-threshold').fill("70%");
     await page
       .locator('.modal .field:has(label:has-text("team charter")) textarea')
       .fill("Goal: build a tiny CLI. Norms: be concise, write a test.");
@@ -985,6 +1004,12 @@ try {
     if (val !== "squad-x") throw new Error(`edit prefill wrong name: "${val}"`);
     const charterVal = await page.locator('.modal .field:has(label:has-text("team charter")) textarea').inputValue();
     if (!charterVal.includes("build a tiny CLI")) throw new Error(`charter not prefilled: "${charterVal}"`);
+    const autoCompactThreshold = page.locator("#mesh-auto-compact-threshold");
+    if ((await autoCompactThreshold.inputValue()) !== "70%") throw new Error("auto-compact threshold not prefilled from created mesh");
+    if (!(await page.locator('.auto-compact-section label:has-text("Enable auto-compact") input').isChecked())) {
+      throw new Error("auto-compact toggle not prefilled as enabled");
+    }
+    await autoCompactThreshold.fill("95%");
     await page.locator('.modal .builder-tab:has-text("router")').click();
     const instructionsVal = await page.locator(".modal .agent-instructions").first().inputValue();
     if (!instructionsVal.includes("coordinate handoffs")) throw new Error(`instructions not prefilled: "${instructionsVal}"`);
@@ -1051,6 +1076,13 @@ try {
     await page.locator('.modal .btn:has-text("save mesh")').click();
     await page.waitForSelector(".modal", { state: "detached", timeout: 4000 });
     await page.waitForSelector('.mrow:has-text("squad-x")', { timeout: 4000 });
+    await page.locator('.detail-head .btn:has-text("edit")').click();
+    await page.waitForSelector('.modal .mhead:has-text("edit mesh")', { timeout: 4000 });
+    if ((await page.locator("#mesh-auto-compact-threshold").inputValue()) !== "95%") {
+      throw new Error("auto-compact threshold did not persist after edit");
+    }
+    await page.locator('.modal .btn:has-text("cancel")').click();
+    await page.waitForSelector(".modal", { state: "detached", timeout: 4000 });
   });
 
   await step("lazy member starts cold and can be manually woken", async () => {

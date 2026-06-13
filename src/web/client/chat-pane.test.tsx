@@ -82,6 +82,7 @@ test("queue source labels distinguish mailbox and user messages", () => {
   expect(queueSourceLabel({ id: "q1", source: "operator", from: "operator", to: "a", preview: "p", ts: "T" })).toBe("you");
   expect(queueSourceLabel({ id: "q2", source: "mail", from: "review", to: "a", preview: "p", ts: "T" })).toBe("mail · review");
   expect(queueSourceLabel({ id: "q3", source: "steer", from: "lead", to: "a", preview: "p", ts: "T" })).toBe("steer · lead");
+  expect(queueSourceLabel({ id: "q4", source: "system", to: "a", preview: "system: auto-threshold", ts: "T" })).toBe("system");
 });
 
 test("queue preview removes the repeated source prefix shown by the badge", () => {

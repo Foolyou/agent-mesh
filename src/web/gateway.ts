@@ -256,7 +256,7 @@ export class WebGateway {
       } catch {
         config = { name, agents: [], edges: [] };
       }
-      pm = { config, transcripts: {}, activity: [], mail: [], pending: [], history: [], modes: {}, models: {}, efforts: {}, capabilities: {}, usage: {}, health: {}, queues: {} };
+      pm = { config, transcripts: {}, activity: [], mail: [], pending: [], history: [], modes: {}, models: {}, efforts: {}, capabilities: {}, usage: {}, health: {}, selfAwareness: {}, queues: {} };
       this.state.perMesh[name] = pm;
     }
     return pm;
@@ -302,6 +302,10 @@ export class WebGateway {
     pm.queues = { ...pm.queues, [agent]: summary };
     this.broadcast({ t: "agent.queue", name, agent, summary });
   }
+  private publishSelfAwareness(name: string, agent: AgentId): void {
+    const pm = this.ensureMesh(name);
+    this.broadcast({ t: "agent.selfAwareness", name, agent, selfAwareness: pm.selfAwareness[agent] ?? {} });
+  }
   private act(kind: ActivityEntry["kind"], text: string, ts: string): ActivityEntry {
     return { id: this.uid(), ts, kind, text };
   }
@@ -322,6 +326,10 @@ export class WebGateway {
     const conv = { scope: "agent" as const, mesh: name, agent: turn.agent };
     if (turn.source === "mail" || (turn.source === "steer" && turn.from && turn.from !== "operator")) {
       this.foldConv(conv, { sessionUpdate: "__mail__", from: turn.from ?? "unknown", to: turn.to ?? turn.agent, body: turn.text }, ts);
+      return;
+    }
+    if (turn.source === "system") {
+      this.foldConv(conv, { sessionUpdate: "agent_message_chunk", content: { type: "text", text: `[${turn.preview}]` } }, ts);
       return;
     }
     this.foldConv(conv, { sessionUpdate: "user_message_chunk", content: { text: turn.text }, images: turn.images }, ts);
@@ -386,6 +394,47 @@ export class WebGateway {
         const health = { signal: e.signal, detail: e.detail, turn: e.turn, ts: e.ts };
         pm.health[e.agent] = health;
         this.broadcast({ t: "agent.health", name, agent: e.agent, health });
+        break;
+      }
+      case "compact_started":
+      case "compact_completed":
+      case "compact_failed": {
+        const status = e.kind === "compact_failed" ? "failed" : e.kind === "compact_completed" ? "completed" : "started";
+        const ts = typeof e.ts === "number" ? new Date(e.ts).toISOString() : e.ts;
+        this.foldConv({ scope: "agent", mesh: name, agent: e.agent }, {
+          sessionUpdate: "__compact__",
+          status,
+          reason: e.kind === "compact_started" ? e.reason : undefined,
+          error: e.kind === "compact_failed" ? e.error : undefined,
+        }, ts);
+        pm.selfAwareness[e.agent] = { ...(pm.selfAwareness[e.agent] ?? {}), lastCompactAt: e.kind === "compact_started" ? e.ts : (pm.selfAwareness[e.agent]?.lastCompactAt ?? null) };
+        const text = e.kind === "compact_failed" ? `${e.agent} compact failed: ${e.error}` : `${e.agent} compact ${status}`;
+        const entry = this.act("compact", text, ts);
+        pm.activity.push(entry);
+        pm.activity = cap(pm.activity, CAP);
+        this.broadcast({ t: "activity", name, entry });
+        this.publishSelfAwareness(name, e.agent);
+        break;
+      }
+      case "near_context_limit_no_compact": {
+        const ts = typeof e.ts === "number" ? new Date(e.ts).toISOString() : e.ts;
+        pm.selfAwareness[e.agent] = { ...(pm.selfAwareness[e.agent] ?? {}), nearLimit: { usagePercent: e.usagePercent, ts: e.ts }, lastNearLimitWarnedAt: e.ts };
+        const entry = this.act("warning", `${e.agent} context near limit (${Math.round(e.usagePercent * 100)}%), /compact unavailable`, ts);
+        pm.activity.push(entry);
+        pm.activity = cap(pm.activity, CAP);
+        this.broadcast({ t: "activity", name, entry });
+        this.publishSelfAwareness(name, e.agent);
+        break;
+      }
+      case "silent_task_complete": {
+        const current = pm.selfAwareness[e.agent]?.silentTaskCompletes ?? { count: 0, lastAt: null };
+        pm.selfAwareness[e.agent] = { ...(pm.selfAwareness[e.agent] ?? {}), silentTaskCompletes: { count: current.count + 1, lastAt: e.ts } };
+        const ts = new Date(e.ts).toISOString();
+        const entry = this.act("warning", `${e.agent} silent stop ×${current.count + 1}`, ts);
+        pm.activity.push(entry);
+        pm.activity = cap(pm.activity, CAP);
+        this.broadcast({ t: "activity", name, entry });
+        this.publishSelfAwareness(name, e.agent);
         break;
       }
       case "agent_turn_health": {

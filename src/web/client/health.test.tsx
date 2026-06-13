@@ -1,7 +1,7 @@
 import { test, expect } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { AgentHealthBadges, ContextWaterline, activeHealth } from "./health";
+import { AgentHealthBadges, ContextUsageChip, ContextWaterline, activeHealth } from "./health";
 import type { AgentHealthSignalEntry, AgentUsage } from "../types";
 
 test("activeHealth hides compact_done but keeps active warning signals", () => {
@@ -39,4 +39,19 @@ test("ContextWaterline renders per-agent usage pressure bars", () => {
   expect(html).toContain("worker");
   expect(html).toContain("40%");
   expect(html).toContain("idle");
+});
+
+test("ContextUsageChip renders threshold classes and compact pending label", () => {
+  const low = renderToStaticMarkup(createElement(ContextUsageChip, { usage: { used: 45, size: 100, ts: new Date().toISOString() } }));
+  expect(low).toContain("ctx-chip-ok");
+  expect(low).toContain("ctx: 45%");
+
+  const warn = renderToStaticMarkup(createElement(ContextUsageChip, { usage: { used: 72, size: 100, ts: new Date().toISOString() } }));
+  expect(warn).toContain("ctx-chip-yellow");
+  expect(warn).toContain("ctx: 72%");
+
+  const high = renderToStaticMarkup(createElement(ContextUsageChip, { usage: { used: 86, size: 100, ts: new Date().toISOString() } }));
+  expect(high).toContain("ctx-chip-red");
+  expect(high).toContain("compact pending");
+  expect(high).toContain("86/100");
 });

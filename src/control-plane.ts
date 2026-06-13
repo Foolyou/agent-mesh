@@ -16,6 +16,10 @@ import { validateAddAgent, validateAddEdge } from "./mesh-validate";
 import { artifactAgentDir } from "./web/artifacts";
 import { readSessionState, setMeshExpectedAlive, updateAgentMailCursor, updateAgentSession, clearAgentSession, type MeshSessionState } from "./session-storage";
 import { now, type AgentActivity, type AgentConfig, type AgentHealthSignalKind, type AgentId, type AgentTurn, type MeshConfig, type MeshEdge, type MeshEvent, type PromptImageRef, type SessionMode, type SessionModel, type ThinkingEffort, type TurnHealthReason } from "./acp/types";
+import { DEFAULT_AUTO_COMPACT_SETTINGS, MIN_AUTO_COMPACT_CONTEXT_WINDOW, evaluateCompactThreshold, parseCompactThreshold } from "./auto-compact";
+
+const COMPACT_COOLDOWN_MS = 180_000;
+const NEAR_LIMIT_WARNING_COOLDOWN_MS = 10 * 60_000;
 
 interface PendingDecision {
   resolve: (decision: PermissionDecision) => void;
@@ -47,6 +51,18 @@ interface HealthFailureSummary {
   reason: TurnHealthReason;
   detail: string;
   ts: string;
+}
+
+export interface ContextUsage {
+  used: number;
+  size: number;
+  percent: number;
+  updatedAt: number;
+}
+
+export interface SilentTaskCompletes {
+  count: number;
+  lastAt: number | null;
 }
 
 function compactPreview(text: string): string {
@@ -232,6 +248,15 @@ export class ControlPlane {
   private activityStates = new Map<AgentId, AgentActivity>();
   private sessionState: MeshSessionState = { meshExpectedAlive: true, agents: {} };
   private resolvedHarnesses = new Map<AgentId, ResolvedHarnessInfo>();
+  private agentContextUsage = new Map<AgentId, ContextUsage>();
+  private agentAdvertisedCommands = new Map<AgentId, Set<string>>();
+  private agentSilentTaskCompletes = new Map<AgentId, SilentTaskCompletes>();
+  private agentLastOutboundMail = new Map<AgentId, number>();
+  private agentLastTurnCompleted = new Map<AgentId, number>();
+  private agentLastCompactAt = new Map<AgentId, number>();
+  private agentNearLimitWarnedAt = new Map<AgentId, number>();
+  private activeTurnIds = new Map<AgentId, string>();
+  private turnOutboundMailCount = new Map<string, number>();
   private pendingRespawns = new Map<AgentId, ReturnType<typeof setTimeout>>();
 
   constructor(config: MeshConfig, opts: ControlPlaneOptions = {}) {
@@ -266,6 +291,100 @@ export class ControlPlane {
     this.emit({ kind: "log", text, ts: now() });
   }
 
+  private updateAgentUsage(id: AgentId, usage: { used: number; size: number; percent: number }): void {
+    this.agentContextUsage.set(id, { ...usage, updatedAt: Date.now() });
+    void this.maybeAutoCompact(id, usage);
+  }
+
+  private updateAgentCommands(id: AgentId, commands: string[]): void {
+    this.agentAdvertisedCommands.set(id, new Set(commands));
+  }
+
+  private clearAgentSelfAwareness(id: AgentId): void {
+    this.agentContextUsage.delete(id);
+    this.agentAdvertisedCommands.delete(id);
+    this.agentLastCompactAt.delete(id);
+    this.agentNearLimitWarnedAt.delete(id);
+  }
+
+  private emitNearContextLimitWarning(id: AgentId, usage: { percent: number }): void {
+    const nowMs = Date.now();
+    const last = this.agentNearLimitWarnedAt.get(id);
+    if (last && nowMs - last < NEAR_LIMIT_WARNING_COOLDOWN_MS) return;
+    this.agentNearLimitWarnedAt.set(id, nowMs);
+    this.emit({ kind: "near_context_limit_no_compact", agent: id, usagePercent: usage.percent, ts: nowMs });
+  }
+
+  private async maybeAutoCompact(agentId: AgentId, usage: { used: number; size: number; percent: number }): Promise<void> {
+    if (usage.size < MIN_AUTO_COMPACT_CONTEXT_WINDOW) return;
+
+    const settings = this.mesh.config.autoCompact ?? DEFAULT_AUTO_COMPACT_SETTINGS;
+    if (!settings.enabled) return;
+
+    let threshold;
+    try {
+      threshold = parseCompactThreshold(settings.threshold);
+    } catch (err) {
+      this.log(`autoCompact threshold invalid for ${agentId}: ${String(err)}`);
+      return;
+    }
+    if (!evaluateCompactThreshold(threshold, usage.used, usage.size)) return;
+
+    const commands = this.agentAdvertisedCommands.get(agentId) ?? new Set<string>();
+    if (!commands.has("compact")) {
+      this.emitNearContextLimitWarning(agentId, usage);
+      return;
+    }
+
+    if ((this.turnCounts.get(agentId) ?? 0) > 0) return;
+
+    const nowMs = Date.now();
+    const lastCompact = this.agentLastCompactAt.get(agentId);
+    if (lastCompact && nowMs - lastCompact < COMPACT_COOLDOWN_MS) return;
+    this.agentLastCompactAt.set(agentId, nowMs);
+    this.emit({ kind: "compact_started", agent: agentId, reason: "auto-threshold", ts: nowMs });
+
+    try {
+      await this.sendBarePrompt(agentId, "/compact", { reason: "auto-threshold" });
+      this.emit({ kind: "compact_completed", agent: agentId, ts: Date.now() });
+    } catch (err) {
+      this.emit({ kind: "compact_failed", agent: agentId, error: String(err), ts: Date.now() });
+    }
+  }
+
+  private clearAgentSilentTaskCompletes(id: AgentId): void {
+    this.agentSilentTaskCompletes.delete(id);
+  }
+
+  private incrementSilentTaskComplete(id: AgentId, turnId: string): void {
+    const current = this.agentSilentTaskCompletes.get(id) ?? { count: 0, lastAt: null };
+    const next = { count: current.count + 1, lastAt: Date.now() };
+    this.agentSilentTaskCompletes.set(id, next);
+    this.emit({ kind: "silent_task_complete", agent: id, turnId, ts: next.lastAt });
+  }
+
+  private noteTurnCompleted(id: AgentId): void {
+    this.agentLastTurnCompleted.set(id, Date.now());
+  }
+
+  private noteOutboundMailForActiveTurn(id: AgentId): void {
+    const turnId = this.activeTurnIds.get(id);
+    if (!turnId) return;
+    this.turnOutboundMailCount.set(turnId, (this.turnOutboundMailCount.get(turnId) ?? 0) + 1);
+  }
+
+  private clearTurnMailTracking(turn: AgentTurn | undefined): void {
+    if (!turn) return;
+    if (this.activeTurnIds.get(turn.agent) === turn.id) this.activeTurnIds.delete(turn.agent);
+    this.turnOutboundMailCount.delete(turn.id);
+  }
+
+  private clearTurnMailTrackingForAgent(agent: AgentId): void {
+    const turnId = this.activeTurnIds.get(agent);
+    if (turnId) this.turnOutboundMailCount.delete(turnId);
+    this.activeTurnIds.delete(agent);
+  }
+
   agent(id: AgentId): AcpAgentConnection {
     const c = this.conns.get(id);
     if (!c) throw new Error(`no connection for agent ${id}`);
@@ -279,6 +398,32 @@ export class ControlPlane {
 
   listResolvedHarnesses(): ResolvedHarnessInfo[] {
     return [...this.resolvedHarnesses.values()].map((info) => ({ ...info }));
+  }
+
+  getAgentContextUsage(id: AgentId): ContextUsage | null {
+    const usage = this.agentContextUsage.get(id);
+    return usage ? { ...usage } : null;
+  }
+
+  getAgentAdvertisedCommands(id: AgentId): Set<string> {
+    return new Set(this.agentAdvertisedCommands.get(id) ?? []);
+  }
+
+  listAgentContextUsages(): Map<AgentId, ContextUsage> {
+    return new Map([...this.agentContextUsage.entries()].map(([id, usage]) => [id, { ...usage }]));
+  }
+
+  getAgentSilentTaskCompletes(id: AgentId): SilentTaskCompletes {
+    const value = this.agentSilentTaskCompletes.get(id) ?? { count: 0, lastAt: null };
+    return { ...value };
+  }
+
+  getAgentLastOutboundMailAt(id: AgentId): number | null {
+    return this.agentLastOutboundMail.get(id) ?? null;
+  }
+
+  getAgentLastTurnCompletedAt(id: AgentId): number | null {
+    return this.agentLastTurnCompleted.get(id) ?? null;
   }
 
   /** Current authoritative agent state for reconnecting clients. */
@@ -332,6 +477,8 @@ export class ControlPlane {
       return;
     }
     this.startedTurnIds.add(turn.id);
+    this.activeTurnIds.set(turn.agent, turn.id);
+    this.turnOutboundMailCount.set(turn.id, 0);
     while (this.startedTurnIds.size > 1000) this.startedTurnIds.delete(this.startedTurnIds.values().next().value!);
     const q = this.queuedTurns.get(turn.agent) ?? [];
     const idx = q.findIndex((queued) => queued.id === turn.id);
@@ -360,7 +507,8 @@ export class ControlPlane {
     this.activeTurnHealth.set(turn.agent, active);
   }
 
-  private noteTurnSignal(agent: AgentId, turn: AgentTurn | undefined): void {
+  private noteTurnSignal(agent: AgentId, turn: AgentTurn | undefined, signal?: unknown): void {
+    this.detectSilentTaskComplete(agent, turn, signal);
     const active = this.activeTurnHealth.get(agent);
     if (!active || !turn || active.turn.id !== turn.id) return;
     const ts = now();
@@ -378,6 +526,7 @@ export class ControlPlane {
   private finishTurnHealth(agent: AgentId, turn: AgentTurn | undefined): void {
     if (!turn) return;
     this.clearTurnHealth(agent, turn.id);
+    this.clearTurnMailTracking(turn);
   }
 
   private clearTurnHealth(agent: AgentId, turnId?: string): void {
@@ -389,6 +538,18 @@ export class ControlPlane {
 
   private clearTurnHealthForAgent(agent: AgentId): void {
     this.clearTurnHealth(agent);
+    this.clearTurnMailTrackingForAgent(agent);
+  }
+
+  private detectSilentTaskComplete(agent: AgentId, turn: AgentTurn | undefined, signal: unknown): void {
+    if (!turn || !signal || typeof signal !== "object") return;
+    if (turn.source === "system") return;
+    const update = signal as any;
+    if (update.sessionUpdate !== "event_msg" || update.payload?.type !== "task_complete") return;
+    this.noteTurnCompleted(agent);
+    if (update.payload.last_agent_message !== null) return;
+    if ((this.turnOutboundMailCount.get(turn.id) ?? 0) !== 0) return;
+    this.incrementSilentTaskComplete(agent, turn.id);
   }
 
   /**
@@ -518,6 +679,17 @@ export class ControlPlane {
     };
   }
 
+  private systemTurn(id: AgentId, text: string, reason?: string): AgentTurn {
+    return {
+      id: randomUUID(),
+      agent: id,
+      source: "system",
+      text,
+      preview: `system: ${compactPreview(reason || text)}`,
+      ts: now(),
+    };
+  }
+
   /** Public: send a prompt turn to an agent (the control plane is the sole driver). Image
    *  blocks are dropped for agents that did not advertise image input, so a non-image agent
    *  still gets the text turn instead of rejecting the whole prompt. */
@@ -525,6 +697,23 @@ export class ControlPlane {
     const imgs = this.imageCaps.get(id) ? images : [];
     const promptImages = imgs.map((i) => this.resolveImagePath(i));
     return this.promptWithResumeFallback(id, text, promptImages, false, turn ?? this.operatorTurn(id, text, imgs));
+  }
+
+  /**
+   * Internal channel for system-level prompts that must reach the agent verbatim
+   * (no mail header, no mail history, not counted as outbound mail).
+   * First use: trigger ACP slash commands like "/compact" without the agent seeing
+   * a "[MAIL #N from lead]:" wrapper that would make the slash detector miss it.
+   */
+  async sendBarePrompt(agentId: AgentId, text: string, opts: { reason?: string } = {}): Promise<void> {
+    if (!this.mesh.agent(agentId)) throw new Error(`no such agent "${agentId}"`);
+    const status = this.mesh.status(agentId);
+    if (status === "dead" || status === "stopped") throw new Error(`agent "${agentId}" is ${status}`);
+    const conn = this.conns.get(agentId);
+    if (!conn) throw new Error(`no connection for agent ${agentId}`);
+    const turn = this.systemTurn(agentId, text, opts.reason);
+    this.emit({ kind: "bare_prompt", agent: agentId, reason: opts.reason ?? "", ts: Date.now() });
+    await this.trackTurn(agentId, () => conn.prompt(text, [], turn)).finally(() => this.finishTurnHealth(agentId, turn));
   }
 
   /** Remove a not-yet-started user/operator prompt from one agent's queue.
@@ -639,6 +828,8 @@ export class ControlPlane {
 
   private async forceRespawnAgent(id: AgentId): Promise<void> {
     if (this.sessionRunDir) this.sessionState = await clearAgentSession(this.sessionRunDir, this.mesh.name, id);
+    this.clearAgentSelfAwareness(id);
+    this.clearAgentSilentTaskCompletes(id);
     this.emit({ kind: "agent_status", agent: id, status: this.mesh.status(id) ?? "dead", detail: "force respawn", ts: now() });
     await this.ensureSpawned(id, { manual: true, forceFresh: true, drainPendingMail: false });
     this.emit({ kind: "agent_status", agent: id, status: this.mesh.status(id) ?? "ready", detail: "agent respawned (force)", ts: now() });
@@ -733,6 +924,8 @@ export class ControlPlane {
     this.spawning.clear();
     this.loadedSessions.clear();
     this.resumePendingValidation.clear();
+    this.agentContextUsage.clear();
+    this.agentAdvertisedCommands.clear();
   }
 
   // Re-register on EVERY (re)spawn. The per-agent MCP transport binds a single
@@ -747,6 +940,8 @@ export class ControlPlane {
   private async spawnAgent(a: AgentConfig, opts: { drainPendingMail: boolean; forceFresh?: boolean }): Promise<AcpAgentConnection> {
     if (!this.mcp) throw new Error("control plane not started");
     await this.ensureMcpRegistered(a);
+    this.clearAgentSelfAwareness(a.id);
+    this.clearAgentSilentTaskCompletes(a.id);
 
     const existing = this.conns.get(a.id);
     if (existing) {
@@ -784,12 +979,15 @@ export class ControlPlane {
       onPermission: (req) => this.handlePermission(a.id, req),
       onPromptQueued: (turn) => this.noteTurnQueued(turn),
       onPromptStarted: (turn) => this.noteTurnStarted(turn),
-      onPromptSignal: (turn) => this.noteTurnSignal(a.id, turn),
+      onPromptSignal: (turn, signal) => this.noteTurnSignal(a.id, turn, signal),
       onExtNotification: (method, params, turn) => this.noteExtNotification(a.id, method, params, turn),
+      onContextUsage: (usage) => this.updateAgentUsage(a.id, usage),
+      onAvailableCommands: (commands) => this.updateAgentCommands(a.id, commands),
       onExit: (code) => {
         if (this.conns.get(a.id) !== conn) return;
         this.clearTurnHealthForAgent(a.id);
         this.resolvedHarnesses.delete(a.id);
+        this.clearAgentSelfAwareness(a.id);
         this.mesh.setStatus(a.id, "dead");
         this.turnCounts.set(a.id, 0);
         this.clearQueuedTurns(a.id);
@@ -925,6 +1123,7 @@ export class ControlPlane {
       if (this.conns.get(a.id) !== conn) {
         conn.kill();
         this.resolvedHarnesses.delete(a.id);
+        this.clearAgentSelfAwareness(a.id);
         throw new Error(`spawn for ${a.id} was superseded`);
       }
       this.mesh.setStatus(a.id, "ready");
@@ -938,10 +1137,12 @@ export class ControlPlane {
         this.sessionModels.delete(a.id);
         this.imageCaps.delete(a.id);
         this.resolvedHarnesses.delete(a.id);
+        this.clearAgentSelfAwareness(a.id);
       }
       conn.kill();
       if (this.conns.get(a.id) === conn) {
         this.conns.delete(a.id);
+        this.clearAgentSelfAwareness(a.id);
         this.clearQueuedTurns(a.id);
         this.emitActivityIfChanged(a.id);
         this.mesh.setStatus(a.id, "dead");
@@ -965,6 +1166,7 @@ export class ControlPlane {
         if (this.spawnGeneration.get(id) !== generation || this.mesh.status(id) === "stopped") {
           conn.kill();
           if (this.conns.get(id) === conn) this.conns.delete(id);
+          this.clearAgentSelfAwareness(id);
           throw new Error(`spawn for ${id} was stopped`);
         }
         return conn;
@@ -1031,6 +1233,7 @@ export class ControlPlane {
     this.sessionModels.delete(id);
     this.imageCaps.delete(id);
     this.resolvedHarnesses.delete(id);
+    this.clearAgentSelfAwareness(id);
     this.loadedSessions.delete(id);
     this.resumePendingValidation.delete(id);
     this.mesh.setStatus(id, "stopped");
@@ -1122,7 +1325,27 @@ export class ControlPlane {
       const healthText = health ? ` last health note: ${health.reason} (${health.detail})` : "";
       return `- ${a.id}${me} [${a.harness}, ${a.role}, ${this.mesh.status(a.id)}, ${this.activityOf(a.id)}] can mail: ${reach.join(", ") || "(none)"}${healthText}`;
     });
-    return `Mesh "${this.mesh.name}" — router is ${this.mesh.router.id}.\n${lines.join("\n")}`;
+    const agents = this.mesh.agents.map((a) => {
+      const reach = this.mesh.agents
+        .filter((o) => o.id !== a.id && this.mesh.canMail(a.id, o.id))
+        .map((o) => o.id);
+      return {
+        id: a.id,
+        harness: a.harness,
+        role: a.role,
+        status: this.mesh.status(a.id) ?? null,
+        activity: this.activityOf(a.id),
+        canMail: reach,
+        contextUsage: this.getAgentContextUsage(a.id),
+        advertisedCommands: [...this.getAgentAdvertisedCommands(a.id)].sort(),
+        silentTaskCompletes: this.getAgentSilentTaskCompletes(a.id),
+        lastOutboundMailAt: this.getAgentLastOutboundMailAt(a.id),
+        lastTurnCompletedAt: this.getAgentLastTurnCompletedAt(a.id),
+        lastCompactAt: this.agentLastCompactAt.get(a.id) ?? null,
+        lastNearLimitWarnedAt: this.agentNearLimitWarnedAt.get(a.id) ?? null,
+      };
+    });
+    return `Mesh "${this.mesh.name}" — router is ${this.mesh.router.id}.\n${lines.join("\n")}\n${JSON.stringify({ agents }, null, 2)}`;
   }
 
   private meshBriefingText(forAgent: AgentId): string {
@@ -1168,6 +1391,10 @@ export class ControlPlane {
     if (next === 0) this.turnCounts.delete(id);
     else this.turnCounts.set(id, next);
     this.emitActivityIfChanged(id);
+    if (next === 0) {
+      const usage = this.agentContextUsage.get(id);
+      if (usage) void this.maybeAutoCompact(id, usage);
+    }
     if (next === 0) void this.runPendingRespawn(id);
   }
 
@@ -1205,6 +1432,7 @@ export class ControlPlane {
     if (!this.mesh.canMail(ctx.agentId, to)) {
       return `error: you (${ctx.agentId}) are not allowed to mail ${to}`;
     }
+    this.noteOutboundMailForActiveTurn(ctx.agentId);
     const seq = ++this.mailSeq;
     const meta: MailDeliveryMeta = { seq, replyTo: opts.replyTo, task: opts.task };
     const event = await sendMail({
@@ -1217,6 +1445,7 @@ export class ControlPlane {
       replyTo: opts.replyTo,
       task: opts.task,
     });
+    this.agentLastOutboundMail.set(ctx.agentId, Date.now());
     this.pushRecentMail({ id: event.id, from: ctx.agentId, to, body, ts: event.ts });
     this.emit({ kind: "mail", id: event.id, from: ctx.agentId, to, body, ts: event.ts });
     // Wake the recipient asynchronously (fire-and-forget; sender's tool returns now).
