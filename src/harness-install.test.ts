@@ -13,6 +13,15 @@ function doneSpawn(calls: any[]) {
   };
 }
 
+function streamOf(text: string): ReadableStream<Uint8Array> {
+  return new ReadableStream({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(text));
+      controller.close();
+    },
+  });
+}
+
 test("startHarnessInstall spawns npm install with safe argv flags and env", async () => {
   resetHarnessInstallJobsForTests();
   const calls: any[] = [];
@@ -98,4 +107,22 @@ test("startHarnessInstall invalidates caches, reprobes, and broadcasts after suc
   expect(events).toContainEqual(["clearModels", "codex"]);
   expect(events).toContainEqual(["reprobe", { refresh: true }]);
   expect(events).toContainEqual(["broadcast", { t: "harnesses-changed", harnessId: "codex" }]);
+});
+
+test("startHarnessInstall records redacted stdout and stderr lines", async () => {
+  resetHarnessInstallJobsForTests();
+  const job = await startHarnessInstall("codex", {
+    prefix: "/tmp/mesh-home/.agent-mesh/npm-global",
+    home: "/tmp/mesh-home",
+    which: () => "/usr/bin/npm",
+    spawn: () => ({
+      exited: Promise.resolve(0),
+      stdout: streamOf("fetching /home/chenan/pkg.tgz\n"),
+      stderr: streamOf("log at /Users/alice/.npm/_logs/x-debug.log\n"),
+    }),
+    reprobe: async () => [],
+  });
+  await job.done;
+  expect(job.events).toContainEqual(expect.objectContaining({ step: "fetch", stdoutLine: "fetching ~/pkg.tgz" }));
+  expect(job.events).toContainEqual(expect.objectContaining({ step: "install", stderrLine: "log at ~/.npm/_logs/x-debug.log" }));
 });

@@ -10,7 +10,7 @@ import { AgentFileError } from "./agent-files";
 import { probeHarnesses } from "../harness-probe";
 import { probeHarnessModels } from "../harness-models";
 import { HARNESSES } from "../harness";
-import { HarnessInstallError, startHarnessInstall } from "../harness-install";
+import { getHarnessInstallJob, HarnessInstallError, startHarnessInstall, type InstallEvent } from "../harness-install";
 
 export interface ApiResult {
   status: number;
@@ -69,6 +69,13 @@ export async function handleApi(
         }
         return fail(e instanceof HarnessInstallError && e.code === "not-installable" ? 400 : 500, str(e?.message ?? e));
       }
+    }
+    if (method === "GET" && p.length === 5 && p[0] === "harnesses" && p[2] === "install" && p[4] === "stream") {
+      const harness = str(p[1]) as AgentConfig["harness"];
+      if (!Object.hasOwn(HARNESSES, harness)) return fail(400, `unknown harness: ${harness}`);
+      const job = getHarnessInstallJob(str(p[3]));
+      if (!job || job.harnessId !== harness) return fail(404, "install job not found");
+      return { status: 200, body: installStreamResponse(job) };
     }
     if (method === "GET" && p.length === 3 && p[0] === "harnesses" && p[2] === "models") {
       const harness = str(p[1]) as AgentConfig["harness"];
@@ -254,6 +261,42 @@ export async function handleApi(
   } catch (e: any) {
     return fail(400, str(e?.message ?? e));
   }
+}
+
+function installStreamResponse(job: { status: string; events: InstallEvent[] }): Response {
+  const encoder = new TextEncoder();
+  let index = 0;
+  return new Response(new ReadableStream({
+    async pull(controller) {
+      while (index >= job.events.length && job.status === "running") {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      while (index < job.events.length) {
+        controller.enqueue(encoder.encode(JSON.stringify(publicInstallEvent(job.events[index++])) + "\n"));
+      }
+      if (job.status !== "running" && index >= job.events.length) controller.close();
+    },
+  }), { headers: { "content-type": "application/x-ndjson" } });
+}
+
+function publicInstallEvent(event: InstallEvent): Record<string, unknown> {
+  const out: Record<string, unknown> = {
+    step: event.step,
+    harnessId: event.harnessId,
+    pkgSpec: event.pkgSpec,
+  };
+  if (event.progress !== undefined) out.progress = event.progress;
+  if (event.stdoutLine !== undefined) out.stdoutLine = event.stdoutLine;
+  if (event.stderrLine !== undefined) out.stderrLine = event.stderrLine;
+  if (event.step === "done") {
+    if (event.installedVersion !== undefined) out.installedVersion = event.installedVersion;
+    if (event.installedPath !== undefined) out.installedPath = event.installedPath;
+  }
+  if (event.step === "error") {
+    if (event.code !== undefined) out.code = event.code;
+    if (event.message !== undefined) out.message = event.message;
+  }
+  return out;
 }
 
 function isHarnessMutationRoute(method: string, p: string[]): boolean {

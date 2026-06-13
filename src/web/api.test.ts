@@ -240,6 +240,32 @@ test("POST /api/harnesses/:id/install returns the active job for duplicate start
   resolveExit(0);
 });
 
+test("GET /api/harnesses/:id/install/:jobId/stream returns redacted NDJSON without argv or env", async () => {
+  resetHarnessInstallJobsForTests();
+  const gw = new WebGateway(fakeManager() as any);
+  const install = (id: any) => startHarnessInstall(id, {
+    prefix: "/tmp/mesh-home/.agent-mesh/npm-global",
+    home: "/tmp/mesh-home",
+    which: () => "/usr/bin/npm",
+    spawn: () => ({
+      exited: Promise.resolve(0),
+      stdout: new ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode("using /home/chenan/x.log\n")); c.close(); } }),
+      stderr: new ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode("npm_config_ignore_scripts --prefix --registry\n")); c.close(); } }),
+    }),
+    reprobe: async () => [{ id, installed: true, version: "1.2.3", path: "/home/chenan/.agent-mesh/npm-global/bin/codex-acp" }] as any,
+  });
+  const started = await handleApi(gw, "POST", "/api/harnesses/codex/install", {}, new URLSearchParams(), undefined, undefined, install, sameOriginCtx());
+  const streamed = await handleApi(gw, "GET", `/api/harnesses/codex/install/${started.body.jobId}/stream`, undefined, new URLSearchParams(), undefined, undefined, undefined, sameOriginCtx());
+  expect(streamed.status).toBe(200);
+  expect(streamed.body).toBeInstanceOf(Response);
+  const text = await (streamed.body as Response).text();
+  expect(text).toContain("~/x.log");
+  expect(text).not.toContain("/home/chenan");
+  expect(text).not.toContain("--prefix");
+  expect(text).not.toContain("--registry");
+  expect(text).not.toContain("npm_config_ignore_scripts");
+});
+
 test("harness install endpoints require same-origin request headers", async () => {
   const gw = new WebGateway(fakeManager() as any);
   const installer = async (id: any) => ({ id: "job-1", harnessId: id, pkgSpec: "@agentclientprotocol/claude-agent-acp@0.44.0", status: "running" }) as any;
