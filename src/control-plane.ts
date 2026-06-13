@@ -6,6 +6,7 @@ import { mkdir, stat } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { AcpAgentConnection, type AcpConnectionOptions, type PermissionDecision } from "./acp/client";
 import { spawnConfigFor } from "./harness";
+import { managedNpmBin } from "./harness-install-spec";
 import { isThinkingEffort, runtimeEffortConfig, runtimeEffortOptionsFromSession, type RuntimeEffortOptions } from "./harness-utils";
 import { Mesh } from "./mesh";
 import { buildMeshBriefing, MAIL_WAKE_GUIDANCE } from "./mesh-briefing";
@@ -123,6 +124,22 @@ function claudeHealthSignal(message: unknown): { signal: AgentHealthSignalKind; 
 
 export type ControlPlaneStopReason = "explicit" | "idle" | "shutdown";
 
+export interface ResolvedHarnessInfo {
+  agentId: AgentId;
+  harnessId: AgentConfig["harness"];
+  path?: string;
+  version?: string;
+  spawnedAt: string;
+}
+
+export type RespawnMode = "after-idle" | "force" | "cancel";
+export interface RespawnResult {
+  mode: RespawnMode;
+  scheduled: boolean;
+  willRunWhen?: "idle" | "now";
+  note?: string;
+}
+
 export interface ControlPlaneOptions {
   mailboxPath?: string;
   /** auto-deny a permission request after this many ms with no human decision */
@@ -214,6 +231,8 @@ export class ControlPlane {
   private emptyMailChecks = new Map<AgentId, { count: number; last: number }>();
   private activityStates = new Map<AgentId, AgentActivity>();
   private sessionState: MeshSessionState = { meshExpectedAlive: true, agents: {} };
+  private resolvedHarnesses = new Map<AgentId, ResolvedHarnessInfo>();
+  private pendingRespawns = new Map<AgentId, ReturnType<typeof setTimeout>>();
 
   constructor(config: MeshConfig, opts: ControlPlaneOptions = {}) {
     this.mesh = new Mesh(config);
@@ -253,6 +272,15 @@ export class ControlPlane {
     return c;
   }
 
+  getResolvedHarness(id: AgentId): ResolvedHarnessInfo | undefined {
+    const info = this.resolvedHarnesses.get(id);
+    return info ? { ...info } : undefined;
+  }
+
+  listResolvedHarnesses(): ResolvedHarnessInfo[] {
+    return [...this.resolvedHarnesses.values()].map((info) => ({ ...info }));
+  }
+
   /** Current authoritative agent state for reconnecting clients. */
   snapshotEvents(): MeshEvent[] {
     const ts = now();
@@ -262,6 +290,10 @@ export class ControlPlane {
       events.push({ kind: "agent_activity", agent: a.id, activity: this.activityOf(a.id), ts });
       if (this.imageCaps.has(a.id)) {
         events.push({ kind: "agent_capabilities", agent: a.id, image: this.imageCaps.get(a.id)!, ts });
+      }
+      const resolved = this.resolvedHarnesses.get(a.id);
+      if (resolved) {
+        events.push({ kind: "agent_resolved_harness", agent: a.id, harness: resolved.harnessId, path: resolved.path, version: resolved.version, spawnedAt: resolved.spawnedAt, ts });
       }
       const modes = this.sessionModes.get(a.id);
       if (modes) {
@@ -577,6 +609,41 @@ export class ControlPlane {
     this.emit({ kind: "update", agent: id, update: { sessionUpdate: "__session_reset__" }, ts: now() });
   }
 
+  async respawnAgent(id: AgentId, mode: RespawnMode): Promise<RespawnResult> {
+    const a = this.mesh.agent(id);
+    if (!a) throw new Error(`no such agent "${id}"`);
+    const status = this.mesh.status(id);
+    if (status === "spawning" || status === "cold") throw new Error(`agent "${id}" is ${status}`);
+    if (mode === "cancel") {
+      const timer = this.pendingRespawns.get(id);
+      if (timer) clearTimeout(timer);
+      this.pendingRespawns.delete(id);
+      this.emit({ kind: "agent_status", agent: id, status: status ?? "dead", detail: "agent respawn canceled", ts: now() });
+      return { mode, scheduled: false };
+    }
+    if (mode === "after-idle" && this.activityOf(id) !== "idle") {
+      if (!this.pendingRespawns.has(id)) {
+        const timer = setTimeout(() => {
+          if (this.pendingRespawns.get(id) !== timer) return;
+          this.pendingRespawns.delete(id);
+          this.emit({ kind: "agent_status", agent: id, status: this.mesh.status(id) ?? "dead", detail: "agent respawn timeout canceled", ts: now() });
+        }, 5 * 60 * 1000);
+        this.pendingRespawns.set(id, timer);
+        this.emit({ kind: "agent_status", agent: id, status: status ?? "ready", detail: "agent respawn pending", ts: now() });
+      }
+      return { mode, scheduled: true, willRunWhen: "idle", note: "ACP session context will be lost; mailbox preserved" };
+    }
+    await this.forceRespawnAgent(id);
+    return { mode, scheduled: false, willRunWhen: "now", note: "ACP session context will be lost; mailbox preserved" };
+  }
+
+  private async forceRespawnAgent(id: AgentId): Promise<void> {
+    if (this.sessionRunDir) this.sessionState = await clearAgentSession(this.sessionRunDir, this.mesh.name, id);
+    this.emit({ kind: "agent_status", agent: id, status: this.mesh.status(id) ?? "dead", detail: "force respawn", ts: now() });
+    await this.ensureSpawned(id, { manual: true, forceFresh: true, drainPendingMail: false });
+    this.emit({ kind: "agent_status", agent: id, status: this.mesh.status(id) ?? "ready", detail: "agent respawned (force)", ts: now() });
+  }
+
   /** One-click: switch every agent in the mesh to a fresh session. */
   async newAllSessions(): Promise<void> {
     for (const a of this.mesh.agents) {
@@ -657,6 +724,9 @@ export class ControlPlane {
     await this.compactMailboxNow();
     for (const a of this.mesh.agents) this.clearTurnHealthForAgent(a.id);
     for (const c of this.conns.values()) c.kill();
+    for (const timer of this.pendingRespawns.values()) clearTimeout(timer);
+    this.pendingRespawns.clear();
+    this.resolvedHarnesses.clear();
     this.mcp?.close();
     for (const p of this.pending.values()) clearTimeout(p.timer);
     this.pending.clear();
@@ -690,12 +760,17 @@ export class ControlPlane {
     const cwd = resolve(process.cwd(), a.project);
     const artifactDir = this.artifactsRoot ? artifactAgentDir(this.artifactsRoot, this.mesh.name, a.id) : undefined;
     if (artifactDir) await mkdir(artifactDir, { recursive: true });
+    const extraEnv: Record<string, string> = { ...env };
+    const managedBin = managedNpmBin();
+    const existingPath = process.env.PATH ?? "";
+    extraEnv.PATH = existingPath ? `${managedBin}:${existingPath}` : managedBin;
+    if (artifactDir) extraEnv.AGENT_MESH_ARTIFACTS = artifactDir;
     const conn = this.connectionFactory({
       id: a.id,
       command,
       args,
       cwd,
-      extraEnv: artifactDir ? { ...env, AGENT_MESH_ARTIFACTS: artifactDir } : env,
+      extraEnv,
       debug: this.debug,
       onUpdate: (u) => {
         if (u && (u as any).sessionUpdate === "current_mode_update" && typeof (u as any).currentModeId === "string") {
@@ -714,6 +789,7 @@ export class ControlPlane {
       onExit: (code) => {
         if (this.conns.get(a.id) !== conn) return;
         this.clearTurnHealthForAgent(a.id);
+        this.resolvedHarnesses.delete(a.id);
         this.mesh.setStatus(a.id, "dead");
         this.turnCounts.set(a.id, 0);
         this.clearQueuedTurns(a.id);
@@ -730,6 +806,15 @@ export class ControlPlane {
       await mkdir(cwd, { recursive: true });
       await conn.start();
       const initRes = await conn.initialize();
+      const resolvedHarness = {
+        agentId: a.id,
+        harnessId: a.harness,
+        path: Bun.which(command, { PATH: extraEnv.PATH }) ?? undefined,
+        version: typeof (initRes as any)?.agentInfo?.version === "string" ? (initRes as any).agentInfo.version : undefined,
+        spawnedAt: now(),
+      };
+      this.resolvedHarnesses.set(a.id, resolvedHarness);
+      this.emit({ kind: "agent_resolved_harness", agent: a.id, harness: a.harness, path: resolvedHarness.path, version: resolvedHarness.version, spawnedAt: resolvedHarness.spawnedAt, ts: now() });
       const mcpServers = [{ type: "http", name: "mesh", url: this.mcp.urlFor(a.id), headers: [] }];
       const saved = this.sessionState.agents[a.id];
       let loaded = false;
@@ -839,6 +924,7 @@ export class ControlPlane {
       this.emit({ kind: "agent_capabilities", agent: a.id, image: imageCap, ts: now() });
       if (this.conns.get(a.id) !== conn) {
         conn.kill();
+        this.resolvedHarnesses.delete(a.id);
         throw new Error(`spawn for ${a.id} was superseded`);
       }
       this.mesh.setStatus(a.id, "ready");
@@ -851,6 +937,7 @@ export class ControlPlane {
         this.sessionModes.delete(a.id);
         this.sessionModels.delete(a.id);
         this.imageCaps.delete(a.id);
+        this.resolvedHarnesses.delete(a.id);
       }
       conn.kill();
       if (this.conns.get(a.id) === conn) {
@@ -943,6 +1030,7 @@ export class ControlPlane {
     this.sessionModes.delete(id);
     this.sessionModels.delete(id);
     this.imageCaps.delete(id);
+    this.resolvedHarnesses.delete(id);
     this.loadedSessions.delete(id);
     this.resumePendingValidation.delete(id);
     this.mesh.setStatus(id, "stopped");
@@ -1080,6 +1168,15 @@ export class ControlPlane {
     if (next === 0) this.turnCounts.delete(id);
     else this.turnCounts.set(id, next);
     this.emitActivityIfChanged(id);
+    if (next === 0) void this.runPendingRespawn(id);
+  }
+
+  private async runPendingRespawn(id: AgentId): Promise<void> {
+    const timer = this.pendingRespawns.get(id);
+    if (!timer) return;
+    clearTimeout(timer);
+    this.pendingRespawns.delete(id);
+    await this.forceRespawnAgent(id).catch((err) => this.log(`pending respawn ${id} failed: ${String(err)}`));
   }
 
   /** Render the delivery header for a mail: [MAIL #7 from lead | task: x | in reply to #5]. */

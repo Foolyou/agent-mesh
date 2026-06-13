@@ -211,6 +211,17 @@ test("assistant.status updates", () => {
   expect(s.assistant.status).toBe("absent");
 });
 
+test("store notifies subscribers when harnesses changed", () => {
+  const store = createStore();
+  let calls = 0;
+  const unsub = store.subscribe(() => {
+    calls += 1;
+  });
+  store.apply({ t: "harnesses-changed", harnessId: "codex" });
+  unsub();
+  expect(calls).toBe(1);
+});
+
 test("events for an unknown mesh auto-create a perMesh container", () => {
   const s = applyMsg(emptyState(), { t: "activity", name: "ghost", entry: { id: "a1", ts: "T", kind: "log", text: "x" } });
   expect(s.perMesh.ghost.activity).toHaveLength(1);

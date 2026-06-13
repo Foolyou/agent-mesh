@@ -3,7 +3,7 @@
 // the client. createStore() owns the socket + REST command helpers; useStore wires it
 // into React via useSyncExternalStore.
 import { useSyncExternalStore } from "react";
-import type { AgentConfig, GatewayState, ServerMsg, PerMeshState, TranscriptItem, ConvRef, MeshConfig, MeshEdge, PromptImageRef, StartSessionStrategy } from "../types";
+import type { AgentConfig, GatewayState, ServerMsg, PerMeshState, TranscriptItem, ConvRef, MeshConfig, MeshEdge, PromptImageRef, StartSessionStrategy, HarnessProbeRow, HarnessId, HarnessInstallEvent, RespawnMode } from "../types";
 
 const CAP = 500;
 function cap<T>(a: T[], n: number): T[] {
@@ -173,6 +173,11 @@ export interface Store {
   stopAgent(name: string, agentId: string): Promise<any>;
   newAgentSession(name: string, agentId: string): Promise<any>;
   newAllSessions(name: string): Promise<any>;
+  respawnAgent(name: string, agentId: string, mode: RespawnMode): Promise<any>;
+  listHarnesses(): Promise<HarnessProbeRow[]>;
+  installHarness(id: HarnessId): Promise<{ jobId: string; status: "running" | "done"; harnessId: HarnessId; pkgSpec: string }>;
+  streamHarnessInstall(id: HarnessId, jobId: string, onEvent: (event: HarnessInstallEvent) => void, onClose?: (err?: Error) => void): Promise<void>;
+  reprobeHarness(id: HarnessId): Promise<any>;
   interruptAssistant(): Promise<any>;
 }
 
@@ -204,6 +209,10 @@ export function createStore(): Store {
   }
   function applyIncoming(msg: ServerMsg) {
     if (msg.t === "snapshot") noteSnapshotVersion(msg.state.appVersion);
+    if (msg.t === "harnesses-changed") {
+      emit();
+      return;
+    }
     set(applyMsg(state, msg));
   }
   function pushToast(kind: Toast["kind"], text: string) {
@@ -271,6 +280,33 @@ export function createStore(): Store {
     return json;
   }
   const post = (path: string, body?: unknown) => send("POST", path, body);
+  async function streamHarnessInstall(id: HarnessId, jobId: string, onEvent: (event: HarnessInstallEvent) => void, onClose?: (err?: Error) => void): Promise<void> {
+    try {
+      const res = await fetch(`/api/harnesses/${enc(id)}/install/${enc(jobId)}/stream`);
+      if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split(/\r?\n/);
+        buf = lines.pop() ?? "";
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          onEvent(JSON.parse(line) as HarnessInstallEvent);
+        }
+      }
+      buf += decoder.decode();
+      if (buf.trim()) onEvent(JSON.parse(buf) as HarnessInstallEvent);
+      onClose?.();
+    } catch (err: any) {
+      const e = err instanceof Error ? err : new Error(String(err));
+      onClose?.(e);
+      throw e;
+    }
+  }
   async function uploadImages(bucket: string, files: File[]): Promise<PromptImageRef[]> {
     const fd = new FormData();
     for (const file of files) fd.append("files", file, file.name);
@@ -321,6 +357,11 @@ export function createStore(): Store {
     stopAgent: (n, a) => guard(post(`/api/meshes/${enc(n)}/agents/${enc(a)}/stop`), `stop ${a}`),
     newAgentSession: (n, a) => guard(post(`/api/meshes/${enc(n)}/agents/${enc(a)}/session`), `new session ${a}`),
     newAllSessions: (n) => guard(post(`/api/meshes/${enc(n)}/session`), `new sessions ${n}`),
+    respawnAgent: (n, a, mode) => guard(post(`/api/meshes/${enc(n)}/agents/${enc(a)}/respawn`, { mode }), `respawn ${a}`),
+    listHarnesses: () => guard(send("GET", "/api/harnesses"), "list harnesses"),
+    installHarness: (id) => guard(post(`/api/harnesses/${enc(id)}/install`), `install ${id}`),
+    streamHarnessInstall,
+    reprobeHarness: (id) => guard(post(`/api/harnesses/${enc(id)}/reprobe`), `reprobe ${id}`),
   };
 }
 

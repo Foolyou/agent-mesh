@@ -1474,6 +1474,151 @@ body::after {
   gap: 12px;
 }
 
+/* ── harness settings ─────────────────────────────────────────────────── */
+.harness-modal {
+  width: min(920px, 94vw);
+}
+.harness-modal .mhead .spacer,
+.install-head .spacer {
+  flex: 1;
+}
+.harness-grid {
+  display: grid;
+  gap: 8px;
+}
+.harness-row {
+  display: grid;
+  grid-template-columns: minmax(130px, 1.2fr) minmax(190px, 1.4fr) auto;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--line);
+  background: var(--bg-inset);
+  padding: 9px;
+  min-width: 0;
+}
+.harness-name {
+  color: var(--fg);
+  font-weight: 600;
+}
+.harness-meta,
+.harness-desc {
+  color: var(--fg-faint);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.harness-badge {
+  justify-self: start;
+  border: 1px solid var(--line-bright);
+  padding: 2px 7px;
+  font-size: 11px;
+  color: var(--fg-dim);
+  overflow-wrap: anywhere;
+}
+.harness-badge.ok {
+  border-color: color-mix(in srgb, var(--ok) 55%, var(--line));
+  color: var(--ok);
+}
+.harness-badge.warn {
+  border-color: color-mix(in srgb, var(--warn) 65%, var(--line));
+  color: var(--warn);
+}
+.harness-badge.bad {
+  border-color: color-mix(in srgb, var(--bad) 65%, var(--line));
+  color: var(--bad);
+}
+.harness-badge.off {
+  color: var(--fg-faint);
+}
+.harness-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+.harness-desc {
+  grid-column: 1 / -1;
+}
+.self-installer-guide {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 8px;
+}
+.self-installer-guide pre {
+  margin: 0;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  padding: 8px;
+  overflow-x: auto;
+  white-space: pre;
+}
+.self-installer-guide code {
+  color: var(--fg);
+  font: 12px/1.45 var(--mono);
+}
+.self-installer-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.install-progress {
+  border: 1px solid var(--line-bright);
+  background: var(--bg-inset);
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+}
+.install-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--fg);
+}
+.install-bar {
+  height: 6px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  overflow: hidden;
+}
+.install-bar span {
+  display: block;
+  height: 100%;
+  width: 40%;
+  background: var(--info);
+}
+.install-bar span.done {
+  width: 100%;
+  background: var(--ok);
+}
+.install-bar span.error,
+.install-bar span.interrupted {
+  width: 100%;
+  background: var(--bad);
+}
+.install-log {
+  margin: 0;
+  max-height: 180px;
+  overflow: auto;
+  color: var(--fg-dim);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  padding: 8px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.stale-harness-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: min(100%, 260px);
+  max-width: 100%;
+  color: var(--warn);
+  border: 1px solid color-mix(in srgb, var(--warn) 45%, var(--line));
+  background: color-mix(in srgb, var(--warn) 9%, transparent);
+  padding: 3px 6px;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
 /* ── mesh canvas ───────────────────────────────────────────────────────── */
 .mesh-canvas {
   position: fixed;

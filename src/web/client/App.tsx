@@ -5,6 +5,7 @@ import { createStore, useStore, useConnected, useToasts, useUpgrade, type Store 
 import { Sidebar } from "./Sidebar";
 import { MeshDetail } from "./MeshDetail";
 import { MeshBuilder } from "./MeshBuilder";
+import { HarnessPanel } from "./HarnessPanel";
 import { useIsMobile } from "./useMedia";
 import { ThemeControls } from "./Theme";
 import { I18nContext, loadLang, saveLang, translate, tStatus, type Lang } from "./i18n";
@@ -75,6 +76,7 @@ export function App() {
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
   const [fullView, setFullView] = useState<FullView>(null);
   const [newMeshOpen, setNewMeshOpen] = useState(false);
+  const [harnessOpen, setHarnessOpen] = useState(false);
   const [editInitial, setEditInitial] = useState<import("../types").MeshConfig | null>(null);
   const [fileRoute, setFileRoute] = useState<FileRoute | undefined>(() => parseFileRoute(window.location.pathname));
 
@@ -200,6 +202,9 @@ export function App() {
         </span>
         <span className="spacer" />
         <ThemeControls />
+        <Btn small kind="ghost" title="Harness settings" ariaLabel="Open harness settings" onClick={() => setHarnessOpen(true)}>
+          Harnesses
+        </Btn>
         <Btn
           small
           kind="ghost"
@@ -253,6 +258,8 @@ export function App() {
           }}
         />
       ) : null}
+
+      <HarnessPanel store={store} open={harnessOpen} onClose={() => setHarnessOpen(false)} />
 
       <Toaster store={store} />
       <UpgradePrompt store={store} />

@@ -8,8 +8,11 @@ import type { StartMeshOptions } from "../mesh-manager";
 import type { UploadFileLike } from "./uploads";
 import { AgentFileError } from "./agent-files";
 import { probeHarnesses } from "../harness-probe";
-import { probeHarnessModels } from "../harness-models";
+import { clearHarnessProbeCache } from "../harness-probe";
+import { clearHarnessModelsCache, probeHarnessModels } from "../harness-models";
 import { HARNESSES } from "../harness";
+import { getHarnessInstallJob, HarnessInstallError, startHarnessInstall, type InstallEvent } from "../harness-install";
+import type { RespawnMode } from "../control-plane";
 
 export interface ApiResult {
   status: number;
@@ -17,6 +20,13 @@ export interface ApiResult {
 }
 
 type HarnessModelProbe = typeof probeHarnessModels;
+type HarnessInstaller = typeof startHarnessInstall;
+export interface ApiRequestContext {
+  headers?: Headers;
+  expectedOrigin?: string;
+  clearProbeCache?: (id?: AgentConfig["harness"]) => void;
+  clearModelsCache?: (id?: AgentConfig["harness"]) => void;
+}
 
 const ok = (body: any = { ok: true }): ApiResult => ({ status: 200, body });
 const fail = (status: number, message: string): ApiResult => ({ status, body: { error: { message } } });
@@ -29,6 +39,8 @@ export async function handleApi(
   query: URLSearchParams = new URLSearchParams(),
   harnessProbe = probeHarnesses,
   harnessModelProbe: HarnessModelProbe = probeHarnessModels,
+  harnessInstaller: HarnessInstaller = startHarnessInstall,
+  ctx: ApiRequestContext = {},
 ): Promise<ApiResult> {
   const seg = path
     .replace(/^\/+|\/+$/g, "")
@@ -40,8 +52,37 @@ export async function handleApi(
   const str = (v: unknown) => (v == null ? "" : String(v));
 
   try {
+    if (isHarnessMutationRoute(method, p)) {
+      const csrf = sameOriginCheck(ctx.headers, ctx.expectedOrigin);
+      if (!csrf.ok) return { status: 403, body: { error: { message: "forbidden" } } };
+    }
     if (method === "GET" && p.length === 1 && p[0] === "state") return ok(gw.snapshot());
-    if (method === "GET" && p.length === 1 && p[0] === "harnesses") return ok(harnessProbe());
+    if (method === "GET" && p.length === 1 && p[0] === "harnesses") return ok(await harnessProbe({
+      runningAgentsUsingOldVersion: (id, latest) => gw.runningAgentsUsingOldVersion(id, latest),
+    }));
+    if (method === "POST" && p.length === 3 && p[0] === "harnesses" && p[2] === "install") {
+      const harness = str(p[1]) as AgentConfig["harness"];
+      if (!Object.hasOwn(HARNESSES, harness)) return fail(400, `unknown harness: ${harness}`);
+      if (harness !== "claude" && harness !== "codex") return fail(400, `harness ${harness} is not npm-installable`);
+      try {
+        const job = await harnessInstaller(harness, { broadcast: (event) => {
+          if (event.t === "harnesses-changed") gw.broadcastHarnessesChanged(event.harnessId);
+        } });
+        return ok({ jobId: job.id, status: job.status === "done" ? "done" : "running", harnessId: job.harnessId, pkgSpec: job.pkgSpec });
+      } catch (e: any) {
+        if (e instanceof HarnessInstallError && e.code === "missing-npm") {
+          return { status: 409, body: { error: "missing-npm", hint: e.message } };
+        }
+        return fail(e instanceof HarnessInstallError && e.code === "not-installable" ? 400 : 500, str(e?.message ?? e));
+      }
+    }
+    if (method === "GET" && p.length === 5 && p[0] === "harnesses" && p[2] === "install" && p[4] === "stream") {
+      const harness = str(p[1]) as AgentConfig["harness"];
+      if (!Object.hasOwn(HARNESSES, harness)) return fail(400, `unknown harness: ${harness}`);
+      const job = getHarnessInstallJob(str(p[3]));
+      if (!job || job.harnessId !== harness) return fail(404, "install job not found");
+      return { status: 200, body: installStreamResponse(job) };
+    }
     if (method === "GET" && p.length === 3 && p[0] === "harnesses" && p[2] === "models") {
       const harness = str(p[1]) as AgentConfig["harness"];
       if (!Object.hasOwn(HARNESSES, harness)) return fail(404, `unknown harness: ${harness}`);
@@ -51,6 +92,16 @@ export async function handleApi(
         const msg = str(e?.message ?? e);
         return fail(/not installed/.test(msg) ? 409 : 400, msg);
       }
+    }
+    if (method === "POST" && p.length === 3 && p[0] === "harnesses" && p[2] === "reprobe") {
+      const harness = str(p[1]) as AgentConfig["harness"];
+      if (!Object.hasOwn(HARNESSES, harness)) return fail(400, `unknown harness: ${harness}`);
+      (ctx.clearProbeCache ?? clearHarnessProbeCache)(harness);
+      (ctx.clearModelsCache ?? clearHarnessModelsCache)(harness);
+      const rows = await harnessProbe({ refresh: true });
+      gw.broadcastHarnessesChanged(harness);
+      const row = rows.find((h: any) => h.id === harness);
+      return ok({ id: harness, installed: row?.installed === true, version: row?.version });
     }
 
     if (p[0] === "uploads") {
@@ -203,6 +254,16 @@ export async function handleApi(
           await gw.newAgentSession(name, agentId);
           return ok();
         }
+        if (p[4] === "respawn") {
+          const mode = str(body?.mode) as RespawnMode;
+          if (mode !== "after-idle" && mode !== "force" && mode !== "cancel") return fail(400, "invalid respawn mode");
+          try {
+            return ok(await gw.respawnAgent(name, agentId, mode));
+          } catch (e: any) {
+            const msg = str(e?.message ?? e);
+            return fail(/spawning|cold/.test(msg) ? 409 : 400, msg);
+          }
+        }
       }
       // DELETE /api/meshes/:name/agents/:id/queue/:turnId
       if (method === "DELETE" && p.length === 6 && p[2] === "agents" && p[4] === "queue") {
@@ -226,6 +287,64 @@ export async function handleApi(
   } catch (e: any) {
     return fail(400, str(e?.message ?? e));
   }
+}
+
+function installStreamResponse(job: { status: string; events: InstallEvent[] }): Response {
+  const encoder = new TextEncoder();
+  let index = 0;
+  return new Response(new ReadableStream({
+    async pull(controller) {
+      while (index >= job.events.length && job.status === "running") {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      while (index < job.events.length) {
+        controller.enqueue(encoder.encode(JSON.stringify(publicInstallEvent(job.events[index++])) + "\n"));
+      }
+      if (job.status !== "running" && index >= job.events.length) controller.close();
+    },
+  }), { headers: { "content-type": "application/x-ndjson" } });
+}
+
+function publicInstallEvent(event: InstallEvent): Record<string, unknown> {
+  const out: Record<string, unknown> = {
+    step: event.step,
+    harnessId: event.harnessId,
+    pkgSpec: event.pkgSpec,
+  };
+  if (event.progress !== undefined) out.progress = event.progress;
+  if (event.stdoutLine !== undefined) out.stdoutLine = event.stdoutLine;
+  if (event.stderrLine !== undefined) out.stderrLine = event.stderrLine;
+  if (event.step === "done") {
+    if (event.installedVersion !== undefined) out.installedVersion = event.installedVersion;
+    if (event.installedPath !== undefined) out.installedPath = event.installedPath;
+  }
+  if (event.step === "error") {
+    if (event.code !== undefined) out.code = event.code;
+    if (event.message !== undefined) out.message = event.message;
+  }
+  return out;
+}
+
+function isHarnessMutationRoute(method: string, p: string[]): boolean {
+  if (p[0] === "harnesses") {
+    if (method === "POST" && p.length === 3 && p[2] === "install") return true;
+    if (method === "GET" && p.length === 5 && p[2] === "install" && p[4] === "stream") return true;
+    if (method === "POST" && p.length === 3 && p[2] === "reprobe") return true;
+  }
+  if (p[0] === "meshes" && method === "POST" && p.length === 5 && p[2] === "agents" && p[4] === "respawn") return true;
+  return false;
+}
+
+export function assertSameOrigin(headers: Headers | undefined, expectedOrigin: string | undefined): void {
+  if (!sameOriginCheck(headers, expectedOrigin).ok) throw new Error("forbidden");
+}
+
+function sameOriginCheck(headers: Headers | undefined, expectedOrigin: string | undefined): { ok: boolean } {
+  const site = headers?.get("sec-fetch-site")?.toLowerCase();
+  if (site === "same-origin") return { ok: true };
+  const origin = headers?.get("origin");
+  if (origin && expectedOrigin && origin === expectedOrigin) return { ok: true };
+  return { ok: false };
 }
 
 function agentFileStatus(code: string): number {

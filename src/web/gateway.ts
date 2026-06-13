@@ -7,6 +7,7 @@ import { now } from "../acp/types";
 import { resolve } from "node:path";
 import type { AgentConfig, MeshConfig, MeshEdge, MeshEvent, AgentId, AgentStatus, AgentActivity, AgentTurn, PromptImageRef, HarnessId } from "../acp/types";
 import type { StartMeshOptions } from "../mesh-manager";
+import type { RespawnMode, RespawnResult } from "../control-plane";
 import { readUpload, storeUploads, uploadPath, type UploadFileLike } from "./uploads";
 import { AgentFileError, resolveAgentFile } from "./agent-files";
 import { resolveArtifactFile } from "./artifacts";
@@ -52,11 +53,13 @@ export interface ManagerLike {
   wakeAgent(name: string, agentId: string): void;
   stopAgent(name: string, agentId: string): void;
   newAgentSession(name: string, agentId: string): Promise<void>;
+  respawnAgent(name: string, agentId: string, mode: RespawnMode): Promise<RespawnResult>;
   newAllSessions(name: string): Promise<void>;
   defineMesh(config: MeshConfig): Promise<void>;
   deleteMesh(name: string): Promise<void>;
   loadDefinitions(): Promise<void>;
   stopAll(): Promise<void>;
+  listResolvedHarnesses?(): { mesh: string; agentId: string; harnessId: HarnessId; version?: string; path?: string; spawnedAt: string }[];
 }
 
 /** The MeshAssistant surface the gateway depends on. */
@@ -109,6 +112,16 @@ function usageOf(update: any, ts: string): AgentUsage | undefined {
   return usage.used !== undefined || usage.size !== undefined || usage.cost !== undefined ? usage : undefined;
 }
 
+function compareSemver(a: string, b: string): number {
+  const pa = a.split(/[.-]/).map((p) => Number.parseInt(p, 10) || 0);
+  const pb = b.split(/[.-]/).map((p) => Number.parseInt(p, 10) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const d = (pa[i] ?? 0) - (pb[i] ?? 0);
+    if (d) return d;
+  }
+  return 0;
+}
+
 /** Project an image ref to the fields safe to broadcast/persist in a transcript: the absolute
  *  on-disk `path` and internal `bucket` stay server-side (used only at the ACP boundary to read
  *  the bytes) and must never reach WS clients. Clients render the thumbnail from `url`. */
@@ -155,6 +168,17 @@ export class WebGateway {
   }
   private broadcast(m: ServerMsg): void {
     for (const l of this.listeners) l(m);
+  }
+  broadcastHarnessesChanged(harnessId: HarnessId): void {
+    this.broadcast({ t: "harnesses-changed", harnessId });
+  }
+
+  runningAgentsUsingOldVersion(id: HarnessId, latest?: string): string[] {
+    if (!latest) return [];
+    const resolved = this.manager.listResolvedHarnesses?.() ?? [];
+    return resolved
+      .filter((r) => r.harnessId === id && r.version && compareSemver(r.version, latest) < 0)
+      .map((r) => `${r.mesh}/${r.agentId}`);
   }
   private broadcastOp(conv: ConvRef, op: TranscriptOp): void {
     if (op.op === "upsert") this.broadcast({ t: "transcript.upsert", conv, item: op.item });
@@ -588,6 +612,11 @@ export class WebGateway {
   async newAgentSession(name: string, agentId: string): Promise<void> {
     await this.manager.newAgentSession(name, agentId);
     this.refreshMeshes();
+  }
+  async respawnAgent(name: string, agentId: string, mode: RespawnMode): Promise<RespawnResult> {
+    const result = await this.manager.respawnAgent(name, agentId, mode);
+    this.refreshMeshes();
+    return result;
   }
   async newAllSessions(name: string): Promise<void> {
     await this.manager.newAllSessions(name);

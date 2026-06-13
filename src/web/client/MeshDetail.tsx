@@ -3,7 +3,7 @@
 // permission-history timelines for the selected mesh.
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import type { Store } from "./store";
-import type { GatewayState, MeshSummary, PerMeshState, ActivityEntry, MailEntry, ResolvedPermission, PermissionReq, AgentModes, AgentModels, HarnessId, StartSessionStrategy } from "../types";
+import type { GatewayState, MeshSummary, PerMeshState, ActivityEntry, MailEntry, ResolvedPermission, PermissionReq, AgentModes, AgentModels, HarnessId, StartSessionStrategy, HarnessProbeRow } from "../types";
 import { effortOptionsForHarness, supportsRuntimeEffort } from "../../harness-utils";
 import { Dot, Btn, Empty, ConfirmButton, InfoIcon, fmtTime } from "./ui";
 import { ChatPane } from "./ChatPane";
@@ -213,6 +213,54 @@ function ModelControl({ mesh, agent, store, models }: { mesh: string; agent: str
   );
 }
 
+function StaleHarnessNotice({
+  mesh,
+  agent,
+  row,
+  store,
+  pending,
+  onPending,
+}: {
+  mesh: string;
+  agent: string;
+  row: HarnessProbeRow;
+  store: Store;
+  pending: boolean;
+  onPending: (pending: boolean) => void;
+}) {
+  const running = row.version ? `running ${row.id} v${row.version}` : `running ${row.id} version unknown`;
+  const newer = row.latest ? `newer v${row.latest} installed` : "newer installed version detected";
+  return (
+    <span className="stale-harness-note" role="status">
+      {pending ? (
+        <>
+          <span>restart pending (after current turn)</span>
+          <Btn small kind="ghost" onClick={() => void store.respawnAgent(mesh, agent, "cancel").then(() => onPending(false))} ariaLabel={`Cancel pending restart for ${agent}`}>
+            cancel
+          </Btn>
+        </>
+      ) : (
+        <>
+          <span>{running}</span>
+          <span>({newer})</span>
+          <Btn small kind="go" onClick={() => void store.respawnAgent(mesh, agent, "after-idle").then(() => onPending(true))} ariaLabel={`Restart ${agent} after current turn`}>
+            Restart agent
+          </Btn>
+          <ConfirmButton
+            small
+            kind="stop"
+            confirmLabel="Force restart agent will lose current ACP session context (mailbox preserved). Continue?"
+            ariaLabel={`Force restart ${agent}`}
+            onConfirm={() => void store.respawnAgent(mesh, agent, "force").then(() => onPending(false))}
+          >
+            force
+          </ConfirmButton>
+        </>
+      )}
+    </span>
+  );
+}
+
 // Per-agent thinking-effort picker. Claude and Kimi can switch thought level at runtime;
 // Codex remains spawn-time only, and OpenCode is pending binary verification.
 function EffortControl({ m, agent, store }: { m: MeshSummary; agent: string; store: Store }) {
@@ -278,6 +326,12 @@ function ConversationPanel({
   const tabRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const menuRef = useRef<HTMLDivElement | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [harnessRows, setHarnessRows] = useState<HarnessProbeRow[]>([]);
+  const [pendingRespawn, setPendingRespawn] = useState(false);
+
+  const refreshHarnesses = async () => {
+    setHarnessRows(await store.listHarnesses().catch(() => []));
+  };
 
   useEffect(() => {
     if (activeId === m.router) return;
@@ -300,9 +354,15 @@ function ConversationPanel({
     };
   }, [menuOpen]);
 
+  useEffect(() => {
+    void refreshHarnesses();
+    return store.subscribe(() => void refreshHarnesses());
+  }, [store]);
+
   if (!cur) return <Empty>{t("empty.members")}</Empty>;
   const statusOf = (id: string) => (live ? (m.agents.find((a) => a.id === id)?.status ?? "stopped") : "stopped");
   const working = live && cur.activity === "working";
+  const staleHarness = harnessRows.find((row) => row.id === cur.harness && row.runningAgentsUsingOldVersion.includes(`${m.name}/${cur.id}`));
   const canWake = live && cur.lazy === true && cur.status === "cold";
   const activate = (id: string) => {
     onActivate(id);
@@ -377,6 +437,16 @@ function ConversationPanel({
             >
               {t("new session")}
             </ConfirmButton>
+          ) : null}
+          {staleHarness ? (
+            <StaleHarnessNotice
+              mesh={m.name}
+              agent={cur.id}
+              row={staleHarness}
+              store={store}
+              pending={pendingRespawn}
+              onPending={setPendingRespawn}
+            />
           ) : null}
           {!mobile ? (
             <Btn small kind="ghost" onClick={onToggleFull} title={fullscreen ? t("exit") : t("full")} ariaLabel={`${fullscreen ? t("exit") : t("full")} ${t("conversation")}`} >

@@ -58,7 +58,7 @@ export class MeshAssistant {
         ? resolve(process.cwd(), this.opts.project)
         : resolve(process.cwd(), ".");
     const connectionFactory = this.opts.connectionFactory ?? ((connOpts: AcpConnectionOptions) => new AcpAgentConnection(connOpts));
-    const installed = this.opts.installedHarnesses ?? probeHarnesses();
+    const installed = this.opts.installedHarnesses ?? await probeHarnesses();
     const installedIds = new Set(installed.filter((h) => h.installed).map((h) => h.id));
     const failures: string[] = [];
     try {

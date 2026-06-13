@@ -11,8 +11,10 @@ import { Mesh } from "./mesh";
 import { validateAddAgent, validateAddEdge } from "./mesh-validate";
 import { now } from "./acp/types";
 import type { AgentConfig, AgentStatus, MeshConfig, MeshEdge, MeshEvent, ThinkingEffort } from "./acp/types";
+import type { HarnessId } from "./acp/types";
 import { isEffortSupportedByHarness, isThinkingEffort } from "./harness-utils";
 import type { PromptImageRef } from "./acp/types";
+import type { RespawnMode, RespawnResult } from "./control-plane";
 import { deleteUploadBucket } from "./web/uploads";
 import { assertSafeArtifactName, deleteArtifactMesh } from "./web/artifacts";
 import { clearAgentSession, clearAllAgentSessions, setMeshExpectedAlive } from "./session-storage";
@@ -55,6 +57,7 @@ export class MeshManager {
   private leaseMs: number;
   private entries = new Map<string, Entry>();
   private agentStatuses = new Map<string, Map<string, AgentStatus>>();
+  private resolvedHarnesses = new Map<string, Map<string, { mesh: string; agentId: string; harnessId: HarnessId; path?: string; version?: string; spawnedAt: string }>>();
   private listeners = new Set<(name: string, e: MeshEvent) => void>();
 
   constructor(opts: MeshManagerOptions = {}) {
@@ -81,6 +84,15 @@ export class MeshManager {
         this.agentStatuses.set(name, statuses);
       }
       statuses.set(e.agent, e.status);
+      if (e.status === "dead" || e.status === "stopped") this.resolvedHarnesses.get(name)?.delete(e.agent);
+    }
+    if (e.kind === "agent_resolved_harness") {
+      let resolved = this.resolvedHarnesses.get(name);
+      if (!resolved) {
+        resolved = new Map();
+        this.resolvedHarnesses.set(name, resolved);
+      }
+      resolved.set(e.agent, { mesh: name, agentId: e.agent, harnessId: e.harness, path: e.path, version: e.version, spawnedAt: e.spawnedAt });
     }
     for (const l of this.listeners) l(name, e);
   }
@@ -379,6 +391,13 @@ export class MeshManager {
     else await clearAgentSession(this.runDir, name, agentId);
   }
 
+  async respawnAgent(name: string, agentId: string, mode: RespawnMode): Promise<RespawnResult> {
+    const entry = this.require(name);
+    if (!entry.config.agents.some((a) => a.id === agentId)) throw new Error(`no agent "${agentId}" in mesh "${name}"`);
+    if (entry.status !== "running" || !entry.client) throw new Error(`mesh "${name}" is not running`);
+    return entry.client.respawn(agentId, mode);
+  }
+
   /** One-click: switch every agent in the mesh to a fresh session. */
   async newAllSessions(name: string): Promise<void> {
     const entry = this.require(name);
@@ -410,6 +429,10 @@ export class MeshManager {
 
   listMeshes(): { name: string; defined: boolean; status: MeshStatus }[] {
     return [...this.entries.values()].map((e) => ({ name: e.config.name, defined: true, status: e.status }));
+  }
+
+  listResolvedHarnesses(): { mesh: string; agentId: string; harnessId: HarnessId; path?: string; version?: string; spawnedAt: string }[] {
+    return [...this.resolvedHarnesses.values()].flatMap((byAgent) => [...byAgent.values()].map((info) => ({ ...info })));
   }
 
   configOf(name: string): MeshConfig {

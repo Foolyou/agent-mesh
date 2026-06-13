@@ -6,6 +6,7 @@ import { handleApi } from "./api";
 import { WebGateway } from "./gateway";
 import { artifactAgentDir } from "./artifacts";
 import type { MeshEvent, MeshConfig } from "../acp/types";
+import { HarnessInstallError, resetHarnessInstallJobsForTests, startHarnessInstall } from "../harness-install";
 
 const CFG: MeshConfig = {
   name: "demo",
@@ -16,6 +17,8 @@ const CFG: MeshConfig = {
   edges: [{ from: "router", to: "codex-1" }],
 };
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]);
+const SAME_ORIGIN = "http://localhost:7317";
+const sameOriginCtx = () => ({ headers: new Headers({ origin: SAME_ORIGIN }), expectedOrigin: SAME_ORIGIN });
 
 function fakeManager(config: MeshConfig = CFG) {
   const calls: any[] = [];
@@ -79,6 +82,12 @@ function fakeManager(config: MeshConfig = CFG) {
     async newAgentSession(n: string, a: string) {
       calls.push(["newAgentSession", n, a]);
     },
+    async respawnAgent(n: string, a: string, mode: string) {
+      calls.push(["respawnAgent", n, a, mode]);
+      if (mode === "after-idle") return { mode, scheduled: true, willRunWhen: "idle", note: "ACP session context will be lost; mailbox preserved" };
+      if (mode === "cancel") return { mode, scheduled: false };
+      return { mode, scheduled: false, willRunWhen: "now", note: "ACP session context will be lost; mailbox preserved" };
+    },
     async newAllSessions(n: string) {
       calls.push(["newAllSessions", n]);
     },
@@ -113,6 +122,38 @@ test("GET /api/harnesses probes harness installation on each request", async () 
   const second = await handleApi(gw, "GET", "/api/harnesses", undefined, new URLSearchParams(), harnessProbe as any);
   expect(first).toEqual({ status: 200, body: [{ id: "codex", installed: false }] });
   expect(second).toEqual({ status: 200, body: [{ id: "codex", installed: true }] });
+});
+
+test("GET /api/harnesses awaits async harness probes", async () => {
+  const gw = new WebGateway(fakeManager() as any);
+  const r = await handleApi(gw, "GET", "/api/harnesses", undefined, new URLSearchParams(), async () => [{ id: "codex", installed: true }] as any);
+  expect(r).toEqual({ status: 200, body: [{ id: "codex", installed: true }] });
+});
+
+test("GET /api/harnesses includes running agents using older resolved versions", async () => {
+  const manager = {
+    ...fakeManager(),
+    listResolvedHarnesses() {
+      return [
+        { mesh: "demo", agentId: "router", harnessId: "codex", version: "0.15.0", path: "/bin/codex-acp", spawnedAt: "t" },
+        { mesh: "demo", agentId: "codex-1", harnessId: "codex", version: "0.16.0", path: "/bin/codex-acp", spawnedAt: "t" },
+      ];
+    },
+  };
+  const gw = new WebGateway(manager as any);
+  const r = await handleApi(
+    gw,
+    "GET",
+    "/api/harnesses",
+    undefined,
+    new URLSearchParams(),
+    async (opts: any) => [{
+      id: "codex",
+      installed: true,
+      runningAgentsUsingOldVersion: opts.runningAgentsUsingOldVersion("codex", "0.16.0"),
+    }] as any,
+  );
+  expect(r.body[0].runningAgentsUsingOldVersion).toEqual(["demo/router"]);
 });
 
 test("GET /api/harnesses/:id/models returns probed model list and passes refresh", async () => {
@@ -169,6 +210,162 @@ test("GET /api/harnesses/:id/models rejects prototype property names as unknown 
   expect(r.status).toBe(404);
   expect(r.body.error.message).toContain("unknown harness");
   expect(called).toBe(false);
+});
+
+test("POST /api/harnesses/claude/install starts an install job", async () => {
+  const gw = new WebGateway(fakeManager() as any);
+  const r = await handleApi(
+    gw,
+    "POST",
+    "/api/harnesses/claude/install",
+    {},
+    new URLSearchParams(),
+    undefined,
+    undefined,
+    async (id) => ({ id: "job-1", harnessId: id, pkgSpec: "@agentclientprotocol/claude-agent-acp@0.44.0", status: "running" }) as any,
+    sameOriginCtx(),
+  );
+  expect(r).toEqual({ status: 200, body: { jobId: "job-1", status: "running", harnessId: "claude", pkgSpec: "@agentclientprotocol/claude-agent-acp@0.44.0" } });
+});
+
+test("POST /api/harnesses/:id/install rejects non-npm and unknown harnesses", async () => {
+  const gw = new WebGateway(fakeManager() as any);
+  const opencode = await handleApi(gw, "POST", "/api/harnesses/opencode/install", {}, new URLSearchParams(), undefined, undefined, undefined, sameOriginCtx());
+  const unknown = await handleApi(gw, "POST", "/api/harnesses/unknown/install", {}, new URLSearchParams(), undefined, undefined, undefined, sameOriginCtx());
+  expect(opencode.status).toBe(400);
+  expect(opencode.body.error.message).toContain("not npm-installable");
+  expect(unknown.status).toBe(400);
+  expect(unknown.body.error.message).toContain("unknown harness");
+});
+
+test("POST /api/harnesses/:id/install returns 409 when npm is missing", async () => {
+  const gw = new WebGateway(fakeManager() as any);
+  const r = await handleApi(
+    gw,
+    "POST",
+    "/api/harnesses/claude/install",
+    {},
+    new URLSearchParams(),
+    undefined,
+    undefined,
+    async () => {
+      throw new HarnessInstallError("missing-npm", "Install Node.js first");
+    },
+    sameOriginCtx(),
+  );
+  expect(r).toEqual({ status: 409, body: { error: "missing-npm", hint: "Install Node.js first" } });
+});
+
+test("POST /api/harnesses/:id/install returns the active job for duplicate starts", async () => {
+  resetHarnessInstallJobsForTests();
+  let resolveExit!: (code: number) => void;
+  const gw = new WebGateway(fakeManager() as any);
+  const install = (id: any) => startHarnessInstall(id, {
+    prefix: "/tmp/mesh-home/.agent-mesh/npm-global",
+    home: "/tmp/mesh-home",
+    which: () => "/usr/bin/npm",
+    spawn: () => ({ exited: new Promise<number>((resolve) => { resolveExit = resolve; }), stdout: new Response("").body, stderr: new Response("").body }),
+  });
+  const first = await handleApi(gw, "POST", "/api/harnesses/codex/install", {}, new URLSearchParams(), undefined, undefined, install, sameOriginCtx());
+  const second = await handleApi(gw, "POST", "/api/harnesses/codex/install", {}, new URLSearchParams(), undefined, undefined, install, sameOriginCtx());
+  expect(second.body.jobId).toBe(first.body.jobId);
+  resolveExit(0);
+});
+
+test("GET /api/harnesses/:id/install/:jobId/stream returns redacted NDJSON without argv or env", async () => {
+  resetHarnessInstallJobsForTests();
+  const gw = new WebGateway(fakeManager() as any);
+  const install = (id: any) => startHarnessInstall(id, {
+    prefix: "/tmp/mesh-home/.agent-mesh/npm-global",
+    home: "/tmp/mesh-home",
+    which: () => "/usr/bin/npm",
+    spawn: () => ({
+      exited: Promise.resolve(0),
+      stdout: new ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode("using /home/chenan/x.log\n")); c.close(); } }),
+      stderr: new ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode("npm_config_ignore_scripts --prefix --registry\n")); c.close(); } }),
+    }),
+    reprobe: async () => [{ id, installed: true, version: "1.2.3", path: "/home/chenan/.agent-mesh/npm-global/bin/codex-acp" }] as any,
+  });
+  const started = await handleApi(gw, "POST", "/api/harnesses/codex/install", {}, new URLSearchParams(), undefined, undefined, install, sameOriginCtx());
+  const streamed = await handleApi(gw, "GET", `/api/harnesses/codex/install/${started.body.jobId}/stream`, undefined, new URLSearchParams(), undefined, undefined, undefined, sameOriginCtx());
+  expect(streamed.status).toBe(200);
+  expect(streamed.body).toBeInstanceOf(Response);
+  const text = await (streamed.body as Response).text();
+  expect(text).toContain("~/x.log");
+  expect(text).not.toContain("/home/chenan");
+  expect(text).not.toContain("--prefix");
+  expect(text).not.toContain("--registry");
+  expect(text).not.toContain("npm_config_ignore_scripts");
+});
+
+test("harness install endpoints require same-origin request headers", async () => {
+  const gw = new WebGateway(fakeManager() as any);
+  const installer = async (id: any) => ({ id: "job-1", harnessId: id, pkgSpec: "@agentclientprotocol/claude-agent-acp@0.44.0", status: "running" }) as any;
+  const missing = await handleApi(gw, "POST", "/api/harnesses/claude/install", {}, new URLSearchParams(), undefined, undefined, installer);
+  const cross = await handleApi(
+    gw,
+    "POST",
+    "/api/harnesses/claude/install",
+    {},
+    new URLSearchParams(),
+    undefined,
+    undefined,
+    installer,
+    { headers: new Headers({ origin: "http://evil.test" }), expectedOrigin: SAME_ORIGIN },
+  );
+  const ok = await handleApi(gw, "POST", "/api/harnesses/claude/install", {}, new URLSearchParams(), undefined, undefined, installer, sameOriginCtx());
+  expect(missing.status).toBe(403);
+  expect(cross.status).toBe(403);
+  expect(ok.status).toBe(200);
+});
+
+test("POST /api/harnesses/:id/reprobe requires same-origin request headers", async () => {
+  const gw = new WebGateway(fakeManager() as any);
+  const probe = async () => [{ id: "opencode", installed: true }] as any;
+  const missing = await handleApi(gw, "POST", "/api/harnesses/opencode/reprobe", {}, new URLSearchParams(), probe);
+  const cross = await handleApi(
+    gw,
+    "POST",
+    "/api/harnesses/opencode/reprobe",
+    {},
+    new URLSearchParams(),
+    probe,
+    undefined,
+    undefined,
+    { headers: new Headers({ origin: "http://evil.test" }), expectedOrigin: SAME_ORIGIN },
+  );
+  const ok = await handleApi(gw, "POST", "/api/harnesses/opencode/reprobe", {}, new URLSearchParams(), probe, undefined, undefined, sameOriginCtx());
+  expect(missing.status).toBe(403);
+  expect(cross.status).toBe(403);
+  expect(ok.status).toBe(200);
+});
+
+test("POST /api/harnesses/:id/reprobe clears caches, refreshes probe, and broadcasts", async () => {
+  const gw = new WebGateway(fakeManager() as any);
+  const messages: any[] = [];
+  gw.subscribe((m) => messages.push(m));
+  const calls: any[] = [];
+  const r = await handleApi(
+    gw,
+    "POST",
+    "/api/harnesses/kimi/reprobe",
+    {},
+    new URLSearchParams(),
+    async (opts) => {
+      calls.push(["probe", opts]);
+      return [{ id: "kimi", installed: true, version: "0.1.0" }] as any;
+    },
+    undefined,
+    undefined,
+    {
+      ...sameOriginCtx(),
+      clearProbeCache: (id) => calls.push(["clearProbe", id]),
+      clearModelsCache: (id) => calls.push(["clearModels", id]),
+    },
+  );
+  expect(r).toEqual({ status: 200, body: { id: "kimi", installed: true, version: "0.1.0" } });
+  expect(calls).toEqual([["clearProbe", "kimi"], ["clearModels", "kimi"], ["probe", { refresh: true }]]);
+  expect(messages).toContainEqual({ t: "harnesses-changed", harnessId: "kimi" });
 });
 
 test("POST /api/meshes/demo/start delegates to startMesh", async () => {
@@ -319,6 +516,43 @@ test("POST /api/meshes/demo/agents/codex-1/session delegates to newAgentSession"
   const r = await handleApi(gw, "POST", "/api/meshes/demo/agents/codex-1/session", {});
   expect(r.status).toBe(200);
   expect(m.calls).toContainEqual(["newAgentSession", "demo", "codex-1"]);
+});
+
+test("POST /api/meshes/:mesh/agents/:agent/respawn requires same-origin headers", async () => {
+  const m = fakeManager();
+  const gw = new WebGateway(m as any);
+  const missing = await handleApi(gw, "POST", "/api/meshes/demo/agents/codex-1/respawn", { mode: "force" });
+  const cross = await handleApi(
+    gw,
+    "POST",
+    "/api/meshes/demo/agents/codex-1/respawn",
+    { mode: "force" },
+    new URLSearchParams(),
+    undefined,
+    undefined,
+    undefined,
+    { headers: new Headers({ origin: "http://evil.test" }), expectedOrigin: SAME_ORIGIN },
+  );
+  const ok = await handleApi(gw, "POST", "/api/meshes/demo/agents/codex-1/respawn", { mode: "force" }, new URLSearchParams(), undefined, undefined, undefined, sameOriginCtx());
+  expect(missing.status).toBe(403);
+  expect(cross.status).toBe(403);
+  expect(ok.status).toBe(200);
+});
+
+test("POST /api/meshes/:mesh/agents/:agent/respawn delegates after-idle, force, and cancel", async () => {
+  const m = fakeManager();
+  const gw = new WebGateway(m as any);
+  const afterIdle = await handleApi(gw, "POST", "/api/meshes/demo/agents/codex-1/respawn", { mode: "after-idle" }, new URLSearchParams(), undefined, undefined, undefined, sameOriginCtx());
+  const force = await handleApi(gw, "POST", "/api/meshes/demo/agents/codex-1/respawn", { mode: "force" }, new URLSearchParams(), undefined, undefined, undefined, sameOriginCtx());
+  const cancel = await handleApi(gw, "POST", "/api/meshes/demo/agents/codex-1/respawn", { mode: "cancel" }, new URLSearchParams(), undefined, undefined, undefined, sameOriginCtx());
+  const bad = await handleApi(gw, "POST", "/api/meshes/demo/agents/codex-1/respawn", { mode: "restart" }, new URLSearchParams(), undefined, undefined, undefined, sameOriginCtx());
+  expect(afterIdle.body).toMatchObject({ mode: "after-idle", scheduled: true, willRunWhen: "idle" });
+  expect(force.body).toMatchObject({ mode: "force", scheduled: false, willRunWhen: "now", note: "ACP session context will be lost; mailbox preserved" });
+  expect(cancel.body).toMatchObject({ mode: "cancel", scheduled: false });
+  expect(bad.status).toBe(400);
+  expect(m.calls).toContainEqual(["respawnAgent", "demo", "codex-1", "after-idle"]);
+  expect(m.calls).toContainEqual(["respawnAgent", "demo", "codex-1", "force"]);
+  expect(m.calls).toContainEqual(["respawnAgent", "demo", "codex-1", "cancel"]);
 });
 
 test("POST /api/meshes/demo/session delegates to newAllSessions", async () => {
