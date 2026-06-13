@@ -8,7 +8,8 @@ import type { StartMeshOptions } from "../mesh-manager";
 import type { UploadFileLike } from "./uploads";
 import { AgentFileError } from "./agent-files";
 import { probeHarnesses } from "../harness-probe";
-import { probeHarnessModels } from "../harness-models";
+import { clearHarnessProbeCache } from "../harness-probe";
+import { clearHarnessModelsCache, probeHarnessModels } from "../harness-models";
 import { HARNESSES } from "../harness";
 import { getHarnessInstallJob, HarnessInstallError, startHarnessInstall, type InstallEvent } from "../harness-install";
 
@@ -22,6 +23,8 @@ type HarnessInstaller = typeof startHarnessInstall;
 export interface ApiRequestContext {
   headers?: Headers;
   expectedOrigin?: string;
+  clearProbeCache?: (id?: AgentConfig["harness"]) => void;
+  clearModelsCache?: (id?: AgentConfig["harness"]) => void;
 }
 
 const ok = (body: any = { ok: true }): ApiResult => ({ status: 200, body });
@@ -86,6 +89,16 @@ export async function handleApi(
         const msg = str(e?.message ?? e);
         return fail(/not installed/.test(msg) ? 409 : 400, msg);
       }
+    }
+    if (method === "POST" && p.length === 3 && p[0] === "harnesses" && p[2] === "reprobe") {
+      const harness = str(p[1]) as AgentConfig["harness"];
+      if (!Object.hasOwn(HARNESSES, harness)) return fail(400, `unknown harness: ${harness}`);
+      (ctx.clearProbeCache ?? clearHarnessProbeCache)(harness);
+      (ctx.clearModelsCache ?? clearHarnessModelsCache)(harness);
+      const rows = await harnessProbe({ refresh: true });
+      gw.broadcastHarnessesChanged(harness);
+      const row = rows.find((h: any) => h.id === harness);
+      return ok({ id: harness, installed: row?.installed === true, version: row?.version });
     }
 
     if (p[0] === "uploads") {

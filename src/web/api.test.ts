@@ -287,6 +287,55 @@ test("harness install endpoints require same-origin request headers", async () =
   expect(ok.status).toBe(200);
 });
 
+test("POST /api/harnesses/:id/reprobe requires same-origin request headers", async () => {
+  const gw = new WebGateway(fakeManager() as any);
+  const probe = async () => [{ id: "opencode", installed: true }] as any;
+  const missing = await handleApi(gw, "POST", "/api/harnesses/opencode/reprobe", {}, new URLSearchParams(), probe);
+  const cross = await handleApi(
+    gw,
+    "POST",
+    "/api/harnesses/opencode/reprobe",
+    {},
+    new URLSearchParams(),
+    probe,
+    undefined,
+    undefined,
+    { headers: new Headers({ origin: "http://evil.test" }), expectedOrigin: SAME_ORIGIN },
+  );
+  const ok = await handleApi(gw, "POST", "/api/harnesses/opencode/reprobe", {}, new URLSearchParams(), probe, undefined, undefined, sameOriginCtx());
+  expect(missing.status).toBe(403);
+  expect(cross.status).toBe(403);
+  expect(ok.status).toBe(200);
+});
+
+test("POST /api/harnesses/:id/reprobe clears caches, refreshes probe, and broadcasts", async () => {
+  const gw = new WebGateway(fakeManager() as any);
+  const messages: any[] = [];
+  gw.subscribe((m) => messages.push(m));
+  const calls: any[] = [];
+  const r = await handleApi(
+    gw,
+    "POST",
+    "/api/harnesses/kimi/reprobe",
+    {},
+    new URLSearchParams(),
+    async (opts) => {
+      calls.push(["probe", opts]);
+      return [{ id: "kimi", installed: true, version: "0.1.0" }] as any;
+    },
+    undefined,
+    undefined,
+    {
+      ...sameOriginCtx(),
+      clearProbeCache: (id) => calls.push(["clearProbe", id]),
+      clearModelsCache: (id) => calls.push(["clearModels", id]),
+    },
+  );
+  expect(r).toEqual({ status: 200, body: { id: "kimi", installed: true, version: "0.1.0" } });
+  expect(calls).toEqual([["clearProbe", "kimi"], ["clearModels", "kimi"], ["probe", { refresh: true }]]);
+  expect(messages).toContainEqual({ t: "harnesses-changed", harnessId: "kimi" });
+});
+
 test("POST /api/meshes/demo/start delegates to startMesh", async () => {
   const m = fakeManager();
   const gw = new WebGateway(m as any);
