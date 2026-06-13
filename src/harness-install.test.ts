@@ -73,6 +73,7 @@ test("startHarnessInstall is idempotent for active jobs", async () => {
     prefix: "/tmp/mesh-home/.agent-mesh/npm-global",
     home: "/tmp/mesh-home",
     which: () => "/usr/bin/npm",
+    reprobe: async () => [],
     spawn: (argv, opts) => {
       calls.push({ argv, opts });
       return { exited: new Promise<number>((resolve) => { resolveExit = resolve; }), stdout: new Response("").body, stderr: new Response("").body };

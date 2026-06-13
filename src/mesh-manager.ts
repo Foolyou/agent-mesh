@@ -14,6 +14,7 @@ import type { AgentConfig, AgentStatus, MeshConfig, MeshEdge, MeshEvent, Thinkin
 import type { HarnessId } from "./acp/types";
 import { isEffortSupportedByHarness, isThinkingEffort } from "./harness-utils";
 import type { PromptImageRef } from "./acp/types";
+import type { RespawnMode, RespawnResult } from "./control-plane";
 import { deleteUploadBucket } from "./web/uploads";
 import { assertSafeArtifactName, deleteArtifactMesh } from "./web/artifacts";
 import { clearAgentSession, clearAllAgentSessions, setMeshExpectedAlive } from "./session-storage";
@@ -388,6 +389,13 @@ export class MeshManager {
     if (!entry.config.agents.some((a) => a.id === agentId)) throw new Error(`no agent "${agentId}" in mesh "${name}"`);
     if (entry.status === "running" && entry.client) entry.client.newSession(agentId);
     else await clearAgentSession(this.runDir, name, agentId);
+  }
+
+  async respawnAgent(name: string, agentId: string, mode: RespawnMode): Promise<RespawnResult> {
+    const entry = this.require(name);
+    if (!entry.config.agents.some((a) => a.id === agentId)) throw new Error(`no agent "${agentId}" in mesh "${name}"`);
+    if (entry.status !== "running" || !entry.client) throw new Error(`mesh "${name}" is not running`);
+    return entry.client.respawn(agentId, mode);
   }
 
   /** One-click: switch every agent in the mesh to a fresh session. */

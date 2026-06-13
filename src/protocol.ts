@@ -8,6 +8,7 @@
 // with the last seq it saw and the host replays everything newer, so the parent's
 // aggregated view is rebuilt seamlessly without losing the live agents.
 import type { AgentConfig, MeshEdge, MeshEvent } from "./acp/types";
+import type { RespawnMode, RespawnResult } from "./control-plane";
 import type { PromptImageRef } from "./acp/types";
 
 /** Bumped when the wire protocol changes incompatibly; a reconnecting parent that
@@ -26,6 +27,7 @@ export type ChildMsg =
   | { t: "event"; seq: number; event: MeshEvent }
   | { t: "replay"; events: SeqEvent[] }
   | { t: "snapshot"; events: MeshEvent[] }
+  | { t: "respawnResult"; reqId: string; result?: RespawnResult; error?: string }
   | { t: "stopped" };
 
 /** parent (MeshManager) -> child (mesh-host) */
@@ -40,6 +42,7 @@ export type ParentMsg =
   | { t: "setEffort"; target: string; effort?: string }
   | { t: "interrupt"; target: string }
   | { t: "newSession"; target: string }
+  | { t: "respawn"; reqId: string; target: string; mode: RespawnMode }
   | { t: "newAllSessions" }
   | { t: "wake"; target: string }
   | { t: "stopAgent"; target: string }

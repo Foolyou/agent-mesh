@@ -12,6 +12,7 @@ import { clearHarnessProbeCache } from "../harness-probe";
 import { clearHarnessModelsCache, probeHarnessModels } from "../harness-models";
 import { HARNESSES } from "../harness";
 import { getHarnessInstallJob, HarnessInstallError, startHarnessInstall, type InstallEvent } from "../harness-install";
+import type { RespawnMode } from "../control-plane";
 
 export interface ApiResult {
   status: number;
@@ -253,6 +254,16 @@ export async function handleApi(
           await gw.newAgentSession(name, agentId);
           return ok();
         }
+        if (p[4] === "respawn") {
+          const mode = str(body?.mode) as RespawnMode;
+          if (mode !== "after-idle" && mode !== "force" && mode !== "cancel") return fail(400, "invalid respawn mode");
+          try {
+            return ok(await gw.respawnAgent(name, agentId, mode));
+          } catch (e: any) {
+            const msg = str(e?.message ?? e);
+            return fail(/spawning|cold/.test(msg) ? 409 : 400, msg);
+          }
+        }
       }
       // DELETE /api/meshes/:name/agents/:id/queue/:turnId
       if (method === "DELETE" && p.length === 6 && p[2] === "agents" && p[4] === "queue") {
@@ -315,10 +326,12 @@ function publicInstallEvent(event: InstallEvent): Record<string, unknown> {
 }
 
 function isHarnessMutationRoute(method: string, p: string[]): boolean {
-  if (p[0] !== "harnesses") return false;
-  if (method === "POST" && p.length === 3 && p[2] === "install") return true;
-  if (method === "GET" && p.length === 5 && p[2] === "install" && p[4] === "stream") return true;
-  if (method === "POST" && p.length === 3 && p[2] === "reprobe") return true;
+  if (p[0] === "harnesses") {
+    if (method === "POST" && p.length === 3 && p[2] === "install") return true;
+    if (method === "GET" && p.length === 5 && p[2] === "install" && p[4] === "stream") return true;
+    if (method === "POST" && p.length === 3 && p[2] === "reprobe") return true;
+  }
+  if (p[0] === "meshes" && method === "POST" && p.length === 5 && p[2] === "agents" && p[4] === "respawn") return true;
   return false;
 }
 

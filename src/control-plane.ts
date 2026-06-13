@@ -131,6 +131,14 @@ export interface ResolvedHarnessInfo {
   spawnedAt: string;
 }
 
+export type RespawnMode = "after-idle" | "force" | "cancel";
+export interface RespawnResult {
+  mode: RespawnMode;
+  scheduled: boolean;
+  willRunWhen?: "idle" | "now";
+  note?: string;
+}
+
 export interface ControlPlaneOptions {
   mailboxPath?: string;
   /** auto-deny a permission request after this many ms with no human decision */
@@ -223,6 +231,7 @@ export class ControlPlane {
   private activityStates = new Map<AgentId, AgentActivity>();
   private sessionState: MeshSessionState = { meshExpectedAlive: true, agents: {} };
   private resolvedHarnesses = new Map<AgentId, ResolvedHarnessInfo>();
+  private pendingRespawns = new Map<AgentId, ReturnType<typeof setTimeout>>();
 
   constructor(config: MeshConfig, opts: ControlPlaneOptions = {}) {
     this.mesh = new Mesh(config);
@@ -599,6 +608,41 @@ export class ControlPlane {
     this.emit({ kind: "update", agent: id, update: { sessionUpdate: "__session_reset__" }, ts: now() });
   }
 
+  async respawnAgent(id: AgentId, mode: RespawnMode): Promise<RespawnResult> {
+    const a = this.mesh.agent(id);
+    if (!a) throw new Error(`no such agent "${id}"`);
+    const status = this.mesh.status(id);
+    if (status === "spawning" || status === "cold") throw new Error(`agent "${id}" is ${status}`);
+    if (mode === "cancel") {
+      const timer = this.pendingRespawns.get(id);
+      if (timer) clearTimeout(timer);
+      this.pendingRespawns.delete(id);
+      this.emit({ kind: "agent_status", agent: id, status: status ?? "dead", detail: "agent respawn canceled", ts: now() });
+      return { mode, scheduled: false };
+    }
+    if (mode === "after-idle" && this.activityOf(id) !== "idle") {
+      if (!this.pendingRespawns.has(id)) {
+        const timer = setTimeout(() => {
+          if (this.pendingRespawns.get(id) !== timer) return;
+          this.pendingRespawns.delete(id);
+          this.emit({ kind: "agent_status", agent: id, status: this.mesh.status(id) ?? "dead", detail: "agent respawn timeout canceled", ts: now() });
+        }, 5 * 60 * 1000);
+        this.pendingRespawns.set(id, timer);
+        this.emit({ kind: "agent_status", agent: id, status: status ?? "ready", detail: "agent respawn pending", ts: now() });
+      }
+      return { mode, scheduled: true, willRunWhen: "idle", note: "ACP session context will be lost; mailbox preserved" };
+    }
+    await this.forceRespawnAgent(id);
+    return { mode, scheduled: false, willRunWhen: "now", note: "ACP session context will be lost; mailbox preserved" };
+  }
+
+  private async forceRespawnAgent(id: AgentId): Promise<void> {
+    if (this.sessionRunDir) this.sessionState = await clearAgentSession(this.sessionRunDir, this.mesh.name, id);
+    this.emit({ kind: "agent_status", agent: id, status: this.mesh.status(id) ?? "dead", detail: "force respawn", ts: now() });
+    await this.ensureSpawned(id, { manual: true, forceFresh: true, drainPendingMail: false });
+    this.emit({ kind: "agent_status", agent: id, status: this.mesh.status(id) ?? "ready", detail: "agent respawned (force)", ts: now() });
+  }
+
   /** One-click: switch every agent in the mesh to a fresh session. */
   async newAllSessions(): Promise<void> {
     for (const a of this.mesh.agents) {
@@ -679,6 +723,8 @@ export class ControlPlane {
     await this.compactMailboxNow();
     for (const a of this.mesh.agents) this.clearTurnHealthForAgent(a.id);
     for (const c of this.conns.values()) c.kill();
+    for (const timer of this.pendingRespawns.values()) clearTimeout(timer);
+    this.pendingRespawns.clear();
     this.resolvedHarnesses.clear();
     this.mcp?.close();
     for (const p of this.pending.values()) clearTimeout(p.timer);
@@ -1116,6 +1162,15 @@ export class ControlPlane {
     if (next === 0) this.turnCounts.delete(id);
     else this.turnCounts.set(id, next);
     this.emitActivityIfChanged(id);
+    if (next === 0) void this.runPendingRespawn(id);
+  }
+
+  private async runPendingRespawn(id: AgentId): Promise<void> {
+    const timer = this.pendingRespawns.get(id);
+    if (!timer) return;
+    clearTimeout(timer);
+    this.pendingRespawns.delete(id);
+    await this.forceRespawnAgent(id).catch((err) => this.log(`pending respawn ${id} failed: ${String(err)}`));
   }
 
   /** Render the delivery header for a mail: [MAIL #7 from lead | task: x | in reply to #5]. */

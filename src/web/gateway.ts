@@ -7,6 +7,7 @@ import { now } from "../acp/types";
 import { resolve } from "node:path";
 import type { AgentConfig, MeshConfig, MeshEdge, MeshEvent, AgentId, AgentStatus, AgentActivity, AgentTurn, PromptImageRef, HarnessId } from "../acp/types";
 import type { StartMeshOptions } from "../mesh-manager";
+import type { RespawnMode, RespawnResult } from "../control-plane";
 import { readUpload, storeUploads, uploadPath, type UploadFileLike } from "./uploads";
 import { AgentFileError, resolveAgentFile } from "./agent-files";
 import { resolveArtifactFile } from "./artifacts";
@@ -52,6 +53,7 @@ export interface ManagerLike {
   wakeAgent(name: string, agentId: string): void;
   stopAgent(name: string, agentId: string): void;
   newAgentSession(name: string, agentId: string): Promise<void>;
+  respawnAgent(name: string, agentId: string, mode: RespawnMode): Promise<RespawnResult>;
   newAllSessions(name: string): Promise<void>;
   defineMesh(config: MeshConfig): Promise<void>;
   deleteMesh(name: string): Promise<void>;
@@ -610,6 +612,11 @@ export class WebGateway {
   async newAgentSession(name: string, agentId: string): Promise<void> {
     await this.manager.newAgentSession(name, agentId);
     this.refreshMeshes();
+  }
+  async respawnAgent(name: string, agentId: string, mode: RespawnMode): Promise<RespawnResult> {
+    const result = await this.manager.respawnAgent(name, agentId, mode);
+    this.refreshMeshes();
+    return result;
   }
   async newAllSessions(name: string): Promise<void> {
     await this.manager.newAllSessions(name);

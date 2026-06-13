@@ -82,6 +82,12 @@ function fakeManager(config: MeshConfig = CFG) {
     async newAgentSession(n: string, a: string) {
       calls.push(["newAgentSession", n, a]);
     },
+    async respawnAgent(n: string, a: string, mode: string) {
+      calls.push(["respawnAgent", n, a, mode]);
+      if (mode === "after-idle") return { mode, scheduled: true, willRunWhen: "idle", note: "ACP session context will be lost; mailbox preserved" };
+      if (mode === "cancel") return { mode, scheduled: false };
+      return { mode, scheduled: false, willRunWhen: "now", note: "ACP session context will be lost; mailbox preserved" };
+    },
     async newAllSessions(n: string) {
       calls.push(["newAllSessions", n]);
     },
@@ -510,6 +516,43 @@ test("POST /api/meshes/demo/agents/codex-1/session delegates to newAgentSession"
   const r = await handleApi(gw, "POST", "/api/meshes/demo/agents/codex-1/session", {});
   expect(r.status).toBe(200);
   expect(m.calls).toContainEqual(["newAgentSession", "demo", "codex-1"]);
+});
+
+test("POST /api/meshes/:mesh/agents/:agent/respawn requires same-origin headers", async () => {
+  const m = fakeManager();
+  const gw = new WebGateway(m as any);
+  const missing = await handleApi(gw, "POST", "/api/meshes/demo/agents/codex-1/respawn", { mode: "force" });
+  const cross = await handleApi(
+    gw,
+    "POST",
+    "/api/meshes/demo/agents/codex-1/respawn",
+    { mode: "force" },
+    new URLSearchParams(),
+    undefined,
+    undefined,
+    undefined,
+    { headers: new Headers({ origin: "http://evil.test" }), expectedOrigin: SAME_ORIGIN },
+  );
+  const ok = await handleApi(gw, "POST", "/api/meshes/demo/agents/codex-1/respawn", { mode: "force" }, new URLSearchParams(), undefined, undefined, undefined, sameOriginCtx());
+  expect(missing.status).toBe(403);
+  expect(cross.status).toBe(403);
+  expect(ok.status).toBe(200);
+});
+
+test("POST /api/meshes/:mesh/agents/:agent/respawn delegates after-idle, force, and cancel", async () => {
+  const m = fakeManager();
+  const gw = new WebGateway(m as any);
+  const afterIdle = await handleApi(gw, "POST", "/api/meshes/demo/agents/codex-1/respawn", { mode: "after-idle" }, new URLSearchParams(), undefined, undefined, undefined, sameOriginCtx());
+  const force = await handleApi(gw, "POST", "/api/meshes/demo/agents/codex-1/respawn", { mode: "force" }, new URLSearchParams(), undefined, undefined, undefined, sameOriginCtx());
+  const cancel = await handleApi(gw, "POST", "/api/meshes/demo/agents/codex-1/respawn", { mode: "cancel" }, new URLSearchParams(), undefined, undefined, undefined, sameOriginCtx());
+  const bad = await handleApi(gw, "POST", "/api/meshes/demo/agents/codex-1/respawn", { mode: "restart" }, new URLSearchParams(), undefined, undefined, undefined, sameOriginCtx());
+  expect(afterIdle.body).toMatchObject({ mode: "after-idle", scheduled: true, willRunWhen: "idle" });
+  expect(force.body).toMatchObject({ mode: "force", scheduled: false, willRunWhen: "now", note: "ACP session context will be lost; mailbox preserved" });
+  expect(cancel.body).toMatchObject({ mode: "cancel", scheduled: false });
+  expect(bad.status).toBe(400);
+  expect(m.calls).toContainEqual(["respawnAgent", "demo", "codex-1", "after-idle"]);
+  expect(m.calls).toContainEqual(["respawnAgent", "demo", "codex-1", "force"]);
+  expect(m.calls).toContainEqual(["respawnAgent", "demo", "codex-1", "cancel"]);
 });
 
 test("POST /api/meshes/demo/session delegates to newAllSessions", async () => {

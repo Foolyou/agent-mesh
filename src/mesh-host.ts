@@ -9,6 +9,7 @@ import { join, dirname } from "node:path";
 import { rm, mkdir } from "node:fs/promises";
 import { appendFileSync } from "node:fs";
 import { ControlPlane, type ControlPlaneStopReason } from "./control-plane";
+import type { RespawnMode, RespawnResult } from "./control-plane";
 import { LineBuffer, encodeFrame, PROTO_VERSION, type ParentMsg, type SeqEvent } from "./protocol";
 import { writeRecord, removeRecord } from "./mesh-registry";
 import { now, type AgentConfig, type MeshConfig, type MeshEdge, type MeshEvent, type PromptImageRef } from "./acp/types";
@@ -39,6 +40,7 @@ export interface BridgeControlPlane {
   setEffort(target: string, effort?: string): Promise<void>;
   interrupt(target: string): Promise<void>;
   newSession(target: string): Promise<void>;
+  respawnAgent?(target: string, mode: RespawnMode): Promise<RespawnResult>;
   newAllSessions(): Promise<void>;
   wakeAgent(target: string): Promise<void>;
   stopAgent(target: string): Promise<void>;
@@ -189,6 +191,17 @@ export class MeshHostDaemon {
         break;
       case "newSession":
         this.enqueue(() => this.cp.newSession(msg.target));
+        break;
+      case "respawn":
+        this.enqueue(async () => {
+          try {
+            if (!this.cp.respawnAgent) throw new Error("respawn unsupported");
+            const result = await this.cp.respawnAgent(msg.target, msg.mode);
+            this.write(sock, { t: "respawnResult", reqId: msg.reqId, result });
+          } catch (err: any) {
+            this.write(sock, { t: "respawnResult", reqId: msg.reqId, error: String(err?.message ?? err) });
+          }
+        });
         break;
       case "newAllSessions":
         this.enqueue(() => this.cp.newAllSessions());

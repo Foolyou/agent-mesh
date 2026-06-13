@@ -12,6 +12,7 @@ import { killTree } from "./acp/client";
 import { LineBuffer, encodeFrame, PROTO_VERSION, type ChildMsg, type ParentMsg } from "./protocol";
 import type { AgentConfig, MeshConfig, MeshEdge, MeshEvent } from "./acp/types";
 import type { PromptImageRef } from "./acp/types";
+import type { RespawnMode, RespawnResult } from "./control-plane";
 
 export interface MeshHostClientOptions {
   name: string;
@@ -40,6 +41,8 @@ export class MeshHostClient {
   private ackResolve?: (a: { running: boolean; proto: number }) => void;
   private readyResolve?: () => void;
   private stoppedResolve?: () => void;
+  private rpcSeq = 0;
+  private respawnWaiters = new Map<string, { resolve: (result: RespawnResult) => void; reject: (err: Error) => void }>();
 
   constructor(private opts: MeshHostClientOptions) {}
 
@@ -163,6 +166,14 @@ export class MeshHostClient {
         if (msg.seq > this.lastSeq) this.lastSeq = msg.seq;
         this.opts.onEvent?.(msg.event);
         break;
+      case "respawnResult": {
+        const waiter = this.respawnWaiters.get(msg.reqId);
+        if (!waiter) break;
+        this.respawnWaiters.delete(msg.reqId);
+        if (msg.error) waiter.reject(new Error(msg.error));
+        else waiter.resolve(msg.result!);
+        break;
+      }
       case "stopped":
         this.stoppedResolve?.();
         break;
@@ -213,6 +224,26 @@ export class MeshHostClient {
   setEffort(target: string, effort?: string): void { this.send({ t: "setEffort", target, effort }); }
   interrupt(target: string): void { this.send({ t: "interrupt", target }); }
   newSession(target: string): void { this.send({ t: "newSession", target }); }
+  respawn(target: string, mode: RespawnMode): Promise<RespawnResult> {
+    const reqId = `respawn-${++this.rpcSeq}`;
+    this.send({ t: "respawn", reqId, target, mode });
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.respawnWaiters.delete(reqId);
+        reject(new Error(`respawn ${target} timed out`));
+      }, 10_000);
+      this.respawnWaiters.set(reqId, {
+        resolve: (result) => {
+          clearTimeout(timer);
+          resolve(result);
+        },
+        reject: (err) => {
+          clearTimeout(timer);
+          reject(err);
+        },
+      });
+    });
+  }
   newAllSessions(): void { this.send({ t: "newAllSessions" }); }
   wakeAgent(target: string): void { this.send({ t: "wake", target }); }
   stopAgent(target: string): void { this.send({ t: "stopAgent", target }); }
