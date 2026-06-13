@@ -16,6 +16,10 @@ import { validateAddAgent, validateAddEdge } from "./mesh-validate";
 import { artifactAgentDir } from "./web/artifacts";
 import { readSessionState, setMeshExpectedAlive, updateAgentMailCursor, updateAgentSession, clearAgentSession, type MeshSessionState } from "./session-storage";
 import { now, type AgentActivity, type AgentConfig, type AgentHealthSignalKind, type AgentId, type AgentTurn, type MeshConfig, type MeshEdge, type MeshEvent, type PromptImageRef, type SessionMode, type SessionModel, type ThinkingEffort, type TurnHealthReason } from "./acp/types";
+import { DEFAULT_AUTO_COMPACT_SETTINGS, evaluateCompactThreshold, parseCompactThreshold } from "./auto-compact";
+
+const COMPACT_COOLDOWN_MS = 60_000;
+const NEAR_LIMIT_WARNING_COOLDOWN_MS = 10 * 60_000;
 
 interface PendingDecision {
   resolve: (decision: PermissionDecision) => void;
@@ -249,6 +253,8 @@ export class ControlPlane {
   private agentSilentTaskCompletes = new Map<AgentId, SilentTaskCompletes>();
   private agentLastOutboundMail = new Map<AgentId, number>();
   private agentLastTurnCompleted = new Map<AgentId, number>();
+  private agentLastCompactAt = new Map<AgentId, number>();
+  private agentNearLimitWarnedAt = new Map<AgentId, number>();
   private activeTurnIds = new Map<AgentId, string>();
   private turnOutboundMailCount = new Map<string, number>();
   private pendingRespawns = new Map<AgentId, ReturnType<typeof setTimeout>>();
@@ -287,6 +293,7 @@ export class ControlPlane {
 
   private updateAgentUsage(id: AgentId, usage: { used: number; size: number; percent: number }): void {
     this.agentContextUsage.set(id, { ...usage, updatedAt: Date.now() });
+    void this.maybeAutoCompact(id, usage);
   }
 
   private updateAgentCommands(id: AgentId, commands: string[]): void {
@@ -296,6 +303,51 @@ export class ControlPlane {
   private clearAgentSelfAwareness(id: AgentId): void {
     this.agentContextUsage.delete(id);
     this.agentAdvertisedCommands.delete(id);
+    this.agentLastCompactAt.delete(id);
+    this.agentNearLimitWarnedAt.delete(id);
+  }
+
+  private emitNearContextLimitWarning(id: AgentId, usage: { percent: number }): void {
+    const nowMs = Date.now();
+    const last = this.agentNearLimitWarnedAt.get(id);
+    if (last && nowMs - last < NEAR_LIMIT_WARNING_COOLDOWN_MS) return;
+    this.agentNearLimitWarnedAt.set(id, nowMs);
+    this.emit({ kind: "near_context_limit_no_compact", agent: id, usagePercent: usage.percent, ts: nowMs });
+  }
+
+  private async maybeAutoCompact(agentId: AgentId, usage: { used: number; size: number; percent: number }): Promise<void> {
+    const settings = this.mesh.config.autoCompact ?? DEFAULT_AUTO_COMPACT_SETTINGS;
+    if (!settings.enabled) return;
+
+    let threshold;
+    try {
+      threshold = parseCompactThreshold(settings.threshold);
+    } catch (err) {
+      this.log(`autoCompact threshold invalid for ${agentId}: ${String(err)}`);
+      return;
+    }
+    if (!evaluateCompactThreshold(threshold, usage.used, usage.size)) return;
+
+    const commands = this.agentAdvertisedCommands.get(agentId) ?? new Set<string>();
+    if (!commands.has("compact")) {
+      this.emitNearContextLimitWarning(agentId, usage);
+      return;
+    }
+
+    if ((this.turnCounts.get(agentId) ?? 0) > 0) return;
+
+    const nowMs = Date.now();
+    const lastCompact = this.agentLastCompactAt.get(agentId);
+    if (lastCompact && nowMs - lastCompact < COMPACT_COOLDOWN_MS) return;
+    this.agentLastCompactAt.set(agentId, nowMs);
+    this.emit({ kind: "compact_started", agent: agentId, reason: "auto-threshold", ts: nowMs });
+
+    try {
+      await this.sendBarePrompt(agentId, "/compact", { reason: "auto-threshold" });
+      this.emit({ kind: "compact_completed", agent: agentId, ts: Date.now() });
+    } catch (err) {
+      this.emit({ kind: "compact_failed", agent: agentId, error: String(err), ts: Date.now() });
+    }
   }
 
   private clearAgentSilentTaskCompletes(id: AgentId): void {
@@ -1286,6 +1338,8 @@ export class ControlPlane {
         silentTaskCompletes: this.getAgentSilentTaskCompletes(a.id),
         lastOutboundMailAt: this.getAgentLastOutboundMailAt(a.id),
         lastTurnCompletedAt: this.getAgentLastTurnCompletedAt(a.id),
+        lastCompactAt: this.agentLastCompactAt.get(a.id) ?? null,
+        lastNearLimitWarnedAt: this.agentNearLimitWarnedAt.get(a.id) ?? null,
       };
     });
     return `Mesh "${this.mesh.name}" — router is ${this.mesh.router.id}.\n${lines.join("\n")}\n${JSON.stringify({ agents }, null, 2)}`;

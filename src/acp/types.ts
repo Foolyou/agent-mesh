@@ -142,6 +142,10 @@ export type MeshEvent =
   | { kind: "agent_health_signal"; agent: AgentId; signal: AgentHealthSignalKind; detail?: Record<string, unknown>; turn?: AgentTurn; ts: string }
   | { kind: "silent_task_complete"; agent: AgentId; turnId: string; ts: number }
   | { kind: "bare_prompt"; agent: AgentId; reason: string; ts: number }
+  | { kind: "compact_started"; agent: AgentId; reason: string; ts: number }
+  | { kind: "compact_completed"; agent: AgentId; ts: number }
+  | { kind: "compact_failed"; agent: AgentId; error: string; ts: number }
+  | { kind: "near_context_limit_no_compact"; agent: AgentId; usagePercent: number; ts: number }
   | { kind: "mail"; from: AgentId; to: AgentId; body: string; ts: string; id?: string }
   | { kind: "steer"; from: AgentId | "operator"; to: AgentId; body: string; ts: string }
   | {
