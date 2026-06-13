@@ -1388,6 +1388,10 @@ export class ControlPlane {
     if (next === 0) this.turnCounts.delete(id);
     else this.turnCounts.set(id, next);
     this.emitActivityIfChanged(id);
+    if (next === 0) {
+      const usage = this.agentContextUsage.get(id);
+      if (usage) void this.maybeAutoCompact(id, usage);
+    }
     if (next === 0) void this.runPendingRespawn(id);
   }
 

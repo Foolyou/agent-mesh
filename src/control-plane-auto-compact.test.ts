@@ -117,6 +117,26 @@ test("auto compact waits when agent has an in-flight turn", async () => {
   });
 });
 
+test("auto compact rechecks high usage when the agent returns idle", async () => {
+  await withControlPlane(undefined, async (cp, conn, events) => {
+    conn.holdNextPrompt = true;
+    const prompt = cp.prompt("router", "busy");
+    await tick();
+
+    conn.opts.onAvailableCommands?.(["compact"]);
+    conn.opts.onContextUsage?.({ used: 900, size: 1000, percent: 0.9 });
+    await tick();
+    expect(conn.prompts.map((p) => p.text)).toEqual([expect.stringContaining("busy")]);
+
+    conn.releasePrompt?.();
+    await prompt;
+    await tick();
+
+    expect(conn.prompts.map((p) => p.text)).toEqual([expect.stringContaining("busy"), "/compact"]);
+    expect(events).toContainEqual(expect.objectContaining({ kind: "compact_started", agent: "router", reason: "auto-threshold" }));
+  });
+});
+
 test("auto compact respects compact cooldown", async () => {
   await withControlPlane(undefined, async (_cp, conn) => {
     conn.opts.onAvailableCommands?.(["compact"]);
