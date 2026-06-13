@@ -1043,7 +1043,7 @@ body::after {
 }
 
 .file-viewer-shell {
-  min-height: 100vh;
+  height: var(--mesh-vvh, 100dvh);
   background: var(--bg);
   color: var(--fg);
   display: flex;
@@ -1083,9 +1083,13 @@ body::after {
   overflow-wrap: anywhere;
 }
 .file-viewer-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
   width: min(1080px, 100%);
   margin: 0 auto;
-  padding: 18px 16px 28px;
+  padding: 18px 16px max(28px, env(safe-area-inset-bottom));
   box-sizing: border-box;
   min-width: 0;
 }
