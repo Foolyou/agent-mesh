@@ -50,7 +50,7 @@ const base = argVal("--root") ? expandHome(argVal("--root")!) : homedir();
 const hostname = argVal("--host");
 
 async function buildGateway() {
-  const manager: any = fake ? new FakeManager() : new MeshManager({ root });
+  const manager: any = fake ? new FakeManager(root) : new MeshManager({ root });
   // Real backend: load whatever the user has defined in their root and nothing more.
   // (We deliberately do NOT seed a sample mesh — the user's storage root stays clean;
   // the UI's empty state guides first-run mesh creation. `--fake` provides the demo.)

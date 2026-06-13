@@ -14,6 +14,7 @@ import type { AgentConfig, AgentStatus, MeshConfig, MeshEdge, MeshEvent, Thinkin
 import { isEffortSupportedByHarness, isThinkingEffort } from "./harness-utils";
 import type { PromptImageRef } from "./acp/types";
 import { deleteUploadBucket } from "./web/uploads";
+import { assertSafeArtifactName, deleteArtifactMesh } from "./web/artifacts";
 import { clearAgentSession, clearAllAgentSessions, setMeshExpectedAlive } from "./session-storage";
 
 export type MeshStatus = "stopped" | "starting" | "running" | "dead";
@@ -38,6 +39,11 @@ interface Entry {
   config: MeshConfig;
   status: MeshStatus;
   client?: MeshHostClient;
+}
+
+function validateArtifactNames(config: MeshConfig): void {
+  assertSafeArtifactName(config.name);
+  for (const agent of config.agents) assertSafeArtifactName(agent.id);
 }
 
 export class MeshManager {
@@ -82,11 +88,13 @@ export class MeshManager {
   /** Load persisted definitions into memory as stopped meshes. */
   async loadDefinitions(): Promise<void> {
     for (const config of await this.store.load()) {
+      validateArtifactNames(config);
       this.entries.set(config.name, { config, status: "stopped" });
     }
   }
 
   async defineMesh(config: MeshConfig): Promise<void> {
+    validateArtifactNames(config);
     const existing = this.entries.get(config.name);
     if (existing && existing.status === "running") {
       throw new Error(`mesh "${config.name}" is running; stop it before redefining`);
@@ -123,6 +131,7 @@ export class MeshManager {
     await this.store.delete(name);
     this.entries.delete(name);
     await deleteUploadBucket(this.root, name);
+    await deleteArtifactMesh(this.root, name);
   }
 
   private require(name: string): Entry {

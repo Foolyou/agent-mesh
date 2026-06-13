@@ -264,6 +264,7 @@ export async function runMeshHost(): Promise<void> {
     debug: process.env.MESH_DEBUG === "1",
     mailboxPath: root ? join(root, `${config.name}-mailbox.ndjson`) : undefined,
     uploadRoot: root ? join(root, "uploads") : undefined,
+    artifactsRoot: root,
     sessionRunDir: runDir,
   });
 

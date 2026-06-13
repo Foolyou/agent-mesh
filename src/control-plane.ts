@@ -12,6 +12,7 @@ import { buildMeshBriefing, MAIL_WAKE_GUIDANCE } from "./mesh-briefing";
 import { createMeshServicesServer, type MeshServicesHandlers, type MeshServicesServer, type MeshToolContext, type SendMailOptions } from "./mcp/mesh-services";
 import { compactMailbox, sendMail, readMailFor, readMailboxEvents, readRecentAddressedMail, readUnreadAddressedMail, type MailMeta } from "./mailbox";
 import { validateAddAgent, validateAddEdge } from "./mesh-validate";
+import { artifactAgentDir } from "./web/artifacts";
 import { readSessionState, setMeshExpectedAlive, updateAgentMailCursor, updateAgentSession, clearAgentSession, type MeshSessionState } from "./session-storage";
 import { now, type AgentActivity, type AgentConfig, type AgentHealthSignalKind, type AgentId, type AgentTurn, type MeshConfig, type MeshEdge, type MeshEvent, type PromptImageRef, type SessionMode, type SessionModel, type ThinkingEffort, type TurnHealthReason } from "./acp/types";
 
@@ -128,6 +129,7 @@ export interface ControlPlaneOptions {
   permissionTimeoutMs?: number;
   debug?: boolean;
   uploadRoot?: string;
+  artifactsRoot?: string;
   /** ${root}/run directory for durable per-mesh ACP session identity. */
   sessionRunDir?: string;
   connectionFactory?: (opts: AcpConnectionOptions) => AcpAgentConnection;
@@ -162,6 +164,7 @@ export class ControlPlane {
   private permissionTimeoutMs: number;
   private debug: boolean;
   private uploadRoot?: string;
+  private artifactsRoot?: string;
   private sessionRunDir?: string;
   private connectionFactory: (opts: AcpConnectionOptions) => AcpAgentConnection;
   private meshServicesFactory: (handlers: MeshServicesHandlers) => MeshServicesServer;
@@ -218,6 +221,7 @@ export class ControlPlane {
     this.permissionTimeoutMs = opts.permissionTimeoutMs ?? 60_000;
     this.debug = opts.debug ?? false;
     this.uploadRoot = opts.uploadRoot;
+    this.artifactsRoot = opts.artifactsRoot;
     this.sessionRunDir = opts.sessionRunDir;
     this.connectionFactory = opts.connectionFactory ?? ((connOpts) => new AcpAgentConnection(connOpts));
     this.meshServicesFactory = opts.meshServicesFactory ?? ((handlers) => createMeshServicesServer({ handlers }));
@@ -684,12 +688,14 @@ export class ControlPlane {
     // codex defaults to "low" for responsiveness when no effort is set.
     const { command, args, env } = spawnConfigFor(a);
     const cwd = resolve(process.cwd(), a.project);
+    const artifactDir = this.artifactsRoot ? artifactAgentDir(this.artifactsRoot, this.mesh.name, a.id) : undefined;
+    if (artifactDir) await mkdir(artifactDir, { recursive: true });
     const conn = this.connectionFactory({
       id: a.id,
       command,
       args,
       cwd,
-      extraEnv: env,
+      extraEnv: artifactDir ? { ...env, AGENT_MESH_ARTIFACTS: artifactDir } : env,
       debug: this.debug,
       onUpdate: (u) => {
         if (u && (u as any).sessionUpdate === "current_mode_update" && typeof (u as any).currentModeId === "string") {

@@ -9,6 +9,7 @@ import type { AgentConfig, MeshConfig, MeshEdge, MeshEvent, AgentId, AgentStatus
 import type { StartMeshOptions } from "../mesh-manager";
 import { readUpload, storeUploads, uploadPath, type UploadFileLike } from "./uploads";
 import { AgentFileError, resolveAgentFile } from "./agent-files";
+import { resolveArtifactFile } from "./artifacts";
 import { defaultAppVersion } from "./version";
 import type {
   GatewayState,
@@ -643,22 +644,25 @@ export class WebGateway {
     });
   }
 
+  async serveAgentArtifact(mesh: string, agentId: string, relPath: string): Promise<Response> {
+    if (!this.opts.root) throw new AgentFileError("enotfound", "artifact storage root is not configured");
+    let config: MeshConfig;
+    try {
+      config = this.manager.configOf(mesh);
+    } catch {
+      throw new AgentFileError("enotfound", "mesh artifact not found");
+    }
+    if (!config.agents.some((a) => a.id === agentId)) throw new AgentFileError("enotfound", "agent artifact not found");
+    const file = await resolveArtifactFile(this.opts.root, mesh, agentId, relPath);
+    return responseForServedFile(file.bytes, file.contentType, relPath);
+  }
+
   async serveAgentFile(agentName: string, relPath: string): Promise<Response> {
     const agent = this.findRunningAgent(agentName);
     if (!agent) throw new AgentFileError("enotfound", "agent file not found");
     const cwd = resolve(process.cwd(), agent.project);
     const file = await resolveAgentFile(cwd, relPath);
-    const body = new Uint8Array(file.bytes.byteLength);
-    body.set(file.bytes);
-    return new Response(body, {
-      headers: {
-        "content-type": file.contentType,
-        "x-content-type-options": "nosniff",
-        "content-security-policy": "default-src 'none'",
-        "cache-control": "private, max-age=60",
-        "content-disposition": `inline; filename="${relPath.split("/").pop()?.replace(/"/g, "") || "file"}"`,
-      },
-    });
+    return responseForServedFile(file.bytes, file.contentType, relPath);
   }
 
   private findRunningAgent(agentName: string): AgentConfig | undefined {
@@ -710,4 +714,18 @@ export class WebGateway {
     this.state.assistant.capabilities = caps;
     this.broadcast({ t: "assistant.capabilities", image: caps.image, harness: caps.harness });
   }
+}
+
+function responseForServedFile(bytes: Uint8Array, contentType: string, relPath: string): Response {
+  const body = new Uint8Array(bytes.byteLength);
+  body.set(bytes);
+  return new Response(body, {
+    headers: {
+      "content-type": contentType,
+      "x-content-type-options": "nosniff",
+      "content-security-policy": "default-src 'none'",
+      "cache-control": "private, max-age=60",
+      "content-disposition": `inline; filename="${relPath.split("/").pop()?.replace(/"/g, "") || "file"}"`,
+    },
+  });
 }

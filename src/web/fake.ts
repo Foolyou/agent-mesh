@@ -5,6 +5,7 @@
 import type { AgentConfig, MeshConfig, MeshEdge, MeshEvent, AgentId } from "../acp/types";
 import { now } from "../acp/types";
 import type { MeshStatus } from "./types";
+import { deleteArtifactMesh } from "./artifacts";
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -48,7 +49,7 @@ export class FakeManager {
   /** current model per `${mesh}:${agent}` so setModel reflects back into the picker */
   private modelOf = new Map<string, string>();
 
-  constructor() {
+  constructor(private root?: string) {
     this.meshes.set("demo", { config: DEMO, status: "stopped" });
   }
 
@@ -92,6 +93,7 @@ export class FakeManager {
     const e = this.meshes.get(name);
     if (e && (e.status === "running" || e.status === "starting")) throw new Error(`mesh "${name}" is running`);
     this.meshes.delete(name);
+    await deleteArtifactMesh(this.root, name);
   }
   async loadDefinitions(): Promise<void> {}
 
