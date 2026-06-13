@@ -13,6 +13,7 @@ import {
 import type { AgentTurn, PromptImageRef } from "./types";
 import { HARNESSES } from "../harness";
 import { parseAvailableCommands, parseTokenCount, parseUsageUpdate } from "./usage-compat";
+import { killProcessTree } from "../os-shim";
 
 export type PermissionDecision = { optionId: string } | "cancel";
 
@@ -50,29 +51,7 @@ function claudeRawSdkMeta(): { claudeCode: { emitRawSDKMessages: Array<Record<st
 // process handlers so abrupt-but-catchable exits (SIGINT/SIGTERM/uncaught)
 // still reap every agent. (SIGKILL cannot be caught; nothing can help there.)
 export function killTree(pid: number, signal: NodeJS.Signals = "SIGKILL"): void {
-  const descendants: number[] = [];
-  const collect = (p: number) => {
-    let out = "";
-    try {
-      out = Bun.spawnSync(["pgrep", "-P", String(p)]).stdout.toString();
-    } catch {}
-    for (const line of out.split("\n")) {
-      const child = Number.parseInt(line.trim(), 10);
-      if (child) {
-        descendants.push(child);
-        collect(child);
-      }
-    }
-  };
-  collect(pid);
-  for (const p of descendants.reverse()) {
-    try {
-      process.kill(p, signal);
-    } catch {}
-  }
-  try {
-    process.kill(pid, signal);
-  } catch {}
+  void killProcessTree(pid, signal);
 }
 
 const LIVE = new Set<AcpAgentConnection>();

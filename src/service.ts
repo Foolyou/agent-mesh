@@ -8,6 +8,7 @@ import { join, resolve } from "node:path";
 import { openSync, existsSync } from "node:fs";
 import { readFile, writeFile, rm, mkdir } from "node:fs/promises";
 import { listLiveRecords, reapAllHosts, pidAlive } from "./mesh-registry";
+import { findPidOnPort } from "./os-shim";
 
 /** How to re-exec ourselves: the compiled binary runs itself; dev runs the source script. */
 function selfCmd(...args: string[]): string[] {
@@ -48,26 +49,11 @@ async function healthy(port: number): Promise<boolean> {
     return false;
   }
 }
-/** The pid listening on a port (so status/stop work even if not started via `mesh up`). */
-function portListenerPid(port: number): number | undefined {
-  try {
-    const out = Bun.spawnSync(["ss", "-ltnp"]).stdout.toString();
-    for (const line of out.split("\n")) {
-      if (line.includes(`:${port} `) || line.includes(`:${port}\t`)) {
-        const m = line.match(/pid=(\d+)/);
-        if (m) return Number(m[1]);
-      }
-    }
-  } catch {
-    /* ss unavailable */
-  }
-  return undefined;
-}
 /** The live backend pid for this root: the recorded pid if alive, else the port listener. */
 async function backendPid(root: string, port?: number): Promise<number | undefined> {
   const rec = await readRec(root);
   if (rec && pidAlive(rec.pid)) return rec.pid;
-  return port !== undefined ? portListenerPid(port) : undefined;
+  return port !== undefined ? (findPidOnPort(port) ?? undefined) : undefined;
 }
 
 /** Strip the mesh-host control env so a re-spawned backend can't misfire as a host. */
