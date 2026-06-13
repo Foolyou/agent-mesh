@@ -340,6 +340,22 @@ export function reduceTranscript(
     return { items: next, ops };
   }
 
+  if (k === "__compact__") {
+    closeOpen();
+    const id = nid(now);
+    const item: TranscriptItem = {
+      id,
+      kind: "compact",
+      status: update.status === "failed" ? "failed" : update.status === "completed" ? "completed" : "started",
+      reason: typeof update.reason === "string" ? update.reason : undefined,
+      error: typeof update.error === "string" ? update.error : undefined,
+      ts: now,
+    };
+    next = [...next, item];
+    ops.push({ op: "upsert", item });
+    return { items: next, ops };
+  }
+
   // plan / available_commands_update / current_mode_update and anything unknown:
   // not part of the conversation transcript.
   return { items: next, ops: [] };

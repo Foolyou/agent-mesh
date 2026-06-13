@@ -42,6 +42,32 @@ export function contextPercent(usage?: AgentUsage): number | undefined {
   return Math.max(0, Math.min(100, Math.round((used / size) * 100)));
 }
 
+function compactTokens(n: number): string {
+  if (n >= 1000) return `${Math.round(n / 1000)}k`;
+  return String(n);
+}
+
+function ageLabel(ts: string): string {
+  const t = Date.parse(ts);
+  if (!Number.isFinite(t)) return "last update unknown";
+  const seconds = Math.max(0, Math.round((Date.now() - t) / 1000));
+  return `last update ${seconds}s ago`;
+}
+
+export function ContextUsageChip({ usage }: { usage?: AgentUsage }) {
+  const percent = contextPercent(usage);
+  if (percent === undefined || usage?.used === undefined || usage.size === undefined) return null;
+  const level = percent >= 80 ? "red" : percent >= 60 ? "yellow" : "ok";
+  const label = percent >= 80 ? `ctx: ${percent}% (compact pending)` : `ctx: ${percent}%`;
+  const title = `${usage.used} / ${usage.size} tokens · ${ageLabel(usage.ts)}`;
+  return (
+    <span className={`ctx-chip ctx-chip-${level}`} title={title} aria-label={title}>
+      {label}
+      <span className="ctx-chip-detail"> ({compactTokens(usage.used)}/{compactTokens(usage.size)})</span>
+    </span>
+  );
+}
+
 export function AgentHealthBadges({ agent, entry }: { agent: string; entry?: AgentHealthSignalEntry }) {
   const active = activeHealth(entry);
   if (!active) return null;

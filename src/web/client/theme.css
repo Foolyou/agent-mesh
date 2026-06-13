@@ -532,6 +532,36 @@ body::after {
   flex: 1;
   border-top: 1px solid var(--line-bright);
 }
+.compact-entry {
+  margin: 4px 0;
+  color: var(--fg-faint);
+  font-size: 11px;
+  text-align: center;
+}
+.compact-entry summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  list-style: none;
+}
+.compact-entry summary::-webkit-details-marker {
+  display: none;
+}
+.compact-status {
+  color: var(--fg-dim);
+  border: 1px solid var(--line);
+  padding: 0 5px;
+  font-size: 10px;
+}
+.compact-entry.failed .compact-status {
+  color: var(--bad);
+  border-color: var(--bad);
+}
+.compact-meta {
+  margin-top: 3px;
+  color: var(--fg-faint);
+}
 .msg.agent .bubble,
 .thought .txt {
   white-space: normal;
@@ -1214,6 +1244,12 @@ body::after {
 }
 .tl .k.log {
   color: var(--fg-faint);
+}
+.tl .k.compact {
+  color: var(--fg-dim);
+}
+.tl .k.warning {
+  color: var(--bad);
 }
 .tl .tx {
   color: var(--fg-dim);
@@ -2399,6 +2435,39 @@ select.inp {
 .context-agent-pct {
   text-align: right;
   color: var(--fg-faint);
+}
+.ctx-chip,
+.silent-stop-badge,
+.near-limit-warning {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 2px 7px;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  color: var(--fg-dim);
+  background: var(--bg-inset);
+  font-size: 10px;
+  white-space: nowrap;
+}
+.ctx-chip-yellow {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 58%, var(--line));
+}
+.ctx-chip-red,
+.silent-stop-badge,
+.near-limit-warning {
+  color: var(--bad);
+  border-color: color-mix(in srgb, var(--bad) 58%, var(--line));
+  background: color-mix(in srgb, var(--bad) 9%, transparent);
+}
+.ctx-chip-detail {
+  color: var(--fg-faint);
+}
+.near-limit-warning {
+  max-width: min(100%, 460px);
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 /* segmented header (rail logs: activity / mail / history) */
 .seg-tabs {

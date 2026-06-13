@@ -557,6 +557,19 @@ try {
     if ((await user.locator("strong").count()) < 1) throw new Error("user message did not render markdown");
   });
 
+  await step("compact event renders context compacted marker", async () => {
+    await page.locator(".conv-router-tab").click();
+    await page.evaluate(() => {
+      const store = (window as any).__meshStore;
+      store.apply({
+        t: "transcript.upsert",
+        conv: { scope: "agent", mesh: "demo", agent: "router" },
+        item: { id: "compact-e2e", kind: "compact", status: "completed", reason: "auto-threshold", ts: new Date().toISOString() },
+      });
+    });
+    await page.locator(".conv-panel .compact-entry", { hasText: "--- Context Compacted ---" }).waitFor({ timeout: 4000 });
+  });
+
   await step("unclosed fence streams without breaking and resolves when closed", async () => {
     await page.locator(".conv-router-tab").click();
     await page.evaluate(() => {

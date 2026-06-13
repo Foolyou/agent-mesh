@@ -20,7 +20,7 @@ function seed(): GatewayState {
     ],
     assistant: { status: "ready", transcript: [] },
     perMesh: {
-      demo: { config: { name: "demo", agents: [], edges: [] }, transcripts: {}, activity: [], mail: [], pending: [], history: [], modes: {}, models: {}, efforts: {}, capabilities: {}, usage: {}, health: {}, queues: {} },
+      demo: { config: { name: "demo", agents: [], edges: [] }, transcripts: {}, activity: [], mail: [], pending: [], history: [], modes: {}, models: {}, efforts: {}, capabilities: {}, usage: {}, health: {}, selfAwareness: {}, queues: {} },
     },
   };
 }
@@ -168,6 +168,25 @@ test("agent.queue updates the per-agent queue summary", () => {
       { id: "q1", source: "operator", from: "operator", to: "codex-1", preview: "you: review this", ts: "T1" },
       { id: "q2", source: "mail", from: "router", to: "codex-1", preview: "mail: latest", ts: "T2" },
     ],
+  });
+});
+
+test("agent.selfAwareness merges per-agent diagnostics", () => {
+  let s = applyMsg(seed(), {
+    t: "agent.selfAwareness",
+    name: "demo",
+    agent: "codex-1",
+    selfAwareness: { nearLimit: { usagePercent: 0.9, ts: 1000 } },
+  });
+  s = applyMsg(s, {
+    t: "agent.selfAwareness",
+    name: "demo",
+    agent: "codex-1",
+    selfAwareness: { silentTaskCompletes: { count: 2, lastAt: 2000 } },
+  });
+  expect(s.perMesh.demo.selfAwareness["codex-1"]).toEqual({
+    nearLimit: { usagePercent: 0.9, ts: 1000 },
+    silentTaskCompletes: { count: 2, lastAt: 2000 },
   });
 });
 

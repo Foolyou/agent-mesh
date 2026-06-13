@@ -9,7 +9,7 @@ import { Dot, Btn, Empty, ConfirmButton, InfoIcon, fmtTime } from "./ui";
 import { ChatPane } from "./ChatPane";
 import { MeshCanvas } from "./MeshCanvas";
 import { Topology } from "./Topology";
-import { ContextWaterline } from "./health";
+import { ContextUsageChip, ContextWaterline } from "./health";
 import { useI18n, tStatus } from "./i18n";
 import { VirtualList } from "./VirtualList";
 
@@ -364,6 +364,9 @@ function ConversationPanel({
   const working = live && cur.activity === "working";
   const staleHarness = harnessRows.find((row) => row.id === cur.harness && row.runningAgentsUsingOldVersion.includes(`${m.name}/${cur.id}`));
   const canWake = live && cur.lazy === true && cur.status === "cold";
+  const self = pm.selfAwareness?.[cur.id];
+  const silentCount = self?.silentTaskCompletes?.count ?? 0;
+  const nearLimit = self?.nearLimit;
   const activate = (id: string) => {
     onActivate(id);
     setMenuOpen(false);
@@ -414,6 +417,12 @@ function ConversationPanel({
       <div className="scroll-pane">
         <div className="row conv-control">
           <span className="sub">{cur.harness}</span>
+          <ContextUsageChip usage={pm.usage?.[cur.id]} />
+          {silentCount > 0 ? (
+            <span className="silent-stop-badge" title={`last silent stop: ${self?.silentTaskCompletes?.lastAt ?? "unknown"}`}>
+              silent stop ×{silentCount}
+            </span>
+          ) : null}
           <span className="control-spacer" />
           <EffortControl m={m} agent={cur.id} store={store} />
           {live ? (
@@ -447,6 +456,11 @@ function ConversationPanel({
               pending={pendingRespawn}
               onPending={setPendingRespawn}
             />
+          ) : null}
+          {nearLimit ? (
+            <span className="near-limit-warning" role="status" title="This agent does not advertise /compact">
+              Context near limit ({Math.round(nearLimit.usagePercent * 100)}%); /compact unavailable.
+            </span>
           ) : null}
           {!mobile ? (
             <Btn small kind="ghost" onClick={onToggleFull} title={fullscreen ? t("exit") : t("full")} ariaLabel={`${fullscreen ? t("exit") : t("full")} ${t("conversation")}`} >
@@ -605,6 +619,7 @@ export function MeshDetail({
       capabilities: {},
       usage: {},
       health: {},
+      selfAwareness: {},
       queues: {},
     };
   // interrupt flash: highlight a node briefly when a new interrupt activity arrives
