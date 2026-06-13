@@ -4,6 +4,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type Keyboar
 import type { Store } from "./store";
 import type { HarnessId, AgentRole, MeshConfig, ThinkingEffort } from "../types";
 import { isEffortSupportedByHarness, supportedEffortsForConfig } from "../../harness-utils";
+import { DEFAULT_AUTO_COMPACT_SETTINGS, parseCompactThreshold } from "../../auto-compact";
 import { Btn } from "./ui";
 import { useI18n } from "./i18n";
 
@@ -161,6 +162,15 @@ function validate(name: string, agents: AgentDraft[], edges: EdgeDraft[]): strin
   return null;
 }
 
+export function validateAutoCompactThresholdInput(raw: string): string | null {
+  try {
+    parseCompactThreshold(raw);
+    return null;
+  } catch (e: any) {
+    return String(e?.message ?? e);
+  }
+}
+
 export function MeshBuilder({
   store,
   onClose,
@@ -191,6 +201,10 @@ export function MeshBuilder({
   );
   const [edges, setEdges] = useState<EdgeDraft[]>(initial ? initial.edges.map((e) => ({ from: e.from, to: e.to, steer: e.steer === true })) : []);
   const [charter, setCharter] = useState(initial?.charter ?? "");
+  const initialAutoCompact = initial?.autoCompact ?? DEFAULT_AUTO_COMPACT_SETTINGS;
+  const [autoCompactEnabled, setAutoCompactEnabled] = useState(initialAutoCompact.enabled);
+  const [autoCompactThreshold, setAutoCompactThreshold] = useState(initialAutoCompact.threshold);
+  const [autoCompactErr, setAutoCompactErr] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [textEdit, setTextEdit] = useState<TextEditTarget | null>(null);
@@ -286,7 +300,14 @@ export function MeshBuilder({
       setErr(v);
       return;
     }
+    const thresholdErr = validateAutoCompactThresholdInput(autoCompactThreshold);
+    if (thresholdErr) {
+      setAutoCompactErr(thresholdErr);
+      setErr(t("build.autoCompact.invalid"));
+      return;
+    }
     setErr(null);
+    setAutoCompactErr(null);
     setBusy(true);
     try {
       const normalizedAgents = agents.map(({ key: _key, ...a }) => ({
@@ -294,7 +315,13 @@ export function MeshBuilder({
         opencodePermission: a.harness === "opencode" ? a.opencodePermission : undefined,
         instructions: a.instructions?.trim() || undefined,
       }));
-      await store.defineMesh({ name, agents: normalizedAgents, edges, charter: charter.trim() || undefined });
+      await store.defineMesh({
+        name,
+        agents: normalizedAgents,
+        edges,
+        charter: charter.trim() || undefined,
+        autoCompact: { enabled: autoCompactEnabled, threshold: autoCompactThreshold.trim() },
+      });
       onClose(name);
     } catch (e: any) {
       setErr(String(e?.message ?? e));
@@ -475,6 +502,44 @@ export function MeshBuilder({
                   />
                 </div>
               </section>
+
+              <fieldset className="builder-section auto-compact-section">
+                <legend className="builder-section-head">{t("build.autoCompact")}</legend>
+                <label className="check-inline auto-compact-toggle">
+                  <input
+                    type="checkbox"
+                    checked={autoCompactEnabled}
+                    onChange={(e) => setAutoCompactEnabled(e.target.checked)}
+                  />
+                  {t("build.autoCompact.enable")}
+                </label>
+                <div className="field">
+                  <label htmlFor="mesh-auto-compact-threshold">{t("build.autoCompact.threshold")}</label>
+                  <input
+                    id="mesh-auto-compact-threshold"
+                    className="inp"
+                    value={autoCompactThreshold}
+                    placeholder="85%"
+                    disabled={!autoCompactEnabled}
+                    aria-describedby="mesh-auto-compact-help"
+                    aria-invalid={autoCompactErr ? "true" : undefined}
+                    aria-errormessage={autoCompactErr ? "mesh-auto-compact-error" : undefined}
+                    onChange={(e) => {
+                      setAutoCompactThreshold(e.target.value);
+                      if (autoCompactErr) setAutoCompactErr(null);
+                    }}
+                    onBlur={() => setAutoCompactErr(validateAutoCompactThresholdInput(autoCompactThreshold))}
+                  />
+                  <div id="mesh-auto-compact-help" className="field-note">
+                    {t("build.autoCompact.help")}
+                  </div>
+                  {autoCompactErr ? (
+                    <div id="mesh-auto-compact-error" className="inline-err" role="alert">
+                      {autoCompactErr}
+                    </div>
+                  ) : null}
+                </div>
+              </fieldset>
 
               <section className="builder-section">
                 <div className="builder-section-head">{t("build.edges")}</div>
