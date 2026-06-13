@@ -166,7 +166,6 @@ export interface Store {
   setMode(name: string, agentId: string, modeId: string): Promise<any>;
   setModel(name: string, agentId: string, modelId: string): Promise<any>;
   setEffort(name: string, agentId: string, effort?: string): Promise<any>;
-  setBypass(name: string, agentId: string, bypass?: boolean): Promise<any>;
   addEdge(name: string, edge: MeshEdge): Promise<any>;
   addAgent(name: string, agent: AgentConfig, edges?: MeshEdge[]): Promise<any>;
   interruptAgent(name: string, agentId: string): Promise<any>;
@@ -315,7 +314,6 @@ export function createStore(): Store {
     setMode: (n, a, m) => guard(post(`/api/meshes/${enc(n)}/agents/${enc(a)}/mode`, { modeId: m }), `set mode ${a}`),
     setModel: (n, a, m) => guard(post(`/api/meshes/${enc(n)}/agents/${enc(a)}/model`, { modelId: m }), `set model ${a}`),
     setEffort: (n, a, e) => guard(post(`/api/meshes/${enc(n)}/agents/${enc(a)}/effort`, { effort: e }), `set effort ${a}`),
-    setBypass: (n, a, b) => guard(post(`/api/meshes/${enc(n)}/agents/${enc(a)}/bypass`, { bypass: b }), `set bypass ${a}`),
     addEdge: (n, edge) => guard(post(`/api/meshes/${enc(n)}/edges`, edge), `add edge ${edge.from}->${edge.to}`),
     addAgent: (n, agent, edges = []) => guard(post(`/api/meshes/${enc(n)}/agents`, { agent, edges }), `add agent ${agent.id}`),
     interruptAgent: (n, a) => guard(post(`/api/meshes/${enc(n)}/agents/${enc(a)}/interrupt`), `interrupt ${a}`),

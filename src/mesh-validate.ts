@@ -14,6 +14,16 @@ function validateAgentEffort(agent: AgentConfig): void {
   }
 }
 
+function validateOpencodePermission(agent: AgentConfig): void {
+  if (agent.opencodePermission === undefined) return;
+  if (agent.opencodePermission !== "allow" && agent.opencodePermission !== "ask") {
+    throw new Error(`agent "${agent.id}" opencodePermission must be "allow" or "ask"`);
+  }
+  if (agent.harness !== "opencode") {
+    throw new Error(`agent "${agent.id}" opencodePermission only applies to the opencode harness; other harnesses set permission via mode`);
+  }
+}
+
 export function validateMeshConfig(config: MeshConfig): void {
   const { name, agents } = config;
   const edges = normalizeMeshEdges((config as any).edges ?? []);
@@ -41,12 +51,7 @@ export function validateMeshConfig(config: MeshConfig): void {
       throw new Error(`agent "${a.id}" project is required`);
     }
     validateAgentEffort(a);
-    if (a.bypass !== undefined && typeof a.bypass !== "boolean") {
-      throw new Error(`agent "${a.id}" bypass must be a boolean`);
-    }
-    if (a.bypass === true && a.harness === "kimi") {
-      throw new Error(`agent "${a.id}" cannot enable bypass: kimi has no bypass mechanism`);
-    }
+    validateOpencodePermission(a);
     if (a.role === "router" && a.lazy === true) {
       throw new Error(`router agent "${a.id}" cannot be lazy`);
     }
@@ -109,12 +114,7 @@ export function validateAddAgent(config: MeshConfig, cfg: AgentConfig): AgentCon
     throw new Error(`agent "${agent.id}" project is required`);
   }
   validateAgentEffort(agent);
-  if (agent.bypass !== undefined && typeof agent.bypass !== "boolean") {
-    throw new Error(`agent "${agent.id}" bypass must be a boolean`);
-  }
-  if (agent.bypass === true && agent.harness === "kimi") {
-    throw new Error(`agent "${agent.id}" cannot enable bypass: kimi has no bypass mechanism`);
-  }
+  validateOpencodePermission(agent);
   if (agent.role === "router") {
     if (config.agents.some((a) => a.role === "router")) {
       throw new Error(`mesh already has a router; cannot add router agent "${agent.id}"`);

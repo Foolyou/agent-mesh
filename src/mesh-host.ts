@@ -23,7 +23,6 @@ export interface BridgeControlPlane {
   setMode(target: string, modeId: string): Promise<void>;
   setModel(target: string, modelId: string): Promise<void>;
   setEffort(target: string, effort?: string): Promise<void>;
-  setBypass(target: string, bypass?: boolean): Promise<void>;
   interrupt(target: string): Promise<void>;
   newSession(target: string): Promise<void>;
   newAllSessions(): Promise<void>;
@@ -170,9 +169,6 @@ export class MeshHostDaemon {
         break;
       case "setEffort":
         this.enqueue(() => this.cp.setEffort(msg.target, msg.effort));
-        break;
-      case "setBypass":
-        this.enqueue(() => this.cp.setBypass(msg.target, msg.bypass));
         break;
       case "interrupt":
         this.cp.interrupt(msg.target).catch(() => {});

@@ -558,22 +558,6 @@ export class ControlPlane {
     if (effort === undefined || isThinkingEffort(effort)) await this.persistRuntimeSessionFields(id, { effort });
   }
 
-  /** Switch permission bypass where runtime support exists. Codex maps bypass to full-access mode. */
-  async setBypass(id: AgentId, bypass?: boolean): Promise<void> {
-    const agent = this.mesh.agent(id);
-    if (!agent) throw new Error(`no such agent "${id}"`);
-    if (agent.harness !== "codex" || !this.conns.has(id)) return;
-    const modes = this.sessionModes.get(id);
-    const target = bypass === true
-      ? "full-access"
-      : (agent.mode && agent.mode !== "full-access" ? agent.mode : modes?.available.find((m) => m.id !== "full-access")?.id);
-    if (!target) return;
-    if (modes?.available.length && !modes.available.some((m) => m.id === target)) {
-      this.log(`skip bypass mode ${id}=${target}: not advertised`);
-      return;
-    }
-    await this.setMode(id, target);
-  }
 
   /** Operator-initiated interrupt: cancel an agent's current turn and record it.
    *  (The router can also interrupt via its mesh tool; this is the human path.) */
@@ -781,7 +765,7 @@ export class ControlPlane {
 
       // Surface the agent's advertised session modes so the operator gets a real picker
       // (read-only / full-access / plan / …) instead of having to know mode-id strings.
-      const desiredMode = a.harness === "codex" && a.bypass === true ? "full-access" : (saved?.mode ?? a.mode);
+      const desiredMode = saved?.mode ?? a.mode;
       const desiredModel = saved?.model ?? a.model;
       const standardModes = (session as any)?.modes;
       const configMode = deriveConfigOption(session, "mode");

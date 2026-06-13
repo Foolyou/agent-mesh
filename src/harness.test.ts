@@ -19,22 +19,21 @@ test("claude sets MAX_THINKING_TOKENS only when an effort is chosen", () => {
   expect(spawnConfigFor(A({ harness: "claude", effort: "minimal" })).env).toEqual({ MAX_THINKING_TOKENS: "1024" });
 });
 
-test("claude bypass adds the spawn permission flag without dropping effort env", () => {
-  const c = spawnConfigFor(A({ harness: "claude", effort: "high", bypass: true }));
-  expect(c.args).toEqual(["--bypassPermissions"]);
+test("claude adds no permission spawn flag (permission is a session mode)", () => {
+  const c = spawnConfigFor(A({ harness: "claude", effort: "high" }));
+  expect(c.args).toEqual([]);
   expect(c.env).toEqual({ MAX_THINKING_TOKENS: "24000" });
 });
 
-test("opencode bypass sets the spawn permission environment variable", () => {
-  const c = spawnConfigFor(A({ harness: "opencode", bypass: true }));
+test("opencode permission=allow sets the spawn permission environment variable", () => {
+  const c = spawnConfigFor(A({ harness: "opencode", opencodePermission: "allow" }));
   expect(c.args).toEqual(["acp"]);
-  expect(c.env).toEqual({ OPENCODE_PERMISSION: '"allow"' });
+  expect(c.env).toEqual({ OPENCODE_PERMISSION: '{"*":"allow"}' });
 });
 
-test("kimi has no bypass spawn mechanism", () => {
-  const c = spawnConfigFor(A({ harness: "kimi", bypass: true }));
-  expect(c.args).toEqual(["acp"]);
-  expect(c.env).toEqual({});
+test("opencode permission=ask (or unset) injects no permission env", () => {
+  expect(spawnConfigFor(A({ harness: "opencode", opencodePermission: "ask" })).env).toEqual({});
+  expect(spawnConfigFor(A({ harness: "opencode" })).env).toEqual({});
 });
 
 test("opencode and kimi ignore spawn-time effort", () => {

@@ -39,12 +39,17 @@ export function spawnConfigFor(a: AgentConfig): { command: string; args: string[
     return { command: spec.command, args: [...spec.args, "-c", `model_reasoning_effort=${effort}`], env: {} };
   }
   if (a.harness === "claude") {
-    const args = a.bypass ? [...spec.args, "--bypassPermissions"] : spec.args;
+    // Permission level is a session mode (default / acceptEdits / bypassPermissions / …),
+    // set via `mode` and switchable live over ACP — no spawn flag needed.
     const env: Record<string, string> = a.effort && a.effort in CLAUDE_THINK_TOKENS ? { MAX_THINKING_TOKENS: String(CLAUDE_THINK_TOKENS[a.effort as keyof typeof CLAUDE_THINK_TOKENS]) } : {};
-    return { command: spec.command, args, env };
+    return { command: spec.command, args: spec.args, env };
   }
-  if (a.harness === "opencode" && a.bypass) {
-    return { command: spec.command, args: spec.args, env: { OPENCODE_PERMISSION: '"allow"' } };
+  if (a.harness === "opencode" && a.opencodePermission === "allow") {
+    // opencode exposes no ACP permission mode — its permission policy is the
+    // OPENCODE_PERMISSION env, applied only at spawn. It must be a permission map; a bare
+    // JSON string ('"allow"') is rejected by opencode's schema (>= 1.16) and breaks
+    // session/new. Use an explicit allow-all map to grant autonomous tool use.
+    return { command: spec.command, args: spec.args, env: { OPENCODE_PERMISSION: '{"*":"allow"}' } };
   }
   return { command: spec.command, args: spec.args, env: {} };
 }

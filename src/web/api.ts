@@ -132,7 +132,7 @@ export async function handleApi(
           role: (agent?.role === "router" ? "router" : "member") as AgentConfig["role"],
           lazy: agent?.lazy === undefined ? undefined : agent?.lazy === true,
           effort: agent?.effort || undefined,
-          bypass: agent?.bypass === undefined ? undefined : agent?.bypass === true,
+          opencodePermission: agent?.opencodePermission === "allow" ? "allow" : agent?.opencodePermission === "ask" ? "ask" : undefined,
           mode: agent?.mode || undefined,
           model: agent?.model || undefined,
           instructions: agent?.instructions || undefined,
@@ -185,10 +185,6 @@ export async function handleApi(
         }
         if (p[4] === "effort") {
           await gw.setEffort(name, agentId, (body?.effort || undefined) as any);
-          return ok();
-        }
-        if (p[4] === "bypass") {
-          await gw.setBypass(name, agentId, body?.bypass === undefined ? undefined : body?.bypass === true);
           return ok();
         }
         if (p[4] === "interrupt") {

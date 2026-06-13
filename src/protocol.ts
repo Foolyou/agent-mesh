@@ -38,7 +38,6 @@ export type ParentMsg =
   | { t: "setMode"; target: string; modeId: string }
   | { t: "setModel"; target: string; modelId: string }
   | { t: "setEffort"; target: string; effort?: string }
-  | { t: "setBypass"; target: string; bypass?: boolean }
   | { t: "interrupt"; target: string }
   | { t: "newSession"; target: string }
   | { t: "newAllSessions" }

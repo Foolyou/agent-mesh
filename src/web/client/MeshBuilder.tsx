@@ -15,7 +15,7 @@ interface AgentDraft {
   project: string;
   model?: string;
   effort?: ThinkingEffort;
-  bypass?: boolean;
+  opencodePermission?: "allow" | "ask";
   lazy?: boolean;
   instructions?: string;
 }
@@ -149,7 +149,7 @@ function validate(name: string, agents: AgentDraft[], edges: EdgeDraft[]): strin
   for (const a of agents) {
     if (!a.project.trim()) return `agent "${a.id}" needs a project (working dir)`;
     if (a.effort !== undefined && !isEffortSupportedByHarness(a.harness, a.effort)) return `agent "${a.id}" has invalid effort "${a.effort}" for ${a.harness}`;
-    if (a.harness === "kimi" && a.bypass === true) return `agent "${a.id}" cannot enable bypass: kimi has no bypass mechanism`;
+    if (a.opencodePermission !== undefined && a.harness !== "opencode") return `agent "${a.id}" opencodePermission only applies to the opencode harness`;
     const instructions = a.instructions?.trim();
     if (instructions && instructions.length > 4000) return `agent "${a.id}" instructions are too long (max 4000 chars)`;
   }
@@ -183,7 +183,7 @@ export function MeshBuilder({
           project: a.project,
           model: a.model,
           effort: a.effort,
-          bypass: a.bypass,
+          opencodePermission: a.opencodePermission,
           lazy: a.lazy,
           instructions: a.instructions,
         }))
@@ -291,7 +291,7 @@ export function MeshBuilder({
     try {
       const normalizedAgents = agents.map(({ key: _key, ...a }) => ({
         ...a,
-        bypass: a.bypass === true ? true : undefined,
+        opencodePermission: a.harness === "opencode" ? a.opencodePermission : undefined,
         instructions: a.instructions?.trim() || undefined,
       }));
       await store.defineMesh({ name, agents: normalizedAgents, edges, charter: charter.trim() || undefined });
@@ -564,7 +564,7 @@ export function MeshBuilder({
                           harness,
                           model: undefined,
                           effort: activeAgent.effort && isEffortSupportedByHarness(harness, activeAgent.effort) ? activeAgent.effort : undefined,
-                          bypass: harness === "kimi" ? undefined : activeAgent.bypass,
+                          opencodePermission: harness === "opencode" ? activeAgent.opencodePermission : undefined,
                         });
                       }}
                     >
@@ -637,15 +637,18 @@ export function MeshBuilder({
                       />
                       {t("build.lazy")}
                     </label>
-                    <label className="check-inline" title={activeAgent.harness === "kimi" ? t("bypass.hint.unsupported") : t("bypass.hint")}>
-                      <input
-                        type="checkbox"
-                        checked={activeAgent.bypass === true}
-                        disabled={activeAgent.harness === "kimi"}
-                        onChange={(e) => setAgent(activeIndex, { bypass: e.target.checked || undefined })}
-                      />
-                      {t("bypass")}
-                    </label>
+                    {activeAgent.harness === "opencode" ? (
+                      <label className="check-inline" title={t("ocperm.hint")}>
+                        {t("ocperm")}
+                        <select
+                          value={activeAgent.opencodePermission ?? "ask"}
+                          onChange={(e) => setAgent(activeIndex, { opencodePermission: e.target.value === "allow" ? "allow" : undefined })}
+                        >
+                          <option value="ask">{t("ocperm.ask")}</option>
+                          <option value="allow">{t("ocperm.allow")}</option>
+                        </select>
+                      </label>
+                    ) : null}
                   </div>
                   <div className="agent-instructions-field">
                     <div className="field-label-row">

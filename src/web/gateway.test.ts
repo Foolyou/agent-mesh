@@ -37,10 +37,6 @@ function fakeManager() {
       calls.push(["setAgentEffort", n, a, effort]);
       config = { ...config, agents: config.agents.map((x) => (x.id === a ? { ...x, effort } : x)) };
     },
-    async setAgentBypass(n: string, a: string, bypass?: boolean) {
-      calls.push(["setAgentBypass", n, a, bypass]);
-      config = { ...config, agents: config.agents.map((x) => (x.id === a ? { ...x, bypass } : x)) };
-    },
     routerOf() {
       return "router";
     },
@@ -596,18 +592,6 @@ test("setEffort persists the effort into the summary and broadcasts mesh.list (n
   expect(m.calls).toContainEqual(["setAgentEffort", "demo", "codex-1", "high"]);
   const summary = gw.snapshot().meshes.find((x) => x.name === "demo");
   expect(summary?.agents.find((a) => a.id === "codex-1")?.effort).toBe("high");
-  expect(got.some((x) => x.t === "mesh.list")).toBe(true);
-});
-
-test("setBypass persists bypass into the summary and broadcasts mesh.list (no restart)", async () => {
-  const m = fakeManager();
-  const gw = new WebGateway(m as any);
-  const got: any[] = [];
-  gw.subscribe((msg) => got.push(msg));
-  await gw.setBypass("demo", "codex-1", true);
-  expect(m.calls).toContainEqual(["setAgentBypass", "demo", "codex-1", true]);
-  const summary = gw.snapshot().meshes.find((x) => x.name === "demo");
-  expect(summary?.agents.find((a) => a.id === "codex-1")?.bypass).toBe(true);
   expect(got.some((x) => x.t === "mesh.list")).toBe(true);
 });
 

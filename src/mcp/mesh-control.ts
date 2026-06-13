@@ -67,8 +67,8 @@ const agentSchema = z.object({
   role: z.enum(["router", "member"]).describe("'router' (exactly one per mesh) or 'member'"),
   lazy: z.boolean().optional().describe("optional: start this non-router agent only on first mail or manual wake"),
   effort: z.enum(effortIds).optional().describe("optional: reasoning/thinking effort for this agent"),
-  bypass: z.boolean().optional().describe("optional: request permission bypass where the harness supports it; kimi is not supported"),
-  mode: z.string().optional().describe("optional: runtime-selected session mode cache, applied best-effort after spawn"),
+  opencodePermission: z.enum(["allow", "ask"]).optional().describe("opencode-only: 'allow' grants autonomous tool use at spawn; other harnesses set permission via `mode` (codex full-access, claude bypassPermissions, kimi yolo)"),
+  mode: z.string().optional().describe("optional: session mode, applied best-effort after spawn; also the permission level for codex/claude/kimi"),
   model: z.string().optional().describe("optional: runtime-selected model cache, applied best-effort after spawn"),
   instructions: z
     .string()

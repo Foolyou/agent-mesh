@@ -73,18 +73,6 @@ test("setAgentEffort forwards runtime-only advertised values without persisting 
   expect(mgr.configOf("echo").agents[0].effort).toBeUndefined();
 });
 
-test("setAgentBypass persists bypass and reloads from disk (no restart)", async () => {
-  await mgr.defineMesh(cfg);
-  await mgr.setAgentBypass("echo", "r", true);
-  expect(mgr.configOf("echo").agents[0].bypass).toBe(true);
-  expect(mgr.listMeshes()[0].status).toBe("stopped");
-
-  const fresh = new MeshManager({ meshesDir: join(dir, "meshes"), runDir: join(dir, "run"), hostScript: FIXTURE });
-  await fresh.loadDefinitions();
-  expect(fresh.configOf("echo").agents[0].bypass).toBe(true);
-  await mgr.setAgentBypass("echo", "r", undefined);
-  expect(mgr.configOf("echo").agents[0].bypass).toBeUndefined();
-});
 
 test("setAgentEffort on an unknown agent throws", async () => {
   await mgr.defineMesh(cfg);

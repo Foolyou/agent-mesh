@@ -113,15 +113,6 @@ export class MeshManager {
     entry.client?.setEffort(agentId, persistedEffort);
   }
 
-  /** Update one agent's bypass setting and persist it. Codex applies it live; spawn-only harnesses keep it for next start. */
-  async setAgentBypass(name: string, agentId: string, bypass?: boolean): Promise<void> {
-    const entry = this.require(name);
-    if (!entry.config.agents.some((a) => a.id === agentId)) throw new Error(`no agent "${agentId}" in mesh "${name}"`);
-    const patched: MeshConfig = { ...entry.config, agents: entry.config.agents.map((a) => (a.id === agentId ? { ...a, bypass } : a)) };
-    await this.store.define(patched);
-    entry.config = patched;
-    entry.client?.setBypass(agentId, bypass);
-  }
 
   /** Delete a mesh definition (and forget it). Refuses while running/starting. */
   async deleteMesh(name: string): Promise<void> {

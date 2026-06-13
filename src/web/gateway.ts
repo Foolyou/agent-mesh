@@ -45,7 +45,6 @@ export interface ManagerLike {
   setMode(name: string, agentId: string, modeId: string): Promise<void>;
   setModel(name: string, agentId: string, modelId: string): Promise<void>;
   setAgentEffort(name: string, agentId: string, effort?: string): Promise<void>;
-  setAgentBypass(name: string, agentId: string, bypass?: boolean): Promise<void>;
   addEdge(name: string, edge: MeshEdge): Promise<void>;
   addAgent(name: string, agent: AgentConfig, edges?: MeshEdge[]): Promise<void>;
   interruptAgent(name: string, agentId: string): void;
@@ -202,7 +201,7 @@ export class WebGateway {
             status,
             activity: status === "dead" ? "idle" : ((live ? activity?.get(a.id) : undefined) ?? "idle"),
             effort: a.effort,
-            bypass: a.bypass,
+            opencodePermission: a.opencodePermission,
             lazy: a.lazy,
             model: pm?.models?.[a.id],
           };
@@ -549,10 +548,6 @@ export class WebGateway {
   async setEffort(name: string, agentId: string, effort?: string): Promise<void> {
     await this.manager.setAgentEffort(name, agentId, effort);
     this.refreshMeshes(); // re-broadcast the summary so the picker reflects the new value
-  }
-  async setBypass(name: string, agentId: string, bypass?: boolean): Promise<void> {
-    await this.manager.setAgentBypass(name, agentId, bypass);
-    this.refreshMeshes();
   }
   async setMode(name: string, agentId: string, modeId: string): Promise<void> {
     await this.manager.setMode(name, agentId, modeId);

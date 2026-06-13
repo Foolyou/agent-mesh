@@ -42,9 +42,13 @@ export interface AgentConfig {
   lazy?: boolean;
   /** Optional reasoning/thinking effort; runtime-switched when supported, otherwise applied on restart. */
   effort?: ThinkingEffort;
-  /** Permission bypass request. Claude/OpenCode apply this at spawn; Codex maps it to full-access mode. Kimi does not support it. */
-  bypass?: boolean;
-  /** Runtime-selected session mode cache. Applied best-effort after spawn when advertised. */
+  /** opencode-only permission policy applied at spawn (opencode exposes no ACP permission
+   *  mode, only the OPENCODE_PERMISSION env). "allow" grants autonomous tool use; "ask"
+   *  (or undefined) defers to opencode's own default. Other harnesses express permission
+   *  through `mode` instead (codex full-access, claude bypassPermissions, kimi yolo). */
+  opencodePermission?: "allow" | "ask";
+  /** Runtime-selected session mode cache. Applied best-effort after spawn when advertised.
+   *  Also where permission level lives for mode-based harnesses (codex/claude/kimi). */
   mode?: string;
   /** Runtime-selected model cache. Applied best-effort after spawn when advertised. */
   model?: string;

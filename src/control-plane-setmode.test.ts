@@ -815,12 +815,12 @@ test("kimi runtime effort uses advertised thinking values behind low/high UI opt
   }
 });
 
-test("start applies codex bypass by switching to full-access mode", async () => {
-  const root = await mkdtemp(join(tmpdir(), "mesh-control-plane-bypass-"));
+test("start applies a configured codex mode (e.g. full-access) when advertised", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mesh-control-plane-mode-"));
   class BypassModesConnection extends ResumeConnection {
     async newSession(): Promise<unknown> {
       return {
-        sessionId: "bypass-session",
+        sessionId: "mode-session",
         modes: {
           currentModeId: "read-only",
           availableModes: [
@@ -832,8 +832,8 @@ test("start applies codex bypass by switching to full-access mode", async () => 
     }
   }
   const config: MeshConfig = {
-    name: "bypass-start",
-    agents: [{ id: "router", harness: "codex", project: root, role: "router", bypass: true }],
+    name: "mode-start",
+    agents: [{ id: "router", harness: "codex", project: root, role: "router", mode: "full-access" }],
     edges: [],
   };
   let conn: ResumeConnection | undefined;

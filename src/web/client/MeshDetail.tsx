@@ -249,28 +249,6 @@ function EffortControl({ m, agent, store }: { m: MeshSummary; agent: string; sto
   );
 }
 
-function BypassControl({ m, agent, store }: { m: MeshSummary; agent: string; store: Store }) {
-  const { t } = useI18n();
-  const a = m.agents.find((x) => x.id === agent);
-  if (!a) return null;
-  const live = m.status === "running" || m.status === "starting";
-  const runtime = a.harness === "codex";
-  const supported = a.harness !== "kimi";
-  const disabled = !supported || (live && !runtime);
-  const title = !supported ? t("bypass.hint.unsupported") : live && runtime ? t("bypass.hint.runtime") : live ? t("bypass.hint.live") : t("bypass.hint");
-  return (
-    <label className="check-inline" title={title}>
-      <input
-        type="checkbox"
-        checked={a.bypass === true}
-        disabled={disabled}
-        onChange={(e) => void store.setBypass(m.name, agent, e.target.checked || undefined)}
-      />
-      {t("bypass")}
-    </label>
-  );
-}
-
 function ConversationPanel({
   m,
   pm,
@@ -377,7 +355,6 @@ function ConversationPanel({
         <div className="row conv-control">
           <span className="sub">{cur.harness}</span>
           <span className="control-spacer" />
-          <BypassControl m={m} agent={cur.id} store={store} />
           <EffortControl m={m} agent={cur.id} store={store} />
           {live ? (
             <ModeControl mesh={m.name} agent={cur.id} store={store} modes={pm.modes?.[cur.id]} />

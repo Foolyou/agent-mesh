@@ -55,13 +55,14 @@ test("accepts arbitrary cached mode/model strings", () => {
   ).not.toThrow();
 });
 
-test("accepts bypass for supported harnesses and rejects invalid bypass fields", () => {
-  expect(() => validateMeshConfig({ ...ok, agents: [{ ...ok.agents[0], bypass: true }, { ...ok.agents[1], bypass: false }] })).not.toThrow();
-  expect(() => validateMeshConfig({ ...ok, agents: [{ ...ok.agents[0], bypass: "yes" as any }, ok.agents[1]] })).toThrow(/bypass/i);
+test("accepts opencodePermission on opencode agents and rejects invalid values", () => {
+  expect(() => validateMeshConfig({ ...ok, agents: [ok.agents[0], { ...ok.agents[1], harness: "opencode", opencodePermission: "allow" }] })).not.toThrow();
+  expect(() => validateMeshConfig({ ...ok, agents: [ok.agents[0], { ...ok.agents[1], harness: "opencode", opencodePermission: "ask" }] })).not.toThrow();
+  expect(() => validateMeshConfig({ ...ok, agents: [ok.agents[0], { ...ok.agents[1], harness: "opencode", opencodePermission: "yes" as any }] })).toThrow(/opencodePermission/i);
 });
 
-test("rejects bypass on kimi because it has no permission bypass mechanism", () => {
-  expect(() => validateMeshConfig({ ...ok, agents: [{ ...ok.agents[0], harness: "kimi", bypass: true }, ok.agents[1]] })).toThrow(/bypass.*kimi/i);
+test("rejects opencodePermission on non-opencode harnesses (they use mode)", () => {
+  expect(() => validateMeshConfig({ ...ok, agents: [{ ...ok.agents[0], opencodePermission: "allow" as any }, ok.agents[1]] })).toThrow(/opencodePermission/i);
 });
 
 test("rejects names containing '..' (path traversal)", () => {

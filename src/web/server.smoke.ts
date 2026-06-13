@@ -33,7 +33,6 @@ function fakeManager() {
     async setMode() {},
     async setModel() {},
     async setAgentEffort() {},
-    async setAgentBypass() {},
     interruptAgent() {},
     async defineMesh() {},
     async deleteMesh() {},
