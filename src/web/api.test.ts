@@ -116,6 +116,12 @@ test("GET /api/harnesses probes harness installation on each request", async () 
   expect(second).toEqual({ status: 200, body: [{ id: "codex", installed: true }] });
 });
 
+test("GET /api/harnesses awaits async harness probes", async () => {
+  const gw = new WebGateway(fakeManager() as any);
+  const r = await handleApi(gw, "GET", "/api/harnesses", undefined, new URLSearchParams(), async () => [{ id: "codex", installed: true }] as any);
+  expect(r).toEqual({ status: 200, body: [{ id: "codex", installed: true }] });
+});
+
 test("GET /api/harnesses/:id/models returns probed model list and passes refresh", async () => {
   const gw = new WebGateway(fakeManager() as any);
   const calls: any[] = [];
