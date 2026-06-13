@@ -1,9 +1,15 @@
 import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { useVirtualizer, type Rect } from "@tanstack/react-virtual";
+import { measureElement as measureVirtualElement, useVirtualizer, type Rect, type Virtualizer } from "@tanstack/react-virtual";
 import type { TranscriptItem } from "../types";
 import { Empty } from "./ui";
 import { useI18n } from "./i18n";
 import { initialBottomOffset, isVirtualAtBottom, shouldAdjustForMeasuredHeightChange, shouldFollowAppend } from "./virtual-transcript-scroll";
+import {
+  initialTranscriptMeasurements,
+  setTranscriptMeasuredHeight,
+  transcriptWidthBucket,
+  type TranscriptMeasurementCacheScope,
+} from "./transcript-measurement-cache";
 
 const DEFAULT_OVERSCAN = 10;
 const DEFAULT_INITIAL_RECT: Rect = { width: 720, height: 720 };
@@ -40,12 +46,14 @@ export function estimateTranscriptItemSize(item: TranscriptItem): number {
 export function VirtualTranscript({
   items,
   renderItem,
+  cacheScope,
   overscan = DEFAULT_OVERSCAN,
   initialRect = DEFAULT_INITIAL_RECT,
   initialOffset,
 }: {
   items: TranscriptItem[];
   renderItem: (item: TranscriptItem) => ReactNode;
+  cacheScope?: TranscriptMeasurementCacheScope;
   overscan?: number;
   /** Test/SSR seed; real layout uses the scroll element rect. */
   initialRect?: Rect;
@@ -56,16 +64,37 @@ export function VirtualTranscript({
   const stickRef = useRef(true);
   const previousCountRef = useRef(items.length);
   const [stick, setStick] = useState(true);
+  const [widthBucket, setWidthBucket] = useState(() => transcriptWidthBucket(initialRect.width));
+  const initialMeasurementsCache =
+    cacheScope && widthBucket ? initialTranscriptMeasurements(items, cacheScope, widthBucket, estimateTranscriptItemSize) : undefined;
   const virtualizer = useVirtualizer<HTMLDivElement, HTMLDivElement>({
     count: items.length,
     getScrollElement: () => parentRef.current,
     getItemKey: (index) => items[index]?.id ?? index,
     estimateSize: (index) => estimateTranscriptItemSize(items[index]!),
+    initialMeasurementsCache,
+    measureElement: (element: HTMLDivElement, entry: ResizeObserverEntry | undefined, instance: Virtualizer<HTMLDivElement, HTMLDivElement>) => {
+      const measured = measureVirtualElement(element, entry, instance);
+      const index = Number(element.getAttribute("data-index"));
+      const item = Number.isInteger(index) ? items[index] : undefined;
+      if (cacheScope && item && widthBucket) setTranscriptMeasuredHeight(cacheScope, item.id, widthBucket, measured);
+      return measured;
+    },
     overscan,
     initialRect,
     initialOffset: initialOffset ?? (() => initialBottomOffset(items, initialRect.height)),
   });
   virtualizer.shouldAdjustScrollPositionOnItemSizeChange = shouldAdjustForMeasuredHeightChange;
+
+  useLayoutEffect(() => {
+    const el = parentRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const update = () => setWidthBucket(transcriptWidthBucket(el.clientWidth || el.getBoundingClientRect().width));
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   useLayoutEffect(() => {
     const previousCount = previousCountRef.current;

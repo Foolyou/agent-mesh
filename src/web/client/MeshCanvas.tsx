@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import type { Store } from "./store";
-import type { MeshSummary, PerMeshState } from "../types";
+import type { MeshSummary, PerMeshState, TranscriptItem } from "../types";
 import { Btn, ConfirmButton, Dot } from "./ui";
 import { ChatPane } from "./ChatPane";
 import { AgentHealthBadges } from "./health";
@@ -17,6 +17,7 @@ const DEFAULT_W = 360;
 const DEFAULT_H = 320;
 const MIN_W = 280;
 const MIN_H = 220;
+export const CANVAS_TAIL_ITEMS = 30;
 
 function clamp(n: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, n));
@@ -28,6 +29,10 @@ function layoutKey(mesh: string): string {
 
 function edgeKey(from: string, to: string): string {
   return `${from}->${to}`;
+}
+
+export function canvasTranscriptItems(items: TranscriptItem[], focused: boolean): TranscriptItem[] {
+  return focused ? items : items.slice(-CANVAS_TAIL_ITEMS);
 }
 
 function signature(m: MeshSummary): string {
@@ -283,6 +288,7 @@ export function MeshCanvas({
   const patchFrame = useRef<number | null>(null);
   const sig = useMemo(() => signature(m), [m]);
   const edgeKeys = useMemo(() => new Set(m.edges.map((edge) => edgeKey(edge.from, edge.to))), [m.edges]);
+  const focusedAgentId = order[order.length - 1] ?? m.router;
   const live = m.status === "running" || m.status === "starting";
 
   useEffect(() => {
@@ -544,6 +550,9 @@ export function MeshCanvas({
         {m.agents.map((agent) => {
           const r = layout.windows[agent.id];
           if (!r) return null;
+          const fullTranscript = pm.transcripts[agent.id] ?? [];
+          const focused = agent.id === focusedAgentId;
+          const transcriptItems = canvasTranscriptItems(fullTranscript, focused);
           const isRouter = agent.id === m.router;
           const z = 20 + order.indexOf(agent.id);
           const status = live ? agent.status : "stopped";
@@ -578,11 +587,17 @@ export function MeshCanvas({
                   )}
                 </span>
               </div>
-              <div className="canvas-window-body">
+              <div
+                className="canvas-window-body"
+                data-transcript-mode={focused ? "full" : "tail"}
+                data-transcript-total={fullTranscript.length}
+                data-transcript-rendered={transcriptItems.length}
+              >
                 <ChatPane
-                  items={pm.transcripts[agent.id] ?? []}
+                  items={transcriptItems}
                   queue={pm.queues?.[agent.id]}
                   author={{ meshId: m.name, agent: agent.id }}
+                  transcriptCacheScope={{ meshId: m.name, agentId: agent.id }}
                   placeholder={isRouter ? t("router.placeholder") : t("agent.placeholder", { id: agent.id })}
                   imageEnabled={!!pm.capabilities?.[agent.id]?.image}
                   imageDisabledReason="This agent does not advertise image input support"

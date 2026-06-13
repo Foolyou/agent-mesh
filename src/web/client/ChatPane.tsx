@@ -9,6 +9,7 @@ import { Composer } from "./ui";
 import { Transcript } from "./Transcript";
 import type { AuthorRef } from "./AuthorContext";
 import { useI18n } from "./i18n";
+import type { TranscriptMeasurementCacheScope } from "./transcript-measurement-cache";
 
 const INTERACTIVE = "button, a, input, textarea, select, .thought .label, .tool .thead";
 
@@ -62,6 +63,7 @@ export function ChatPane({
   imageDisabledReason,
   queue,
   author,
+  transcriptCacheScope,
 }: {
   items: TranscriptItem[];
   onSend: (text: string, images?: PromptImageRef[], opts?: { steer?: boolean }) => void | Promise<void>;
@@ -75,6 +77,7 @@ export function ChatPane({
   imageDisabledReason?: string;
   queue?: QueueSummary;
   author?: AuthorRef;
+  transcriptCacheScope?: TranscriptMeasurementCacheScope;
 }) {
   const { t } = useI18n();
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -130,7 +133,7 @@ export function ChatPane({
 
   return (
     <div className="chat" onClick={focusOnClick}>
-      <Transcript items={items} author={author} />
+      <Transcript items={items} author={author} cacheScope={transcriptCacheScope} />
       {queue?.count && nav.item ? (
         <div
           className="queue-box"

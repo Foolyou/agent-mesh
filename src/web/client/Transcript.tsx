@@ -8,6 +8,7 @@ import { useI18n } from "./i18n";
 import { Markdown } from "./Markdown";
 import { AuthorContext, type AuthorRef } from "./AuthorContext";
 import { VirtualTranscript } from "./VirtualTranscript";
+import type { TranscriptMeasurementCacheScope } from "./transcript-measurement-cache";
 
 export const VIRTUAL_THRESHOLD = 200;
 
@@ -268,7 +269,7 @@ export function isTranscriptAtBottom(
   return scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight <= threshold;
 }
 
-export function Transcript({ items, author }: { items: TranscriptItem[]; author?: AuthorRef }) {
+export function Transcript({ items, author, cacheScope }: { items: TranscriptItem[]; author?: AuthorRef; cacheScope?: TranscriptMeasurementCacheScope }) {
   const { t } = useI18n();
   const endRef = useRef<HTMLDivElement>(null);
   // autoscroll to bottom when content changes, unless the user scrolled up
@@ -308,7 +309,7 @@ export function Transcript({ items, author }: { items: TranscriptItem[]; author?
 
   if (!items.length) return <Empty>{t("empty.messages")}</Empty>;
   if (items.length > VIRTUAL_THRESHOLD) {
-    return <VirtualTranscript items={items} renderItem={(item) => <TranscriptRow item={item} author={author} />} />;
+    return <VirtualTranscript items={items} cacheScope={cacheScope} renderItem={(item) => <TranscriptRow item={item} author={author} />} />;
   }
   return (
     <div className="stream-shell">
