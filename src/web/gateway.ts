@@ -363,6 +363,16 @@ export class WebGateway {
         this.broadcast({ t: "agent.health", name, agent: e.agent, health });
         break;
       }
+      case "agent_turn_health": {
+        // Non-fatal "agent is quiet" hint from the turn watchdog — surface it in the
+        // activity feed so the operator knows the agent is working (likely long
+        // reasoning/compaction), not dead. The turn is never cancelled or killed.
+        const entry = this.act("log", `⚠️ ${e.agent} ${e.detail}`, e.ts);
+        pm.activity.push(entry);
+        pm.activity = cap(pm.activity, CAP);
+        this.broadcast({ t: "activity", name, entry });
+        break;
+      }
       case "steer": {
         const from = e.from === "operator" ? "operator" : e.from;
         const entry = this.act("steer", `${from} ⇢ ${e.to}: ${e.body}`, e.ts);

@@ -118,7 +118,6 @@ function makePlane(root: string, created: Record<string, HealthConnection>) {
   return new ControlPlane(config, {
     mailboxPath: join(root, "mailbox.ndjson"),
     turnFirstSignalTimeoutMs: 10,
-    turnCancelGraceMs: 10,
     connectionFactory: (opts) => {
       const conn = new HealthConnection(opts);
       created[opts.id] = conn;
@@ -127,8 +126,10 @@ function makePlane(root: string, created: Record<string, HealthConnection>) {
   });
 }
 
-test("started prompt with no first signal times out, cancels, then kills and marks dead", async () => {
-  const root = await mkdtemp(join(tmpdir(), "mesh-turn-health-timeout-"));
+const warnings = (events: any[]) => events.filter((e) => e.kind === "agent_turn_health" && e.level === "warning");
+
+test("a quiet started prompt surfaces a warning but never cancels or kills the turn", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mesh-turn-health-quiet-"));
   const created: Record<string, HealthConnection> = {};
   const cp = makePlane(root, created);
   const events: any[] = [];
@@ -136,30 +137,53 @@ test("started prompt with no first signal times out, cancels, then kills and mar
 
   try {
     await cp.start();
-    void cp.prompt("member", "hang forever").catch(() => {});
+    const prompt = cp.prompt("member", "long silent reasoning");
 
-    await waitUntil(() => created.member.killed);
+    await waitUntil(() => warnings(events).length > 0);
 
-    expect(created.member.cancels).toBe(1);
-    expect(created.member.kills).toBe(1);
-    expect((cp as any).mesh.status("member")).toBe("dead");
-    expect((cp as any).conns.has("member")).toBe(false);
-    expect(events).toContainEqual(
-      expect.objectContaining({
-        kind: "agent_turn_health",
-        agent: "member",
-        level: "failed",
-        reason: "first_signal_timeout",
-      }),
-    );
-    expect(events).toContainEqual(expect.objectContaining({ kind: "agent_activity", agent: "member", activity: "idle" }));
+    // The watchdog only warned — the turn and its process are untouched.
+    expect(created.member.cancels).toBe(0);
+    expect(created.member.kills).toBe(0);
+    expect(created.member.killed).toBe(false);
+    expect((cp as any).mesh.status("member")).toBe("ready");
+    expect(created.member.active).toBeTruthy(); // turn still in flight
+    expect(warnings(events)[0]).toMatchObject({ agent: "member", level: "warning", reason: "first_signal_timeout" });
+    // No status flip to "dead" anywhere.
+    expect(events.some((e) => e.kind === "agent_status" && e.status === "dead")).toBe(false);
+
+    // A late first signal + natural completion still works (turn was never aborted).
+    created.member.emitUpdate();
+    created.member.finish();
+    await prompt;
+    expect((cp as any).mesh.status("member")).toBe("ready");
   } finally {
     await cp.stop();
     await rm(root, { recursive: true, force: true });
   }
 });
 
-test("first update before deadline clears the first-signal timer", async () => {
+test("a quiet turn keeps re-warning with backoff while it stays silent", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mesh-turn-health-rewarn-"));
+  const created: Record<string, HealthConnection> = {};
+  const cp = makePlane(root, created);
+  const events: any[] = [];
+  cp.on((e) => events.push(e));
+
+  try {
+    await cp.start();
+    const prompt = cp.prompt("member", "still silent");
+    await waitUntil(() => warnings(events).length >= 2, 2000);
+    expect(created.member.killed).toBe(false);
+    expect(created.member.cancels).toBe(0);
+    created.member.finish();
+    await prompt;
+  } finally {
+    await cp.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("first update before the deadline clears the quiet-warning timer", async () => {
   const root = await mkdtemp(join(tmpdir(), "mesh-turn-health-update-"));
   const created: Record<string, HealthConnection> = {};
   const cp = makePlane(root, created);
@@ -174,7 +198,7 @@ test("first update before deadline clears the first-signal timer", async () => {
     await new Promise((resolve) => setTimeout(resolve, 35));
     expect(created.member.killed).toBe(false);
     expect((cp as any).mesh.status("member")).toBe("ready");
-    expect(events.some((e) => e.kind === "agent_turn_health")).toBe(false);
+    expect(warnings(events).length).toBe(0);
 
     created.member.finish();
     await prompt;
@@ -184,114 +208,42 @@ test("first update before deadline clears the first-signal timer", async () => {
   }
 });
 
-test("late timeout from an old connection does not hurt a new connection", async () => {
-  const root = await mkdtemp(join(tmpdir(), "mesh-turn-health-old-conn-"));
-  const created: Record<string, HealthConnection[]> = {};
-  const cp = new ControlPlane(config, {
-    mailboxPath: join(root, "mailbox.ndjson"),
-    turnFirstSignalTimeoutMs: 10,
-    turnCancelGraceMs: 30,
-    connectionFactory: (opts) => {
-      const conn = new HealthConnection(opts);
-      (created[opts.id] ??= []).push(conn);
-      return conn as unknown as AcpAgentConnection;
-    },
-  });
-
-  try {
-    await cp.start();
-    void cp.prompt("member", "old hang").catch(() => {});
-    await waitUntil(() => !!created.member?.[0]?.active);
-    const oldConn = created.member[0]!;
-    await new Promise((resolve) => setTimeout(resolve, 15));
-
-    await (cp as any).ensureSpawned("member", { manual: true, forceFresh: true, drainPendingMail: false });
-    const newConn = created.member[1]!;
-    newConn.emitUpdate();
-    newConn.finish();
-
-    await new Promise((resolve) => setTimeout(resolve, 45));
-    expect((cp as any).conns.get("member")).toBe(newConn);
-    expect((cp as any).mesh.status("member")).toBe("ready");
-    expect(oldConn.kills).toBe(1);
-    expect(newConn.kills).toBe(0);
-  } finally {
-    await cp.stop();
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
-test("stopped agent is not changed to dead by a pending turn timeout", async () => {
-  const root = await mkdtemp(join(tmpdir(), "mesh-turn-health-stopped-"));
-  const created: Record<string, HealthConnection> = {};
-  const cp = new ControlPlane(config, {
-    mailboxPath: join(root, "mailbox.ndjson"),
-    turnFirstSignalTimeoutMs: 10,
-    turnCancelGraceMs: 30,
-    connectionFactory: (opts) => {
-      const conn = new HealthConnection(opts);
-      created[opts.id] = conn;
-      return conn as unknown as AcpAgentConnection;
-    },
-  });
-
-  try {
-    await cp.start();
-    void cp.prompt("member", "old hang").catch(() => {});
-    await waitUntil(() => !!created.member.active);
-    await new Promise((resolve) => setTimeout(resolve, 15));
-    await cp.stopAgent("member");
-
-    await new Promise((resolve) => setTimeout(resolve, 45));
-    expect((cp as any).mesh.status("member")).toBe("stopped");
-    expect((cp as any).conns.has("member")).toBe(false);
-  } finally {
-    await cp.stop();
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
-test("mail wake timeout keeps mail persisted, sends delivery-failed receipt, and reports mesh health", async () => {
+test("a mail-woken quiet turn keeps the mail persisted, sends NO delivery-failed receipt, and is not killed", async () => {
   const root = await mkdtemp(join(tmpdir(), "mesh-turn-health-mail-"));
   const created: Record<string, HealthConnection> = {};
   const cp = makePlane(root, created);
+  const events: any[] = [];
+  cp.on((e) => events.push(e));
 
   try {
     await cp.start();
     const res = await (cp as any).handleSendMail({ agentId: "router", role: "router" }, "member", "please respond");
     expect(res).toBe("queued for member as #1; wake scheduled");
 
-    await waitUntil(() => created.member.killed);
-    await waitUntil(() => created.router.prompts.some((prompt) => prompt.includes("[DELIVERY FAILED]")));
+    await waitUntil(() => warnings(events).some((e) => e.agent === "member"));
 
+    // No kill, no cancel, no delivery-failed receipt back to the router.
+    expect(created.member.killed).toBe(false);
+    expect(created.member.cancels).toBe(0);
+    expect(created.router.prompts.some((p) => p.includes("[DELIVERY FAILED]"))).toBe(false);
+
+    // The mail is still persisted (the member is processing it, not failed).
     const memberMail = await readMailFor("member", { mailboxPath: join(root, "mailbox.ndjson") });
     expect(memberMail.map((m) => m.body)).toEqual(["please respond"]);
 
-    const routerMail = await readMailFor("router", { mailboxPath: join(root, "mailbox.ndjson") });
-    expect(routerMail.map((m) => m.body).join("\n")).toContain("[DELIVERY FAILED]");
-    expect(routerMail.map((m) => m.body).join("\n")).toContain("mail #1 is still persisted");
-
+    // The quiet warning is surfaced as a health note in mesh status (not a failure).
     const status = (cp as any).meshStatusText("router");
-    expect(status).toContain("last health failure: first_signal_timeout");
+    expect(status).toContain("last health note: first_signal_timeout");
   } finally {
     await cp.stop();
     await rm(root, { recursive: true, force: true });
   }
 });
 
-test("claude raw sdk retry and compaction signals emit health events and suppress first-signal timeout", async () => {
+test("claude raw sdk retry and compaction signals emit health events and suppress the quiet warning", async () => {
   const root = await mkdtemp(join(tmpdir(), "mesh-turn-health-signals-"));
   const created: Record<string, HealthConnection> = {};
-  const cp = new ControlPlane(config, {
-    mailboxPath: join(root, "mailbox.ndjson"),
-    turnFirstSignalTimeoutMs: 10,
-    turnCancelGraceMs: 10,
-    connectionFactory: (opts) => {
-      const conn = new HealthConnection(opts);
-      created[opts.id] = conn;
-      return conn as unknown as AcpAgentConnection;
-    },
-  });
+  const cp = makePlane(root, created);
   const events: any[] = [];
   cp.on((e) => events.push(e));
 
@@ -337,7 +289,7 @@ test("claude raw sdk retry and compaction signals emit health events and suppres
     expect(events).toContainEqual(expect.objectContaining({ kind: "agent_health_signal", agent: "router", signal: "compacting" }));
     expect(events).toContainEqual(expect.objectContaining({ kind: "agent_health_signal", agent: "router", signal: "compact_done", detail: { outcome: "success" } }));
     expect(events).toContainEqual(expect.objectContaining({ kind: "agent_health_signal", agent: "router", signal: "compact_done", detail: expect.objectContaining({ trigger: "auto", preTokens: 120000, postTokens: 45000, durationMs: 2200 }) }));
-    expect(events.some((e) => e.kind === "agent_turn_health" && e.reason === "first_signal_timeout")).toBe(false);
+    expect(warnings(events).length).toBe(0);
 
     created.router.finish();
     await prompt;

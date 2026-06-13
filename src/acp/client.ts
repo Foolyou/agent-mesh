@@ -96,6 +96,49 @@ function installCleanupHandlers(): void {
   });
 }
 
+// codex-acp streams `usage_update` session notifications (token/context usage) as a
+// liveness + cost heartbeat, but the ACP library's strict session-update schema rejects
+// the kind outright ("Invalid params"), so the frame never reaches our sessionUpdate
+// handler — it is dropped AND never counts as a turn signal. We intercept it at the raw
+// ndjson layer BEFORE the library parses: hand the update to our own callback (so it
+// feeds the cost waterline and the quiet-turn watchdog) and filter the frame out so the
+// library never sees the unknown kind. Scoped to usage_update only — every other frame
+// passes through byte-for-byte, so nothing the library already understands is diverted.
+export function filterUsageUpdates(
+  src: ReadableStream<Uint8Array>,
+  onUsageUpdate: (update: any) => void,
+): ReadableStream<Uint8Array> {
+  const dec = new TextDecoder();
+  const enc = new TextEncoder();
+  let buf = "";
+  const transform = new TransformStream<Uint8Array, Uint8Array>({
+    transform(chunk, controller) {
+      buf += dec.decode(chunk, { stream: true });
+      let nl: number;
+      while ((nl = buf.indexOf("\n")) >= 0) {
+        const line = buf.slice(0, nl + 1); // keep the trailing newline for pass-through
+        buf = buf.slice(nl + 1);
+        if (line.trim()) {
+          try {
+            const msg = JSON.parse(line);
+            if (msg?.method === "session/update" && msg.params?.update?.sessionUpdate === "usage_update") {
+              onUsageUpdate(msg.params.update);
+              continue; // consume: keep it away from the library's strict schema
+            }
+          } catch {
+            /* not parseable here; let the library handle it verbatim */
+          }
+        }
+        controller.enqueue(enc.encode(line));
+      }
+    },
+    flush(controller) {
+      if (buf) controller.enqueue(enc.encode(buf));
+    },
+  });
+  return src.pipeThrough(transform);
+}
+
 export interface AcpConnectionOptions {
   id: string;
   command: string;
@@ -169,7 +212,11 @@ export class AcpAgentConnection {
         child.stdin.end();
       },
     });
-    const stream = ndJsonStream(output, child.stdout as ReadableStream<Uint8Array>);
+    const input = filterUsageUpdates(child.stdout as ReadableStream<Uint8Array>, (update) => {
+      this.opts.onPromptSignal?.(this.activeJob?.turn, update);
+      this.opts.onUpdate?.(update);
+    });
+    const stream = ndJsonStream(output, input);
 
     this.conn = new ClientSideConnection((): Client => this.clientHandlers() as Client, stream);
 

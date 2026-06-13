@@ -7,10 +7,24 @@
 import net from "node:net";
 import { join, dirname } from "node:path";
 import { rm, mkdir } from "node:fs/promises";
+import { appendFileSync } from "node:fs";
 import { ControlPlane, type ControlPlaneStopReason } from "./control-plane";
 import { LineBuffer, encodeFrame, PROTO_VERSION, type ParentMsg, type SeqEvent } from "./protocol";
 import { writeRecord, removeRecord } from "./mesh-registry";
 import { now, type AgentConfig, type MeshConfig, type MeshEdge, type MeshEvent, type PromptImageRef } from "./acp/types";
+
+/** Append one crash record to the mesh's persisted crash log. Daemon stderr is lost
+ *  once the backend reattaches over the socket, so an uncaught exception / unhandled
+ *  rejection that takes the host down otherwise leaves no trace (see the assistant
+ *  16:07 "host exited" with no stack). This keeps a durable record to debug from. */
+export function writeMeshCrashDump(path: string, kind: string, err: unknown): void {
+  try {
+    const stack = err instanceof Error ? (err.stack ?? err.message) : String(err);
+    appendFileSync(path, `\n[${now()}] ${kind} (pid ${process.pid})\n${stack}\n`);
+  } catch {
+    /* best-effort: never let crash logging mask the original crash */
+  }
+}
 
 /** The slice of ControlPlane the daemon depends on (keeps it unit-testable). */
 export interface BridgeControlPlane {
@@ -238,6 +252,13 @@ export async function runMeshHost(): Promise<void> {
   const root = process.env.MESH_ROOT;
   const runDir = dirname(socketPath); // sockets + registry records share ${root}/run
   const leaseMs = Number(process.env.MESH_LEASE_MS) || 0;
+
+  // Persist crashes before the process dies. These run alongside (and before) the
+  // AcpAgentConnection cleanup handlers installed during cp.start(); they only record
+  // and never exit, so the existing reap-and-exit behavior is unchanged.
+  const crashLog = join(root ?? runDir, `${config.name}.crash.log`);
+  process.on("uncaughtException", (err) => writeMeshCrashDump(crashLog, "uncaughtException", err));
+  process.on("unhandledRejection", (reason) => writeMeshCrashDump(crashLog, "unhandledRejection", reason));
 
   const cp = new ControlPlane(config, {
     debug: process.env.MESH_DEBUG === "1",

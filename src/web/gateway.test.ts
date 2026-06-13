@@ -216,6 +216,29 @@ test("agent health signal is exposed in snapshot and ws without transcript foldi
   });
 });
 
+test("a quiet-turn health warning surfaces as an activity entry (and is not a transcript/failure)", () => {
+  const m = fakeManager();
+  const gw = new WebGateway(m as any);
+  const got: any[] = [];
+  gw.subscribe((msg) => got.push(msg));
+
+  m.emit("demo", {
+    kind: "agent_turn_health",
+    agent: "codex-1",
+    turn: { id: "t1", agent: "codex-1", source: "operator" },
+    level: "warning",
+    reason: "first_signal_timeout",
+    detail: "quiet for 120s with no output",
+    ts: "T",
+  } as any);
+
+  const s = gw.snapshot();
+  const entry = s.perMesh.demo.activity.find((a) => a.text.includes("codex-1") && a.text.includes("quiet"));
+  expect(entry).toBeTruthy();
+  expect(s.perMesh.demo.transcripts["codex-1"] ?? []).toHaveLength(0);
+  expect(got.some((x) => x.t === "activity" && x.entry.text.includes("quiet"))).toBe(true);
+});
+
 test("permission add then resolved updates pending + history + activity", () => {
   const m = fakeManager();
   const gw = new WebGateway(m as any);

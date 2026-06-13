@@ -34,8 +34,11 @@ interface ActiveTurnHealth {
   startedAt: string;
   firstSignalAt?: string;
   lastSignalAt?: string;
-  firstSignalTimer?: ReturnType<typeof setTimeout>;
-  cancelGraceTimer?: ReturnType<typeof setTimeout>;
+  /** Fires when a started turn has stayed completely silent; surfaces a non-fatal
+   *  "agent is quiet" warning. Never cancels or kills — recovery is manual. */
+  quietWarnTimer?: ReturnType<typeof setTimeout>;
+  /** How many quiet warnings have been surfaced for this turn (drives backoff). */
+  quietWarnCount?: number;
 }
 
 interface HealthFailureSummary {
@@ -62,10 +65,6 @@ function numberEnv(name: string, fallback: number): number {
 
 function publicImageRef(i: PromptImageRef): PromptImageRef {
   return { id: i.id, mimeType: i.mimeType, name: i.name, url: i.url };
-}
-
-function isSystemReceipt(body: string): boolean {
-  return body.startsWith("[DELIVERY FAILED]") || body.startsWith("[SPAWN FAILED]");
 }
 
 function claudeHealthSignal(message: unknown): { signal: AgentHealthSignalKind; detail?: Record<string, unknown> } | undefined {
@@ -143,12 +142,13 @@ export interface ControlPlaneOptions {
   checkMailMaxCount?: number;
   /** Max total body bytes per check_mail call; at least one mail is always returned. */
   checkMailMaxBytes?: number;
-  /** Started prompt must emit an update/permission/result/error before this deadline. */
+  /** A started prompt that emits no signal within this long surfaces a non-fatal
+   *  "agent is quiet" warning. It NEVER cancels or kills the turn — a silent codex
+   *  is usually just doing long reasoning/compaction on a large context, and recovery
+   *  from a genuine hang is left to the operator. 0 disables the warning. */
   turnFirstSignalTimeoutMs?: number;
   /** Reserved for future idle-stall enforcement. 0 disables enforcement. */
   turnIdleStallTimeoutMs?: number;
-  /** Grace period after best-effort cancel before a silent turn kills its connection. */
-  turnCancelGraceMs?: number;
 }
 
 export class ControlPlane {
@@ -173,7 +173,6 @@ export class ControlPlane {
   private checkMailMaxBytes: number;
   private turnFirstSignalTimeoutMs: number;
   private turnIdleStallTimeoutMs: number;
-  private turnCancelGraceMs: number;
   private spawning = new Map<AgentId, Promise<AcpAgentConnection>>();
   private spawnFails = new Map<AgentId, number>();
   private spawnGeneration = new Map<AgentId, number>();
@@ -230,7 +229,6 @@ export class ControlPlane {
     this.checkMailMaxBytes = opts.checkMailMaxBytes ?? 64_000;
     this.turnFirstSignalTimeoutMs = opts.turnFirstSignalTimeoutMs ?? numberEnv("MESH_TURN_FIRST_SIGNAL_MS", 120_000);
     this.turnIdleStallTimeoutMs = opts.turnIdleStallTimeoutMs ?? numberEnv("MESH_TURN_IDLE_STALL_MS", 0);
-    this.turnCancelGraceMs = opts.turnCancelGraceMs ?? numberEnv("MESH_TURN_CANCEL_GRACE_MS", 5_000);
   }
 
   // ---- event bus ----
@@ -322,7 +320,7 @@ export class ControlPlane {
       conn,
       startedAt: now(),
     };
-    active.firstSignalTimer = setTimeout(() => this.handleFirstSignalTimeout(active), this.turnFirstSignalTimeoutMs);
+    active.quietWarnTimer = setTimeout(() => this.handleQuietTurn(active), this.turnFirstSignalTimeoutMs);
     this.activeTurnHealth.set(turn.agent, active);
   }
 
@@ -332,9 +330,10 @@ export class ControlPlane {
     const ts = now();
     active.firstSignalAt ??= ts;
     active.lastSignalAt = ts;
-    if (active.firstSignalTimer) {
-      clearTimeout(active.firstSignalTimer);
-      active.firstSignalTimer = undefined;
+    // The turn has shown life: stop the quiet-warning watchdog for the rest of it.
+    if (active.quietWarnTimer) {
+      clearTimeout(active.quietWarnTimer);
+      active.quietWarnTimer = undefined;
     }
     // Idle-stall tracking is intentionally data-only in v1.
     void this.turnIdleStallTimeoutMs;
@@ -348,8 +347,7 @@ export class ControlPlane {
   private clearTurnHealth(agent: AgentId, turnId?: string): void {
     const active = this.activeTurnHealth.get(agent);
     if (!active || (turnId && active.turn.id !== turnId)) return;
-    if (active.firstSignalTimer) clearTimeout(active.firstSignalTimer);
-    if (active.cancelGraceTimer) clearTimeout(active.cancelGraceTimer);
+    if (active.quietWarnTimer) clearTimeout(active.quietWarnTimer);
     this.activeTurnHealth.delete(agent);
   }
 
@@ -357,45 +355,34 @@ export class ControlPlane {
     this.clearTurnHealth(agent);
   }
 
-  private handleFirstSignalTimeout(active: ActiveTurnHealth): void {
+  /**
+   * A started turn has emitted no signal for the configured window. This is NOT
+   * treated as a failure: a silent codex turn is almost always just doing long
+   * reasoning or context compaction on a large context (codex has no heartbeat
+   * during that phase), and killing it would murder healthy work. So we only
+   * surface a non-fatal "agent is quiet" warning and let the turn keep running;
+   * recovery from a genuine hang is the operator's call (manual restart / new
+   * session). The warning re-arms with capped exponential backoff so a long
+   * silence keeps surfacing without flooding.
+   */
+  private handleQuietTurn(active: ActiveTurnHealth): void {
     if (this.activeTurnHealth.get(active.agent) !== active) return;
-    active.firstSignalTimer = undefined;
-    const detail = `first signal timed out after ${this.turnFirstSignalTimeoutMs}ms`;
-    this.recordTurnHealthFailure(active, "first_signal_timeout", detail);
-    active.conn.cancel().catch((err) => this.log(`turn cancel after first-signal timeout for ${active.agent} failed: ${String(err)}`));
-    active.cancelGraceTimer = setTimeout(() => this.finalizeFirstSignalTimeout(active, detail), this.turnCancelGraceMs);
+    active.quietWarnTimer = undefined;
+    const count = (active.quietWarnCount = (active.quietWarnCount ?? 0) + 1);
+    const quietSec = Math.round((Date.parse(now()) - Date.parse(active.startedAt)) / 1000);
+    const detail =
+      `quiet for ${quietSec}s with no output — the agent is likely doing long reasoning ` +
+      `or context compaction. It has NOT been cancelled; restart or start a new session ` +
+      `manually if it is genuinely stuck.`;
+    this.recordTurnHealthWarning(active, "first_signal_timeout", detail);
+    const factor = Math.min(2 ** count, 8);
+    active.quietWarnTimer = setTimeout(() => this.handleQuietTurn(active), this.turnFirstSignalTimeoutMs * factor);
   }
 
-  private finalizeFirstSignalTimeout(active: ActiveTurnHealth, detail: string): void {
-    if (this.activeTurnHealth.get(active.agent) !== active) return;
-    active.cancelGraceTimer = undefined;
-    const current = this.conns.get(active.agent);
-    const stopped = this.mesh.status(active.agent) === "stopped";
-    this.failActiveTurn(active.conn, active.turn.id, new Error(detail));
-    this.clearTurnHealth(active.agent, active.turn.id);
-    if (current !== active.conn || stopped) return;
-    active.conn.kill();
-    if (this.conns.get(active.agent) === active.conn) this.conns.delete(active.agent);
-    if (this.mesh.status(active.agent) !== "stopped") {
-      this.mesh.setStatus(active.agent, "dead");
-      this.clearQueuedTurns(active.agent);
-      this.emit({ kind: "agent_status", agent: active.agent, status: "dead", detail, ts: now() });
-    }
-    this.emitActivityIfChanged(active.agent);
-  }
-
-  private failActiveTurn(conn: AcpAgentConnection, turnId: string, err: unknown): void {
-    const failer = (conn as unknown as { failActiveTurn?: (turnId: string, err: unknown) => boolean }).failActiveTurn;
-    if (failer) failer.call(conn, turnId, err);
-  }
-
-  private recordTurnHealthFailure(active: ActiveTurnHealth, reason: TurnHealthReason, detail: string): void {
+  private recordTurnHealthWarning(active: ActiveTurnHealth, reason: TurnHealthReason, detail: string): void {
     const ts = now();
     this.lastHealthFailure.set(active.agent, { reason, detail, ts });
-    this.emit({ kind: "agent_turn_health", agent: active.agent, turn: active.turn, level: "failed", reason, detail, ts });
-    if (active.turn.source === "mail" && active.turn.from && active.turn.from !== "operator" && !isSystemReceipt(active.turn.text)) {
-      this.sendDeliveryFailedReceipt(active.turn, reason, detail);
-    }
+    this.emit({ kind: "agent_turn_health", agent: active.agent, turn: active.turn, level: "warning", reason, detail, ts });
   }
 
   private noteExtNotification(agent: AgentId, method: string, params: unknown, turn: AgentTurn | undefined): void {
@@ -1038,7 +1025,7 @@ export class ControlPlane {
         .map((o) => o.id);
       const me = a.id === forAgent ? " (you)" : "";
       const health = this.lastHealthFailure.get(a.id);
-      const healthText = health ? ` last health failure: ${health.reason} (${health.detail})` : "";
+      const healthText = health ? ` last health note: ${health.reason} (${health.detail})` : "";
       return `- ${a.id}${me} [${a.harness}, ${a.role}, ${this.mesh.status(a.id)}, ${this.activityOf(a.id)}] can mail: ${reach.join(", ") || "(none)"}${healthText}`;
     });
     return `Mesh "${this.mesh.name}" — router is ${this.mesh.router.id}.\n${lines.join("\n")}`;
@@ -1169,27 +1156,6 @@ export class ControlPlane {
         this.wake(from, to, body, event.id, { seq });
       })
       .catch((err) => this.log(`spawn failed receipt ${to}->${from} failed: ${String(err)}`));
-  }
-
-  private sendDeliveryFailedReceipt(turn: AgentTurn, reason: TurnHealthReason, detail: string): void {
-    const from = turn.from;
-    const to = turn.to ?? turn.agent;
-    if (!from || from === "operator") return;
-    const mailLabel = turn.mailId ? `mail ${turn.mailId}` : "mail";
-    const seq = ++this.mailSeq;
-    const body =
-      `[DELIVERY FAILED] ${to} did not start handling ${mailLabel}. ` +
-      `Reason: ${reason} (${detail}). ` +
-      `The original mail${turn.mailSeq !== undefined ? ` #${turn.mailSeq}` : ""} is still persisted; ` +
-      `retry after manual wake or model change.`;
-    void sendMail({ mailboxPath: this.mailboxPath, mesh: this.mesh.name, from: to, to: from, body, seq })
-      .then((event) => {
-        this.rememberMailSeq(seq, { from: to, to: from, body });
-        this.pushRecentMail({ id: event.id, from: to, to: from, body, ts: event.ts });
-        this.emit({ kind: "mail", id: event.id, from: to, to: from, body, ts: event.ts });
-        this.wake(from, to, body, event.id, { seq });
-      })
-      .catch((err) => this.log(`delivery failed receipt ${to}->${from} failed: ${String(err)}`));
   }
 
   private wake(to: AgentId, from: AgentId, body: string, mailId?: string, meta: MailDeliveryMeta = {}): void {
