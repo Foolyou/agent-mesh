@@ -212,7 +212,7 @@ function pushOutputLine(job: InstallJob, field: "stdoutLine" | "stderrLine", ste
 }
 
 function containsSensitiveInstallToken(line: string): boolean {
-  return /(?:_authToken|authorization|bearer\s|_password|npm_token|npm_config_|NODE_|--prefix|--registry|--cache|PATH=)/i.test(line);
+  return /(?:_authToken|authorization|bearer\s|_password|npm_token|npm_config_|NODE_(?:AUTH|OPTIONS|PATH=)|--prefix|--registry|--cache|PATH=)/i.test(line);
 }
 
 function randomJobId(random = Math.random): string {
