@@ -1,7 +1,7 @@
 import { test, expect } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { isTranscriptAtBottom, Transcript } from "./Transcript";
+import { isTranscriptAtBottom, mailFoldButtonLabel, mailFoldInitialLineCount, nextMailExpanded, Transcript } from "./Transcript";
 import type { TranscriptItem } from "../types";
 
 const T = "2026-06-09T00:00:00.000Z";
@@ -72,4 +72,39 @@ test("transcript renders compact entries as dim infrastructure markers", () => {
   expect(html).toContain("compact-entry completed");
   expect(html).toContain("--- Context Compacted ---");
   expect(html).toContain("completed");
+});
+
+test("short mail renders fully without an expand button", () => {
+  const html = render([{ id: "m1", kind: "mail", from: "lead", to: "fixer", body: "short mail", ts: T }]);
+
+  expect(html).toContain("short mail");
+  expect(html).not.toContain("mail-expand-btn");
+  expect(html).not.toContain("mail-fold collapsed");
+});
+
+test("long mail renders collapsed by default with an accessible expand button", () => {
+  const html = render([
+    {
+      id: "m1",
+      kind: "mail",
+      from: "lead",
+      to: "fixer",
+      body: ["line 1", "line 2", "line 3", "line 4", "line 5", "line 6"].join("\n"),
+      ts: T,
+    },
+  ]);
+
+  expect(html).toContain("mail-fold collapsed");
+  expect(html).toContain('aria-expanded="false"');
+  expect(html).toContain('aria-controls="mail-body-m1"');
+  expect(html).toContain("show more (+3 lines)");
+});
+
+test("mail fold helpers switch between expand and collapse states", () => {
+  expect(mailFoldInitialLineCount("one line")).toBe(1);
+  expect(mailFoldInitialLineCount("one\ntwo\nthree\nfour")).toBe(4);
+  expect(mailFoldButtonLabel(false, 47)).toBe("show more (+47 lines)");
+  expect(mailFoldButtonLabel(true, 47)).toBe("show less");
+  expect(nextMailExpanded(false)).toBe(true);
+  expect(nextMailExpanded(true)).toBe(false);
 });
