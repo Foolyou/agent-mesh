@@ -92,10 +92,10 @@ try {
       status: 200,
       contentType: "application/json",
       body: JSON.stringify([
-        { id: "codex", installed: true },
-        { id: "claude", installed: true },
-        { id: "opencode", installed: true },
-        { id: "kimi", installed: false },
+        { id: "codex", label: "Codex", installed: true, auth: "ok", installable: "npm", runningAgentsUsingOldVersion: [] },
+        { id: "claude", label: "Claude", installed: true, auth: "ok", installable: "npm", runningAgentsUsingOldVersion: [] },
+        { id: "opencode", label: "OpenCode", installed: true, auth: "ok", installable: "self", runningAgentsUsingOldVersion: [] },
+        { id: "kimi", label: "Kimi", installed: false, auth: "unknown", installable: "self", runningAgentsUsingOldVersion: [] },
       ]),
     }),
   );
