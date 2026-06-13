@@ -20,6 +20,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "@tanstack/react-virtual": "^3",
     "@zed-industries/agent-client-protocol": "^0.4.5",
     "hast-util-sanitize": "5.0.2",
     "react": "^19.2.7",
