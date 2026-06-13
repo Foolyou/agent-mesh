@@ -4,6 +4,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AcpAgentConnection, AcpConnectionOptions } from "./acp/client";
+import type { HarnessId } from "./acp/types";
+import type { HarnessProbeResult } from "./harness-probe";
 import { buildMeshAssistantBriefing } from "./mesh-assistant-briefing";
 import { MeshAssistant } from "./mesh-assistant";
 
@@ -49,6 +51,16 @@ const fakeManager = {
     return "router";
   },
 };
+
+const probeFixture = (over: Partial<HarnessProbeResult> & { id: HarnessId }): HarnessProbeResult => ({
+  label: over.id,
+  installed: true,
+  auth: "ok",
+  installable: "manual",
+  lastProbeAt: 0,
+  runningAgentsUsingOldVersion: [],
+  ...over,
+});
 
 test("Mesh Assistant reports image capability advertised by initialize", async () => {
   const seen: Array<{ image: boolean; harness?: string }> = [];
@@ -110,10 +122,10 @@ test("Mesh Assistant tries explicit harness first, then default fallback order",
   const assistant = new MeshAssistant(fakeManager as any, {
     harness: "opencode",
     installedHarnesses: [
-      { id: "codex", installed: true },
-      { id: "claude", installed: true },
-      { id: "opencode", installed: true },
-      { id: "kimi", installed: true },
+      probeFixture({ id: "codex", installed: true }),
+      probeFixture({ id: "claude", installed: true }),
+      probeFixture({ id: "opencode", installed: true }),
+      probeFixture({ id: "kimi", installed: true }),
     ],
     connectionFactory: (opts) => {
       seen.push(opts);
@@ -144,10 +156,10 @@ test("Mesh Assistant skips uninstalled fallbacks and fails only after all instal
   const conns: FakeAcpConnection[] = [];
   const assistant = new MeshAssistant(fakeManager as any, {
     installedHarnesses: [
-      { id: "codex", installed: true },
-      { id: "claude", installed: false },
-      { id: "opencode", installed: false },
-      { id: "kimi", installed: true },
+      probeFixture({ id: "codex", installed: true }),
+      probeFixture({ id: "claude", installed: false }),
+      probeFixture({ id: "opencode", installed: false }),
+      probeFixture({ id: "kimi", installed: true }),
     ],
     connectionFactory: (opts) => {
       seen.push(opts);

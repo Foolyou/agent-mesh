@@ -32,7 +32,7 @@ test("probeHarnesses reports all registered harnesses with managed prefix taking
     createConnection: () => new FakeProbeConnection("9.9.9", []),
   });
 
-  expect(rows.map((r) => r.id)).toEqual(Object.keys(HARNESSES));
+  expect(rows.map((r) => r.id)).toEqual(Object.keys(HARNESSES) as HarnessId[]);
   expect(rows.find((r) => r.id === "codex")).toMatchObject({ installed: true, path: join(managedBin, "codex-acp"), version: "9.9.9" });
   expect(rows.find((r) => r.id === "claude")).toMatchObject({ installed: true, path: "/usr/bin/claude-agent-acp" });
 });
