@@ -196,6 +196,7 @@ export type ServerMsg =
   | { t: "mail"; name: string; entry: MailEntry }
   | { t: "permission.add"; name: string; req: PermissionReq }
   | { t: "permission.remove"; name: string; resolved: ResolvedPermission }
-  | { t: "assistant.status"; status: AssistantStatus; working?: boolean };
+  | { t: "assistant.status"; status: AssistantStatus; working?: boolean }
+  | { t: "harnesses-changed"; harnessId: HarnessId };
 
 export type { MeshConfig, MeshEdge, AgentId, AgentStatus, AgentActivity, AgentRole, HarnessId };

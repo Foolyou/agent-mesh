@@ -33,6 +33,16 @@ export interface HarnessModelProbeOptions {
 const cache = new Map<HarnessId, HarnessModelProbeResult>();
 const inflight = new Map<HarnessId, Promise<HarnessModelProbeResult>>();
 
+export function clearHarnessModelsCache(id?: HarnessId): void {
+  if (id) {
+    cache.delete(id);
+    inflight.delete(id);
+    return;
+  }
+  cache.clear();
+  inflight.clear();
+}
+
 export async function probeHarnessModels(id: HarnessId, opts: HarnessModelProbeOptions = {}): Promise<HarnessModelProbeResult> {
   const spec = resolveHarness(id);
   const now = opts.now ?? Date.now;

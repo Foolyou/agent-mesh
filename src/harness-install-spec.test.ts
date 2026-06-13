@@ -17,6 +17,8 @@ test("assertSafeNpmPackageSpec rejects non-pinned and executable package specs",
     "@scope/pkg",
     "@scope/pkg@1.2.3+build",
     "@scope/pkg@1.2.3;touch /tmp/pwned",
+    "@scope/../pkg@1.2.3",
+    "../pkg@1.2.3",
     "pkg@1.2",
     "pkg@1.2.3 && echo bad",
   ];
