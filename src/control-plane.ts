@@ -1001,7 +1001,11 @@ export class ControlPlane {
     this.emit({ kind: "agent_status", agent: a.id, status: "spawning", ts: now() });
     let initialized = false;
     try {
-      await mkdir(cwd, { recursive: true });
+      try {
+        await mkdir(cwd, { recursive: true });
+      } catch {
+        throw new Error(`agent project dir does not exist: ${cwd}`);
+      }
       await conn.start();
       const initRes = await conn.initialize();
       const resolvedHarness = {

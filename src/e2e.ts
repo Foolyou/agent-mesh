@@ -9,6 +9,11 @@ import { mkdir, mkdtemp, rm, stat } from "node:fs/promises";
 import { MeshManager } from "./mesh-manager";
 import { DEMO_MESH } from "./config";
 
+// Ensure the fixture project directory exists at the CWD. A fresh checkout /
+// worktree has no test_mesh_0/ (in .gitignore) and Bun reports a missing spawn
+// cwd as a misleading ENOENT on the command itself.
+await mkdir(join(process.cwd(), "test_mesh_0"), { recursive: true });
+
 // Isolated throwaway root: persisted sessions / mailbox / daemon registry from
 // earlier runs replay stale events (false mailSeen, resumed agents with stale
 // context) and a shared registry lets concurrent e2e runs SIGTERM each other.
