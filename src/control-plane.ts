@@ -123,6 +123,14 @@ function claudeHealthSignal(message: unknown): { signal: AgentHealthSignalKind; 
 
 export type ControlPlaneStopReason = "explicit" | "idle" | "shutdown";
 
+export interface ResolvedHarnessInfo {
+  agentId: AgentId;
+  harnessId: AgentConfig["harness"];
+  path?: string;
+  version?: string;
+  spawnedAt: string;
+}
+
 export interface ControlPlaneOptions {
   mailboxPath?: string;
   /** auto-deny a permission request after this many ms with no human decision */
@@ -214,6 +222,7 @@ export class ControlPlane {
   private emptyMailChecks = new Map<AgentId, { count: number; last: number }>();
   private activityStates = new Map<AgentId, AgentActivity>();
   private sessionState: MeshSessionState = { meshExpectedAlive: true, agents: {} };
+  private resolvedHarnesses = new Map<AgentId, ResolvedHarnessInfo>();
 
   constructor(config: MeshConfig, opts: ControlPlaneOptions = {}) {
     this.mesh = new Mesh(config);
@@ -251,6 +260,15 @@ export class ControlPlane {
     const c = this.conns.get(id);
     if (!c) throw new Error(`no connection for agent ${id}`);
     return c;
+  }
+
+  getResolvedHarness(id: AgentId): ResolvedHarnessInfo | undefined {
+    const info = this.resolvedHarnesses.get(id);
+    return info ? { ...info } : undefined;
+  }
+
+  listResolvedHarnesses(): ResolvedHarnessInfo[] {
+    return [...this.resolvedHarnesses.values()].map((info) => ({ ...info }));
   }
 
   /** Current authoritative agent state for reconnecting clients. */
@@ -657,6 +675,7 @@ export class ControlPlane {
     await this.compactMailboxNow();
     for (const a of this.mesh.agents) this.clearTurnHealthForAgent(a.id);
     for (const c of this.conns.values()) c.kill();
+    this.resolvedHarnesses.clear();
     this.mcp?.close();
     for (const p of this.pending.values()) clearTimeout(p.timer);
     this.pending.clear();
@@ -714,6 +733,7 @@ export class ControlPlane {
       onExit: (code) => {
         if (this.conns.get(a.id) !== conn) return;
         this.clearTurnHealthForAgent(a.id);
+        this.resolvedHarnesses.delete(a.id);
         this.mesh.setStatus(a.id, "dead");
         this.turnCounts.set(a.id, 0);
         this.clearQueuedTurns(a.id);
@@ -730,6 +750,13 @@ export class ControlPlane {
       await mkdir(cwd, { recursive: true });
       await conn.start();
       const initRes = await conn.initialize();
+      this.resolvedHarnesses.set(a.id, {
+        agentId: a.id,
+        harnessId: a.harness,
+        path: Bun.which(command) ?? undefined,
+        version: typeof (initRes as any)?.agentInfo?.version === "string" ? (initRes as any).agentInfo.version : undefined,
+        spawnedAt: now(),
+      });
       const mcpServers = [{ type: "http", name: "mesh", url: this.mcp.urlFor(a.id), headers: [] }];
       const saved = this.sessionState.agents[a.id];
       let loaded = false;
@@ -839,6 +866,7 @@ export class ControlPlane {
       this.emit({ kind: "agent_capabilities", agent: a.id, image: imageCap, ts: now() });
       if (this.conns.get(a.id) !== conn) {
         conn.kill();
+        this.resolvedHarnesses.delete(a.id);
         throw new Error(`spawn for ${a.id} was superseded`);
       }
       this.mesh.setStatus(a.id, "ready");
@@ -851,6 +879,7 @@ export class ControlPlane {
         this.sessionModes.delete(a.id);
         this.sessionModels.delete(a.id);
         this.imageCaps.delete(a.id);
+        this.resolvedHarnesses.delete(a.id);
       }
       conn.kill();
       if (this.conns.get(a.id) === conn) {
@@ -943,6 +972,7 @@ export class ControlPlane {
     this.sessionModes.delete(id);
     this.sessionModels.delete(id);
     this.imageCaps.delete(id);
+    this.resolvedHarnesses.delete(id);
     this.loadedSessions.delete(id);
     this.resumePendingValidation.delete(id);
     this.mesh.setStatus(id, "stopped");
