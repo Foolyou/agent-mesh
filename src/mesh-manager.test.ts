@@ -336,6 +336,31 @@ test("deleteMesh removes mesh upload bucket but keeps assistant uploads", async 
   }
 });
 
+test("deleteMesh removes mesh artifact bucket", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mgr-artifacts-root-"));
+  const m = new MeshManager({ root, hostScript: FIXTURE });
+  const { existsSync } = await import("node:fs");
+  try {
+    await m.defineMesh(cfg);
+    await mkdir(join(root, "artifacts", "echo", "r"), { recursive: true });
+    await writeFile(join(root, "artifacts", "echo", "r", "diagram.png"), "x");
+    await m.deleteMesh("echo");
+    expect(existsSync(join(root, "artifacts", "echo"))).toBe(false);
+  } finally {
+    await m.stopAll();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("loadDefinitions rejects manually edited unsafe artifact names", async () => {
+  await mkdir(join(dir, "meshes"), { recursive: true });
+  await writeFile(
+    join(dir, "meshes", "unsafe.json"),
+    JSON.stringify({ ...cfg, name: "bad..mesh", agents: [{ ...cfg.agents[0]!, id: "bad/agent" }] }),
+  );
+  await expect(mgr.loadDefinitions()).rejects.toThrow(/invalid/i);
+});
+
 test("deleteMesh refuses while running", async () => {
   await mgr.defineMesh(cfg);
   await mgr.startMesh("echo");

@@ -1,9 +1,10 @@
 import { test, expect } from "bun:test";
-import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { handleApi } from "./api";
 import { WebGateway } from "./gateway";
+import { artifactAgentDir } from "./artifacts";
 import type { MeshEvent, MeshConfig } from "../acp/types";
 
 const CFG: MeshConfig = {
@@ -26,7 +27,8 @@ function fakeManager(config: MeshConfig = CFG) {
     listMeshes() {
       return [{ name: "demo", defined: true, status: "running" as const }];
     },
-    configOf() {
+    configOf(n = config.name) {
+      if (n !== config.name) throw new Error(`no such mesh "${n}"`);
       return config;
     },
     routerOf() {
@@ -207,6 +209,35 @@ test("POST /api/meshes/demo/agents/codex-1/steer delegates to steerAgent", async
   const r = await handleApi(gw, "POST", "/api/meshes/demo/agents/codex-1/steer", { text: "urgent" });
   expect(r.status).toBe(200);
   expect(m.calls).toContainEqual(["steerAgent", "demo", "codex-1", "urgent", []]);
+});
+
+test("GET /api/meshes/:mesh/agents/:agent/artifacts/:path serves scoped artifacts", async () => {
+  const root = await mkdtemp(join(tmpdir(), "api-artifacts-"));
+  try {
+    const dir = artifactAgentDir(root, "demo", "codex-1");
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, "report.md"), "# artifact\n");
+    const gw = new WebGateway(fakeManager() as any, undefined, { root });
+    const r = await handleApi(gw, "GET", "/api/meshes/demo/agents/codex-1/artifacts/report.md", undefined);
+    expect(r.status).toBe(200);
+    expect(r.body).toBeInstanceOf(Response);
+    expect(await r.body.text()).toBe("# artifact\n");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("GET artifact route rejects unknown mesh/agent pairs", async () => {
+  const root = await mkdtemp(join(tmpdir(), "api-artifacts-missing-"));
+  try {
+    const gw = new WebGateway(fakeManager() as any, undefined, { root });
+    const missingMesh = await handleApi(gw, "GET", "/api/meshes/missing/agents/codex-1/artifacts/report.md", undefined);
+    expect(missingMesh.status).toBe(404);
+    const missingAgent = await handleApi(gw, "GET", "/api/meshes/demo/agents/nope/artifacts/report.md", undefined);
+    expect(missingAgent.status).toBe(404);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("DELETE /api/meshes/demo/agents/codex-1/queue/q1 delegates to removeQueuedTurn", async () => {
