@@ -424,7 +424,7 @@ export function MeshBuilder({
             </button>
             {agents.map((a, i) => (
               <div
-                className="builder-tab"
+                className={`builder-tab${a.role === "router" ? " router-tab" : ""}`}
                 role="tab"
                 id={`mesh-builder-tab-${a.key}`}
                 ref={(el) => {
@@ -545,112 +545,124 @@ export function MeshBuilder({
               </div>
               <div className="field">
                 <div className="agent-block">
-                  <div className="agrow">
-                    <input
-                      ref={activeIdInputRef}
-                      className="inp"
-                      value={activeAgent.id}
-                      placeholder="id"
-                      onChange={(e) => setAgent(activeIndex, { id: e.target.value })}
-                    />
-                    <select
-                      className="inp select-control"
-                      value={activeAgent.harness}
-                      onFocus={() => void refreshHarnesses()}
-                      title={harnessProbeErr ? t("build.harness.refreshFailed") : undefined}
-                      onChange={(e) => {
-                        const harness = e.target.value as HarnessId;
-                        setAgent(activeIndex, {
-                          harness,
-                          model: undefined,
-                          effort: activeAgent.effort && isEffortSupportedByHarness(harness, activeAgent.effort) ? activeAgent.effort : undefined,
-                          opencodePermission: harness === "opencode" ? activeAgent.opencodePermission : undefined,
-                        });
-                      }}
-                    >
-                      {HARNESSES.map((h) => (
-                        <option key={h} value={h} disabled={harnessInstalled[h] === false} title={harnessInstalled[h] === false ? t("build.harness.notInstalled") : undefined}>
-                          {harnessInstalled[h] === false ? `${h} (${t("build.harness.notInstalled")})` : h}
-                        </option>
-                      ))}
-                    </select>
-                    <select
-                      className="inp select-control"
-                      value={activeAgent.role}
-                      onChange={(e) => {
-                        const role = e.target.value as AgentRole;
-                        setAgent(activeIndex, { role, lazy: role === "router" ? undefined : activeAgent.lazy });
-                      }}
-                    >
-                      <option value="router">router</option>
-                      <option value="member">member</option>
-                    </select>
-                    <input className="inp" value={activeAgent.project} placeholder="project dir" onChange={(e) => setAgent(activeIndex, { project: e.target.value })} />
-                  </div>
-                  <div className="agrow-adv">
-                    <span className="adv-label">{t("model")}</span>
-                    <select
-                      className="inp adv-sel select-control"
-                      value={activeAgent.model ?? ""}
-                      title={t("build.model.hint")}
-                      disabled={modelProbes[activeAgent.harness]?.status === "loading"}
-                      onFocus={() => void refreshModels(activeAgent.harness)}
-                      onChange={(e) => setAgent(activeIndex, { model: e.target.value || undefined })}
-                    >
-                      <option value="">{t("build.model.default")}</option>
-                      {activeModelMissing ? (
-                        <option value={activeAgent.model}>{activeAgent.model} ({t("build.model.notAdvertised")})</option>
-                      ) : null}
-                      {(activeModelProbe?.models ?? []).map((m) => (
-                        <option key={m.id} value={m.id}>{m.name || m.id}</option>
-                      ))}
-                    </select>
-                    {activeModelProbe?.status === "loading" ? (
-                      <span className="probe-note">{t("build.model.loading")}</span>
-                    ) : activeModelProbe?.status === "error" ? (
-                      <button type="button" className="linkish probe-note" onClick={() => void refreshModels(activeAgent.harness, true)} title={activeModelProbe?.message}>
-                        {t("build.model.retry")}
-                      </button>
-                    ) : null}
-                    {activeEfforts.length > 0 ? (
-                      <>
-                        <span className="adv-label">{t("effort")}</span>
-                        <select
-                          className="inp adv-sel select-control"
-                          value={activeAgent.effort ?? ""}
-                          title={t("effort.hint")}
-                          onChange={(e) => setAgent(activeIndex, { effort: (e.target.value || undefined) as ThinkingEffort | undefined })}
-                        >
-                          <option value="">{t("effort.default")}</option>
-                          {activeEfforts.map((eff) => (
-                            <option key={eff} value={eff}>{t(`effort.${eff}`)}</option>
-                          ))}
-                        </select>
-                      </>
-                    ) : null}
-                    <label className="check-inline" title={t("build.lazy.tooltip")}>
+                  <div className="agent-subgroup">
+                    <div className="subgroup-head">{t("build.group.identity")}</div>
+                    <div className="agrow agrow-identity">
                       <input
-                        type="checkbox"
-                        checked={activeAgent.lazy === true}
-                        disabled={activeAgent.role === "router"}
-                        onChange={(e) => setAgent(activeIndex, { lazy: e.target.checked || undefined })}
+                        ref={activeIdInputRef}
+                        className="inp"
+                        value={activeAgent.id}
+                        placeholder="id"
+                        onChange={(e) => setAgent(activeIndex, { id: e.target.value })}
                       />
-                      {t("build.lazy")}
-                    </label>
-                    {activeAgent.harness === "opencode" ? (
-                      <label className="check-inline" title={t("ocperm.hint")}>
-                        {t("ocperm")}
-                        <select
-                          value={activeAgent.opencodePermission ?? "ask"}
-                          onChange={(e) => setAgent(activeIndex, { opencodePermission: e.target.value === "allow" ? "allow" : undefined })}
-                        >
-                          <option value="ask">{t("ocperm.ask")}</option>
-                          <option value="allow">{t("ocperm.allow")}</option>
-                        </select>
-                      </label>
-                    ) : null}
+                      <select
+                        className="inp select-control"
+                        value={activeAgent.role}
+                        onChange={(e) => {
+                          const role = e.target.value as AgentRole;
+                          setAgent(activeIndex, { role, lazy: role === "router" ? undefined : activeAgent.lazy });
+                        }}
+                      >
+                        <option value="router">router</option>
+                        <option value="member">member</option>
+                      </select>
+                    </div>
                   </div>
-                  <div className="agent-instructions-field">
+                  <div className="agent-subgroup">
+                    <div className="subgroup-head">{t("build.group.runtime")}</div>
+                    <div className="agrow agrow-runtime">
+                      <select
+                        className="inp select-control"
+                        value={activeAgent.harness}
+                        onFocus={() => void refreshHarnesses()}
+                        title={harnessProbeErr ? t("build.harness.refreshFailed") : undefined}
+                        onChange={(e) => {
+                          const harness = e.target.value as HarnessId;
+                          setAgent(activeIndex, {
+                            harness,
+                            model: undefined,
+                            effort: activeAgent.effort && isEffortSupportedByHarness(harness, activeAgent.effort) ? activeAgent.effort : undefined,
+                            opencodePermission: harness === "opencode" ? activeAgent.opencodePermission : undefined,
+                          });
+                        }}
+                      >
+                        {HARNESSES.map((h) => (
+                          <option key={h} value={h} disabled={harnessInstalled[h] === false} title={harnessInstalled[h] === false ? t("build.harness.notInstalled") : undefined}>
+                            {harnessInstalled[h] === false ? `${h} (${t("build.harness.notInstalled")})` : h}
+                          </option>
+                        ))}
+                      </select>
+                      <input className="inp" value={activeAgent.project} placeholder="project dir" onChange={(e) => setAgent(activeIndex, { project: e.target.value })} />
+                    </div>
+                  </div>
+                  <div className="agent-subgroup">
+                    <div className="subgroup-head">{t("build.group.model")}</div>
+                    <div className="agrow-adv">
+                      <span className="adv-label">{t("model")}</span>
+                      <select
+                        className="inp adv-sel select-control"
+                        value={activeAgent.model ?? ""}
+                        title={t("build.model.hint")}
+                        disabled={modelProbes[activeAgent.harness]?.status === "loading"}
+                        onFocus={() => void refreshModels(activeAgent.harness)}
+                        onChange={(e) => setAgent(activeIndex, { model: e.target.value || undefined })}
+                      >
+                        <option value="">{t("build.model.default")}</option>
+                        {activeModelMissing ? (
+                          <option value={activeAgent.model}>{activeAgent.model} ({t("build.model.notAdvertised")})</option>
+                        ) : null}
+                        {(activeModelProbe?.models ?? []).map((m) => (
+                          <option key={m.id} value={m.id}>{m.name || m.id}</option>
+                        ))}
+                      </select>
+                      {activeModelProbe?.status === "loading" ? (
+                        <span className="probe-note">{t("build.model.loading")}</span>
+                      ) : activeModelProbe?.status === "error" ? (
+                        <button type="button" className="linkish probe-note" onClick={() => void refreshModels(activeAgent.harness, true)} title={activeModelProbe?.message}>
+                          {t("build.model.retry")}
+                        </button>
+                      ) : null}
+                      {activeEfforts.length > 0 ? (
+                        <>
+                          <span className="adv-label">{t("effort")}</span>
+                          <select
+                            className="inp adv-sel select-control"
+                            value={activeAgent.effort ?? ""}
+                            title={t("effort.hint")}
+                            onChange={(e) => setAgent(activeIndex, { effort: (e.target.value || undefined) as ThinkingEffort | undefined })}
+                          >
+                            <option value="">{t("effort.default")}</option>
+                            {activeEfforts.map((eff) => (
+                              <option key={eff} value={eff}>{t(`effort.${eff}`)}</option>
+                            ))}
+                          </select>
+                        </>
+                      ) : null}
+                      <label className="check-inline" title={t("build.lazy.tooltip")}>
+                        <input
+                          type="checkbox"
+                          checked={activeAgent.lazy === true}
+                          disabled={activeAgent.role === "router"}
+                          onChange={(e) => setAgent(activeIndex, { lazy: e.target.checked || undefined })}
+                        />
+                        {t("build.lazy")}
+                      </label>
+                      {activeAgent.harness === "opencode" ? (
+                        <label className="check-inline" title={t("ocperm.hint")}>
+                          {t("ocperm")}
+                          <select
+                            value={activeAgent.opencodePermission ?? "ask"}
+                            onChange={(e) => setAgent(activeIndex, { opencodePermission: e.target.value === "allow" ? "allow" : undefined })}
+                          >
+                            <option value="ask">{t("ocperm.ask")}</option>
+                            <option value="allow">{t("ocperm.allow")}</option>
+                          </select>
+                        </label>
+                      ) : null}
+                    </div>
+                  </div>
+                  <div className="agent-subgroup agent-instructions-field">
+                    <div className="subgroup-head">{t("build.instructions")}</div>
                     <div className="field-label-row">
                       <label className="adv-label" htmlFor={`agent-${activeIndex}-instructions`}>
                         {t("build.instructions")}
@@ -679,7 +691,7 @@ export function MeshBuilder({
 
           {err ? <div className="err">{err}</div> : null}
 
-          <div className="row" style={{ justifyContent: "flex-end" }}>
+          <div className="row builder-actions" style={{ justifyContent: "flex-end" }}>
             <Btn kind="ghost" onClick={() => onClose()}>
               {t("cancel")}
             </Btn>

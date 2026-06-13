@@ -1448,7 +1448,8 @@ body::after {
 .modal {
   width: min(640px, 92vw);
   max-height: 84vh;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   background: var(--bg-raise);
   border: 1px solid var(--line-bright);
   border-radius: var(--r);
@@ -1735,6 +1736,9 @@ select.inp {
   background: color-mix(in srgb, var(--bg-raise) 64%, transparent);
   font-weight: 600;
 }
+.builder-tab.router-tab {
+  border-left: 2px solid var(--info);
+}
 .builder-tab:focus {
   outline: none;
 }
@@ -1810,11 +1814,28 @@ select.inp {
 .agent-block {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 9px;
   padding: 9px;
   border: 1px solid var(--line);
   border-radius: var(--r);
   background: color-mix(in srgb, var(--bg-raise) 68%, transparent);
+}
+.agent-subgroup {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.subgroup-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 5px;
+  border-bottom: 1px solid var(--line);
+  color: var(--fg-faint);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
 }
 .agrow {
   display: grid;
@@ -1917,6 +1938,9 @@ select.inp {
   line-height: 1.55;
 }
 .text-editor-actions {
+  justify-content: flex-end;
+}
+.builder-actions {
   justify-content: flex-end;
 }
 .err {
@@ -2550,6 +2574,88 @@ select.inp {
     flex: 1;
     min-height: 56vh;
     font-size: 16px;
+  }
+}
+
+@media (max-width: 480px) {
+  .scrim {
+    padding-top: max(0px, env(safe-area-inset-top));
+  }
+  .modal {
+    width: 100vw;
+    max-height: calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+    border-left: 0;
+    border-right: 0;
+    border-radius: 0;
+  }
+  .modal .mbody {
+    padding: 14px;
+  }
+  .builder-tabs {
+    scrollbar-width: thin;
+  }
+  .builder-tabs > .btn {
+    flex: none;
+  }
+  .builder-tab {
+    flex: none;
+    min-width: 96px;
+    max-width: 200px;
+  }
+  .builder-tab-remove {
+    width: 28px;
+    height: 28px;
+  }
+  .agrow {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+  .agrow-adv {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 8px;
+    padding-left: 0;
+  }
+  .inp,
+  .adv-sel,
+  select.inp {
+    min-width: 0;
+    width: 100%;
+    box-sizing: border-box;
+  }
+  .adv-sel {
+    flex: none;
+    font-size: 16px;
+  }
+  .adv-label {
+    display: block;
+    width: 100%;
+    font-size: 11px;
+    letter-spacing: 0.6px;
+  }
+  .probe-note {
+    white-space: normal;
+  }
+  .check-inline {
+    width: 100%;
+    min-height: 44px;
+    padding: 6px 4px;
+    box-sizing: border-box;
+  }
+  .check-inline select {
+    min-width: 0;
+    max-width: 100%;
+  }
+  .builder-actions {
+    position: sticky;
+    bottom: 0;
+    z-index: 2;
+    gap: 8px;
+    background: var(--bg-raise);
+    padding: 10px 14px;
+    padding-bottom: max(10px, env(safe-area-inset-bottom));
+    border-top: 1px solid var(--line);
+    margin: 0 -14px -14px;
   }
 }
 
