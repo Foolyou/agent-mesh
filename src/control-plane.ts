@@ -49,6 +49,13 @@ interface HealthFailureSummary {
   ts: string;
 }
 
+export interface ContextUsage {
+  used: number;
+  size: number;
+  percent: number;
+  updatedAt: number;
+}
+
 function compactPreview(text: string): string {
   return text.replace(/\s+/g, " ").trim().slice(0, 160);
 }
@@ -232,6 +239,8 @@ export class ControlPlane {
   private activityStates = new Map<AgentId, AgentActivity>();
   private sessionState: MeshSessionState = { meshExpectedAlive: true, agents: {} };
   private resolvedHarnesses = new Map<AgentId, ResolvedHarnessInfo>();
+  private agentContextUsage = new Map<AgentId, ContextUsage>();
+  private agentAdvertisedCommands = new Map<AgentId, Set<string>>();
   private pendingRespawns = new Map<AgentId, ReturnType<typeof setTimeout>>();
 
   constructor(config: MeshConfig, opts: ControlPlaneOptions = {}) {
@@ -266,6 +275,19 @@ export class ControlPlane {
     this.emit({ kind: "log", text, ts: now() });
   }
 
+  private updateAgentUsage(id: AgentId, usage: { used: number; size: number; percent: number }): void {
+    this.agentContextUsage.set(id, { ...usage, updatedAt: Date.now() });
+  }
+
+  private updateAgentCommands(id: AgentId, commands: string[]): void {
+    this.agentAdvertisedCommands.set(id, new Set(commands));
+  }
+
+  private clearAgentSelfAwareness(id: AgentId): void {
+    this.agentContextUsage.delete(id);
+    this.agentAdvertisedCommands.delete(id);
+  }
+
   agent(id: AgentId): AcpAgentConnection {
     const c = this.conns.get(id);
     if (!c) throw new Error(`no connection for agent ${id}`);
@@ -279,6 +301,19 @@ export class ControlPlane {
 
   listResolvedHarnesses(): ResolvedHarnessInfo[] {
     return [...this.resolvedHarnesses.values()].map((info) => ({ ...info }));
+  }
+
+  getAgentContextUsage(id: AgentId): ContextUsage | null {
+    const usage = this.agentContextUsage.get(id);
+    return usage ? { ...usage } : null;
+  }
+
+  getAgentAdvertisedCommands(id: AgentId): Set<string> {
+    return new Set(this.agentAdvertisedCommands.get(id) ?? []);
+  }
+
+  listAgentContextUsages(): Map<AgentId, ContextUsage> {
+    return new Map([...this.agentContextUsage.entries()].map(([id, usage]) => [id, { ...usage }]));
   }
 
   /** Current authoritative agent state for reconnecting clients. */
@@ -639,6 +674,7 @@ export class ControlPlane {
 
   private async forceRespawnAgent(id: AgentId): Promise<void> {
     if (this.sessionRunDir) this.sessionState = await clearAgentSession(this.sessionRunDir, this.mesh.name, id);
+    this.clearAgentSelfAwareness(id);
     this.emit({ kind: "agent_status", agent: id, status: this.mesh.status(id) ?? "dead", detail: "force respawn", ts: now() });
     await this.ensureSpawned(id, { manual: true, forceFresh: true, drainPendingMail: false });
     this.emit({ kind: "agent_status", agent: id, status: this.mesh.status(id) ?? "ready", detail: "agent respawned (force)", ts: now() });
@@ -733,6 +769,8 @@ export class ControlPlane {
     this.spawning.clear();
     this.loadedSessions.clear();
     this.resumePendingValidation.clear();
+    this.agentContextUsage.clear();
+    this.agentAdvertisedCommands.clear();
   }
 
   // Re-register on EVERY (re)spawn. The per-agent MCP transport binds a single
@@ -747,6 +785,7 @@ export class ControlPlane {
   private async spawnAgent(a: AgentConfig, opts: { drainPendingMail: boolean; forceFresh?: boolean }): Promise<AcpAgentConnection> {
     if (!this.mcp) throw new Error("control plane not started");
     await this.ensureMcpRegistered(a);
+    this.clearAgentSelfAwareness(a.id);
 
     const existing = this.conns.get(a.id);
     if (existing) {
@@ -786,10 +825,13 @@ export class ControlPlane {
       onPromptStarted: (turn) => this.noteTurnStarted(turn),
       onPromptSignal: (turn) => this.noteTurnSignal(a.id, turn),
       onExtNotification: (method, params, turn) => this.noteExtNotification(a.id, method, params, turn),
+      onContextUsage: (usage) => this.updateAgentUsage(a.id, usage),
+      onAvailableCommands: (commands) => this.updateAgentCommands(a.id, commands),
       onExit: (code) => {
         if (this.conns.get(a.id) !== conn) return;
         this.clearTurnHealthForAgent(a.id);
         this.resolvedHarnesses.delete(a.id);
+        this.clearAgentSelfAwareness(a.id);
         this.mesh.setStatus(a.id, "dead");
         this.turnCounts.set(a.id, 0);
         this.clearQueuedTurns(a.id);
@@ -925,6 +967,7 @@ export class ControlPlane {
       if (this.conns.get(a.id) !== conn) {
         conn.kill();
         this.resolvedHarnesses.delete(a.id);
+        this.clearAgentSelfAwareness(a.id);
         throw new Error(`spawn for ${a.id} was superseded`);
       }
       this.mesh.setStatus(a.id, "ready");
@@ -938,10 +981,12 @@ export class ControlPlane {
         this.sessionModels.delete(a.id);
         this.imageCaps.delete(a.id);
         this.resolvedHarnesses.delete(a.id);
+        this.clearAgentSelfAwareness(a.id);
       }
       conn.kill();
       if (this.conns.get(a.id) === conn) {
         this.conns.delete(a.id);
+        this.clearAgentSelfAwareness(a.id);
         this.clearQueuedTurns(a.id);
         this.emitActivityIfChanged(a.id);
         this.mesh.setStatus(a.id, "dead");
@@ -965,6 +1010,7 @@ export class ControlPlane {
         if (this.spawnGeneration.get(id) !== generation || this.mesh.status(id) === "stopped") {
           conn.kill();
           if (this.conns.get(id) === conn) this.conns.delete(id);
+          this.clearAgentSelfAwareness(id);
           throw new Error(`spawn for ${id} was stopped`);
         }
         return conn;
@@ -1031,6 +1077,7 @@ export class ControlPlane {
     this.sessionModels.delete(id);
     this.imageCaps.delete(id);
     this.resolvedHarnesses.delete(id);
+    this.clearAgentSelfAwareness(id);
     this.loadedSessions.delete(id);
     this.resumePendingValidation.delete(id);
     this.mesh.setStatus(id, "stopped");
