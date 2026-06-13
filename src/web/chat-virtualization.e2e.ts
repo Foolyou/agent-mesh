@@ -218,11 +218,11 @@ try {
     await canvas.waitFor({ state: "detached", timeout: 4000 });
   });
 
-  await step("Scenario C: expanding a lower tool does not move the viewport anchor", async () => {
+  await step("Scenario C: expanding an above-viewport row preserves the viewport anchor", async () => {
     await page.locator(".conv-router-tab").click();
     const stream = await activeStream(page);
     let probe: { anchorIndex: string; before: number } | null = null;
-    for (const scrollTop of [8_000, 16_000, 24_000, 32_000, 40_000, 48_000]) {
+    for (const scrollTop of [8_000, 16_000, 24_000, 32_000, 40_000, 48_000, 56_000]) {
       await stream.evaluate((el, scrollTop) => {
         el.scrollTop = scrollTop;
         el.dispatchEvent(new Event("scroll", { bubbles: true }));
@@ -239,10 +239,9 @@ try {
         });
         if (!row) return null;
         const anchorTop = row.getBoundingClientRect().top;
-        const streamBottom = streamBox.bottom;
-        const expandableRow = rows.find((candidate) => {
+        const expandableRow = rows.reverse().find((candidate) => {
           const box = candidate.getBoundingClientRect();
-          return box.top > anchorTop + 40 && box.bottom < streamBottom && !!candidate.querySelector(".tool .thead, .thought .label");
+          return box.bottom < streamBox.top && !!candidate.querySelector(".tool .thead, .thought .label");
         });
         if (!expandableRow) return null;
         (expandableRow.querySelector(".tool .thead, .thought .label") as HTMLElement).click();
@@ -250,7 +249,7 @@ try {
       });
       if (probe) break;
     }
-    if (!probe) throw new Error("missing lower visible expandable row");
+    if (!probe) throw new Error("missing above-viewport expandable row");
     await page.waitForTimeout(120);
     const anchor = page.locator(`.conv-panel [data-virtual-row='true'][data-index="${probe.anchorIndex}"]`);
     const before = probe.before;

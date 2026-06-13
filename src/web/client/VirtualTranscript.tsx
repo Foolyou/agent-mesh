@@ -3,7 +3,7 @@ import { measureElement as measureVirtualElement, useVirtualizer, type Rect, typ
 import type { TranscriptItem } from "../types";
 import { Empty } from "./ui";
 import { useI18n } from "./i18n";
-import { initialBottomOffset, isVirtualAtBottom, shouldAdjustForMeasuredHeightChange, shouldFollowAppend } from "./virtual-transcript-scroll";
+import { initialBottomOffset, isVirtualAtBottom, shouldFollowAppend } from "./virtual-transcript-scroll";
 import {
   initialTranscriptMeasurements,
   setTranscriptMeasuredHeight,
@@ -63,6 +63,7 @@ export function VirtualTranscript({
   const parentRef = useRef<HTMLDivElement>(null);
   const stickRef = useRef(true);
   const previousCountRef = useRef(items.length);
+  const measuredSizesRef = useRef(new Map<string | number, number>());
   const [stick, setStick] = useState(true);
   const [widthBucket, setWidthBucket] = useState(() => transcriptWidthBucket(initialRect.width));
   const initialMeasurementsCache =
@@ -77,6 +78,16 @@ export function VirtualTranscript({
       const measured = measureVirtualElement(element, entry, instance);
       const index = Number(element.getAttribute("data-index"));
       const item = Number.isInteger(index) ? items[index] : undefined;
+      const key = item?.id ?? index;
+      const previous = measuredSizesRef.current.get(key);
+      const virtualItem = instance.getVirtualItems().find((row) => row.index === index);
+      const delta = previous === undefined ? 0 : measured - previous;
+      const scrollOffset = instance.scrollOffset ?? 0;
+      if (delta !== 0 && virtualItem && virtualItem.start < scrollOffset) {
+        const scroll = parentRef.current;
+        if (scroll) scroll.scrollTop += delta;
+      }
+      measuredSizesRef.current.set(key, measured);
       if (cacheScope && item && widthBucket) setTranscriptMeasuredHeight(cacheScope, item.id, widthBucket, measured);
       return measured;
     },
@@ -84,7 +95,6 @@ export function VirtualTranscript({
     initialRect,
     initialOffset: initialOffset ?? (() => initialBottomOffset(items, initialRect.height)),
   });
-  virtualizer.shouldAdjustScrollPositionOnItemSizeChange = shouldAdjustForMeasuredHeightChange;
 
   useLayoutEffect(() => {
     const el = parentRef.current;

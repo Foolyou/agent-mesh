@@ -1,4 +1,3 @@
-import type { VirtualItem } from "@tanstack/react-virtual";
 import type { TranscriptItem } from "../types";
 import { estimateTranscriptItemSize } from "./VirtualTranscript";
 
@@ -20,8 +19,4 @@ export function initialBottomOffset(items: TranscriptItem[], viewportHeight: num
 
 export function shouldFollowAppend(wasAtBottom: boolean, previousCount: number, nextCount: number): boolean {
   return wasAtBottom && nextCount > previousCount;
-}
-
-export function shouldAdjustForMeasuredHeightChange(item: VirtualItem, scrollOffset: number): boolean {
-  return item.start < scrollOffset;
 }

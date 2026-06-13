@@ -1,5 +1,12 @@
 import { expect, test } from "bun:test";
-import { initialTranscriptMeasurements, setTranscriptMeasuredHeight, transcriptWidthBucket, type TranscriptMeasurementCacheScope } from "./transcript-measurement-cache";
+import {
+  getTranscriptMeasuredHeight,
+  initialTranscriptMeasurements,
+  setTranscriptMeasuredHeight,
+  TRANSCRIPT_MEASUREMENT_CACHE_LIMIT,
+  transcriptWidthBucket,
+  type TranscriptMeasurementCacheScope,
+} from "./transcript-measurement-cache";
 import type { TranscriptItem } from "../types";
 
 const T = "2026-06-09T00:00:00.000Z";
@@ -25,4 +32,14 @@ test("initialTranscriptMeasurements reuses cached row heights by mesh, agent, it
   expect(measurements.map((m) => m.size)).toEqual([50, 140, 50]);
   expect(measurements.map((m) => m.start)).toEqual([0, 50, 190]);
   expect(measurements.at(-1)?.end).toBe(240);
+});
+
+test("measurement cache evicts oldest entries when it reaches the limit", () => {
+  const bucket = transcriptWidthBucket(720);
+  for (let i = 0; i <= TRANSCRIPT_MEASUREMENT_CACHE_LIMIT; i++) {
+    setTranscriptMeasuredHeight({ meshId: "lru", agentId: "agent" }, `item-${i}`, bucket, i + 1);
+  }
+
+  expect(getTranscriptMeasuredHeight({ meshId: "lru", agentId: "agent" }, "item-0", bucket)).toBeUndefined();
+  expect(getTranscriptMeasuredHeight({ meshId: "lru", agentId: "agent" }, `item-${TRANSCRIPT_MEASUREMENT_CACHE_LIMIT}`, bucket)).toBe(TRANSCRIPT_MEASUREMENT_CACHE_LIMIT + 1);
 });

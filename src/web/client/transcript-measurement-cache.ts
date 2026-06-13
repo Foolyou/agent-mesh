@@ -3,6 +3,8 @@ import type { TranscriptItem } from "../types";
 
 export type TranscriptMeasurementCacheScope = { meshId: string; agentId: string };
 
+export const TRANSCRIPT_MEASUREMENT_CACHE_LIMIT = 5_000;
+
 const measuredHeights = new Map<string, number>();
 
 export function transcriptWidthBucket(width: number): number {
@@ -20,7 +22,14 @@ export function getTranscriptMeasuredHeight(scope: TranscriptMeasurementCacheSco
 
 export function setTranscriptMeasuredHeight(scope: TranscriptMeasurementCacheScope, itemId: string, widthBucket: number, height: number): void {
   if (!Number.isFinite(height) || height <= 0) return;
-  measuredHeights.set(cacheKey(scope, itemId, widthBucket), height);
+  const key = cacheKey(scope, itemId, widthBucket);
+  if (measuredHeights.has(key)) measuredHeights.delete(key);
+  measuredHeights.set(key, height);
+  while (measuredHeights.size > TRANSCRIPT_MEASUREMENT_CACHE_LIMIT) {
+    const oldest = measuredHeights.keys().next().value;
+    if (oldest === undefined) break;
+    measuredHeights.delete(oldest);
+  }
 }
 
 export function initialTranscriptMeasurements(
