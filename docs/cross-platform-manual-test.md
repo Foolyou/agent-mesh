@@ -54,3 +54,29 @@ This checklist covers macOS and Windows runtime verification for the cross-platf
 ## CI Status
 
 `.github/workflows/cross-platform.yml` runs `bunx tsc --noEmit` and `bun test` on Ubuntu, macOS, and Windows. It intentionally skips e2e because browser, daemon, and agent harness setup differs by runner.
+
+## After deps-bump Verification
+
+After dependency bumps, verify each target platform separately:
+
+1. Refresh dependencies and run the core checks:
+
+   ```bash
+   bun install
+   bunx tsc --noEmit
+   bun test
+   ```
+
+2. Run e2e suites where the platform has the required browser and harness setup. If Playwright reports missing browser binaries, install them first:
+
+   ```bash
+   bunx playwright install
+   bun run e2e
+   bun run src/web/browser.e2e.ts
+   ```
+
+3. Check for platform-specific rendering/runtime differences, especially:
+   - `streamdown` markdown rendering changes
+   - React 19 hydration or event behavior differences
+   - Windows browser font/layout differences in Playwright screenshots
+   - Windows PTY fallback output formatting
