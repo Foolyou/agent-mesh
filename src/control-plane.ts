@@ -56,6 +56,11 @@ export interface ContextUsage {
   updatedAt: number;
 }
 
+export interface SilentTaskCompletes {
+  count: number;
+  lastAt: number | null;
+}
+
 function compactPreview(text: string): string {
   return text.replace(/\s+/g, " ").trim().slice(0, 160);
 }
@@ -241,6 +246,9 @@ export class ControlPlane {
   private resolvedHarnesses = new Map<AgentId, ResolvedHarnessInfo>();
   private agentContextUsage = new Map<AgentId, ContextUsage>();
   private agentAdvertisedCommands = new Map<AgentId, Set<string>>();
+  private agentSilentTaskCompletes = new Map<AgentId, SilentTaskCompletes>();
+  private activeTurnIds = new Map<AgentId, string>();
+  private turnOutboundMailCount = new Map<string, number>();
   private pendingRespawns = new Map<AgentId, ReturnType<typeof setTimeout>>();
 
   constructor(config: MeshConfig, opts: ControlPlaneOptions = {}) {
@@ -288,6 +296,35 @@ export class ControlPlane {
     this.agentAdvertisedCommands.delete(id);
   }
 
+  private clearAgentSilentTaskCompletes(id: AgentId): void {
+    this.agentSilentTaskCompletes.delete(id);
+  }
+
+  private incrementSilentTaskComplete(id: AgentId, turnId: string): void {
+    const current = this.agentSilentTaskCompletes.get(id) ?? { count: 0, lastAt: null };
+    const next = { count: current.count + 1, lastAt: Date.now() };
+    this.agentSilentTaskCompletes.set(id, next);
+    this.emit({ kind: "silent_task_complete", agent: id, turnId, ts: next.lastAt });
+  }
+
+  private noteOutboundMailForActiveTurn(id: AgentId): void {
+    const turnId = this.activeTurnIds.get(id);
+    if (!turnId) return;
+    this.turnOutboundMailCount.set(turnId, (this.turnOutboundMailCount.get(turnId) ?? 0) + 1);
+  }
+
+  private clearTurnMailTracking(turn: AgentTurn | undefined): void {
+    if (!turn) return;
+    if (this.activeTurnIds.get(turn.agent) === turn.id) this.activeTurnIds.delete(turn.agent);
+    this.turnOutboundMailCount.delete(turn.id);
+  }
+
+  private clearTurnMailTrackingForAgent(agent: AgentId): void {
+    const turnId = this.activeTurnIds.get(agent);
+    if (turnId) this.turnOutboundMailCount.delete(turnId);
+    this.activeTurnIds.delete(agent);
+  }
+
   agent(id: AgentId): AcpAgentConnection {
     const c = this.conns.get(id);
     if (!c) throw new Error(`no connection for agent ${id}`);
@@ -314,6 +351,11 @@ export class ControlPlane {
 
   listAgentContextUsages(): Map<AgentId, ContextUsage> {
     return new Map([...this.agentContextUsage.entries()].map(([id, usage]) => [id, { ...usage }]));
+  }
+
+  getAgentSilentTaskCompletes(id: AgentId): SilentTaskCompletes {
+    const value = this.agentSilentTaskCompletes.get(id) ?? { count: 0, lastAt: null };
+    return { ...value };
   }
 
   /** Current authoritative agent state for reconnecting clients. */
@@ -367,6 +409,8 @@ export class ControlPlane {
       return;
     }
     this.startedTurnIds.add(turn.id);
+    this.activeTurnIds.set(turn.agent, turn.id);
+    this.turnOutboundMailCount.set(turn.id, 0);
     while (this.startedTurnIds.size > 1000) this.startedTurnIds.delete(this.startedTurnIds.values().next().value!);
     const q = this.queuedTurns.get(turn.agent) ?? [];
     const idx = q.findIndex((queued) => queued.id === turn.id);
@@ -395,7 +439,8 @@ export class ControlPlane {
     this.activeTurnHealth.set(turn.agent, active);
   }
 
-  private noteTurnSignal(agent: AgentId, turn: AgentTurn | undefined): void {
+  private noteTurnSignal(agent: AgentId, turn: AgentTurn | undefined, signal?: unknown): void {
+    this.detectSilentTaskComplete(agent, turn, signal);
     const active = this.activeTurnHealth.get(agent);
     if (!active || !turn || active.turn.id !== turn.id) return;
     const ts = now();
@@ -413,6 +458,7 @@ export class ControlPlane {
   private finishTurnHealth(agent: AgentId, turn: AgentTurn | undefined): void {
     if (!turn) return;
     this.clearTurnHealth(agent, turn.id);
+    this.clearTurnMailTracking(turn);
   }
 
   private clearTurnHealth(agent: AgentId, turnId?: string): void {
@@ -424,6 +470,16 @@ export class ControlPlane {
 
   private clearTurnHealthForAgent(agent: AgentId): void {
     this.clearTurnHealth(agent);
+    this.clearTurnMailTrackingForAgent(agent);
+  }
+
+  private detectSilentTaskComplete(agent: AgentId, turn: AgentTurn | undefined, signal: unknown): void {
+    if (!turn || !signal || typeof signal !== "object") return;
+    const update = signal as any;
+    if (update.sessionUpdate !== "event_msg" || update.payload?.type !== "task_complete") return;
+    if (update.payload.last_agent_message !== null) return;
+    if ((this.turnOutboundMailCount.get(turn.id) ?? 0) !== 0) return;
+    this.incrementSilentTaskComplete(agent, turn.id);
   }
 
   /**
@@ -675,6 +731,7 @@ export class ControlPlane {
   private async forceRespawnAgent(id: AgentId): Promise<void> {
     if (this.sessionRunDir) this.sessionState = await clearAgentSession(this.sessionRunDir, this.mesh.name, id);
     this.clearAgentSelfAwareness(id);
+    this.clearAgentSilentTaskCompletes(id);
     this.emit({ kind: "agent_status", agent: id, status: this.mesh.status(id) ?? "dead", detail: "force respawn", ts: now() });
     await this.ensureSpawned(id, { manual: true, forceFresh: true, drainPendingMail: false });
     this.emit({ kind: "agent_status", agent: id, status: this.mesh.status(id) ?? "ready", detail: "agent respawned (force)", ts: now() });
@@ -786,6 +843,7 @@ export class ControlPlane {
     if (!this.mcp) throw new Error("control plane not started");
     await this.ensureMcpRegistered(a);
     this.clearAgentSelfAwareness(a.id);
+    this.clearAgentSilentTaskCompletes(a.id);
 
     const existing = this.conns.get(a.id);
     if (existing) {
@@ -823,7 +881,7 @@ export class ControlPlane {
       onPermission: (req) => this.handlePermission(a.id, req),
       onPromptQueued: (turn) => this.noteTurnQueued(turn),
       onPromptStarted: (turn) => this.noteTurnStarted(turn),
-      onPromptSignal: (turn) => this.noteTurnSignal(a.id, turn),
+      onPromptSignal: (turn, signal) => this.noteTurnSignal(a.id, turn, signal),
       onExtNotification: (method, params, turn) => this.noteExtNotification(a.id, method, params, turn),
       onContextUsage: (usage) => this.updateAgentUsage(a.id, usage),
       onAvailableCommands: (commands) => this.updateAgentCommands(a.id, commands),
@@ -1252,6 +1310,7 @@ export class ControlPlane {
     if (!this.mesh.canMail(ctx.agentId, to)) {
       return `error: you (${ctx.agentId}) are not allowed to mail ${to}`;
     }
+    this.noteOutboundMailForActiveTurn(ctx.agentId);
     const seq = ++this.mailSeq;
     const meta: MailDeliveryMeta = { seq, replyTo: opts.replyTo, task: opts.task };
     const event = await sendMail({
