@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type { AcpAgentConnection, AcpConnectionOptions } from "./acp/client";
 import type { MeshConfig } from "./acp/types";
 import { ControlPlane } from "./control-plane";
+import { managedNpmBin } from "./harness-install-spec";
 
 class ResolvedConnection {
   static versionById = new Map<string, string>();
@@ -85,6 +86,32 @@ test("ControlPlane clears resolved harness info on stopAgent", async () => {
     expect(cp.getResolvedHarness("router")).toBeDefined();
     await cp.stopAgent("router");
     expect(cp.getResolvedHarness("router")).toBeUndefined();
+  } finally {
+    Bun.which = originalWhich;
+    await cp.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("ControlPlane prioritizes managed npm bin in spawn PATH and resolved harness lookup", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cp-managed-path-"));
+  const originalWhich = Bun.which;
+  const seen: AcpConnectionOptions[] = [];
+  Bun.which = ((command: string, opts?: { PATH?: string }) => {
+    if (command !== "codex-acp") return null;
+    return opts?.PATH?.startsWith(`${managedNpmBin()}:`) ? `${managedNpmBin()}/codex-acp` : "/usr/local/bin/codex-acp";
+  }) as typeof Bun.which;
+  const cp = new ControlPlane(config(root), {
+    mailboxPath: join(root, "mailbox.ndjson"),
+    connectionFactory: (opts) => {
+      seen.push(opts);
+      return new ResolvedConnection(opts) as unknown as AcpAgentConnection;
+    },
+  });
+  try {
+    await cp.start();
+    expect(seen[0].extraEnv?.PATH).toStartWith(`${managedNpmBin()}:`);
+    expect(cp.getResolvedHarness("router")).toMatchObject({ path: `${managedNpmBin()}/codex-acp` });
   } finally {
     Bun.which = originalWhich;
     await cp.stop();

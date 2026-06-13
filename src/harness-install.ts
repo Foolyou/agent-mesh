@@ -132,6 +132,7 @@ export async function startHarnessInstall(harnessId: HarnessId, opts: HarnessIns
     job.status = "error";
     job.error = String(err?.message ?? err);
     historyJobs.set(job.id, job);
+    opts.broadcast?.({ t: "harnesses-changed", harnessId });
     throw new HarnessInstallError("spawn-failed", job.error);
   }
 
@@ -211,7 +212,7 @@ function pushOutputLine(job: InstallJob, field: "stdoutLine" | "stderrLine", ste
 }
 
 function containsSensitiveInstallToken(line: string): boolean {
-  return /(?:--prefix|--registry|--cache|npm_config_|NODE_|PATH=)/.test(line);
+  return /(?:_authToken|authorization|bearer\s|_password|npm_token|npm_config_|NODE_|--prefix|--registry|--cache|PATH=)/i.test(line);
 }
 
 function randomJobId(random = Math.random): string {

@@ -6,6 +6,7 @@ import { mkdir, stat } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { AcpAgentConnection, type AcpConnectionOptions, type PermissionDecision } from "./acp/client";
 import { spawnConfigFor } from "./harness";
+import { managedNpmBin } from "./harness-install-spec";
 import { isThinkingEffort, runtimeEffortConfig, runtimeEffortOptionsFromSession, type RuntimeEffortOptions } from "./harness-utils";
 import { Mesh } from "./mesh";
 import { buildMeshBriefing, MAIL_WAKE_GUIDANCE } from "./mesh-briefing";
@@ -759,12 +760,17 @@ export class ControlPlane {
     const cwd = resolve(process.cwd(), a.project);
     const artifactDir = this.artifactsRoot ? artifactAgentDir(this.artifactsRoot, this.mesh.name, a.id) : undefined;
     if (artifactDir) await mkdir(artifactDir, { recursive: true });
+    const extraEnv: Record<string, string> = { ...env };
+    const managedBin = managedNpmBin();
+    const existingPath = process.env.PATH ?? "";
+    extraEnv.PATH = existingPath ? `${managedBin}:${existingPath}` : managedBin;
+    if (artifactDir) extraEnv.AGENT_MESH_ARTIFACTS = artifactDir;
     const conn = this.connectionFactory({
       id: a.id,
       command,
       args,
       cwd,
-      extraEnv: artifactDir ? { ...env, AGENT_MESH_ARTIFACTS: artifactDir } : env,
+      extraEnv,
       debug: this.debug,
       onUpdate: (u) => {
         if (u && (u as any).sessionUpdate === "current_mode_update" && typeof (u as any).currentModeId === "string") {
@@ -803,7 +809,7 @@ export class ControlPlane {
       const resolvedHarness = {
         agentId: a.id,
         harnessId: a.harness,
-        path: Bun.which(command) ?? undefined,
+        path: Bun.which(command, { PATH: extraEnv.PATH }) ?? undefined,
         version: typeof (initRes as any)?.agentInfo?.version === "string" ? (initRes as any).agentInfo.version : undefined,
         spawnedAt: now(),
       };
