@@ -13,6 +13,9 @@ import {
 
 const DEFAULT_OVERSCAN = 10;
 const DEFAULT_INITIAL_RECT: Rect = { width: 720, height: 720 };
+type VirtualizerOptionsWithCompensationGuard = Parameters<typeof useVirtualizer<HTMLDivElement, HTMLDivElement>>[0] & {
+  shouldAdjustScrollPositionOnItemSizeChange: () => false;
+};
 
 function textBucket(chars: number): number {
   if (chars <= 120) return 0;
@@ -76,6 +79,12 @@ export function VirtualTranscript({
     getItemKey: (index) => items[index]?.id ?? index,
     estimateSize: (index) => estimateTranscriptItemSize(items[index]!),
     initialMeasurementsCache,
+    // Explicitly disable library default scroll compensation. Our manual
+    // measureElement-based compensation is the single owner; this guard
+    // protects against future @tanstack/react-virtual minor versions
+    // making the library default start firing (= 2x delta double compensation).
+    // See #28 / reviewer mail #258 for context.
+    shouldAdjustScrollPositionOnItemSizeChange: () => false,
     measureElement: (element: HTMLDivElement, entry: ResizeObserverEntry | undefined, instance: Virtualizer<HTMLDivElement, HTMLDivElement>) => {
       const measured = measureVirtualElement(element, entry, instance);
       const index = Number(element.getAttribute("data-index"));
@@ -99,7 +108,7 @@ export function VirtualTranscript({
     overscan,
     initialRect,
     initialOffset: initialOffset ?? (() => initialBottomOffset(items, initialRect.height)),
-  });
+  } as VirtualizerOptionsWithCompensationGuard);
 
   useLayoutEffect(() => {
     const el = parentRef.current;
