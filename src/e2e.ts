@@ -35,6 +35,7 @@ let permSeen = false;
 let permResolvedHuman = false;
 let interruptSeen = false;
 let codexStreaming = false;
+let codexReadOnlyApplied = false;
 
 const isChunk = (u: any) =>
   ["agent_message_chunk", "agent_thought_chunk", "tool_call"].includes(u?.sessionUpdate);
@@ -67,6 +68,14 @@ manager.on((_name, e) => {
   if (e.kind === "mail" && e.from === "codex-1" && e.to === "opencode-1") mailSeen = true;
   if (mailSeen && e.kind === "update" && e.agent === "opencode-1" && isChunk(e.update)) recipientActivity = true;
   if (e.kind === "update" && e.agent === "codex-1" && isChunk(e.update)) codexStreaming = true;
+  if (
+    e.kind === "update" &&
+    e.agent === "codex-1" &&
+    (e.update as any)?.sessionUpdate === "current_mode_update" &&
+    (e.update as any)?.currentModeId === "read-only"
+  ) {
+    codexReadOnlyApplied = true;
+  }
   if (e.kind === "permission_resolved" && e.by === "human") permResolvedHuman = true;
   if (e.kind === "interrupt" && e.target === "codex-1") interruptSeen = true;
 });
@@ -124,7 +133,12 @@ try {
   });
 
   // Point 4: member permission request escalates -> (auto) human decision -> op runs.
-  manager.setMode(DEMO_MESH.name, "codex-1", "read-only");
+  codexReadOnlyApplied = false;
+  await manager.setMode(DEMO_MESH.name, "codex-1", "read-only");
+  // setMode is async and has no host-side ack; this explicit wait avoids a step 4 race
+  // where the prompt runs before read-only mode is actually applied.
+  const modeApplied = await waitFor(() => codexReadOnlyApplied, 10_000);
+  if (!modeApplied) throw new Error("timed out waiting for codex-1 read-only mode before permission prompt");
   hostPrompt(
     "codex-1",
     "You are read-only. Create a file named e2e-probe.txt containing 'ok'. Request approval, and once granted, create it.",
