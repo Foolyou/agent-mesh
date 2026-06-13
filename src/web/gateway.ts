@@ -324,6 +324,10 @@ export class WebGateway {
       this.foldConv(conv, { sessionUpdate: "__mail__", from: turn.from ?? "unknown", to: turn.to ?? turn.agent, body: turn.text }, ts);
       return;
     }
+    if (turn.source === "system") {
+      this.foldConv(conv, { sessionUpdate: "agent_message_chunk", content: { type: "text", text: `[${turn.preview}]` } }, ts);
+      return;
+    }
     this.foldConv(conv, { sessionUpdate: "user_message_chunk", content: { text: turn.text }, images: turn.images }, ts);
   }
 

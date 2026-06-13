@@ -624,6 +624,17 @@ export class ControlPlane {
     };
   }
 
+  private systemTurn(id: AgentId, text: string, reason?: string): AgentTurn {
+    return {
+      id: randomUUID(),
+      agent: id,
+      source: "system",
+      text,
+      preview: `system: ${compactPreview(reason || text)}`,
+      ts: now(),
+    };
+  }
+
   /** Public: send a prompt turn to an agent (the control plane is the sole driver). Image
    *  blocks are dropped for agents that did not advertise image input, so a non-image agent
    *  still gets the text turn instead of rejecting the whole prompt. */
@@ -631,6 +642,23 @@ export class ControlPlane {
     const imgs = this.imageCaps.get(id) ? images : [];
     const promptImages = imgs.map((i) => this.resolveImagePath(i));
     return this.promptWithResumeFallback(id, text, promptImages, false, turn ?? this.operatorTurn(id, text, imgs));
+  }
+
+  /**
+   * Internal channel for system-level prompts that must reach the agent verbatim
+   * (no mail header, no mail history, not counted as outbound mail).
+   * First use: trigger ACP slash commands like "/compact" without the agent seeing
+   * a "[MAIL #N from lead]:" wrapper that would make the slash detector miss it.
+   */
+  async sendBarePrompt(agentId: AgentId, text: string, opts: { reason?: string } = {}): Promise<void> {
+    if (!this.mesh.agent(agentId)) throw new Error(`no such agent "${agentId}"`);
+    const status = this.mesh.status(agentId);
+    if (status === "dead" || status === "stopped") throw new Error(`agent "${agentId}" is ${status}`);
+    const conn = this.conns.get(agentId);
+    if (!conn) throw new Error(`no connection for agent ${agentId}`);
+    const turn = this.systemTurn(agentId, text, opts.reason);
+    this.emit({ kind: "bare_prompt", agent: agentId, reason: opts.reason ?? "", ts: Date.now() });
+    await this.trackTurn(agentId, () => conn.prompt(text, [], turn)).finally(() => this.finishTurnHealth(agentId, turn));
   }
 
   /** Remove a not-yet-started user/operator prompt from one agent's queue.

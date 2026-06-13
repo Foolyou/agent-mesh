@@ -24,6 +24,7 @@ export function queueNavState(items: QueueItem[], selectedId?: string, selectedI
 export function queueSourceLabel(item: QueueItem): string {
   if (item.source === "mail") return `mail${item.from ? ` · ${item.from}` : ""}`;
   if (item.source === "steer") return `steer${item.from ? ` · ${item.from}` : ""}`;
+  if (item.source === "system") return "system";
   return "you";
 }
 
@@ -31,6 +32,7 @@ export function queuePreviewText(item: QueueItem): string {
   if (item.preview.startsWith("you: ")) return item.preview.slice("you: ".length);
   if (item.preview.startsWith("mail:")) return item.preview.replace(/^mail:\s*/, "");
   if (item.preview.startsWith("steer:")) return item.preview.replace(/^steer:\s*/, "");
+  if (item.preview.startsWith("system:")) return item.preview.replace(/^system:\s*/, "");
   const fromPrefix = item.from ? `${item.from}: ` : "";
   if (fromPrefix && item.preview.startsWith(fromPrefix)) return item.preview.slice(fromPrefix.length);
   return item.preview;
