@@ -62,9 +62,17 @@ const probeFixture = (over: Partial<HarnessProbeResult> & { id: HarnessId }): Ha
   ...over,
 });
 
+const allInstalledProbeFixtures = (): HarnessProbeResult[] => [
+  probeFixture({ id: "codex", installed: true }),
+  probeFixture({ id: "claude", installed: true }),
+  probeFixture({ id: "opencode", installed: true }),
+  probeFixture({ id: "kimi", installed: true }),
+];
+
 test("Mesh Assistant reports image capability advertised by initialize", async () => {
   const seen: Array<{ image: boolean; harness?: string }> = [];
   const assistant = new MeshAssistant(fakeManager as any, {
+    installedHarnesses: allInstalledProbeFixtures(),
     connectionFactory: (opts) => new FakeAcpConnection(opts) as unknown as AcpAgentConnection,
     onCapabilities: (caps) => seen.push(caps),
   });
@@ -79,6 +87,7 @@ test("Mesh Assistant reports image capability advertised by initialize", async (
 test("Mesh Assistant defaults to the codex harness", async () => {
   let seen: AcpConnectionOptions | undefined;
   const assistant = new MeshAssistant(fakeManager as any, {
+    installedHarnesses: allInstalledProbeFixtures(),
     connectionFactory: (opts) => {
       seen = opts;
       return new FakeAcpConnection(opts) as unknown as AcpAgentConnection;
@@ -98,6 +107,7 @@ test("Mesh Assistant can be configured to use another harness", async () => {
   let seen: AcpConnectionOptions | undefined;
   const assistant = new MeshAssistant(fakeManager as any, {
     harness: "claude",
+    installedHarnesses: allInstalledProbeFixtures(),
     connectionFactory: (opts) => {
       seen = opts;
       return new FakeAcpConnection(opts) as unknown as AcpAgentConnection;
@@ -121,12 +131,7 @@ test("Mesh Assistant tries explicit harness first, then default fallback order",
   const conns: FakeAcpConnection[] = [];
   const assistant = new MeshAssistant(fakeManager as any, {
     harness: "opencode",
-    installedHarnesses: [
-      probeFixture({ id: "codex", installed: true }),
-      probeFixture({ id: "claude", installed: true }),
-      probeFixture({ id: "opencode", installed: true }),
-      probeFixture({ id: "kimi", installed: true }),
-    ],
+    installedHarnesses: allInstalledProbeFixtures(),
     connectionFactory: (opts) => {
       seen.push(opts);
       const conn = new FakeAcpConnection(opts);
@@ -184,6 +189,7 @@ test("Mesh Assistant starts in the configured assistant cwd", async () => {
   let seen: AcpConnectionOptions | undefined;
   const assistant = new MeshAssistant(fakeManager as any, {
     cwd: assistantCwd,
+    installedHarnesses: allInstalledProbeFixtures(),
     connectionFactory: (opts) => {
       seen = opts;
       return new FakeAcpConnection(opts) as unknown as AcpAgentConnection;
@@ -202,6 +208,7 @@ test("Mesh Assistant starts in the configured assistant cwd", async () => {
 test("Mesh Assistant injects mesh-control MCP into the session", async () => {
   let conn: FakeAcpConnection | undefined;
   const assistant = new MeshAssistant(fakeManager as any, {
+    installedHarnesses: allInstalledProbeFixtures(),
     connectionFactory: (opts) => {
       conn = new FakeAcpConnection(opts);
       return conn as unknown as AcpAgentConnection;
@@ -220,6 +227,7 @@ test("Mesh Assistant injects mesh-control MCP into the session", async () => {
 test("Mesh Assistant prepends the control briefing only to the first user prompt", async () => {
   let conn: FakeAcpConnection | undefined;
   const assistant = new MeshAssistant(fakeManager as any, {
+    installedHarnesses: allInstalledProbeFixtures(),
     connectionFactory: (opts) => {
       conn = new FakeAcpConnection(opts);
       return conn as unknown as AcpAgentConnection;
