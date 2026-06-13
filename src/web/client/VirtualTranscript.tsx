@@ -3,7 +3,7 @@ import { measureElement as measureVirtualElement, useVirtualizer, type Rect, typ
 import type { TranscriptItem } from "../types";
 import { Empty } from "./ui";
 import { useI18n } from "./i18n";
-import { initialBottomOffset, isVirtualAtBottom, shouldFollowAppend } from "./virtual-transcript-scroll";
+import { initialBottomOffset, isVirtualAtBottom, shouldFollowAppend, shouldManuallyAdjustMeasuredHeight, type VirtualScrollDirection } from "./virtual-transcript-scroll";
 import {
   initialTranscriptMeasurements,
   setTranscriptMeasuredHeight,
@@ -64,6 +64,8 @@ export function VirtualTranscript({
   const stickRef = useRef(true);
   const previousCountRef = useRef(items.length);
   const measuredSizesRef = useRef(new Map<string | number, number>());
+  const previousScrollTopRef = useRef<number | null>(null);
+  const scrollDirectionRef = useRef<VirtualScrollDirection>(null);
   const [stick, setStick] = useState(true);
   const [widthBucket, setWidthBucket] = useState(() => transcriptWidthBucket(initialRect.width));
   const initialMeasurementsCache =
@@ -82,10 +84,13 @@ export function VirtualTranscript({
       const previous = measuredSizesRef.current.get(key);
       const virtualItem = instance.getVirtualItems().find((row) => row.index === index);
       const delta = previous === undefined ? 0 : measured - previous;
-      const scrollOffset = instance.scrollOffset ?? 0;
-      if (delta !== 0 && virtualItem && virtualItem.start < scrollOffset) {
-        const scroll = parentRef.current;
-        if (scroll) scroll.scrollTop += delta;
+      const scroll = parentRef.current;
+      // TanStack's default resize adjustment does not fire for this overscan +
+      // custom measureElement path in our e2e. Keep a local compensation, but
+      // mirror TanStack's backward-scroll guard to avoid upward-scroll jank.
+      if (scroll && shouldManuallyAdjustMeasuredHeight(delta, virtualItem?.start, scroll.scrollTop, scrollDirectionRef.current)) {
+        scroll.scrollTop += delta;
+        previousScrollTopRef.current = scroll.scrollTop;
       }
       measuredSizesRef.current.set(key, measured);
       if (cacheScope && item && widthBucket) setTranscriptMeasuredHeight(cacheScope, item.id, widthBucket, measured);
@@ -122,6 +127,11 @@ export function VirtualTranscript({
   function noteScrollPosition() {
     const el = parentRef.current;
     if (!el) return;
+    const previous = previousScrollTopRef.current;
+    if (previous != null && el.scrollTop !== previous) {
+      scrollDirectionRef.current = el.scrollTop > previous ? "forward" : "backward";
+    }
+    previousScrollTopRef.current = el.scrollTop;
     const atBottom = isVirtualAtBottom(el, virtualizer.getDistanceFromEnd());
     stickRef.current = atBottom;
     setStick(atBottom);

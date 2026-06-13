@@ -221,6 +221,11 @@ try {
   await step("Scenario C: expanding an above-viewport row preserves the viewport anchor", async () => {
     await page.locator(".conv-router-tab").click();
     const stream = await activeStream(page);
+    await stream.evaluate((el) => {
+      el.scrollTop = 0;
+      el.dispatchEvent(new Event("scroll", { bubbles: true }));
+    });
+    await page.waitForTimeout(400);
     let probe: { anchorIndex: string; before: number } | null = null;
     for (const scrollTop of [8_000, 16_000, 24_000, 32_000, 40_000, 48_000, 56_000]) {
       await stream.evaluate((el, scrollTop) => {

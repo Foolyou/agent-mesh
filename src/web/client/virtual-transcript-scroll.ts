@@ -2,6 +2,7 @@ import type { TranscriptItem } from "../types";
 import { estimateTranscriptItemSize } from "./VirtualTranscript";
 
 export const VIRTUAL_BOTTOM_THRESHOLD = 40;
+export type VirtualScrollDirection = "forward" | "backward" | null;
 
 export function isVirtualAtBottom(
   scroll: Pick<HTMLElement, "scrollHeight" | "scrollTop" | "clientHeight">,
@@ -19,4 +20,13 @@ export function initialBottomOffset(items: TranscriptItem[], viewportHeight: num
 
 export function shouldFollowAppend(wasAtBottom: boolean, previousCount: number, nextCount: number): boolean {
   return wasAtBottom && nextCount > previousCount;
+}
+
+export function shouldManuallyAdjustMeasuredHeight(
+  delta: number,
+  itemStart: number | null | undefined,
+  scrollTop: number,
+  scrollDirection: VirtualScrollDirection,
+): boolean {
+  return delta !== 0 && itemStart != null && itemStart < scrollTop && scrollDirection !== "backward";
 }

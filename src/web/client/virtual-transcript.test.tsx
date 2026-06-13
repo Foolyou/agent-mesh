@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { estimateTranscriptItemSize, VirtualTranscript } from "./VirtualTranscript";
-import { initialBottomOffset, isVirtualAtBottom, shouldFollowAppend } from "./virtual-transcript-scroll";
+import { initialBottomOffset, isVirtualAtBottom, shouldFollowAppend, shouldManuallyAdjustMeasuredHeight } from "./virtual-transcript-scroll";
 import type { TranscriptItem } from "../types";
 
 const T = "2026-06-09T00:00:00.000Z";
@@ -65,5 +65,9 @@ test("virtual transcript scroll helpers preserve chat semantics", () => {
   expect(shouldFollowAppend(true, 10, 11)).toBe(true);
   expect(shouldFollowAppend(false, 10, 11)).toBe(false);
   expect(shouldFollowAppend(true, 10, 10)).toBe(false);
+  expect(shouldManuallyAdjustMeasuredHeight(120, 100, 500, "forward")).toBe(true);
+  expect(shouldManuallyAdjustMeasuredHeight(120, 700, 500, "forward")).toBe(false);
+  expect(shouldManuallyAdjustMeasuredHeight(120, 100, 500, "backward")).toBe(false);
+  expect(shouldManuallyAdjustMeasuredHeight(0, 100, 500, "forward")).toBe(false);
   expect(initialBottomOffset(makeItems(3), 10)).toBeGreaterThan(0);
 });
