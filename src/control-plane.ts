@@ -281,6 +281,10 @@ export class ControlPlane {
       if (this.imageCaps.has(a.id)) {
         events.push({ kind: "agent_capabilities", agent: a.id, image: this.imageCaps.get(a.id)!, ts });
       }
+      const resolved = this.resolvedHarnesses.get(a.id);
+      if (resolved) {
+        events.push({ kind: "agent_resolved_harness", agent: a.id, harness: resolved.harnessId, path: resolved.path, version: resolved.version, spawnedAt: resolved.spawnedAt, ts });
+      }
       const modes = this.sessionModes.get(a.id);
       if (modes) {
         events.push({ kind: "agent_modes", agent: a.id, current: modes.current, available: modes.available, ts });
@@ -750,13 +754,15 @@ export class ControlPlane {
       await mkdir(cwd, { recursive: true });
       await conn.start();
       const initRes = await conn.initialize();
-      this.resolvedHarnesses.set(a.id, {
+      const resolvedHarness = {
         agentId: a.id,
         harnessId: a.harness,
         path: Bun.which(command) ?? undefined,
         version: typeof (initRes as any)?.agentInfo?.version === "string" ? (initRes as any).agentInfo.version : undefined,
         spawnedAt: now(),
-      });
+      };
+      this.resolvedHarnesses.set(a.id, resolvedHarness);
+      this.emit({ kind: "agent_resolved_harness", agent: a.id, harness: a.harness, path: resolvedHarness.path, version: resolvedHarness.version, spawnedAt: resolvedHarness.spawnedAt, ts: now() });
       const mcpServers = [{ type: "http", name: "mesh", url: this.mcp.urlFor(a.id), headers: [] }];
       const saved = this.sessionState.agents[a.id];
       let loaded = false;

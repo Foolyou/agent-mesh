@@ -57,6 +57,7 @@ export interface ManagerLike {
   deleteMesh(name: string): Promise<void>;
   loadDefinitions(): Promise<void>;
   stopAll(): Promise<void>;
+  listResolvedHarnesses?(): { mesh: string; agentId: string; harnessId: HarnessId; version?: string; path?: string; spawnedAt: string }[];
 }
 
 /** The MeshAssistant surface the gateway depends on. */
@@ -109,6 +110,16 @@ function usageOf(update: any, ts: string): AgentUsage | undefined {
   return usage.used !== undefined || usage.size !== undefined || usage.cost !== undefined ? usage : undefined;
 }
 
+function compareSemver(a: string, b: string): number {
+  const pa = a.split(/[.-]/).map((p) => Number.parseInt(p, 10) || 0);
+  const pb = b.split(/[.-]/).map((p) => Number.parseInt(p, 10) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const d = (pa[i] ?? 0) - (pb[i] ?? 0);
+    if (d) return d;
+  }
+  return 0;
+}
+
 /** Project an image ref to the fields safe to broadcast/persist in a transcript: the absolute
  *  on-disk `path` and internal `bucket` stay server-side (used only at the ACP boundary to read
  *  the bytes) and must never reach WS clients. Clients render the thumbnail from `url`. */
@@ -158,6 +169,14 @@ export class WebGateway {
   }
   broadcastHarnessesChanged(harnessId: HarnessId): void {
     this.broadcast({ t: "harnesses-changed", harnessId });
+  }
+
+  runningAgentsUsingOldVersion(id: HarnessId, latest?: string): string[] {
+    if (!latest) return [];
+    const resolved = this.manager.listResolvedHarnesses?.() ?? [];
+    return resolved
+      .filter((r) => r.harnessId === id && r.version && compareSemver(r.version, latest) < 0)
+      .map((r) => `${r.mesh}/${r.agentId}`);
   }
   private broadcastOp(conv: ConvRef, op: TranscriptOp): void {
     if (op.op === "upsert") this.broadcast({ t: "transcript.upsert", conv, item: op.item });

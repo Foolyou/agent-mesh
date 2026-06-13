@@ -56,7 +56,9 @@ export async function handleApi(
       if (!csrf.ok) return { status: 403, body: { error: { message: "forbidden" } } };
     }
     if (method === "GET" && p.length === 1 && p[0] === "state") return ok(gw.snapshot());
-    if (method === "GET" && p.length === 1 && p[0] === "harnesses") return ok(await harnessProbe());
+    if (method === "GET" && p.length === 1 && p[0] === "harnesses") return ok(await harnessProbe({
+      runningAgentsUsingOldVersion: (id, latest) => gw.runningAgentsUsingOldVersion(id, latest),
+    }));
     if (method === "POST" && p.length === 3 && p[0] === "harnesses" && p[2] === "install") {
       const harness = str(p[1]) as AgentConfig["harness"];
       if (!Object.hasOwn(HARNESSES, harness)) return fail(400, `unknown harness: ${harness}`);

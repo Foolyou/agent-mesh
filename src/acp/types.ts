@@ -128,6 +128,7 @@ export type MeshEvent =
   | { kind: "agent_models"; agent: AgentId; current: string; available: SessionModel[]; ts: string }
   | { kind: "agent_efforts"; agent: AgentId; configId: string; current: string; available: SessionEffort[]; ts: string }
   | { kind: "agent_capabilities"; agent: AgentId; image: boolean; ts: string }
+  | { kind: "agent_resolved_harness"; agent: AgentId; harness: HarnessId; path?: string; version?: string; spawnedAt: string; ts: string }
   | { kind: "agent_turn"; phase: "queued" | "started" | "consumed" | "removed"; turn: AgentTurn; ts: string }
   | { kind: "agent_turn_health"; agent: AgentId; turn?: AgentTurn; level: "warning" | "failed"; reason: TurnHealthReason; detail: string; ts: string }
   | { kind: "agent_health_signal"; agent: AgentId; signal: AgentHealthSignalKind; detail?: Record<string, unknown>; turn?: AgentTurn; ts: string }

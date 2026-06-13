@@ -124,6 +124,32 @@ test("GET /api/harnesses awaits async harness probes", async () => {
   expect(r).toEqual({ status: 200, body: [{ id: "codex", installed: true }] });
 });
 
+test("GET /api/harnesses includes running agents using older resolved versions", async () => {
+  const manager = {
+    ...fakeManager(),
+    listResolvedHarnesses() {
+      return [
+        { mesh: "demo", agentId: "router", harnessId: "codex", version: "0.15.0", path: "/bin/codex-acp", spawnedAt: "t" },
+        { mesh: "demo", agentId: "codex-1", harnessId: "codex", version: "0.16.0", path: "/bin/codex-acp", spawnedAt: "t" },
+      ];
+    },
+  };
+  const gw = new WebGateway(manager as any);
+  const r = await handleApi(
+    gw,
+    "GET",
+    "/api/harnesses",
+    undefined,
+    new URLSearchParams(),
+    async (opts: any) => [{
+      id: "codex",
+      installed: true,
+      runningAgentsUsingOldVersion: opts.runningAgentsUsingOldVersion("codex", "0.16.0"),
+    }] as any,
+  );
+  expect(r.body[0].runningAgentsUsingOldVersion).toEqual(["demo/router"]);
+});
+
 test("GET /api/harnesses/:id/models returns probed model list and passes refresh", async () => {
   const gw = new WebGateway(fakeManager() as any);
   const calls: any[] = [];
