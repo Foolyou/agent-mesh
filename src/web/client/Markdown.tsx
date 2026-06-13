@@ -123,7 +123,7 @@ export function Markdown({ text }: { text: string }) {
 
 export function rewriteAgentHref(href: string, author: AuthorRef | undefined): string | undefined {
   if (isHttpUrl(href)) return href;
-  const artifact = rewriteArtifactRef(href, author);
+  const artifact = rewriteArtifactRef(href, author, "viewer");
   if (artifact !== undefined || isArtifactRef(href)) return artifact;
   if (!isRelativeRef(href) || !author) return undefined;
   return `/mesh/${encodeURIComponent(author.meshId)}/agent/${encodeURIComponent(author.agent)}/file/${encodeRelPath(href)}`;
@@ -131,13 +131,13 @@ export function rewriteAgentHref(href: string, author: AuthorRef | undefined): s
 
 export function rewriteAgentImageSrc(src: string, author: AuthorRef | undefined): string | undefined {
   if (isImageSrc(src)) return src;
-  const artifact = rewriteArtifactRef(src, author);
+  const artifact = rewriteArtifactRef(src, author, "api");
   if (artifact !== undefined || isArtifactRef(src)) return artifact;
   if (!isRelativeRef(src) || !author) return undefined;
   return `/api/agents/${encodeURIComponent(author.agent)}/files/${encodeRelPath(src)}`;
 }
 
-function rewriteArtifactRef(ref: string, author: AuthorRef | undefined): string | undefined {
+function rewriteArtifactRef(ref: string, author: AuthorRef | undefined, target: "api" | "viewer"): string | undefined {
   if (!isArtifactRef(ref) || !author) return undefined;
   const raw = ref.trim().slice("artifact:".length);
   let agent = author.agent;
@@ -152,7 +152,9 @@ function rewriteArtifactRef(ref: string, author: AuthorRef | undefined): string 
     if (agent.includes(".")) return undefined;
   }
   if (!isSafeArtifactAgent(agent) || !isSafeArtifactRest(rest)) return undefined;
-  return `/api/meshes/${encodeURIComponent(author.meshId)}/agents/${encodeURIComponent(agent)}/artifacts/${encodeRelPath(rest)}`;
+  return target === "api"
+    ? `/api/meshes/${encodeURIComponent(author.meshId)}/agents/${encodeURIComponent(agent)}/artifacts/${encodeRelPath(rest)}`
+    : `/mesh/${encodeURIComponent(author.meshId)}/agent/${encodeURIComponent(agent)}/artifact/${encodeRelPath(rest)}`;
 }
 
 function isSafeArtifactAgent(agent: string): boolean {

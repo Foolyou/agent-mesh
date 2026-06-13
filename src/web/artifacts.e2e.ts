@@ -6,7 +6,7 @@ import { join } from "node:path";
 
 const PORT = Number(process.env.E2E_PORT) || 7553;
 const BASE = `http://localhost:${PORT}`;
-const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]);
+const PNG = Uint8Array.from(Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=", "base64"));
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 let pass = 0;
@@ -53,7 +53,7 @@ async function openAgent(page: Page, agent: string) {
   await page.reload({ waitUntil: "domcontentloaded" });
   await page.waitForSelector('.detail-head:has-text("artifact-demo")', { timeout: 8000 });
   const tab = agent === "lead" ? page.locator(`.conv-router-tab:has-text("${agent}")`) : page.locator(`.conv-member-tab:has-text("${agent}")`);
-  await tab.click();
+  await tab.click({ force: true });
   await page.waitForSelector(`.conv-head .sub:has-text("${agent}")`, { timeout: 8000 });
 }
 
@@ -91,7 +91,7 @@ try {
   await post("/api/meshes/artifact-demo/agents/codex-1/prompt", {
     text: "Artifacts: ![diagram](artifact:diagram.png) [doc](artifact:report.md)",
   });
-  await post("/api/meshes/artifact-demo/prompt", {
+  await post("/api/meshes/artifact-demo/agents/lead/prompt", {
     text: "Forwarded: ![builder](artifact://builder/x.png)",
   });
   await sleep(700);
@@ -107,16 +107,22 @@ try {
   await step("agent artifact image and document link render with mesh-scoped URLs", async () => {
     await openAgent(page, "codex-1");
     const bubble = page.locator(".msg.agent .bubble", { hasText: "Artifacts:" }).last();
-    await bubble.locator('img[src="/api/meshes/artifact-demo/agents/codex-1/artifacts/diagram.png"]').waitFor({ timeout: 8000 });
-    await bubble.locator('a[href="/api/meshes/artifact-demo/agents/codex-1/artifacts/report.md"]').waitFor({ timeout: 8000 });
-    const res = await fetch(`${BASE}/api/meshes/artifact-demo/agents/codex-1/artifacts/report.md`);
-    if (!res.ok || !(await res.text()).includes("Artifact report")) throw new Error(`artifact document fetch failed: ${res.status}`);
+    const img = bubble.locator('img[src="/api/meshes/artifact-demo/agents/codex-1/artifacts/diagram.png"]');
+    await img.waitFor({ state: "attached", timeout: 8000 });
+    await waitForLoadedImage(img);
+    const doc = bubble.locator('a[href="/mesh/artifact-demo/agent/codex-1/artifact/report.md"]');
+    await doc.waitFor({ timeout: 8000 });
+    await doc.click({ force: true });
+    await page.waitForSelector('.file-viewer-path:has-text("report.md")', { timeout: 8000 });
+    await page.waitForSelector(".md h1:has-text('Artifact report')", { timeout: 8000 });
   });
 
   await step("explicit artifact owner renders from another agent directory", async () => {
     await openAgent(page, "lead");
     const bubble = page.locator(".msg.agent .bubble", { hasText: "Forwarded:" }).last();
-    await bubble.locator('img[src="/api/meshes/artifact-demo/agents/builder/artifacts/x.png"]').waitFor({ timeout: 8000 });
+    const img = bubble.locator('img[src="/api/meshes/artifact-demo/agents/builder/artifacts/x.png"]');
+    await img.waitFor({ state: "attached", timeout: 8000 });
+    await waitForLoadedImage(img);
   });
 
   await step("negative artifact requests and user-authored artifact refs are rejected", async () => {
@@ -127,10 +133,10 @@ try {
     const svg = await fetch(`${BASE}/api/meshes/artifact-demo/agents/codex-1/artifacts/bad.svg`);
     if (svg.status !== 404) throw new Error(`svg status ${svg.status}`);
 
+    await post("/api/meshes/artifact-demo/agents/lead/prompt", {
+      text: "user artifact ![bad](artifact:x.png)",
+    });
     await openAgent(page, "lead");
-    const textarea = page.locator(".composer textarea");
-    await textarea.fill("user artifact ![bad](artifact:x.png)");
-    await textarea.press("Enter");
     const userBubble = page.locator(".msg.user .bubble", { hasText: "user artifact" }).last();
     await userBubble.waitFor({ timeout: 8000 });
     if ((await userBubble.locator("img").count()) !== 0) throw new Error("user-authored artifact image rendered without AuthorContext");
@@ -164,4 +170,23 @@ try {
   await browser.close();
   server.kill();
   await rm(baseRoot, { recursive: true, force: true });
+}
+
+async function waitForLoadedImage(locator: ReturnType<Page["locator"]>) {
+  await locator.evaluate(async (node: HTMLImageElement) => {
+    node.loading = "eager";
+    node.scrollIntoView({ block: "center", inline: "center" });
+    if (!node.complete) {
+      await new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error(`timed out loading artifact image: ${node.currentSrc}`)), 8000);
+        const done = () => {
+          clearTimeout(timeout);
+          resolve();
+        };
+        node.addEventListener("load", done, { once: true });
+        node.addEventListener("error", done, { once: true });
+      });
+    }
+    if (!node.complete || node.naturalWidth < 1) throw new Error(`artifact image did not load: ${node.currentSrc}`);
+  });
 }

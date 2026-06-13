@@ -13,16 +13,18 @@ type LoadState =
 export interface FileRoute {
   meshId: string;
   agentName: string;
+  kind: "file" | "artifact";
   path: string;
 }
 
 export function parseFileRoute(pathname: string): FileRoute | undefined {
-  const m = pathname.match(/^\/mesh\/([^/]+)\/agent\/([^/]+)\/file\/(.+)$/);
+  const m = pathname.match(/^\/mesh\/([^/]+)\/agent\/([^/]+)\/(file|artifact)\/(.+)$/);
   if (!m) return undefined;
   return {
     meshId: decodeURIComponent(m[1]),
     agentName: decodeURIComponent(m[2]),
-    path: m[3],
+    kind: m[3] as "file" | "artifact",
+    path: m[4],
   };
 }
 
@@ -36,7 +38,10 @@ export function FileViewer({ route }: { route: FileRoute }) {
     let alive = true;
     let objectUrl: string | undefined;
     setState({ kind: "loading" });
-    const url = `/api/agents/${encodeURIComponent(route.agentName)}/files/${route.path}`;
+    const url =
+      route.kind === "artifact"
+        ? `/api/meshes/${encodeURIComponent(route.meshId)}/agents/${encodeURIComponent(route.agentName)}/artifacts/${route.path}`
+        : `/api/agents/${encodeURIComponent(route.agentName)}/files/${route.path}`;
     void (async () => {
       try {
         const resp = await fetch(url);
@@ -63,7 +68,7 @@ export function FileViewer({ route }: { route: FileRoute }) {
       alive = false;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [route.agentName, route.path, ext]);
+  }, [route.meshId, route.agentName, route.kind, route.path, ext]);
 
   const decodedPath = safeDecode(route.path);
   return (

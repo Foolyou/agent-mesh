@@ -34,12 +34,12 @@ test("encoded paths are preserved rather than double-encoded", () => {
 
 test("artifact refs rewrite through AuthorContext", () => {
   expect(rewriteAgentImageSrc("artifact:foo.png", author)).toBe("/api/meshes/dev/agents/codex-1/artifacts/foo.png");
-  expect(rewriteAgentHref("artifact:report.md", author)).toBe("/api/meshes/dev/agents/codex-1/artifacts/report.md");
+  expect(rewriteAgentHref("artifact:report.md", author)).toBe("/mesh/dev/agent/codex-1/artifact/report.md");
 });
 
 test("artifact explicit owner refs rewrite through the current mesh", () => {
   expect(rewriteAgentImageSrc("artifact://builder/x.png", author)).toBe("/api/meshes/dev/agents/builder/artifacts/x.png");
-  expect(rewriteAgentHref("artifact://builder/docs/a%20b.md", author)).toBe("/api/meshes/dev/agents/builder/artifacts/docs/a%20b.md");
+  expect(rewriteAgentHref("artifact://builder/docs/a%20b.md", author)).toBe("/mesh/dev/agent/builder/artifact/docs/a%20b.md");
 });
 
 test("unsafe artifact refs are dropped", () => {
