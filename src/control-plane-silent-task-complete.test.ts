@@ -139,6 +139,19 @@ test("silent task_complete does not trigger when codex produced a final message"
   });
 });
 
+test("silent task_complete ignores system turns such as auto compact", async () => {
+  await withControlPlane(async (cp, router) => {
+    const prompt = cp.sendBarePrompt("router", "/compact", { reason: "auto-threshold" });
+    await Bun.sleep(0);
+    expect(router.activeTurn?.source).toBe("system");
+
+    router.opts.onPromptSignal?.(router.activeTurn, taskComplete(null));
+
+    expect(cp.getAgentSilentTaskCompletes("router")).toEqual({ count: 0, lastAt: null });
+    await finishTurn(prompt, router);
+  });
+});
+
 test("silent task_complete count is cleared by fresh spawn", async () => {
   await withControlPlane(async (cp, router) => {
     const { prompt } = await startTurn(cp, router);

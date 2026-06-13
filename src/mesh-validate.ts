@@ -87,6 +87,7 @@ export function validateMeshConfig(config: MeshConfig): void {
     }
     if (typeof config.autoCompact.enabled !== "boolean") throw new Error("mesh autoCompact.enabled must be a boolean");
     if (typeof config.autoCompact.threshold !== "string") throw new Error("mesh autoCompact.threshold must be a string");
+    if (config.autoCompact.enabled === false) return;
     try {
       parseCompactThreshold(config.autoCompact.threshold);
     } catch (err) {

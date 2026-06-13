@@ -16,9 +16,9 @@ import { validateAddAgent, validateAddEdge } from "./mesh-validate";
 import { artifactAgentDir } from "./web/artifacts";
 import { readSessionState, setMeshExpectedAlive, updateAgentMailCursor, updateAgentSession, clearAgentSession, type MeshSessionState } from "./session-storage";
 import { now, type AgentActivity, type AgentConfig, type AgentHealthSignalKind, type AgentId, type AgentTurn, type MeshConfig, type MeshEdge, type MeshEvent, type PromptImageRef, type SessionMode, type SessionModel, type ThinkingEffort, type TurnHealthReason } from "./acp/types";
-import { DEFAULT_AUTO_COMPACT_SETTINGS, evaluateCompactThreshold, parseCompactThreshold } from "./auto-compact";
+import { DEFAULT_AUTO_COMPACT_SETTINGS, MIN_AUTO_COMPACT_CONTEXT_WINDOW, evaluateCompactThreshold, parseCompactThreshold } from "./auto-compact";
 
-const COMPACT_COOLDOWN_MS = 60_000;
+const COMPACT_COOLDOWN_MS = 180_000;
 const NEAR_LIMIT_WARNING_COOLDOWN_MS = 10 * 60_000;
 
 interface PendingDecision {
@@ -316,6 +316,8 @@ export class ControlPlane {
   }
 
   private async maybeAutoCompact(agentId: AgentId, usage: { used: number; size: number; percent: number }): Promise<void> {
+    if (usage.size < MIN_AUTO_COMPACT_CONTEXT_WINDOW) return;
+
     const settings = this.mesh.config.autoCompact ?? DEFAULT_AUTO_COMPACT_SETTINGS;
     if (!settings.enabled) return;
 
@@ -541,6 +543,7 @@ export class ControlPlane {
 
   private detectSilentTaskComplete(agent: AgentId, turn: AgentTurn | undefined, signal: unknown): void {
     if (!turn || !signal || typeof signal !== "object") return;
+    if (turn.source === "system") return;
     const update = signal as any;
     if (update.sessionUpdate !== "event_msg" || update.payload?.type !== "task_complete") return;
     this.noteTurnCompleted(agent);

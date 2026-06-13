@@ -186,8 +186,8 @@ const DICT: Record<string, Entry> = {
   "build.autoCompact.enable": ["Enable auto-compact", "启用自动 compact"],
   "build.autoCompact.threshold": ["threshold", "阈值"],
   "build.autoCompact.help": [
-    'percent "85%" / absolute tokens "200000 tokens" / remaining tokens "-20000"',
-    '百分比 "85%" / 绝对 token "200000 tokens" / 剩余 token "-20000"',
+    'percent "90%" / absolute tokens "200000 tokens" / remaining tokens "-20000"',
+    '百分比 "90%" / 绝对 token "200000 tokens" / 剩余 token "-20000"',
   ],
   "build.autoCompact.invalid": ["auto-compact threshold is invalid", "自动 compact 阈值无效"],
   "build.overview": ["overview", "总体"],

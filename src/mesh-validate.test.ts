@@ -117,8 +117,10 @@ test("accepts an optional charter and rejects an overly long one", () => {
 });
 
 test("accepts optional autoCompact settings", () => {
-  expect(() => validateMeshConfig({ ...ok, autoCompact: { enabled: true, threshold: "85%" } })).not.toThrow();
+  expect(() => validateMeshConfig({ ...ok, autoCompact: { enabled: true, threshold: "90%" } })).not.toThrow();
   expect(() => validateMeshConfig({ ...ok, autoCompact: { enabled: false, threshold: "-20000" } })).not.toThrow();
+  expect(() => validateMeshConfig({ ...ok, autoCompact: { enabled: false, threshold: "" } })).not.toThrow();
+  expect(() => validateMeshConfig({ ...ok, autoCompact: { enabled: false, threshold: "abc" } })).not.toThrow();
 });
 
 test("accepts missing autoCompact for old mesh configs", () => {
@@ -127,7 +129,7 @@ test("accepts missing autoCompact for old mesh configs", () => {
 
 test("rejects invalid autoCompact settings", () => {
   expect(() => validateMeshConfig({ ...ok, autoCompact: { enabled: true, threshold: "0%" } })).toThrow(/autoCompact/i);
-  expect(() => validateMeshConfig({ ...ok, autoCompact: { enabled: "yes" as any, threshold: "85%" } })).toThrow(/autoCompact/i);
+  expect(() => validateMeshConfig({ ...ok, autoCompact: { enabled: "yes" as any, threshold: "90%" } })).toThrow(/autoCompact/i);
   expect(() => validateMeshConfig({ ...ok, autoCompact: { enabled: true, threshold: "" } })).toThrow(/autoCompact/i);
 });
 

@@ -171,6 +171,10 @@ export function validateAutoCompactThresholdInput(raw: string): string | null {
   }
 }
 
+export function validateAutoCompactSettingsInput(enabled: boolean, raw: string): string | null {
+  return enabled ? validateAutoCompactThresholdInput(raw) : null;
+}
+
 export function MeshBuilder({
   store,
   onClose,
@@ -300,7 +304,7 @@ export function MeshBuilder({
       setErr(v);
       return;
     }
-    const thresholdErr = validateAutoCompactThresholdInput(autoCompactThreshold);
+    const thresholdErr = validateAutoCompactSettingsInput(autoCompactEnabled, autoCompactThreshold);
     if (thresholdErr) {
       setAutoCompactErr(thresholdErr);
       setErr(t("build.autoCompact.invalid"));
@@ -519,7 +523,7 @@ export function MeshBuilder({
                     id="mesh-auto-compact-threshold"
                     className="inp"
                     value={autoCompactThreshold}
-                    placeholder="85%"
+                    placeholder="90%"
                     disabled={!autoCompactEnabled}
                     aria-describedby="mesh-auto-compact-help"
                     aria-invalid={autoCompactErr ? "true" : undefined}
@@ -528,7 +532,7 @@ export function MeshBuilder({
                       setAutoCompactThreshold(e.target.value);
                       if (autoCompactErr) setAutoCompactErr(null);
                     }}
-                    onBlur={() => setAutoCompactErr(validateAutoCompactThresholdInput(autoCompactThreshold))}
+                    onBlur={() => setAutoCompactErr(validateAutoCompactSettingsInput(autoCompactEnabled, autoCompactThreshold))}
                   />
                   <div id="mesh-auto-compact-help" className="field-note">
                     {t("build.autoCompact.help")}

@@ -1,8 +1,13 @@
 import { expect, test } from "bun:test";
-import { evaluateCompactThreshold, parseCompactThreshold } from "./auto-compact";
+import { DEFAULT_AUTO_COMPACT_SETTINGS, MIN_AUTO_COMPACT_CONTEXT_WINDOW, evaluateCompactThreshold, parseCompactThreshold } from "./auto-compact";
+
+test("default auto compact settings match Zed threshold parity", () => {
+  expect(DEFAULT_AUTO_COMPACT_SETTINGS).toEqual({ enabled: true, threshold: "90%" });
+  expect(MIN_AUTO_COMPACT_CONTEXT_WINDOW).toBe(80_000);
+});
 
 test("parseCompactThreshold parses percent thresholds", () => {
-  expect(parseCompactThreshold("85%")).toEqual({ kind: "percent", value: 0.85 });
+  expect(parseCompactThreshold("90%")).toEqual({ kind: "percent", value: 0.9 });
   expect(parseCompactThreshold(" 100% ")).toEqual({ kind: "percent", value: 1 });
 });
 
@@ -24,9 +29,9 @@ test("parseCompactThreshold rejects invalid thresholds", () => {
 });
 
 test("evaluateCompactThreshold evaluates percent thresholds", () => {
-  const threshold = parseCompactThreshold("85%");
-  expect(evaluateCompactThreshold(threshold, 849, 1000)).toBe(false);
-  expect(evaluateCompactThreshold(threshold, 850, 1000)).toBe(true);
+  const threshold = parseCompactThreshold("90%");
+  expect(evaluateCompactThreshold(threshold, 899, 1000)).toBe(false);
+  expect(evaluateCompactThreshold(threshold, 900, 1000)).toBe(true);
 });
 
 test("evaluateCompactThreshold evaluates tokens-used thresholds", () => {

@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { MeshBuilder, validateAutoCompactThresholdInput } from "./MeshBuilder";
+import { MeshBuilder, validateAutoCompactSettingsInput, validateAutoCompactThresholdInput } from "./MeshBuilder";
 import type { Store } from "./store";
 import type { MeshConfig } from "../types";
 
@@ -26,8 +26,8 @@ test("MeshBuilder renders default auto-compact settings", () => {
   expect(html).toContain("build.autoCompact.enable");
   expect(html).toContain('type="checkbox" checked=""');
   expect(html).toContain('id="mesh-auto-compact-threshold"');
-  expect(html).toContain('value="85%"');
-  expect(html).toContain('placeholder="85%"');
+  expect(html).toContain('value="90%"');
+  expect(html).toContain('placeholder="90%"');
 });
 
 test("MeshBuilder pre-fills existing auto-compact settings", () => {
@@ -43,4 +43,10 @@ test("validateAutoCompactThresholdInput accepts valid formats and rejects invali
   expect(validateAutoCompactThresholdInput("200000 tokens")).toBeNull();
   expect(validateAutoCompactThresholdInput("-20000")).toBeNull();
   expect(validateAutoCompactThresholdInput("abc")).toMatch(/invalid compact threshold/);
+});
+
+test("validateAutoCompactSettingsInput skips threshold validation when disabled", () => {
+  expect(validateAutoCompactSettingsInput(false, "")).toBeNull();
+  expect(validateAutoCompactSettingsInput(false, "abc")).toBeNull();
+  expect(validateAutoCompactSettingsInput(true, "abc")).toMatch(/invalid compact threshold/);
 });

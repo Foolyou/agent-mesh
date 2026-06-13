@@ -950,7 +950,7 @@ try {
     await page.locator("#mesh-auto-compact-threshold").fill("abc");
     await page.locator('.modal .btn:has-text("define mesh")').click();
     await page.waitForSelector('#mesh-auto-compact-error:has-text("invalid compact threshold")', { timeout: 4000 });
-    await page.locator("#mesh-auto-compact-threshold").fill("85%");
+    await page.locator("#mesh-auto-compact-threshold").fill("90%");
   });
 
   await step("mesh builder: valid config creates a mesh", async () => {

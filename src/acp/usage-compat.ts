@@ -26,6 +26,12 @@ export function parseUsageUpdate(raw: unknown): UsageUpdate | null {
   return { used, size, usagePercent: used / size };
 }
 
+/**
+ * NOTE: For codex, last_token_usage.total_tokens is per-request tokens,
+ * not cumulative context occupancy. Currently usage_update is the primary
+ * source for auto-compact triggering; if a future harness only emits
+ * token_count, this would severely underestimate and may never trigger.
+ */
 export function parseTokenCount(raw: unknown): TokenCount | null {
   if (!isObject(raw) || raw.sessionUpdate !== "event_msg" || !isObject(raw.payload)) return null;
   if (raw.payload.type !== "token_count") return null;

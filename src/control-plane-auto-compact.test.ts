@@ -77,7 +77,7 @@ async function tick(): Promise<void> {
 test("auto compact triggers bare prompt when usage exceeds threshold and compact is advertised", async () => {
   await withControlPlane(undefined, async (cp, conn, events) => {
     conn.opts.onAvailableCommands?.(["compact", "init"]);
-    conn.opts.onContextUsage?.({ used: 900, size: 1000, percent: 0.9 });
+    conn.opts.onContextUsage?.({ used: 90_000, size: 100_000, percent: 0.9 });
     await tick();
 
     expect(conn.prompts.map((p) => p.text)).toEqual(["/compact"]);
@@ -89,7 +89,7 @@ test("auto compact triggers bare prompt when usage exceeds threshold and compact
 test("auto compact warns when compact command is not advertised", async () => {
   await withControlPlane(undefined, async (_cp, conn, events) => {
     conn.opts.onAvailableCommands?.(["init"]);
-    conn.opts.onContextUsage?.({ used: 900, size: 1000, percent: 0.9 });
+    conn.opts.onContextUsage?.({ used: 90_000, size: 100_000, percent: 0.9 });
     await tick();
 
     expect(conn.prompts).toHaveLength(0);
@@ -108,7 +108,7 @@ test("auto compact waits when agent has an in-flight turn", async () => {
     await tick();
 
     conn.opts.onAvailableCommands?.(["compact"]);
-    conn.opts.onContextUsage?.({ used: 900, size: 1000, percent: 0.9 });
+    conn.opts.onContextUsage?.({ used: 90_000, size: 100_000, percent: 0.9 });
     await tick();
 
     expect(conn.prompts.map((p) => p.text)).toEqual([expect.stringContaining("busy")]);
@@ -124,7 +124,7 @@ test("auto compact rechecks high usage when the agent returns idle", async () =>
     await tick();
 
     conn.opts.onAvailableCommands?.(["compact"]);
-    conn.opts.onContextUsage?.({ used: 900, size: 1000, percent: 0.9 });
+    conn.opts.onContextUsage?.({ used: 90_000, size: 100_000, percent: 0.9 });
     await tick();
     expect(conn.prompts.map((p) => p.text)).toEqual([expect.stringContaining("busy")]);
 
@@ -140,9 +140,9 @@ test("auto compact rechecks high usage when the agent returns idle", async () =>
 test("auto compact respects compact cooldown", async () => {
   await withControlPlane(undefined, async (_cp, conn) => {
     conn.opts.onAvailableCommands?.(["compact"]);
-    conn.opts.onContextUsage?.({ used: 900, size: 1000, percent: 0.9 });
+    conn.opts.onContextUsage?.({ used: 90_000, size: 100_000, percent: 0.9 });
     await tick();
-    conn.opts.onContextUsage?.({ used: 910, size: 1000, percent: 0.91 });
+    conn.opts.onContextUsage?.({ used: 91_000, size: 100_000, percent: 0.91 });
     await tick();
 
     expect(conn.prompts.map((p) => p.text)).toEqual(["/compact"]);
@@ -150,9 +150,9 @@ test("auto compact respects compact cooldown", async () => {
 });
 
 test("auto compact can be disabled", async () => {
-  await withControlPlane({ enabled: false, threshold: "85%" }, async (_cp, conn, events) => {
+  await withControlPlane({ enabled: false, threshold: "90%" }, async (_cp, conn, events) => {
     conn.opts.onAvailableCommands?.(["compact"]);
-    conn.opts.onContextUsage?.({ used: 900, size: 1000, percent: 0.9 });
+    conn.opts.onContextUsage?.({ used: 90_000, size: 100_000, percent: 0.9 });
     await tick();
 
     expect(conn.prompts).toHaveLength(0);
@@ -163,11 +163,11 @@ test("auto compact can be disabled", async () => {
 test("auto compact honors configured threshold", async () => {
   await withControlPlane({ enabled: true, threshold: "95%" }, async (_cp, conn) => {
     conn.opts.onAvailableCommands?.(["compact"]);
-    conn.opts.onContextUsage?.({ used: 900, size: 1000, percent: 0.9 });
+    conn.opts.onContextUsage?.({ used: 90_000, size: 100_000, percent: 0.9 });
     await tick();
     expect(conn.prompts).toHaveLength(0);
 
-    conn.opts.onContextUsage?.({ used: 960, size: 1000, percent: 0.96 });
+    conn.opts.onContextUsage?.({ used: 96_000, size: 100_000, percent: 0.96 });
     await tick();
     expect(conn.prompts.map((p) => p.text)).toEqual(["/compact"]);
   });
@@ -177,7 +177,7 @@ test("auto compact emits failure when bare prompt fails", async () => {
   await withControlPlane(undefined, async (cp, conn, events) => {
     cp.sendBarePrompt = async () => { throw new Error("compact failed"); };
     conn.opts.onAvailableCommands?.(["compact"]);
-    conn.opts.onContextUsage?.({ used: 900, size: 1000, percent: 0.9 });
+    conn.opts.onContextUsage?.({ used: 90_000, size: 100_000, percent: 0.9 });
     await tick();
 
     expect(events).toContainEqual(expect.objectContaining({ kind: "compact_failed", agent: "router", error: "Error: compact failed" }));
@@ -187,7 +187,7 @@ test("auto compact emits failure when bare prompt fails", async () => {
 test("fresh spawn clears last compact and near-limit warning timestamps", async () => {
   await withControlPlane(undefined, async (cp, conn) => {
     conn.opts.onAvailableCommands?.(["compact"]);
-    conn.opts.onContextUsage?.({ used: 900, size: 1000, percent: 0.9 });
+    conn.opts.onContextUsage?.({ used: 90_000, size: 100_000, percent: 0.9 });
     await tick();
     expect((cp as any).meshStatusText("router")).toContain("\"lastCompactAt\":");
 
@@ -195,5 +195,16 @@ test("fresh spawn clears last compact and near-limit warning timestamps", async 
     const parsed = JSON.parse((cp as any).meshStatusText("router").match(/\{[\s\S]*$/)![0]);
     expect(parsed.agents[0].lastCompactAt).toBeNull();
     expect(parsed.agents[0].lastNearLimitWarnedAt).toBeNull();
+  });
+});
+
+test("auto compact skips small context windows", async () => {
+  await withControlPlane(undefined, async (_cp, conn, events) => {
+    conn.opts.onAvailableCommands?.(["compact"]);
+    conn.opts.onContextUsage?.({ used: 57_000, size: 60_000, percent: 0.95 });
+    await tick();
+
+    expect(conn.prompts).toHaveLength(0);
+    expect(events.some((e) => e.kind === "compact_started")).toBe(false);
   });
 });
