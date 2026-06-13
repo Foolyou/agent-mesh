@@ -113,16 +113,16 @@ export function buildMeshBriefing(mesh: Mesh, agentId: AgentId): string {
   );
 
   lines.push("");
-  lines.push("Writing file references in Markdown:");
+  lines.push("Attaching images/documents for the user:");
   lines.push(
-    "When you mention a file you have written, attach it as a Markdown link or image whose " +
-      "target is the file path RELATIVE TO YOUR CWD — the web console resolves the path against " +
-      "your CWD to render it inline. Bare filenames only work if the file sits at the cwd root; " +
-      "absolute paths (/home/...) are stripped for security and will not load.",
+    "  - Write: put files under `$AGENT_MESH_ARTIFACTS/<file>`; the directory is created for you " +
+      "when this agent starts. Prefer tmp + rename for atomic writes so the frontend never reads a partial file as a broken image.",
   );
-  lines.push("  good:  [analysis](artifacts/analysis.md)   # file at <cwd>/artifacts/analysis.md");
-  lines.push("  good:  ![](screenshots/diagram.png)        # file at <cwd>/screenshots/diagram.png");
-  lines.push("  bad:   [analysis](analysis.md)             # broken unless file is at <cwd>/analysis.md");
+  lines.push("  - Reference: use `![alt](artifact:<file>)` or `[name](artifact:<file>)` in Markdown.");
+  lines.push("  - Forward someone else's artifact: use `artifact://<owner-agent>/<file>` so ownership is explicit.");
+  lines.push(
+    "  - This directory is outside your worktree, so it does not dirty the user's repository; it is removed automatically when the mesh is deleted.",
+  );
 
   const charter = mesh.charter;
   if (charter) {
