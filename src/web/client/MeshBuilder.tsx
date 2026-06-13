@@ -432,6 +432,8 @@ export function MeshBuilder({
                 }}
                 aria-selected={page.kind === "agent" && page.key === a.key}
                 aria-controls={`mesh-builder-panel-${a.key}`}
+                aria-label={a.role === "router" ? `${a.id || `agent-${i}`} (router)` : a.id || `agent-${i}`}
+                title={a.role === "router" ? `${a.id || `agent-${i}`} (router)` : undefined}
                 tabIndex={page.kind === "agent" && page.key === a.key ? 0 : -1}
                 onClick={() => setPage({ kind: "agent", key: a.key })}
                 onKeyDown={(e) => onTabKeyDown(i + 1, e)}
@@ -662,11 +664,10 @@ export function MeshBuilder({
                     </div>
                   </div>
                   <div className="agent-subgroup agent-instructions-field">
-                    <div className="subgroup-head">{t("build.instructions")}</div>
+                    <div id={`agent-${activeIndex}-instructions-label`} className="subgroup-head">
+                      {t("build.instructions")}
+                    </div>
                     <div className="field-label-row">
-                      <label className="adv-label" htmlFor={`agent-${activeIndex}-instructions`}>
-                        {t("build.instructions")}
-                      </label>
                       <Btn
                         small
                         kind="ghost"
@@ -677,6 +678,7 @@ export function MeshBuilder({
                     </div>
                     <textarea
                       id={`agent-${activeIndex}-instructions`}
+                      aria-labelledby={`agent-${activeIndex}-instructions-label`}
                       className="inp agent-instructions"
                       rows={3}
                       value={activeAgent.instructions ?? ""}

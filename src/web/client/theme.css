@@ -1843,6 +1843,10 @@ select.inp {
   gap: 6px;
   align-items: center;
 }
+.agrow-identity,
+.agrow-runtime {
+  grid-template-columns: 1.3fr 1fr;
+}
 /* advanced per-agent settings on a labeled sub-row */
 .agrow-adv {
   display: flex;
@@ -2623,9 +2627,14 @@ select.inp {
     width: 100%;
     box-sizing: border-box;
   }
+  .inp:not(.compact),
+  select.inp,
+  textarea.inp,
+  .check-inline select {
+    font-size: 16px;
+  }
   .adv-sel {
     flex: none;
-    font-size: 16px;
   }
   .adv-label {
     display: block;

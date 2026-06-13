@@ -196,7 +196,7 @@ const DICT: Record<string, Entry> = {
   "build.model.retry": ["model probe failed · retry", "模型探测失败 · 重试"],
   "build.group.identity": ["identity", "身份"],
   "build.group.runtime": ["runtime", "运行"],
-  "build.group.model": ["model", "模型"],
+  "build.group.model": ["model & runtime opts", "模型与高级选项"],
   "build.instructions": ["role-specific instructions (optional)", "专属指令（可选）"],
   "build.instructions.placeholder": [
     "Only this agent sees this. Applies on the next start.",

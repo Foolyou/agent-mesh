@@ -1110,6 +1110,17 @@ try {
     await shot(page, "mesh-builder-mobile-380.png");
 
     await page.setViewportSize({ width: 1280, height: 800 });
+    const desktopRowsFill = await page.locator(".modal .agent-block").evaluate((block) => {
+      const rows = Array.from(block.querySelectorAll<HTMLElement>(".agrow-identity, .agrow-runtime"));
+      return rows.every((row) => {
+        const last = row.lastElementChild;
+        if (!(last instanceof HTMLElement)) return false;
+        const rowRight = row.getBoundingClientRect().right;
+        const lastRight = last.getBoundingClientRect().right;
+        return Math.abs(rowRight - lastRight) <= 24;
+      });
+    });
+    if (!desktopRowsFill) throw new Error("desktop identity/runtime rows do not fill the available row width");
     await shot(page, "mesh-builder-desktop-1280.png");
     await page.locator(".modal .mhead .btn").click();
     await page.waitForSelector(".modal", { state: "detached", timeout: 4000 });
