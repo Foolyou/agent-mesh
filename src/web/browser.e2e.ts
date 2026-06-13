@@ -938,7 +938,7 @@ try {
   await step("mesh builder: valid config creates a mesh", async () => {
     await page.locator('.modal .field:has(label:has-text("mesh name")) input').fill("squad-x");
     await page.locator('.modal .builder-tab:has-text("router")').click();
-    const harnessSelect = page.locator(".modal .agent-block .agrow select").nth(0);
+    const harnessSelect = page.locator(".modal .agent-block .agrow-runtime select").first();
     await harnessSelect.locator('option[value="kimi"]:has-text("not installed")').waitFor({ state: "attached", timeout: 4000 });
     if (!(await harnessSelect.locator('option[value="kimi"]').isDisabled())) throw new Error("uninstalled harness option was not disabled");
     const harnessOpts = await harnessSelect.locator("option").allTextContents();
@@ -946,9 +946,9 @@ try {
     await page.locator(".modal .agent-instructions").first().fill("Router should coordinate handoffs and keep tasks scoped.");
     await page.locator('.modal .btn:has-text("+ agent")').click();
     await page.waitForSelector('.modal .builder-tab[aria-selected="true"]:has-text("agent-1")', { timeout: 4000 });
-    await page.locator(".modal .agrow").locator("input").first().fill("worker");
-    await page.locator(".modal .agrow").locator("select").nth(0).selectOption("opencode");
-    await page.locator(".modal .agrow").locator("select").nth(1).selectOption("member");
+    await page.locator(".modal .agrow-identity").locator("input").first().fill("worker");
+    await page.locator(".modal .agrow-runtime").locator("select").first().selectOption("opencode");
+    await page.locator(".modal .agrow-identity").locator("select").first().selectOption("member");
     await page.locator('.modal .builder-tab:has-text("overview")').click();
     await page.locator('.modal .btn:has-text("+ edge")').click();
     await page.locator('.modal .field:has(label:has-text("mail edges")) .row').last().locator("select").nth(0).selectOption("router");
@@ -1076,6 +1076,52 @@ try {
     await edgeRow.locator('input[type="checkbox"]').check();
     await page.locator('.modal .btn:has-text("save mesh")').click();
     await page.waitForSelector(".modal .err", { timeout: 4000 });
+    await page.locator(".modal .mhead .btn").click();
+    await page.waitForSelector(".modal", { state: "detached", timeout: 4000 });
+  });
+
+  await step("mesh builder edit modal fits a 380px mobile viewport", async () => {
+    await page.locator('.detail-head .btn:has-text("edit")').click();
+    await page.waitForSelector('.modal .mhead:has-text("edit mesh")', { timeout: 4000 });
+    await page.setViewportSize({ width: 380, height: 820 });
+
+    const routerTab = page.locator('.modal .builder-tab:has-text("router")').first();
+    await routerTab.waitFor({ state: "visible", timeout: 4000 });
+    const tabOk = await routerTab.evaluate((el) => {
+      const text = el.textContent ?? "";
+      return text.includes("router") && el.scrollWidth <= el.clientWidth + 1;
+    });
+    if (!tabOk) throw new Error("router tab text is clipped at 380px");
+
+    await routerTab.click();
+    const contained = await page.locator(".modal").evaluate((modal) => {
+      const modalRight = modal.getBoundingClientRect().right;
+      const fields = Array.from(modal.querySelectorAll<HTMLInputElement | HTMLSelectElement>("input, select"))
+        .filter((el) => el.offsetParent !== null);
+      return fields.every((el) => el.getBoundingClientRect().right <= modalRight + 1);
+    });
+    if (!contained) throw new Error("builder controls overflow the modal at 380px");
+
+    const saveVisible = await page.locator('.modal .builder-actions .btn:has-text("save mesh")').evaluate((el) => {
+      const rect = el.getBoundingClientRect();
+      return rect.bottom <= window.innerHeight && rect.top >= 0;
+    });
+    if (!saveVisible) throw new Error("sticky save button is not visible without scrolling at 380px");
+    await shot(page, "mesh-builder-mobile-380.png");
+
+    await page.setViewportSize({ width: 1280, height: 800 });
+    const desktopRowsFill = await page.locator(".modal .agent-block").evaluate((block) => {
+      const rows = Array.from(block.querySelectorAll<HTMLElement>(".agrow-identity, .agrow-runtime"));
+      return rows.every((row) => {
+        const last = row.lastElementChild;
+        if (!(last instanceof HTMLElement)) return false;
+        const rowRight = row.getBoundingClientRect().right;
+        const lastRight = last.getBoundingClientRect().right;
+        return Math.abs(rowRight - lastRight) <= 24;
+      });
+    });
+    if (!desktopRowsFill) throw new Error("desktop identity/runtime rows do not fill the available row width");
+    await shot(page, "mesh-builder-desktop-1280.png");
     await page.locator(".modal .mhead .btn").click();
     await page.waitForSelector(".modal", { state: "detached", timeout: 4000 });
   });
