@@ -4,6 +4,31 @@ import { join } from "node:path";
 import { test, expect } from "bun:test";
 import { AcpAgentConnection } from "./client";
 
+test("recordStreamState tracks usage and advertised commands for control-plane callbacks", () => {
+  const calls: any[] = [];
+  const c = Object.create(AcpAgentConnection.prototype) as AcpAgentConnection;
+  (c as any).id = "a";
+  (c as any).contextUsage = null;
+  (c as any).advertisedCommands = new Set<string>();
+  (c as any).opts = {
+    onContextUsage: (usage: any) => calls.push(["usage", usage]),
+    onAvailableCommands: (commands: string[]) => calls.push(["commands", commands]),
+  };
+
+  (c as any).recordStreamState({ sessionUpdate: "usage_update", used: 23, size: 100 });
+  (c as any).recordStreamState({
+    sessionUpdate: "available_commands_update",
+    availableCommands: [{ name: "/compact" }, { name: "review" }],
+  });
+
+  expect((c as any).contextUsage).toEqual({ used: 23, size: 100, percent: 0.23 });
+  expect(Array.from((c as any).advertisedCommands)).toEqual(["compact", "review"]);
+  expect(calls).toEqual([
+    ["usage", { used: 23, size: 100, percent: 0.23 }],
+    ["commands", ["compact", "review"]],
+  ]);
+});
+
 test("prompt constructs ACP text plus readable image blocks and skips missing files", async () => {
   const root = await mkdtemp(join(tmpdir(), "mesh-acp-image-"));
   const img = join(root, "img.png");
