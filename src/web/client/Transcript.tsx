@@ -240,6 +240,24 @@ function MailBubble({ item, meshId }: { item: Extract<TranscriptItem, { kind: "m
   );
 }
 
+export function TranscriptRow({ item, author }: { item: TranscriptItem; author?: AuthorRef }) {
+  return item.kind === "message" ? (
+    <Msg item={item} author={author} />
+  ) : item.kind === "thought" ? (
+    <Thought item={item} author={author} />
+  ) : item.kind === "tool_call" ? (
+    <ToolCard item={item} />
+  ) : item.kind === "mail" ? (
+    <MailBubble item={item} meshId={author?.meshId} />
+  ) : item.kind === "compact" ? (
+    <CompactEntry item={item} />
+  ) : item.kind === "divider" ? (
+    <Divider />
+  ) : (
+    <PlanCard item={item} />
+  );
+}
+
 export function isTranscriptAtBottom(
   scroll: Pick<HTMLElement, "scrollHeight" | "scrollTop" | "clientHeight">,
   threshold = 40,
@@ -285,23 +303,7 @@ export function Transcript({ items, author }: { items: TranscriptItem[]; author?
   return (
     <div className="stream-shell">
       <div className="stream" ref={wrapRef} onScroll={onScroll} tabIndex={-1}>
-        {items.map((it) =>
-          it.kind === "message" ? (
-            <Msg key={it.id} item={it} author={author} />
-          ) : it.kind === "thought" ? (
-            <Thought key={it.id} item={it} author={author} />
-          ) : it.kind === "tool_call" ? (
-            <ToolCard key={it.id} item={it} />
-          ) : it.kind === "mail" ? (
-            <MailBubble key={it.id} item={it} meshId={author?.meshId} />
-          ) : it.kind === "compact" ? (
-            <CompactEntry key={it.id} item={it} />
-          ) : it.kind === "divider" ? (
-            <Divider key={it.id} />
-          ) : (
-            <PlanCard key={it.id} item={it} />
-          ),
-        )}
+        {items.map((it) => <TranscriptRow key={it.id} item={it} author={author} />)}
         <div ref={endRef} />
       </div>
       {!stick ? (
