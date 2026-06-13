@@ -30,6 +30,7 @@ test("VirtualTranscript renders only the initial visible range for long transcri
   const html = renderToStaticMarkup(
     createElement(VirtualTranscript, {
       items: makeItems(1000),
+      renderItem: (item: TranscriptItem) => createElement("div", { className: `row-${item.kind}` }, item.id),
       initialRect: { width: 720, height: 720 },
       overscan: 10,
     }),

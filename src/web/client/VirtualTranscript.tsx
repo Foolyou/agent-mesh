@@ -1,12 +1,11 @@
-import { useRef } from "react";
+import { useRef, type ReactNode } from "react";
 import { useVirtualizer, type Rect } from "@tanstack/react-virtual";
 import type { TranscriptItem } from "../types";
 import { Empty } from "./ui";
 import { useI18n } from "./i18n";
-import { TranscriptRow } from "./Transcript";
-import type { AuthorRef } from "./AuthorContext";
 
 const DEFAULT_OVERSCAN = 10;
+const DEFAULT_INITIAL_RECT: Rect = { width: 720, height: 720 };
 
 function textBucket(chars: number): number {
   if (chars <= 120) return 0;
@@ -39,13 +38,13 @@ export function estimateTranscriptItemSize(item: TranscriptItem): number {
 
 export function VirtualTranscript({
   items,
-  author,
+  renderItem,
   overscan = DEFAULT_OVERSCAN,
-  initialRect,
+  initialRect = DEFAULT_INITIAL_RECT,
   initialOffset = 0,
 }: {
   items: TranscriptItem[];
-  author?: AuthorRef;
+  renderItem: (item: TranscriptItem) => ReactNode;
   overscan?: number;
   /** Test/SSR seed; real layout uses the scroll element rect. */
   initialRect?: Rect;
@@ -87,7 +86,7 @@ export function VirtualTranscript({
                   transform: `translateY(${virtualRow.start}px)`,
                 }}
               >
-                <TranscriptRow item={item} author={author} />
+                {renderItem(item)}
               </div>
             );
           })}

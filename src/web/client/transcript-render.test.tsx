@@ -1,7 +1,7 @@
 import { test, expect } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { isTranscriptAtBottom, mailFoldButtonLabel, mailFoldInitialLineCount, nextMailExpanded, Transcript } from "./Transcript";
+import { isTranscriptAtBottom, mailFoldButtonLabel, mailFoldInitialLineCount, nextMailExpanded, Transcript, VIRTUAL_THRESHOLD } from "./Transcript";
 import type { TranscriptItem } from "../types";
 
 const T = "2026-06-09T00:00:00.000Z";
@@ -9,6 +9,17 @@ const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4DwQACfs
 
 function render(items: TranscriptItem[]): string {
   return renderToStaticMarkup(createElement(Transcript, { items }));
+}
+
+function messageItems(count: number): TranscriptItem[] {
+  return Array.from({ length: count }, (_, i) => ({
+    id: `m-${i}`,
+    kind: "message" as const,
+    role: "agent" as const,
+    text: `message ${i}`,
+    ts: T,
+    complete: true,
+  }));
 }
 
 test("user message markdown renders data image instead of literal base64 text", () => {
@@ -64,6 +75,22 @@ test("transcript stream is programmatically focusable for jump-to-bottom", () =>
 
   expect(html).toContain('class="stream"');
   expect(html).toContain('tabindex="-1"');
+});
+
+test("small transcripts use the full DOM renderer", () => {
+  const html = render(messageItems(50));
+
+  expect(html).not.toContain('data-virtual-row="true"');
+  expect((html.match(/class="msg agent"/g) ?? []).length).toBe(50);
+});
+
+test("large transcripts use the virtual renderer", () => {
+  const html = render(messageItems(VIRTUAL_THRESHOLD + 50));
+  const virtualRows = (html.match(/data-virtual-row="true"/g) ?? []).length;
+
+  expect(virtualRows).toBeGreaterThan(0);
+  expect(virtualRows).toBeLessThan(50);
+  expect((html.match(/class="msg agent"/g) ?? []).length).toBe(virtualRows);
 });
 
 test("transcript renders compact entries as dim infrastructure markers", () => {

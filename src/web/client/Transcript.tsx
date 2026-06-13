@@ -1,12 +1,15 @@
 // Renders an aggregated TranscriptItem[] as message bubbles, collapsible thought
 // blocks, and tool-call cards that update in place. The aggregation already happened
 // upstream (transcript reducer); this is pure presentation.
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import type { TranscriptItem } from "../types";
 import { Empty, fmtTime } from "./ui";
 import { useI18n } from "./i18n";
 import { Markdown } from "./Markdown";
 import { AuthorContext, type AuthorRef } from "./AuthorContext";
+import { VirtualTranscript } from "./VirtualTranscript";
+
+export const VIRTUAL_THRESHOLD = 200;
 
 function Msg({ item, author }: { item: Extract<TranscriptItem, { kind: "message" }>; author?: AuthorRef }) {
   const { t } = useI18n();
@@ -274,14 +277,18 @@ export function Transcript({ items, author }: { items: TranscriptItem[]; author?
   const [stick, setStick] = useState(true);
   useLayoutEffect(() => {
     if (stickRef.current) endRef.current?.scrollIntoView({ block: "end" });
+    const raf = requestAnimationFrame(() => {
+      if (stickRef.current) endRef.current?.scrollIntoView({ block: "end" });
+    });
+    return () => cancelAnimationFrame(raf);
   }, [items, stick]);
-  useEffect(() => {
-    const el = wrapRef.current;
-    if (!el || !stick || typeof ResizeObserver === "undefined") return;
+  useLayoutEffect(() => {
+    const tail = endRef.current?.previousElementSibling;
+    if (!tail || !stick || typeof ResizeObserver === "undefined") return;
     const ro = new ResizeObserver(() => {
       if (stickRef.current) endRef.current?.scrollIntoView({ block: "end" });
     });
-    for (const child of Array.from(el.children)) ro.observe(child);
+    ro.observe(tail);
     return () => ro.disconnect();
   }, [items, stick]);
 
@@ -300,6 +307,9 @@ export function Transcript({ items, author }: { items: TranscriptItem[]; author?
   }
 
   if (!items.length) return <Empty>{t("empty.messages")}</Empty>;
+  if (items.length > VIRTUAL_THRESHOLD) {
+    return <VirtualTranscript items={items} renderItem={(item) => <TranscriptRow item={item} author={author} />} />;
+  }
   return (
     <div className="stream-shell">
       <div className="stream" ref={wrapRef} onScroll={onScroll} tabIndex={-1}>
