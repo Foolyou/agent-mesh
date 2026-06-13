@@ -104,6 +104,7 @@ test("silent task_complete increments count and emits event when no mail was sen
     router.opts.onPromptSignal?.(router.activeTurn, taskComplete(null));
 
     expect(cp.getAgentSilentTaskCompletes("router")).toMatchObject({ count: 1 });
+    expect(cp.getAgentLastTurnCompletedAt("router")).toBeGreaterThan(0);
     expect(events).toContainEqual(expect.objectContaining({
       kind: "silent_task_complete",
       agent: "router",
@@ -118,9 +119,11 @@ test("silent task_complete does not trigger when the turn sent mail", async () =
     const { prompt } = await startTurn(cp, router);
     await (cp as any).handleSendMail({ agentId: "router" }, "peer", "[DONE] work finished");
 
+    expect(cp.getAgentLastOutboundMailAt("router")).toBeGreaterThan(0);
     router.opts.onPromptSignal?.(router.activeTurn, taskComplete(null));
 
     expect(cp.getAgentSilentTaskCompletes("router")).toEqual({ count: 0, lastAt: null });
+    expect(cp.getAgentLastTurnCompletedAt("router")).toBeGreaterThan(0);
     await finishTurn(prompt, router);
   });
 });

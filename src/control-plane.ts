@@ -247,6 +247,8 @@ export class ControlPlane {
   private agentContextUsage = new Map<AgentId, ContextUsage>();
   private agentAdvertisedCommands = new Map<AgentId, Set<string>>();
   private agentSilentTaskCompletes = new Map<AgentId, SilentTaskCompletes>();
+  private agentLastOutboundMail = new Map<AgentId, number>();
+  private agentLastTurnCompleted = new Map<AgentId, number>();
   private activeTurnIds = new Map<AgentId, string>();
   private turnOutboundMailCount = new Map<string, number>();
   private pendingRespawns = new Map<AgentId, ReturnType<typeof setTimeout>>();
@@ -307,6 +309,10 @@ export class ControlPlane {
     this.emit({ kind: "silent_task_complete", agent: id, turnId, ts: next.lastAt });
   }
 
+  private noteTurnCompleted(id: AgentId): void {
+    this.agentLastTurnCompleted.set(id, Date.now());
+  }
+
   private noteOutboundMailForActiveTurn(id: AgentId): void {
     const turnId = this.activeTurnIds.get(id);
     if (!turnId) return;
@@ -356,6 +362,14 @@ export class ControlPlane {
   getAgentSilentTaskCompletes(id: AgentId): SilentTaskCompletes {
     const value = this.agentSilentTaskCompletes.get(id) ?? { count: 0, lastAt: null };
     return { ...value };
+  }
+
+  getAgentLastOutboundMailAt(id: AgentId): number | null {
+    return this.agentLastOutboundMail.get(id) ?? null;
+  }
+
+  getAgentLastTurnCompletedAt(id: AgentId): number | null {
+    return this.agentLastTurnCompleted.get(id) ?? null;
   }
 
   /** Current authoritative agent state for reconnecting clients. */
@@ -477,6 +491,7 @@ export class ControlPlane {
     if (!turn || !signal || typeof signal !== "object") return;
     const update = signal as any;
     if (update.sessionUpdate !== "event_msg" || update.payload?.type !== "task_complete") return;
+    this.noteTurnCompleted(agent);
     if (update.payload.last_agent_message !== null) return;
     if ((this.turnOutboundMailCount.get(turn.id) ?? 0) !== 0) return;
     this.incrementSilentTaskComplete(agent, turn.id);
@@ -1227,7 +1242,25 @@ export class ControlPlane {
       const healthText = health ? ` last health note: ${health.reason} (${health.detail})` : "";
       return `- ${a.id}${me} [${a.harness}, ${a.role}, ${this.mesh.status(a.id)}, ${this.activityOf(a.id)}] can mail: ${reach.join(", ") || "(none)"}${healthText}`;
     });
-    return `Mesh "${this.mesh.name}" — router is ${this.mesh.router.id}.\n${lines.join("\n")}`;
+    const agents = this.mesh.agents.map((a) => {
+      const reach = this.mesh.agents
+        .filter((o) => o.id !== a.id && this.mesh.canMail(a.id, o.id))
+        .map((o) => o.id);
+      return {
+        id: a.id,
+        harness: a.harness,
+        role: a.role,
+        status: this.mesh.status(a.id) ?? null,
+        activity: this.activityOf(a.id),
+        canMail: reach,
+        contextUsage: this.getAgentContextUsage(a.id),
+        advertisedCommands: [...this.getAgentAdvertisedCommands(a.id)].sort(),
+        silentTaskCompletes: this.getAgentSilentTaskCompletes(a.id),
+        lastOutboundMailAt: this.getAgentLastOutboundMailAt(a.id),
+        lastTurnCompletedAt: this.getAgentLastTurnCompletedAt(a.id),
+      };
+    });
+    return `Mesh "${this.mesh.name}" — router is ${this.mesh.router.id}.\n${lines.join("\n")}\n${JSON.stringify({ agents }, null, 2)}`;
   }
 
   private meshBriefingText(forAgent: AgentId): string {
@@ -1323,6 +1356,7 @@ export class ControlPlane {
       replyTo: opts.replyTo,
       task: opts.task,
     });
+    this.agentLastOutboundMail.set(ctx.agentId, Date.now());
     this.pushRecentMail({ id: event.id, from: ctx.agentId, to, body, ts: event.ts });
     this.emit({ kind: "mail", id: event.id, from: ctx.agentId, to, body, ts: event.ts });
     // Wake the recipient asynchronously (fire-and-forget; sender's tool returns now).

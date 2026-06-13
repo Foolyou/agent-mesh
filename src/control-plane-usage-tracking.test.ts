@@ -72,6 +72,26 @@ test("ControlPlane tracks normalized advertised commands callbacks", async () =>
   });
 });
 
+test("meshStatusText exposes usage and advertised commands as agent records", async () => {
+  await withControlPlane(async (cp, created) => {
+    created[0].opts.onContextUsage?.({ used: 100, size: 1000, percent: 0.1 });
+    created[0].opts.onAvailableCommands?.(["init", "compact"]);
+
+    const status = (cp as any).meshStatusText("router");
+    const parsed = JSON.parse(status.slice(status.indexOf("{")));
+
+    expect(parsed.agents[0]).toMatchObject({
+      id: "router",
+      contextUsage: { used: 100, size: 1000, percent: 0.1 },
+      advertisedCommands: ["compact", "init"],
+      silentTaskCompletes: { count: 0, lastAt: null },
+      lastOutboundMailAt: null,
+      lastTurnCompletedAt: null,
+    });
+    expect(parsed.agents[0].contextUsage.updatedAt).toBeGreaterThan(0);
+  });
+});
+
 test("ControlPlane clears usage and commands on fresh spawn", async () => {
   await withControlPlane(async (cp, created) => {
     created[0].opts.onContextUsage?.({ used: 100, size: 1000, percent: 0.1 });
