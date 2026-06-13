@@ -1,0 +1,24 @@
+# Matrix added 2026-06-14 for cross-platform readiness; not yet verified on macOS/Windows.
+name: Cross-platform runtime
+
+on:
+  push:
+    branches: [main, mesh-dev]
+  pull_request:
+
+jobs:
+  test:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+      - run: bunx tsc --noEmit
+      - run: bun test
