@@ -98,6 +98,40 @@ export interface MeshSummary {
   edges: MeshEdge[];
 }
 
+export type HarnessAuthState = "ok" | "required" | "unknown";
+export type HarnessInstallable = "npm" | "self" | "manual";
+export interface HarnessProbeRow {
+  id: HarnessId;
+  label: string;
+  installed: boolean;
+  version?: string;
+  path?: string;
+  latest?: string;
+  outdated?: boolean;
+  auth: HarnessAuthState;
+  installable: HarnessInstallable;
+  installSpec?: { npmPackage: string; pinnedVersion: string; bin: string };
+  installHint?: { command: string; docsUrl: string };
+  lastProbeAt: number;
+  error?: string;
+  runningAgentsUsingOldVersion: string[];
+}
+
+export interface HarnessInstallEvent {
+  step: "started" | "fetch" | "install" | "link" | "done" | "error";
+  harnessId: HarnessId;
+  pkgSpec: string;
+  progress?: number;
+  stdoutLine?: string;
+  stderrLine?: string;
+  installedVersion?: string;
+  installedPath?: string;
+  code?: number;
+  message?: string;
+}
+
+export type RespawnMode = "after-idle" | "force" | "cancel";
+
 export interface ActivityEntry {
   id: string;
   ts: string;
