@@ -23,6 +23,17 @@ type SpawnSyncResult = { stdout?: string | Uint8Array; stderr?: string | Uint8Ar
 type SpawnSyncFn = (cmd: string[]) => SpawnSyncResult;
 type KillFn = (pid: number, signal?: NodeJS.Signals | number) => void;
 
+export function ptySpawnArgsForPlatform(platform: HostOs, command: string, _rawLogPath: string): string[] {
+  if (platform === "win32") return ["cmd.exe", "/d", "/s", "/c", command];
+  if (platform === "darwin") {
+    // BSD/macOS `script` differs from util-linux: command argv follows the
+    // typescript file argument and command strings with spaces need `sh -c`.
+    // Verify on real macOS before changing; this is locked by os-shim.test.ts.
+    return ["script", "-q", "/dev/null", "sh", "-c", command];
+  }
+  return ["script", "-qfec", command, "/dev/null"];
+}
+
 function text(value: string | Uint8Array | undefined): string {
   if (value === undefined) return "";
   return typeof value === "string" ? value : new TextDecoder().decode(value);
@@ -175,7 +186,7 @@ export async function createPtyBackend(input: PtyBackendOpts): Promise<PtyBacken
     input.onData?.(message);
     await mkdir(dirname(resolve(input.cwd, input.rawLogPath)), { recursive: true });
     await appendFile(resolve(input.cwd, input.rawLogPath), message, "utf8").catch(() => {});
-    const child = Bun.spawn(["cmd.exe", "/d", "/s", "/c", input.command], {
+    const child = Bun.spawn(ptySpawnArgsForPlatform("win32", input.command, resolve(input.cwd, input.rawLogPath)), {
       cwd: input.cwd,
       stdin: "pipe",
       stdout: "pipe",
@@ -194,6 +205,5 @@ export async function createPtyBackend(input: PtyBackendOpts): Promise<PtyBacken
       exited: child.exited,
     };
   }
-  if (HOST_OS === "darwin") return spawnScriptPtyImpl(input, ["script", "-F", resolve(input.cwd, input.rawLogPath), input.command]);
-  return spawnScriptPtyImpl(input, ["script", "-qfec", input.command, "/dev/null"]);
+  return spawnScriptPtyImpl(input, ptySpawnArgsForPlatform(HOST_OS, input.command, resolve(input.cwd, input.rawLogPath)));
 }

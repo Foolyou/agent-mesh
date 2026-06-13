@@ -47,6 +47,7 @@ This checklist covers macOS and Windows runtime verification for the cross-platf
 
 - Linux uses `pgrep -P` for process tree discovery and `ss -ltnp` for port ownership.
 - macOS uses `pgrep -P` for process tree discovery and `lsof -nP -iTCP:<port> -sTCP:LISTEN` for port ownership.
+- macOS PTY uses BSD `script -q /dev/null sh -c <command>`. BSD `script` argument order differs from util-linux `script`; verify that commands containing spaces execute and that raw logs are not double-written.
 - Windows uses `taskkill /T /F /PID` for process tree teardown and `netstat -ano` for port ownership.
 - Windows PTY support is v1 fallback only: the PTY backend logs `PTY unavailable on Windows in v1; falling back to non-tty mode.` and runs without a real terminal. Some harness output formatting may differ until ConPTY/node-pty support is implemented in a later task.
 

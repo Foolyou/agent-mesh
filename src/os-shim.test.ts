@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { createOsShimForTest, parseLsofPid, parseNetstatPid, parseSsPid } from "./os-shim";
+import { ptySpawnArgsForPlatform, createOsShimForTest, parseLsofPid, parseNetstatPid, parseSsPid } from "./os-shim";
 
 test("linux ss output reports listener pid on port", () => {
   // Fixture shape from: ss -ltnp
@@ -76,4 +76,10 @@ test("windows killProcessTree uses taskkill tree mode", async () => {
 
   await shim.killProcessTree(10);
   expect(calls).toEqual([["taskkill", "/T", "/F", "/PID", "10"]]);
+});
+
+test("PTY backend argv is platform-specific and command-safe", () => {
+  expect(ptySpawnArgsForPlatform("linux", "echo hi", "/tmp/raw.log")).toEqual(["script", "-qfec", "echo hi", "/dev/null"]);
+  expect(ptySpawnArgsForPlatform("darwin", "echo hi", "/tmp/raw.log")).toEqual(["script", "-q", "/dev/null", "sh", "-c", "echo hi"]);
+  expect(ptySpawnArgsForPlatform("win32", "echo hi", "/tmp/raw.log")).toEqual(["cmd.exe", "/d", "/s", "/c", "echo hi"]);
 });
