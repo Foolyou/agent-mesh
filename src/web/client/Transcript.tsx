@@ -162,18 +162,79 @@ function CompactEntry({ item }: { item: Extract<TranscriptItem, { kind: "compact
   );
 }
 
+const MAIL_COLLAPSED_LINES = 3;
+
+export function mailFoldInitialLineCount(body: string): number {
+  return Math.max(1, body.split(/\r\n|\r|\n/).length);
+}
+
+export function nextMailExpanded(expanded: boolean): boolean {
+  return !expanded;
+}
+
+export function mailFoldButtonLabel(expanded: boolean, hiddenLines: number, lang: "en" | "zh" = "en"): string {
+  if (expanded) return lang === "zh" ? "收起邮件" : "show less";
+  return lang === "zh" ? `展开邮件 (+${hiddenLines} 行)` : `show more (+${hiddenLines} lines)`;
+}
+
+function measuredLineHeight(el: HTMLElement): number {
+  const styles = window.getComputedStyle(el);
+  const parsed = Number.parseFloat(styles.lineHeight);
+  if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  const fontSize = Number.parseFloat(styles.fontSize);
+  return Number.isFinite(fontSize) && fontSize > 0 ? fontSize * 1.45 : 18;
+}
+
 function MailBubble({ item, meshId }: { item: Extract<TranscriptItem, { kind: "mail" }>; meshId?: string }) {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
   const author = meshId ? { meshId, agent: item.from } : undefined;
+  const bodyId = `mail-body-${item.id.replace(/[^A-Za-z0-9_-]/g, "-")}`;
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const [expanded, setExpanded] = useState(false);
+  const [lineCount, setLineCount] = useState(() => mailFoldInitialLineCount(item.body));
+  const [lineHeight, setLineHeight] = useState<number | null>(null);
+  const foldable = lineCount > MAIL_COLLAPSED_LINES;
+  const collapsed = foldable && !expanded;
+  const hiddenLines = Math.max(0, lineCount - MAIL_COLLAPSED_LINES);
+
+  useLayoutEffect(() => {
+    const el = bodyRef.current;
+    if (!el || typeof window === "undefined") return;
+    const measure = () => {
+      const lh = measuredLineHeight(el);
+      const fullHeight = Math.max(el.scrollHeight, el.clientHeight);
+      setLineHeight(lh);
+      setLineCount(Math.max(1, Math.ceil(fullHeight / lh)));
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [item.body, expanded]);
+
   return (
     <div className="msg mail">
       <div className="who">
         ✉ {t("mail.from", { from: item.from })} <span className="t">{fmtTime(item.ts)}</span>
       </div>
       <div className="bubble">
-        <AuthorContext.Provider value={author}>
-          <Markdown text={item.body} />
-        </AuthorContext.Provider>
+        <div
+          id={bodyId}
+          ref={bodyRef}
+          className={`mail-fold ${collapsed ? "collapsed" : "expanded"}`}
+          style={collapsed && lineHeight ? { maxHeight: `${lineHeight * MAIL_COLLAPSED_LINES}px` } : undefined}
+        >
+          <AuthorContext.Provider value={author}>
+            <Markdown text={item.body} />
+          </AuthorContext.Provider>
+          {collapsed ? <span className="mail-fade-gradient" aria-hidden="true" /> : null}
+        </div>
+        {foldable ? (
+          <button className="mail-expand-btn" type="button" aria-expanded={expanded} aria-controls={bodyId} onClick={() => setExpanded((open) => nextMailExpanded(open))}>
+            <span aria-hidden="true">{expanded ? "▴" : "▾"}</span> {mailFoldButtonLabel(expanded, hiddenLines, lang)}
+          </button>
+        ) : null}
       </div>
     </div>
   );
