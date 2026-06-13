@@ -56,6 +56,11 @@ export interface AgentConfig {
   instructions?: string;
 }
 
+export interface AutoCompactSettings {
+  enabled: boolean;
+  threshold: string;
+}
+
 export interface MeshConfig {
   name: string;
   agents: AgentConfig[];
@@ -64,6 +69,9 @@ export interface MeshConfig {
   /** Optional team charter — shared goal + working norms injected into every
    *  agent's mesh briefing. Free text. */
   charter?: string;
+  /** Optional per-mesh automatic context compaction settings. Missing means
+   *  DEFAULT_AUTO_COMPACT_SETTINGS ({ enabled: true, threshold: "85%" }). */
+  autoCompact?: AutoCompactSettings;
 }
 
 export type AgentStatus = "cold" | "spawning" | "ready" | "dead" | "stopped";
