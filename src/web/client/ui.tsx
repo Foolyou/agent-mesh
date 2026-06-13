@@ -24,6 +24,7 @@ export function Btn({
   disabled,
   title,
   ariaLabel,
+  ariaDescribedBy,
   small,
 }: {
   children: ReactNode;
@@ -32,6 +33,7 @@ export function Btn({
   disabled?: boolean;
   title?: string;
   ariaLabel?: string;
+  ariaDescribedBy?: string;
   small?: boolean;
 }) {
   return (
@@ -41,6 +43,7 @@ export function Btn({
       disabled={disabled}
       title={title}
       aria-label={ariaLabel}
+      aria-describedby={ariaDescribedBy}
     >
       {children}
     </button>

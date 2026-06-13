@@ -104,8 +104,9 @@ export function HarnessPanel({ store, open, onClose }: { store: Store; open: boo
   );
 }
 
-function HarnessRow({ row, onInstall, onReprobe }: { row: HarnessProbeRow; onInstall: () => void; onReprobe: () => void }) {
+export function HarnessRow({ row, onInstall, onReprobe }: { row: HarnessProbeRow; onInstall: () => void; onReprobe: () => void }) {
   const status = statusLabel(row);
+  const installHint = row.installable === "self" ? row.installHint : undefined;
   const installDisabled = row.installable !== "npm";
   const descId = `harness-${row.id}-install-desc`;
   const actionLabel = row.installed && row.outdated && row.version && row.latest
@@ -120,12 +121,34 @@ function HarnessRow({ row, onInstall, onReprobe }: { row: HarnessProbeRow; onIns
       <span className={`harness-badge ${status.kind}`}>{status.text}</span>
       {row.auth === "required" ? <span className="harness-badge warn">auth required</span> : null}
       <span className="harness-actions">
-        <Btn small kind="ghost" onClick={onReprobe} ariaLabel={`Reprobe ${row.id}`}>reprobe</Btn>
-        <Btn small kind="go" disabled={installDisabled} ariaLabel={actionLabel} aria-describedby={installDisabled ? descId : undefined} onClick={onInstall}>
-          {row.installed ? "update" : "install"}
-        </Btn>
+        {installHint ? null : <Btn small kind="ghost" onClick={onReprobe} ariaLabel={`Reprobe ${row.id}`}>reprobe</Btn>}
+        {installHint ? null : (
+          <Btn small kind="go" disabled={installDisabled} ariaLabel={actionLabel} ariaDescribedBy={installDisabled ? descId : undefined} onClick={onInstall}>
+            {row.installed ? "update" : "install"}
+          </Btn>
+        )}
       </span>
-      {installDisabled ? <span id={descId} className="harness-desc">Use the copy command flow for self-installing harnesses; click docs from the self-installer guide.</span> : null}
+      {installHint ? <SelfInstallerGuide row={row} command={installHint.command} docsUrl={installHint.docsUrl} onReprobe={onReprobe} /> : null}
+      {installDisabled && !installHint ? <span id={descId} className="harness-desc">Use the copy command flow for self-installing harnesses; click docs from the self-installer guide.</span> : null}
+    </div>
+  );
+}
+
+function SelfInstallerGuide({ row, command, docsUrl, onReprobe }: { row: HarnessProbeRow; command: string; docsUrl: string; onReprobe: () => void }) {
+  const [copied, setCopied] = useState(false);
+  async function copyCommand() {
+    await navigator.clipboard?.writeText(command);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1600);
+  }
+  return (
+    <div className="self-installer-guide">
+      <pre><code>{command}</code></pre>
+      <span className="self-installer-actions">
+        <Btn small kind="ghost" onClick={() => void copyCommand()} ariaLabel={`Copy install command for ${row.id}`}>{copied ? "copied" : "copy command"}</Btn>
+        <a className="btn sm ghost" href={docsUrl} target="_blank" rel="noreferrer" aria-label={`Open official installation docs for ${row.id}`}>official docs</a>
+        <Btn small kind="go" onClick={onReprobe} ariaLabel={`Done? Reprobe to detect ${row.id}`}>Done? Reprobe to detect</Btn>
+      </span>
     </div>
   );
 }

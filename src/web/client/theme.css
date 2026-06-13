@@ -1537,6 +1537,28 @@ body::after {
 .harness-desc {
   grid-column: 1 / -1;
 }
+.self-installer-guide {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 8px;
+}
+.self-installer-guide pre {
+  margin: 0;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  padding: 8px;
+  overflow-x: auto;
+  white-space: pre;
+}
+.self-installer-guide code {
+  color: var(--fg);
+  font: 12px/1.45 var(--mono);
+}
+.self-installer-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
 .install-progress {
   border: 1px solid var(--line-bright);
   background: var(--bg-inset);
