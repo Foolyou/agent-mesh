@@ -1,12 +1,16 @@
 // Renders an aggregated TranscriptItem[] as message bubbles, collapsible thought
 // blocks, and tool-call cards that update in place. The aggregation already happened
 // upstream (transcript reducer); this is pure presentation.
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import type { TranscriptItem } from "../types";
 import { Empty, fmtTime } from "./ui";
 import { useI18n } from "./i18n";
 import { Markdown } from "./Markdown";
 import { AuthorContext, type AuthorRef } from "./AuthorContext";
+import { VirtualTranscript } from "./VirtualTranscript";
+import type { TranscriptMeasurementCacheScope } from "./transcript-measurement-cache";
+
+export const VIRTUAL_THRESHOLD = 200;
 
 function Msg({ item, author }: { item: Extract<TranscriptItem, { kind: "message" }>; author?: AuthorRef }) {
   const { t } = useI18n();
@@ -240,6 +244,24 @@ function MailBubble({ item, meshId }: { item: Extract<TranscriptItem, { kind: "m
   );
 }
 
+export function TranscriptRow({ item, author }: { item: TranscriptItem; author?: AuthorRef }) {
+  return item.kind === "message" ? (
+    <Msg item={item} author={author} />
+  ) : item.kind === "thought" ? (
+    <Thought item={item} author={author} />
+  ) : item.kind === "tool_call" ? (
+    <ToolCard item={item} />
+  ) : item.kind === "mail" ? (
+    <MailBubble item={item} meshId={author?.meshId} />
+  ) : item.kind === "compact" ? (
+    <CompactEntry item={item} />
+  ) : item.kind === "divider" ? (
+    <Divider />
+  ) : (
+    <PlanCard item={item} />
+  );
+}
+
 export function isTranscriptAtBottom(
   scroll: Pick<HTMLElement, "scrollHeight" | "scrollTop" | "clientHeight">,
   threshold = 40,
@@ -247,7 +269,7 @@ export function isTranscriptAtBottom(
   return scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight <= threshold;
 }
 
-export function Transcript({ items, author }: { items: TranscriptItem[]; author?: AuthorRef }) {
+export function Transcript({ items, author, cacheScope }: { items: TranscriptItem[]; author?: AuthorRef; cacheScope?: TranscriptMeasurementCacheScope }) {
   const { t } = useI18n();
   const endRef = useRef<HTMLDivElement>(null);
   // autoscroll to bottom when content changes, unless the user scrolled up
@@ -256,14 +278,18 @@ export function Transcript({ items, author }: { items: TranscriptItem[]; author?
   const [stick, setStick] = useState(true);
   useLayoutEffect(() => {
     if (stickRef.current) endRef.current?.scrollIntoView({ block: "end" });
+    const raf = requestAnimationFrame(() => {
+      if (stickRef.current) endRef.current?.scrollIntoView({ block: "end" });
+    });
+    return () => cancelAnimationFrame(raf);
   }, [items, stick]);
-  useEffect(() => {
-    const el = wrapRef.current;
-    if (!el || !stick || typeof ResizeObserver === "undefined") return;
+  useLayoutEffect(() => {
+    const tail = endRef.current?.previousElementSibling;
+    if (!tail || !stick || typeof ResizeObserver === "undefined") return;
     const ro = new ResizeObserver(() => {
       if (stickRef.current) endRef.current?.scrollIntoView({ block: "end" });
     });
-    for (const child of Array.from(el.children)) ro.observe(child);
+    ro.observe(tail);
     return () => ro.disconnect();
   }, [items, stick]);
 
@@ -282,26 +308,13 @@ export function Transcript({ items, author }: { items: TranscriptItem[]; author?
   }
 
   if (!items.length) return <Empty>{t("empty.messages")}</Empty>;
+  if (items.length > VIRTUAL_THRESHOLD) {
+    return <VirtualTranscript items={items} cacheScope={cacheScope} renderItem={(item) => <TranscriptRow item={item} author={author} />} />;
+  }
   return (
     <div className="stream-shell">
       <div className="stream" ref={wrapRef} onScroll={onScroll} tabIndex={-1}>
-        {items.map((it) =>
-          it.kind === "message" ? (
-            <Msg key={it.id} item={it} author={author} />
-          ) : it.kind === "thought" ? (
-            <Thought key={it.id} item={it} author={author} />
-          ) : it.kind === "tool_call" ? (
-            <ToolCard key={it.id} item={it} />
-          ) : it.kind === "mail" ? (
-            <MailBubble key={it.id} item={it} meshId={author?.meshId} />
-          ) : it.kind === "compact" ? (
-            <CompactEntry key={it.id} item={it} />
-          ) : it.kind === "divider" ? (
-            <Divider key={it.id} />
-          ) : (
-            <PlanCard key={it.id} item={it} />
-          ),
-        )}
+        {items.map((it) => <TranscriptRow key={it.id} item={it} author={author} />)}
         <div ref={endRef} />
       </div>
       {!stick ? (
