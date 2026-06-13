@@ -156,6 +156,9 @@ export class WebGateway {
   private broadcast(m: ServerMsg): void {
     for (const l of this.listeners) l(m);
   }
+  broadcastHarnessesChanged(harnessId: HarnessId): void {
+    this.broadcast({ t: "harnesses-changed", harnessId });
+  }
   private broadcastOp(conv: ConvRef, op: TranscriptOp): void {
     if (op.op === "upsert") this.broadcast({ t: "transcript.upsert", conv, item: op.item });
     else this.broadcast({ t: "transcript.patch", conv, id: op.id, patch: op.patch });

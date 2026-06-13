@@ -10,6 +10,7 @@ import { AgentFileError } from "./agent-files";
 import { probeHarnesses } from "../harness-probe";
 import { probeHarnessModels } from "../harness-models";
 import { HARNESSES } from "../harness";
+import { HarnessInstallError, startHarnessInstall } from "../harness-install";
 
 export interface ApiResult {
   status: number;
@@ -17,6 +18,7 @@ export interface ApiResult {
 }
 
 type HarnessModelProbe = typeof probeHarnessModels;
+type HarnessInstaller = typeof startHarnessInstall;
 
 const ok = (body: any = { ok: true }): ApiResult => ({ status: 200, body });
 const fail = (status: number, message: string): ApiResult => ({ status, body: { error: { message } } });
@@ -29,6 +31,7 @@ export async function handleApi(
   query: URLSearchParams = new URLSearchParams(),
   harnessProbe = probeHarnesses,
   harnessModelProbe: HarnessModelProbe = probeHarnessModels,
+  harnessInstaller: HarnessInstaller = startHarnessInstall,
 ): Promise<ApiResult> {
   const seg = path
     .replace(/^\/+|\/+$/g, "")
@@ -42,6 +45,22 @@ export async function handleApi(
   try {
     if (method === "GET" && p.length === 1 && p[0] === "state") return ok(gw.snapshot());
     if (method === "GET" && p.length === 1 && p[0] === "harnesses") return ok(harnessProbe());
+    if (method === "POST" && p.length === 3 && p[0] === "harnesses" && p[2] === "install") {
+      const harness = str(p[1]) as AgentConfig["harness"];
+      if (!Object.hasOwn(HARNESSES, harness)) return fail(400, `unknown harness: ${harness}`);
+      if (harness !== "claude" && harness !== "codex") return fail(400, `harness ${harness} is not npm-installable`);
+      try {
+        const job = await harnessInstaller(harness, { broadcast: (event) => {
+          if (event.t === "harnesses-changed") gw.broadcastHarnessesChanged(event.harnessId);
+        } });
+        return ok({ jobId: job.id, status: job.status === "done" ? "done" : "running", harnessId: job.harnessId, pkgSpec: job.pkgSpec });
+      } catch (e: any) {
+        if (e instanceof HarnessInstallError && e.code === "missing-npm") {
+          return { status: 409, body: { error: "missing-npm", hint: e.message } };
+        }
+        return fail(e instanceof HarnessInstallError && e.code === "not-installable" ? 400 : 500, str(e?.message ?? e));
+      }
+    }
     if (method === "GET" && p.length === 3 && p[0] === "harnesses" && p[2] === "models") {
       const harness = str(p[1]) as AgentConfig["harness"];
       if (!Object.hasOwn(HARNESSES, harness)) return fail(404, `unknown harness: ${harness}`);

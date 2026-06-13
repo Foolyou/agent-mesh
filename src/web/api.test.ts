@@ -6,6 +6,7 @@ import { handleApi } from "./api";
 import { WebGateway } from "./gateway";
 import { artifactAgentDir } from "./artifacts";
 import type { MeshEvent, MeshConfig } from "../acp/types";
+import { HarnessInstallError, resetHarnessInstallJobsForTests, startHarnessInstall } from "../harness-install";
 
 const CFG: MeshConfig = {
   name: "demo",
@@ -169,6 +170,64 @@ test("GET /api/harnesses/:id/models rejects prototype property names as unknown 
   expect(r.status).toBe(404);
   expect(r.body.error.message).toContain("unknown harness");
   expect(called).toBe(false);
+});
+
+test("POST /api/harnesses/claude/install starts an install job", async () => {
+  const gw = new WebGateway(fakeManager() as any);
+  const r = await handleApi(
+    gw,
+    "POST",
+    "/api/harnesses/claude/install",
+    {},
+    new URLSearchParams(),
+    undefined,
+    undefined,
+    async (id) => ({ id: "job-1", harnessId: id, pkgSpec: "@agentclientprotocol/claude-agent-acp@0.44.0", status: "running" }) as any,
+  );
+  expect(r).toEqual({ status: 200, body: { jobId: "job-1", status: "running", harnessId: "claude", pkgSpec: "@agentclientprotocol/claude-agent-acp@0.44.0" } });
+});
+
+test("POST /api/harnesses/:id/install rejects non-npm and unknown harnesses", async () => {
+  const gw = new WebGateway(fakeManager() as any);
+  const opencode = await handleApi(gw, "POST", "/api/harnesses/opencode/install", {});
+  const unknown = await handleApi(gw, "POST", "/api/harnesses/unknown/install", {});
+  expect(opencode.status).toBe(400);
+  expect(opencode.body.error.message).toContain("not npm-installable");
+  expect(unknown.status).toBe(400);
+  expect(unknown.body.error.message).toContain("unknown harness");
+});
+
+test("POST /api/harnesses/:id/install returns 409 when npm is missing", async () => {
+  const gw = new WebGateway(fakeManager() as any);
+  const r = await handleApi(
+    gw,
+    "POST",
+    "/api/harnesses/claude/install",
+    {},
+    new URLSearchParams(),
+    undefined,
+    undefined,
+    async () => {
+      throw new HarnessInstallError("missing-npm", "Install Node.js first");
+    },
+  );
+  expect(r).toEqual({ status: 409, body: { error: "missing-npm", hint: "Install Node.js first" } });
+});
+
+test("POST /api/harnesses/:id/install returns the active job for duplicate starts", async () => {
+  resetHarnessInstallJobsForTests();
+  let resolveExit!: (code: number) => void;
+  const gw = new WebGateway(fakeManager() as any);
+  const install = (id: any) => startHarnessInstall(id, {
+    prefix: "/tmp/mesh-home/.agent-mesh/npm-global",
+    home: "/tmp/mesh-home",
+    which: () => "/usr/bin/npm",
+    spawn: () => ({ exited: new Promise<number>((resolve) => { resolveExit = resolve; }), stdout: new Response("").body, stderr: new Response("").body }),
+  });
+  const first = await handleApi(gw, "POST", "/api/harnesses/codex/install", {}, new URLSearchParams(), undefined, undefined, install);
+  const second = await handleApi(gw, "POST", "/api/harnesses/codex/install", {}, new URLSearchParams(), undefined, undefined, install);
+  expect(second.body.jobId).toBe(first.body.jobId);
+  resolveExit(0);
 });
 
 test("POST /api/meshes/demo/start delegates to startMesh", async () => {
