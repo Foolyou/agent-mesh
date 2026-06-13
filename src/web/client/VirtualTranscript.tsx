@@ -1,8 +1,9 @@
-import { useRef, type ReactNode } from "react";
+import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { useVirtualizer, type Rect } from "@tanstack/react-virtual";
 import type { TranscriptItem } from "../types";
 import { Empty } from "./ui";
 import { useI18n } from "./i18n";
+import { initialBottomOffset, isVirtualAtBottom, shouldAdjustForMeasuredHeightChange, shouldFollowAppend } from "./virtual-transcript-scroll";
 
 const DEFAULT_OVERSCAN = 10;
 const DEFAULT_INITIAL_RECT: Rect = { width: 720, height: 720 };
@@ -41,7 +42,7 @@ export function VirtualTranscript({
   renderItem,
   overscan = DEFAULT_OVERSCAN,
   initialRect = DEFAULT_INITIAL_RECT,
-  initialOffset = 0,
+  initialOffset,
 }: {
   items: TranscriptItem[];
   renderItem: (item: TranscriptItem) => ReactNode;
@@ -52,6 +53,9 @@ export function VirtualTranscript({
 }) {
   const { t } = useI18n();
   const parentRef = useRef<HTMLDivElement>(null);
+  const stickRef = useRef(true);
+  const previousCountRef = useRef(items.length);
+  const [stick, setStick] = useState(true);
   const virtualizer = useVirtualizer<HTMLDivElement, HTMLDivElement>({
     count: items.length,
     getScrollElement: () => parentRef.current,
@@ -59,14 +63,43 @@ export function VirtualTranscript({
     estimateSize: (index) => estimateTranscriptItemSize(items[index]!),
     overscan,
     initialRect,
-    initialOffset,
+    initialOffset: initialOffset ?? (() => initialBottomOffset(items, initialRect.height)),
   });
+  virtualizer.shouldAdjustScrollPositionOnItemSizeChange = shouldAdjustForMeasuredHeightChange;
+
+  useLayoutEffect(() => {
+    const previousCount = previousCountRef.current;
+    previousCountRef.current = items.length;
+    if (!items.length) return;
+    if (!shouldFollowAppend(stickRef.current, previousCount, items.length) && previousCount !== items.length) return;
+    if (!stickRef.current) return;
+    virtualizer.scrollToIndex(items.length - 1, { align: "end" });
+    const raf = requestAnimationFrame(() => {
+      if (stickRef.current) virtualizer.scrollToIndex(items.length - 1, { align: "end" });
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [items.length, virtualizer]);
+
+  function noteScrollPosition() {
+    const el = parentRef.current;
+    if (!el) return;
+    const atBottom = isVirtualAtBottom(el, virtualizer.getDistanceFromEnd());
+    stickRef.current = atBottom;
+    setStick(atBottom);
+  }
+
+  function jumpToBottom() {
+    stickRef.current = true;
+    setStick(true);
+    virtualizer.scrollToIndex(items.length - 1, { align: "end" });
+    parentRef.current?.focus({ preventScroll: true });
+  }
 
   if (!items.length) return <Empty>{t("empty.messages")}</Empty>;
 
   return (
     <div className="stream-shell">
-      <div className="stream virtual-stream" ref={parentRef} tabIndex={-1}>
+      <div className="stream virtual-stream" ref={parentRef} onScroll={noteScrollPosition} tabIndex={-1}>
         <div className="virtual-transcript-spacer" style={{ height: `${virtualizer.getTotalSize()}px`, position: "relative" }}>
           {virtualizer.getVirtualItems().map((virtualRow) => {
             const item = items[virtualRow.index];
@@ -92,6 +125,11 @@ export function VirtualTranscript({
           })}
         </div>
       </div>
+      {!stick ? (
+        <button className="jump-bottom" type="button" title={t("transcript.jumpBottom")} aria-label={t("transcript.jumpBottom")} onClick={jumpToBottom}>
+          <span aria-hidden="true">↓</span>
+        </button>
+      ) : null}
     </div>
   );
 }

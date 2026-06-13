@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { estimateTranscriptItemSize, VirtualTranscript } from "./VirtualTranscript";
+import { initialBottomOffset, isVirtualAtBottom, shouldAdjustForMeasuredHeightChange, shouldFollowAppend } from "./virtual-transcript-scroll";
 import type { TranscriptItem } from "../types";
 
 const T = "2026-06-09T00:00:00.000Z";
@@ -32,6 +33,7 @@ test("VirtualTranscript renders only the initial visible range for long transcri
       items: makeItems(1000),
       renderItem: (item: TranscriptItem) => createElement("div", { className: `row-${item.kind}` }, item.id),
       initialRect: { width: 720, height: 720 },
+      initialOffset: 0,
       overscan: 10,
     }),
   );
@@ -41,4 +43,29 @@ test("VirtualTranscript renders only the initial visible range for long transcri
   expect(renderedRows).toBeLessThan(30);
   expect(html).toContain('data-index="0"');
   expect(html).not.toContain('data-index="999"');
+});
+
+test("VirtualTranscript starts at the tail by default", () => {
+  const html = renderToStaticMarkup(
+    createElement(VirtualTranscript, {
+      items: makeItems(1000),
+      renderItem: (item: TranscriptItem) => createElement("div", { className: `row-${item.kind}` }, item.id),
+      initialRect: { width: 720, height: 720 },
+      overscan: 10,
+    }),
+  );
+
+  expect(html).toContain('data-index="999"');
+});
+
+test("virtual transcript scroll helpers preserve chat semantics", () => {
+  expect(isVirtualAtBottom({ scrollHeight: 1000, scrollTop: 560, clientHeight: 400 }, 500)).toBe(true);
+  expect(isVirtualAtBottom({ scrollHeight: 1000, scrollTop: 500, clientHeight: 400 }, 20)).toBe(true);
+  expect(isVirtualAtBottom({ scrollHeight: 1000, scrollTop: 500, clientHeight: 400 }, 100)).toBe(false);
+  expect(shouldFollowAppend(true, 10, 11)).toBe(true);
+  expect(shouldFollowAppend(false, 10, 11)).toBe(false);
+  expect(shouldFollowAppend(true, 10, 10)).toBe(false);
+  expect(shouldAdjustForMeasuredHeightChange({ key: "a", index: 1, start: 100, end: 160, size: 60, lane: 0 }, 120)).toBe(true);
+  expect(shouldAdjustForMeasuredHeightChange({ key: "b", index: 2, start: 200, end: 260, size: 60, lane: 0 }, 120)).toBe(false);
+  expect(initialBottomOffset(makeItems(3), 10)).toBeGreaterThan(0);
 });
