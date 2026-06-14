@@ -269,13 +269,33 @@ export function isTranscriptAtBottom(
   return scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight <= threshold;
 }
 
+export function nextTranscriptStickState(current: boolean, atBottom: boolean, userInitiatedScroll: boolean): boolean {
+  if (atBottom) return true;
+  if (userInitiatedScroll) return false;
+  return current;
+}
+
+export function isTranscriptScrollIntentKey(key: string): boolean {
+  return ["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(key);
+}
+
 export function Transcript({ items, author, cacheScope }: { items: TranscriptItem[]; author?: AuthorRef; cacheScope?: TranscriptMeasurementCacheScope }) {
   const { t } = useI18n();
   const endRef = useRef<HTMLDivElement>(null);
   // autoscroll to bottom when content changes, unless the user scrolled up
   const wrapRef = useRef<HTMLDivElement>(null);
   const stickRef = useRef(true);
+  const userScrollIntentRef = useRef(false);
+  const userScrollIntentTimerRef = useRef<number | undefined>(undefined);
   const [stick, setStick] = useState(true);
+  function markUserScrollIntent() {
+    userScrollIntentRef.current = true;
+    if (userScrollIntentTimerRef.current !== undefined) window.clearTimeout(userScrollIntentTimerRef.current);
+    userScrollIntentTimerRef.current = window.setTimeout(() => {
+      userScrollIntentRef.current = false;
+      userScrollIntentTimerRef.current = undefined;
+    }, 350);
+  }
   useLayoutEffect(() => {
     if (stickRef.current) endRef.current?.scrollIntoView({ block: "end" });
     const raf = requestAnimationFrame(() => {
@@ -292,13 +312,19 @@ export function Transcript({ items, author, cacheScope }: { items: TranscriptIte
     ro.observe(tail);
     return () => ro.disconnect();
   }, [items, stick]);
+  useLayoutEffect(() => {
+    return () => {
+      if (userScrollIntentTimerRef.current !== undefined) window.clearTimeout(userScrollIntentTimerRef.current);
+    };
+  }, []);
 
   function onScroll() {
     const el = wrapRef.current;
     if (!el) return;
     const atBottom = isTranscriptAtBottom(el);
-    stickRef.current = atBottom;
-    setStick(atBottom);
+    const nextStick = nextTranscriptStickState(stickRef.current, atBottom, userScrollIntentRef.current);
+    stickRef.current = nextStick;
+    setStick(nextStick);
   }
 
   function jumpToBottom() {
@@ -313,7 +339,17 @@ export function Transcript({ items, author, cacheScope }: { items: TranscriptIte
   }
   return (
     <div className="stream-shell">
-      <div className="stream" ref={wrapRef} onScroll={onScroll} tabIndex={-1}>
+      <div
+        className="stream"
+        ref={wrapRef}
+        onScroll={onScroll}
+        onWheel={markUserScrollIntent}
+        onTouchMove={markUserScrollIntent}
+        onKeyDown={(e) => {
+          if (isTranscriptScrollIntentKey(e.key)) markUserScrollIntent();
+        }}
+        tabIndex={-1}
+      >
         {items.map((it) => <TranscriptRow key={it.id} item={it} author={author} />)}
         <div ref={endRef} />
       </div>

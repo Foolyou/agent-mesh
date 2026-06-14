@@ -1,7 +1,7 @@
 import { test, expect } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { isTranscriptAtBottom, mailFoldButtonLabel, mailFoldInitialLineCount, nextMailExpanded, Transcript, VIRTUAL_THRESHOLD } from "./Transcript";
+import { isTranscriptAtBottom, isTranscriptScrollIntentKey, mailFoldButtonLabel, mailFoldInitialLineCount, nextMailExpanded, nextTranscriptStickState, Transcript, VIRTUAL_THRESHOLD } from "./Transcript";
 import type { TranscriptItem } from "../types";
 
 const T = "2026-06-09T00:00:00.000Z";
@@ -59,6 +59,18 @@ test("user message relative image without an author does not rewrite to an agent
 test("transcript bottom detection treats nearby scroll positions as bottom", () => {
   expect(isTranscriptAtBottom({ scrollHeight: 1000, scrollTop: 560, clientHeight: 400 })).toBe(true);
   expect(isTranscriptAtBottom({ scrollHeight: 1000, scrollTop: 559, clientHeight: 400 })).toBe(false);
+});
+
+test("transcript keeps stick-to-bottom across layout-only scroll drift", () => {
+  expect(nextTranscriptStickState(true, false, false)).toBe(true);
+  expect(nextTranscriptStickState(true, false, true)).toBe(false);
+  expect(nextTranscriptStickState(false, true, false)).toBe(true);
+});
+
+test("transcript recognizes keyboard scroll intent keys", () => {
+  expect(isTranscriptScrollIntentKey("PageUp")).toBe(true);
+  expect(isTranscriptScrollIntentKey("ArrowDown")).toBe(true);
+  expect(isTranscriptScrollIntentKey("Enter")).toBe(false);
 });
 
 test("transcript stream is programmatically focusable for jump-to-bottom", () => {
