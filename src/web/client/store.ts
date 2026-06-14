@@ -285,6 +285,14 @@ export function createStore(): Store {
     return harnessListInFlight;
   }
   const transcriptKey = (mesh: string, agentId: string) => `${mesh}:${agentId}`;
+  function mergeInitialTranscriptItems(current: TranscriptItem[], fetched: TranscriptItem[]): TranscriptItem[] {
+    const merged = new Map<string, TranscriptItem>();
+    for (const item of fetched) merged.set(item.id, item);
+    for (const item of current) {
+      if (!merged.has(item.id)) merged.set(item.id, item);
+    }
+    return [...merged.values()];
+  }
   function replaceTranscriptItems(mesh: string, agentId: string, items: TranscriptItem[], hasMore: boolean): void {
     set(withPerMesh(state, mesh, (pm) => ({
       ...pm,
@@ -322,10 +330,6 @@ export function createStore(): Store {
     const current = state.perMesh[mesh]?.transcripts[agentId];
     if (!current?.hasMore || initialLoadedTranscripts.has(transcriptKey(mesh, agentId))) return Promise.resolve();
     const key = transcriptKey(mesh, agentId);
-    if (current.items.length > 0) {
-      initialLoadedTranscripts.add(key);
-      return Promise.resolve();
-    }
     const existing = loadingInitialTranscript.get(key);
     if (existing) return existing;
     const params = new URLSearchParams();
@@ -335,7 +339,9 @@ export function createStore(): Store {
       `load transcript ${agentId}`,
     )
       .then((res) => {
-        const items = Array.isArray(res.items) ? res.items : [];
+        const fetched = Array.isArray(res.items) ? res.items : [];
+        const latest = state.perMesh[mesh]?.transcripts[agentId]?.items ?? [];
+        const items = mergeInitialTranscriptItems(latest, fetched);
         initialLoadedTranscripts.add(key);
         replaceTranscriptItems(mesh, agentId, items, res.hasMore === true);
       })

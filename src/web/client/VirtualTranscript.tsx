@@ -43,6 +43,10 @@ export function preservePrependAnchorOffset({
   return Math.max(0, currentStart - (previousTop - containerTop));
 }
 
+export function shouldShowOlderTranscriptMarker(hasMore: boolean | undefined, firstVisibleIndex: number | undefined): boolean {
+  return hasMore === true && firstVisibleIndex === 0;
+}
+
 function textBucket(chars: number): number {
   if (chars <= 120) return 0;
   if (chars <= 500) return 48;
@@ -80,6 +84,7 @@ export function VirtualTranscript({
   initialRect = DEFAULT_INITIAL_RECT,
   initialOffset,
   hasMore,
+  activeId,
   onLoadOlder,
 }: {
   items: TranscriptItem[];
@@ -90,6 +95,7 @@ export function VirtualTranscript({
   initialRect?: Rect;
   initialOffset?: number;
   hasMore?: boolean;
+  activeId?: string;
   onLoadOlder?: () => Promise<void>;
 }) {
   const { t } = useI18n();
@@ -106,6 +112,7 @@ export function VirtualTranscript({
   const previousFirstItemIdRef = useRef(items[0]?.id);
   const [stick, setStick] = useState(true);
   const [loadingOlder, setLoadingOlder] = useState(false);
+  const [firstVisibleIndex, setFirstVisibleIndex] = useState<number | undefined>(undefined);
   const [widthBucket, setWidthBucket] = useState(() => transcriptWidthBucket(initialRect.width));
   const initialMeasurementsCache =
     cacheScope && widthBucket ? initialTranscriptMeasurements(items, cacheScope, widthBucket, estimateTranscriptItemSize) : undefined;
@@ -187,6 +194,19 @@ export function VirtualTranscript({
     });
     return () => cancelAnimationFrame(raf);
   }, [items.length, virtualizer]);
+  useLayoutEffect(() => {
+    stickRef.current = true;
+    setStick(true);
+    if (items.length) {
+      virtualizer.scrollToIndex(items.length - 1, { align: "end" });
+      syncPreviousScrollTop();
+      const raf = requestAnimationFrame(() => {
+        virtualizer.scrollToIndex(items.length - 1, { align: "end" });
+        syncPreviousScrollTop();
+      });
+      return () => cancelAnimationFrame(raf);
+    }
+  }, [activeId, items.length, virtualizer]);
   useLayoutEffect(() => {
     const previousFirstItemId = previousFirstItemIdRef.current;
     previousFirstItemIdRef.current = items[0]?.id;
@@ -273,6 +293,7 @@ export function VirtualTranscript({
   }
 
   useLayoutEffect(() => {
+    setFirstVisibleIndex(virtualizer.getVirtualItems()[0]?.index);
     maybeLoadOlder();
   });
 
@@ -299,7 +320,7 @@ export function VirtualTranscript({
         }}
         tabIndex={-1}
       >
-        {hasMore ? (
+        {shouldShowOlderTranscriptMarker(hasMore, firstVisibleIndex ?? virtualizer.getVirtualItems()[0]?.index) ? (
           <div className="virtual-transcript-loading" aria-live="polite">
             {loadingOlder ? "Loading older..." : "Scroll up for older messages"}
           </div>

@@ -453,9 +453,9 @@ test("loadInitialTranscript coalesces concurrent requests and skips after succes
   }
 });
 
-test("loadInitialTranscript marks preloaded snapshot items without fetching", async () => {
+test("loadInitialTranscript fetches tail when live items arrived before initial load", async () => {
   const originalFetch = globalThis.fetch;
-  const fetchMock = mock(() => Promise.resolve(responseJson({ items: [], hasMore: false })));
+  const fetchMock = mock(() => Promise.resolve(responseJson({ items: [message("tail-0"), message("live-0")], hasMore: true })));
   globalThis.fetch = fetchMock as any;
   try {
     const store = createStore();
@@ -467,7 +467,7 @@ test("loadInitialTranscript marks preloaded snapshot items without fetching", as
           demo: {
             ...seed().perMesh.demo,
             transcripts: {
-              "codex-1": { items: [message("snapshot-tail")], hasMore: true, oldestSeq: "snapshot-tail" },
+              "codex-1": { items: [message("live-0")], hasMore: true, oldestSeq: "live-0" },
             },
           },
         },
@@ -476,9 +476,50 @@ test("loadInitialTranscript marks preloaded snapshot items without fetching", as
 
     await store.loadInitialTranscript("demo", "codex-1");
 
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(store.isTranscriptInitialLoaded("demo", "codex-1")).toBe(true);
-    expect(store.getState().perMesh.demo.transcripts["codex-1"].items.map((item) => item.id)).toEqual(["snapshot-tail"]);
+    expect(store.getState().perMesh.demo.transcripts["codex-1"].items.map((item) => item.id)).toEqual(["tail-0", "live-0"]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("loadInitialTranscript keeps live items appended while fetch is in flight", async () => {
+  const originalFetch = globalThis.fetch;
+  let resolveFetch: (res: Response) => void = () => {};
+  const fetchMock = mock(() => new Promise<Response>((resolve) => {
+    resolveFetch = resolve;
+  }));
+  globalThis.fetch = fetchMock as any;
+  try {
+    const store = createStore();
+    store.apply({
+      t: "snapshot",
+      state: {
+        ...seed(),
+        perMesh: {
+          demo: {
+            ...seed().perMesh.demo,
+            transcripts: {
+              "codex-1": { items: [], hasMore: true },
+            },
+          },
+        },
+      },
+    });
+
+    const loading = store.loadInitialTranscript("demo", "codex-1");
+    store.apply({
+      t: "transcript.upsert",
+      conv: { scope: "agent", mesh: "demo", agent: "codex-1" },
+      item: message("live-after-fetch-start"),
+    });
+    resolveFetch(responseJson({ items: [message("tail-0")], hasMore: true }));
+    await loading;
+
+    const transcript = store.getState().perMesh.demo.transcripts["codex-1"];
+    expect(transcript.items.map((item) => item.id)).toEqual(["tail-0", "live-after-fetch-start"]);
+    expect(transcript.oldestSeq).toBe("tail-0");
   } finally {
     globalThis.fetch = originalFetch;
   }

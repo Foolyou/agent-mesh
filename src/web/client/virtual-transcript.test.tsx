@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { estimateTranscriptItemSize, preservePrependAnchorOffset, shouldTriggerTranscriptBackfill, VirtualTranscript } from "./VirtualTranscript";
+import { estimateTranscriptItemSize, preservePrependAnchorOffset, shouldShowOlderTranscriptMarker, shouldTriggerTranscriptBackfill, VirtualTranscript } from "./VirtualTranscript";
 import { initialBottomOffset, isVirtualAtBottom, shouldFollowAppend, shouldManuallyAdjustMeasuredHeight } from "./virtual-transcript-scroll";
-import { nextTranscriptStickState } from "./Transcript";
+import { Transcript, nextTranscriptStickState } from "./Transcript";
 import type { TranscriptItem } from "../types";
 
 const T = "2026-06-09T00:00:00.000Z";
@@ -94,6 +94,38 @@ test("VirtualTranscript renders a loading marker while older transcript exists",
   );
 
   expect(html).toContain("virtual-transcript-loading");
+});
+
+test("VirtualTranscript hides the older marker when not viewing the oldest rendered row", () => {
+  const html = renderToStaticMarkup(
+    createElement(VirtualTranscript, {
+      items: makeItems(1000),
+      renderItem: (item: TranscriptItem) => createElement("div", { className: `row-${item.kind}` }, item.id),
+      initialRect: { width: 720, height: 720 },
+      hasMore: true,
+      onLoadOlder: async () => {},
+    }),
+  );
+
+  expect(html).not.toContain("virtual-transcript-loading");
+});
+
+test("older transcript marker only shows at the oldest visible row", () => {
+  expect(shouldShowOlderTranscriptMarker(true, 0)).toBe(true);
+  expect(shouldShowOlderTranscriptMarker(true, 1)).toBe(false);
+  expect(shouldShowOlderTranscriptMarker(false, 0)).toBe(false);
+});
+
+test("Transcript uses virtual rendering for short transcripts that can backfill", () => {
+  const html = renderToStaticMarkup(
+    createElement(Transcript, {
+      items: makeItems(100),
+      hasMore: true,
+      onLoadOlder: async () => {},
+    }),
+  );
+
+  expect(html).toContain("virtual-stream");
 });
 
 test("virtual transcript stick state ignores layout-only and downward scroll drift", () => {

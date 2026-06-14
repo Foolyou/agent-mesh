@@ -480,6 +480,7 @@ function ConversationPanel({
           items={transcript?.items ?? []}
           hasMore={transcript?.hasMore}
           loadingTranscript={loadingTranscript}
+          activeId={activeId}
           onLoadOlder={() => store.loadOlderTranscript(m.name, activeId)}
           queue={pm.queues?.[activeId]}
           author={{ meshId: m.name, agent: activeId }}

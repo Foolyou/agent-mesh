@@ -291,6 +291,7 @@ export function Transcript({
   cacheScope,
   hasMore,
   loadingTranscript,
+  activeId,
   onLoadOlder,
 }: {
   items: TranscriptItem[];
@@ -298,6 +299,7 @@ export function Transcript({
   cacheScope?: TranscriptMeasurementCacheScope;
   hasMore?: boolean;
   loadingTranscript?: boolean;
+  activeId?: string;
   onLoadOlder?: () => Promise<void>;
 }) {
   const { t } = useI18n();
@@ -322,6 +324,17 @@ export function Transcript({
       userScrollIntentTimerRef.current = undefined;
     }, 350);
   }
+  useLayoutEffect(() => {
+    stickRef.current = true;
+    setStick(true);
+    endRef.current?.scrollIntoView({ block: "end" });
+    syncLastScrollTop();
+    const raf = requestAnimationFrame(() => {
+      endRef.current?.scrollIntoView({ block: "end" });
+      syncLastScrollTop();
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [activeId]);
   useLayoutEffect(() => {
     if (stickRef.current) {
       endRef.current?.scrollIntoView({ block: "end" });
@@ -373,8 +386,8 @@ export function Transcript({
   }
 
   if (!items.length) return <Empty>{loadingTranscript ? t("transcript.loading") : t("empty.messages")}</Empty>;
-  if (items.length > VIRTUAL_THRESHOLD) {
-    return <VirtualTranscript items={items} cacheScope={cacheScope} hasMore={hasMore} onLoadOlder={onLoadOlder} renderItem={(item) => <TranscriptRow item={item} author={author} />} />;
+  if (items.length > VIRTUAL_THRESHOLD || hasMore) {
+    return <VirtualTranscript items={items} cacheScope={cacheScope} hasMore={hasMore} activeId={activeId} onLoadOlder={onLoadOlder} renderItem={(item) => <TranscriptRow item={item} author={author} />} />;
   }
   return (
     <div className="stream-shell">

@@ -605,6 +605,7 @@ export function MeshCanvas({
                   items={transcriptItems}
                   hasMore={focused ? transcript?.hasMore : false}
                   loadingTranscript={loadingTranscript}
+                  activeId={focused ? agent.id : undefined}
                   onLoadOlder={focused ? () => store.loadOlderTranscript(m.name, agent.id) : undefined}
                   queue={pm.queues?.[agent.id]}
                   author={{ meshId: m.name, agent: agent.id }}
