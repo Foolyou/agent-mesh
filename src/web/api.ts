@@ -227,16 +227,15 @@ export async function handleApi(
           return ok();
         }
         if (p[4] === "mode") {
-          await gw.setMode(name, agentId, str(body?.modeId));
-          return ok();
+          // Body carries saved/applied/error so the UI can distinguish "persisted, pending
+          // restart" from "live apply failed"; a live failure is never reported as plain success.
+          return ok(await gw.setMode(name, agentId, str(body?.modeId)));
         }
         if (p[4] === "model") {
-          await gw.setModel(name, agentId, str(body?.modelId));
-          return ok();
+          return ok(await gw.setModel(name, agentId, str(body?.modelId)));
         }
         if (p[4] === "effort") {
-          await gw.setEffort(name, agentId, (body?.effort || undefined) as any);
-          return ok();
+          return ok(await gw.setEffort(name, agentId, (body?.effort || undefined) as any));
         }
         if (p[4] === "interrupt") {
           gw.interruptAgent(name, agentId);

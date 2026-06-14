@@ -9,10 +9,15 @@ import net from "node:net";
 import { resolve } from "node:path";
 import { existsSync } from "node:fs";
 import { killTree } from "./acp/client";
-import { LineBuffer, encodeFrame, PROTO_VERSION, type ChildMsg, type ParentMsg } from "./protocol";
+import { LineBuffer, encodeFrame, PROTO_VERSION, type ChildMsg, type MutationAckStatus, type ParentMsg } from "./protocol";
 import type { AgentConfig, MeshConfig, MeshEdge, MeshEvent } from "./acp/types";
 import type { PromptImageRef } from "./acp/types";
 import type { RespawnMode, RespawnResult } from "./control-plane";
+
+/** Host-side acknowledgement for a config mutation (setMode/setModel/setEffort). */
+export interface MutationAck {
+  status: MutationAckStatus;
+}
 
 export interface MeshHostClientOptions {
   name: string;
@@ -25,10 +30,13 @@ export interface MeshHostClientOptions {
   onEvent?: (event: MeshEvent) => void;
   onExit?: (code: number) => void; // only fires for a daemon WE spawned
   onClose?: () => void; // the socket closed unexpectedly (daemon died / lost) — not on stop()
+  rpcTimeoutMs?: number; // request/ack (respawn + mutation) waiter timeout; default 10s
 }
 
 const CONNECT_TIMEOUT_MS = 8000;
 const READY_TIMEOUT_MS = 60_000;
+const RESPAWN_TIMEOUT_MS = 10_000;
+const MUTATION_ACK_TIMEOUT_MS = 10_000;
 
 export class MeshHostClient {
   private conn?: net.Socket;
@@ -42,7 +50,10 @@ export class MeshHostClient {
   private readyResolve?: () => void;
   private stoppedResolve?: () => void;
   private rpcSeq = 0;
-  private respawnWaiters = new Map<string, { resolve: (result: RespawnResult) => void; reject: (err: Error) => void }>();
+  /** In-flight request/ack waiters keyed by reqId, shared by respawn and config-mutation acks.
+   *  Every waiter is settled exactly once — by its result frame, its timeout, or a connection
+   *  loss/takeover (rejectAllRpc) — so no waiter can leak or hang forever. */
+  private rpcWaiters = new Map<string, { resolve: (value: unknown) => void; reject: (err: Error) => void; timer: ReturnType<typeof setTimeout> }>();
 
   constructor(private opts: MeshHostClientOptions) {}
 
@@ -121,7 +132,50 @@ export class MeshHostClient {
     return tryOnce();
   }
 
+  private get mutationTimeoutMs(): number { return this.opts.rpcTimeoutMs ?? MUTATION_ACK_TIMEOUT_MS; }
+  private get respawnTimeoutMs(): number { return this.opts.rpcTimeoutMs ?? RESPAWN_TIMEOUT_MS; }
+
+  /** Register a waiter for a request/ack RPC. Rejects immediately if there is no live
+   *  connection to carry the request, otherwise arms a timeout. */
+  private awaitRpc<T>(reqId: string, timeoutMs: number, label: string): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      if (!this.conn) {
+        reject(new Error(`mesh-host "${this.opts.name}": ${label} has no connection`));
+        return;
+      }
+      const timer = setTimeout(() => {
+        this.rpcWaiters.delete(reqId);
+        reject(new Error(`mesh-host "${this.opts.name}": ${label} timed out`));
+      }, timeoutMs);
+      this.rpcWaiters.set(reqId, { resolve: resolve as (v: unknown) => void, reject, timer });
+    });
+  }
+
+  /** Settle one waiter from an incoming result frame. */
+  private settleRpc(reqId: string, error: string | undefined, value: unknown): void {
+    const waiter = this.rpcWaiters.get(reqId);
+    if (!waiter) return;
+    this.rpcWaiters.delete(reqId);
+    clearTimeout(waiter.timer);
+    if (error) waiter.reject(new Error(error));
+    else waiter.resolve(value);
+  }
+
+  /** Reject and clear every in-flight waiter — used when the connection is lost or replaced,
+   *  since their result frames can never arrive on a dead/superseded socket. */
+  private rejectAllRpc(err: Error): void {
+    if (this.rpcWaiters.size === 0) return;
+    const waiters = [...this.rpcWaiters.values()];
+    this.rpcWaiters.clear();
+    for (const w of waiters) {
+      clearTimeout(w.timer);
+      w.reject(err);
+    }
+  }
+
   private bind(sock: net.Socket): void {
+    // A new socket supersedes any prior one: its in-flight requests can never be answered.
+    this.rejectAllRpc(new Error(`mesh-host "${this.opts.name}": connection replaced`));
     this.conn = sock;
     const lb = new LineBuffer();
     sock.setEncoding("utf8");
@@ -138,9 +192,11 @@ export class MeshHostClient {
     });
     sock.on("error", () => {});
     sock.on("close", () => {
-      if (this.conn === sock && !this.stopping) {
+      if (this.conn === sock) {
         this.conn = undefined;
-        this.opts.onClose?.();
+        // Any in-flight request/ack on this socket will never be answered now.
+        this.rejectAllRpc(new Error(`mesh-host "${this.opts.name}": connection closed`));
+        if (!this.stopping) this.opts.onClose?.();
       }
     });
   }
@@ -166,14 +222,12 @@ export class MeshHostClient {
         if (msg.seq > this.lastSeq) this.lastSeq = msg.seq;
         this.opts.onEvent?.(msg.event);
         break;
-      case "respawnResult": {
-        const waiter = this.respawnWaiters.get(msg.reqId);
-        if (!waiter) break;
-        this.respawnWaiters.delete(msg.reqId);
-        if (msg.error) waiter.reject(new Error(msg.error));
-        else waiter.resolve(msg.result!);
+      case "respawnResult":
+        this.settleRpc(msg.reqId, msg.error, msg.result);
         break;
-      }
+      case "cmdResult":
+        this.settleRpc(msg.reqId, msg.error, msg.status ? { status: msg.status } : undefined);
+        break;
       case "stopped":
         this.stoppedResolve?.();
         break;
@@ -219,30 +273,31 @@ export class MeshHostClient {
   removeQueuedTurn(target: string, turnId: string): void { this.send({ t: "removeQueuedTurn", target, turnId }); }
   steer(target: string, text: string, images?: PromptImageRef[]): void { this.send({ t: "steer", target, text, images }); }
   resolve(requestId: string, optionId: string): void { this.send({ t: "resolve", requestId, optionId }); }
-  setMode(target: string, modeId: string): void { this.send({ t: "setMode", target, modeId }); }
-  setModel(target: string, modelId: string): void { this.send({ t: "setModel", target, modelId }); }
-  setEffort(target: string, effort?: string): void { this.send({ t: "setEffort", target, effort }); }
+  setMode(target: string, modeId: string): Promise<MutationAck> {
+    const reqId = `setMode-${++this.rpcSeq}`;
+    const waiting = this.awaitRpc<MutationAck>(reqId, this.mutationTimeoutMs, `setMode ${target}`);
+    this.send({ t: "setMode", target, modeId, reqId });
+    return waiting;
+  }
+  setModel(target: string, modelId: string): Promise<MutationAck> {
+    const reqId = `setModel-${++this.rpcSeq}`;
+    const waiting = this.awaitRpc<MutationAck>(reqId, this.mutationTimeoutMs, `setModel ${target}`);
+    this.send({ t: "setModel", target, modelId, reqId });
+    return waiting;
+  }
+  setEffort(target: string, effort?: string): Promise<MutationAck> {
+    const reqId = `setEffort-${++this.rpcSeq}`;
+    const waiting = this.awaitRpc<MutationAck>(reqId, this.mutationTimeoutMs, `setEffort ${target}`);
+    this.send({ t: "setEffort", target, effort, reqId });
+    return waiting;
+  }
   interrupt(target: string): void { this.send({ t: "interrupt", target }); }
   newSession(target: string): void { this.send({ t: "newSession", target }); }
   respawn(target: string, mode: RespawnMode): Promise<RespawnResult> {
     const reqId = `respawn-${++this.rpcSeq}`;
+    const waiting = this.awaitRpc<RespawnResult>(reqId, this.respawnTimeoutMs, `respawn ${target}`);
     this.send({ t: "respawn", reqId, target, mode });
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.respawnWaiters.delete(reqId);
-        reject(new Error(`respawn ${target} timed out`));
-      }, 10_000);
-      this.respawnWaiters.set(reqId, {
-        resolve: (result) => {
-          clearTimeout(timer);
-          resolve(result);
-        },
-        reject: (err) => {
-          clearTimeout(timer);
-          reject(err);
-        },
-      });
-    });
+    return waiting;
   }
   newAllSessions(): void { this.send({ t: "newAllSessions" }); }
   wakeAgent(target: string): void { this.send({ t: "wake", target }); }

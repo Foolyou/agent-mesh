@@ -5,7 +5,8 @@
 import { resolve, join } from "node:path";
 import { rm } from "node:fs/promises";
 import { MeshStore } from "./mesh-store";
-import { MeshHostClient } from "./mesh-host-client";
+import { MeshHostClient, type MutationAck } from "./mesh-host-client";
+import type { MutationApplyResult } from "./web/types";
 import { listLiveRecords, readRecord, removeRecord, pidAlive, type MeshHostRecord } from "./mesh-registry";
 import { Mesh } from "./mesh";
 import { validateAddAgent, validateAddEdge } from "./mesh-validate";
@@ -21,6 +22,8 @@ import { clearAgentSession, clearAllAgentSessions, setMeshExpectedAlive } from "
 
 export type MeshStatus = "stopped" | "starting" | "running" | "dead";
 export type StartSessionStrategy = "resume" | "fresh";
+
+export type { MutationApplyResult };
 
 export interface StartMeshOptions {
   sessionStrategy?: StartSessionStrategy;
@@ -117,20 +120,22 @@ export class MeshManager {
 
   /** Update one agent's thinking effort. Known config-safe values are persisted for the
    *  next start; advertised runtime-only values are forwarded live and not stored. */
-  async setAgentEffort(name: string, agentId: string, effort?: string): Promise<void> {
+  async setAgentEffort(name: string, agentId: string, effort?: string): Promise<MutationApplyResult> {
     const entry = this.require(name);
     const target = entry.config.agents.find((a) => a.id === agentId);
     if (!target) throw new Error(`no agent "${agentId}" in mesh "${name}"`);
     if (effort !== undefined && (!isThinkingEffort(effort) || !isEffortSupportedByHarness(target.harness, effort))) {
-      if (!entry.client) throw new Error(`agent "${agentId}" effort "${effort}" is runtime-only and mesh "${name}" is not running`);
-      entry.client.setEffort(agentId, effort);
-      return;
+      // Runtime-only advertised value: forwarded live, never persisted (saved:false).
+      const client = entry.client;
+      if (!client) throw new Error(`agent "${agentId}" effort "${effort}" is runtime-only and mesh "${name}" is not running`);
+      return this.applyLiveMutation(() => client.setEffort(agentId, effort), false);
     }
     const persistedEffort = effort as ThinkingEffort | undefined;
     const patched: MeshConfig = { ...entry.config, agents: entry.config.agents.map((a) => (a.id === agentId ? { ...a, effort: persistedEffort } : a)) };
     await this.store.define(patched); // validates + persists
     entry.config = patched;
-    entry.client?.setEffort(agentId, persistedEffort);
+    const client = entry.client;
+    return this.applyLiveMutation(client ? () => client.setEffort(agentId, persistedEffort) : undefined, true);
   }
 
 
@@ -306,22 +311,43 @@ export class MeshManager {
     this.require(name).client?.resolve(requestId, optionId);
   }
 
-  async setMode(name: string, agentId: string, modeId: string): Promise<void> {
+  /** Run a live config mutation against the running daemon and fold its ack into a
+   *  MutationApplyResult. `send` is undefined when the mesh is not running, in which case only
+   *  the persisted desired value stands (applied:false, no error). A host error/timeout/close
+   *  is captured as a failed live apply WITHOUT discarding the already-persisted desired. */
+  private async applyLiveMutation(
+    send: (() => Promise<MutationAck>) | undefined,
+    saved: boolean,
+  ): Promise<MutationApplyResult> {
+    if (!send) return { saved, applied: false };
+    try {
+      const ack = await send();
+      // Only an ACP-confirmed apply (setSessionMode) counts as applied. Model/effort are raw
+      // config writes the host can only accept, so they report applied:false + accepted_by_host.
+      return { saved, applied: ack.status === "applied_by_acp", ackStatus: ack.status };
+    } catch (err: any) {
+      return { saved, applied: false, error: String(err?.message ?? err) };
+    }
+  }
+
+  async setMode(name: string, agentId: string, modeId: string): Promise<MutationApplyResult> {
     const entry = this.require(name);
     if (!entry.config.agents.some((a) => a.id === agentId)) throw new Error(`no agent "${agentId}" in mesh "${name}"`);
     const patched: MeshConfig = { ...entry.config, agents: entry.config.agents.map((a) => (a.id === agentId ? { ...a, mode: modeId } : a)) };
     await this.store.define(patched); // persists the runtime cache; does NOT restart the daemon
     entry.config = patched;
-    entry.client?.setMode(agentId, modeId);
+    const client = entry.client;
+    return this.applyLiveMutation(client ? () => client.setMode(agentId, modeId) : undefined, true);
   }
 
-  async setModel(name: string, agentId: string, modelId: string): Promise<void> {
+  async setModel(name: string, agentId: string, modelId: string): Promise<MutationApplyResult> {
     const entry = this.require(name);
     if (!entry.config.agents.some((a) => a.id === agentId)) throw new Error(`no agent "${agentId}" in mesh "${name}"`);
     const patched: MeshConfig = { ...entry.config, agents: entry.config.agents.map((a) => (a.id === agentId ? { ...a, model: modelId } : a)) };
     await this.store.define(patched); // persists the runtime cache; does NOT restart the daemon
     entry.config = patched;
-    entry.client?.setModel(agentId, modelId);
+    const client = entry.client;
+    return this.applyLiveMutation(client ? () => client.setModel(agentId, modelId) : undefined, true);
   }
 
   async addEdge(name: string, edgeInput: MeshEdge): Promise<void> {

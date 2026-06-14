@@ -10,7 +10,7 @@ import { rm, mkdir } from "node:fs/promises";
 import { appendFileSync } from "node:fs";
 import { ControlPlane, type ControlPlaneStopReason } from "./control-plane";
 import type { RespawnMode, RespawnResult } from "./control-plane";
-import { LineBuffer, encodeFrame, PROTO_VERSION, type ParentMsg, type SeqEvent } from "./protocol";
+import { LineBuffer, encodeFrame, PROTO_VERSION, type MutationAckStatus, type ParentMsg, type SeqEvent } from "./protocol";
 import { writeRecord, removeRecord } from "./mesh-registry";
 import { now, type AgentConfig, type MeshConfig, type MeshEdge, type MeshEvent, type PromptImageRef } from "./acp/types";
 
@@ -128,6 +128,26 @@ export class MeshHostDaemon {
     this.commandQueue = run.catch(() => {});
   }
 
+  /** Enqueue a config mutation that must be ACKED: run it on the serial queue, then send a
+   *  `cmdResult` only after the underlying control-plane call settles. A failure sends an
+   *  error result instead of a status; either way the action's rejection is swallowed by
+   *  enqueue() so the command queue stays alive for subsequent commands. */
+  private enqueueCmd(
+    sock: net.Socket,
+    reqId: string,
+    status: MutationAckStatus,
+    action: () => Promise<void> | void,
+  ): void {
+    this.enqueue(async () => {
+      try {
+        await action();
+        this.write(sock, { t: "cmdResult", reqId, status });
+      } catch (err: any) {
+        this.write(sock, { t: "cmdResult", reqId, error: String(err?.message ?? err) });
+      }
+    });
+  }
+
   private attach(sock: net.Socket): void {
     if (this.client && this.client !== sock) this.client.destroy(); // latest client wins
     this.client = sock;
@@ -178,13 +198,17 @@ export class MeshHostDaemon {
         this.cp.resolveDecision(msg.requestId, msg.optionId, "human");
         break;
       case "setMode":
-        this.enqueue(() => this.cp.setMode(msg.target, msg.modeId));
+        // setMode awaits ACP setSessionMode in the control plane, so a clean return means the
+        // change really took effect: applied_by_acp.
+        this.enqueueCmd(sock, msg.reqId, "applied_by_acp", () => this.cp.setMode(msg.target, msg.modeId));
         break;
       case "setModel":
-        this.enqueue(() => this.cp.setModel(msg.target, msg.modelId));
+        // Model/effort are raw ACP config writes with no tracked upstream response, so the
+        // strongest honest claim is accepted_by_host.
+        this.enqueueCmd(sock, msg.reqId, "accepted_by_host", () => this.cp.setModel(msg.target, msg.modelId));
         break;
       case "setEffort":
-        this.enqueue(() => this.cp.setEffort(msg.target, msg.effort));
+        this.enqueueCmd(sock, msg.reqId, "accepted_by_host", () => this.cp.setEffort(msg.target, msg.effort));
         break;
       case "interrupt":
         this.cp.interrupt(msg.target).catch(() => {});

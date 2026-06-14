@@ -50,6 +50,7 @@ function perMesh(m: MeshSummary): PerMeshState {
 
 function store(state: GatewayState): Store {
   const noop = async () => undefined;
+  const mutationNoop = async () => ({ saved: true, applied: true, ackStatus: "applied_by_acp" as const });
   return {
     getState: () => state,
     subscribe: () => () => {},
@@ -70,9 +71,9 @@ function store(state: GatewayState): Store {
     steerAgent: noop,
     promptAssistant: noop,
     resolvePermission: noop,
-    setMode: noop,
-    setModel: noop,
-    setEffort: noop,
+    setMode: mutationNoop,
+    setModel: mutationNoop,
+    setEffort: mutationNoop,
     addEdge: noop,
     addAgent: noop,
     interruptAgent: noop,

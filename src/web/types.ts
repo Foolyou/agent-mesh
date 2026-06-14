@@ -2,12 +2,27 @@
 // WebSocket wire protocol. These are the contract between WebGateway (server) and
 // the client store.
 import type { AgentConfig, MeshConfig, AgentId, AgentStatus, AgentActivity, AgentRole, HarnessId, SessionMode, SessionModel, SessionEffort, PromptImageRef, ThinkingEffort, MeshEdge, AgentTurnSource, AgentHealthSignalKind, AgentTurn } from "../acp/types";
+import type { MutationAckStatus } from "../protocol";
+export type { MutationAckStatus };
 export type { SessionMode };
 export type { SessionModel };
 export type { PromptImageRef };
 export type { ThinkingEffort };
 export type { AgentConfig };
 export type StartSessionStrategy = "resume" | "fresh";
+
+/** Outcome of a config mutation (setMode/setModel/setEffort), the shared client/server
+ *  contract for distinguishing "desired persisted" from "live apply succeeded/failed".
+ *  - saved:    desired value persisted to disk (replays on next start).
+ *  - applied:  the live mutation reached a running daemon and was acked.
+ *  - ackStatus: strongest applied guarantee, present only when applied.
+ *  - error:    present only when a live apply was attempted and failed (desired may still be saved). */
+export interface MutationApplyResult {
+  saved: boolean;
+  applied: boolean;
+  ackStatus?: MutationAckStatus;
+  error?: string;
+}
 
 /** The session modes an agent advertises plus which one is active. */
 export interface AgentModes {

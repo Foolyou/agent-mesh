@@ -686,3 +686,62 @@ test("events for an unknown mesh auto-create a perMesh container", () => {
   const s = applyMsg(emptyState(), { t: "activity", name: "ghost", entry: { id: "a1", ts: "T", kind: "log", text: "x" } });
   expect(s.perMesh.ghost.activity).toHaveLength(1);
 });
+
+async function mutationToast(result: unknown, run: (store: ReturnType<typeof createStore>) => Promise<unknown>) {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = mock(() => Promise.resolve(responseJson(result))) as any;
+  try {
+    const store = createStore();
+    await run(store);
+    return store.getToasts();
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
+
+test("setMode applied_by_acp surfaces an 'applied' info toast", async () => {
+  const toasts = await mutationToast({ saved: true, applied: true, ackStatus: "applied_by_acp" }, (s) =>
+    s.setMode("demo", "codex-1", "read-only"));
+  expect(toasts).toContainEqual(expect.objectContaining({ kind: "info", text: expect.stringContaining("applied") }));
+});
+
+test("setModel accepted_by_host surfaces an 'accepted (apply not confirmed)' toast", async () => {
+  // accepted_by_host is reported as applied:false; the toast keys off ackStatus, not applied
+  const toasts = await mutationToast({ saved: true, applied: false, ackStatus: "accepted_by_host" }, (s) =>
+    s.setModel("demo", "codex-1", "kimi-k2"));
+  expect(toasts).toContainEqual(expect.objectContaining({ kind: "info", text: expect.stringContaining("accepted (apply not confirmed)") }));
+});
+
+test("a stopped mesh's saved-without-apply surfaces a 'next start' toast", async () => {
+  const toasts = await mutationToast({ saved: true, applied: false }, (s) =>
+    s.setMode("demo", "codex-1", "plan"));
+  expect(toasts).toContainEqual(expect.objectContaining({ kind: "info", text: expect.stringContaining("applies on next start") }));
+});
+
+test("a live-apply failure surfaces an error toast WITHOUT pretending success", async () => {
+  const toasts = await mutationToast({ saved: true, applied: false, error: "host exploded" }, (s) =>
+    s.setMode("demo", "codex-1", "plan"));
+  expect(toasts).toContainEqual(expect.objectContaining({ kind: "error", text: expect.stringContaining("saved, but live apply failed — host exploded") }));
+  expect(toasts.some((t) => t.kind === "info")).toBe(false);
+});
+
+test("a runtime-only effort failure (saved:false) does NOT claim 'saved'", async () => {
+  const toasts = await mutationToast({ saved: false, applied: false, error: "runtime rejected" }, (s) =>
+    s.setEffort("demo", "codex-1", "max"));
+  const err = toasts.find((t) => t.kind === "error");
+  expect(err?.text).toContain("live apply failed — runtime rejected");
+  expect(err?.text).not.toContain("saved"); // nothing was persisted, so don't imply it was
+  expect(toasts.some((t) => t.kind === "info")).toBe(false);
+});
+
+test("a transport/HTTP failure still rejects and toasts like any command", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = mock(() => Promise.resolve(responseJson({ error: { message: "boom" } }, 500))) as any;
+  try {
+    const store = createStore();
+    await expect(store.setMode("demo", "codex-1", "plan")).rejects.toThrow(/boom/);
+    expect(store.getToasts()).toContainEqual(expect.objectContaining({ kind: "error", text: expect.stringContaining("set mode codex-1: boom") }));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

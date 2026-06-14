@@ -65,12 +65,19 @@ test("setAgentEffort persists the effort and reloads from disk (no restart)", as
 test("setAgentEffort forwards runtime-only advertised values without persisting them", async () => {
   await mgr.defineMesh(cfg);
   const calls: any[] = [];
-  (mgr as any).entries.get("echo").client = { setEffort: (agent: string, effort?: string) => calls.push({ agent, effort }) };
+  (mgr as any).entries.get("echo").client = {
+    setEffort: (agent: string, effort?: string) => {
+      calls.push({ agent, effort });
+      return Promise.resolve({ status: "accepted_by_host" });
+    },
+  };
 
-  await mgr.setAgentEffort("echo", "r", "max");
+  const result = await mgr.setAgentEffort("echo", "r", "max");
 
   expect(calls).toEqual([{ agent: "r", effort: "max" }]);
   expect(mgr.configOf("echo").agents[0].effort).toBeUndefined();
+  // runtime-only: forwarded live, never persisted; host can only accept (not apply)
+  expect(result).toEqual({ saved: false, applied: false, ackStatus: "accepted_by_host" });
 });
 
 
@@ -144,6 +151,58 @@ test("setMode and setModel are allowed while running", async () => {
   expect(mgr.listMeshes()[0].status).toBe("running");
   expect(mgr.configOf("echo").agents[0].mode).toBe("plan");
   expect(mgr.configOf("echo").agents[0].model).toBe("test-model");
+});
+
+test("a stopped mesh saves the desired value without a live apply", async () => {
+  await mgr.defineMesh(cfg);
+  const result = await mgr.setMode("echo", "r", "plan");
+  expect(result).toEqual({ saved: true, applied: false });
+  expect(mgr.configOf("echo").agents[0].mode).toBe("plan");
+});
+
+test("setMode does not resolve until the host acks, then reports applied_by_acp", async () => {
+  await mgr.defineMesh(cfg);
+  let releaseAck!: (ack: { status: string }) => void;
+  (mgr as any).entries.get("echo").client = {
+    setMode: () => new Promise((resolve) => { releaseAck = resolve; }),
+  };
+
+  let settled = false;
+  const pending = mgr.setMode("echo", "r", "plan").then((r) => { settled = true; return r; });
+  await Bun.sleep(30);
+  expect(settled).toBe(false); // manager must wait for the host ack, not resolve eagerly
+  // desired is already persisted even though the live apply has not been acked yet
+  expect(mgr.configOf("echo").agents[0].mode).toBe("plan");
+
+  releaseAck({ status: "applied_by_acp" });
+  expect(await pending).toEqual({ saved: true, applied: true, ackStatus: "applied_by_acp" });
+});
+
+test("setModel reports accepted_by_host (model writes are not tracked by ACP)", async () => {
+  await mgr.defineMesh(cfg);
+  (mgr as any).entries.get("echo").client = {
+    setModel: () => Promise.resolve({ status: "accepted_by_host" }),
+  };
+  const result = await mgr.setModel("echo", "r", "test-model");
+  // accepted_by_host is NOT applied: ACP does not confirm raw model writes
+  expect(result).toEqual({ saved: true, applied: false, ackStatus: "accepted_by_host" });
+});
+
+test("a live apply failure is surfaced but the desired value stays persisted", async () => {
+  await mgr.defineMesh(cfg);
+  (mgr as any).entries.get("echo").client = {
+    setMode: () => Promise.reject(new Error("host exploded")),
+  };
+  const result = await mgr.setMode("echo", "r", "plan");
+  // not reported as success...
+  expect(result.applied).toBe(false);
+  expect(result.error).toMatch(/host exploded/);
+  // ...but the desired value is still saved for replay on next start
+  expect(result.saved).toBe(true);
+  expect(mgr.configOf("echo").agents[0].mode).toBe("plan");
+  const fresh = new MeshManager({ meshesDir: join(dir, "meshes"), runDir: join(dir, "run"), hostScript: FIXTURE });
+  await fresh.loadDefinitions();
+  expect(fresh.configOf("echo").agents[0].mode).toBe("plan");
 });
 
 test("addEdge updates parent config, persists, then sends daemon RPC", async () => {

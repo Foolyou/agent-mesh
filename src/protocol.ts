@@ -12,13 +12,21 @@ import type { RespawnMode, RespawnResult } from "./control-plane";
 import type { PromptImageRef } from "./acp/types";
 
 /** Bumped when the wire protocol changes incompatibly; a reconnecting parent that
- *  speaks a different version refuses to attach to an old daemon. */
-export const PROTO_VERSION = 12;
+ *  speaks a different version refuses to attach to an old daemon.
+ *  13: config mutations (setMode/setModel/setEffort) carry a reqId and are acked with a
+ *      `cmdResult` frame; hard bump (no dual-mode). */
+export const PROTO_VERSION = 13;
 
 export interface SeqEvent {
   seq: number;
   event: MeshEvent;
 }
+
+/** How strongly the host could confirm a config mutation actually took effect.
+ *  - `applied_by_acp`: the host awaited the ACP call (e.g. setSessionMode) to completion.
+ *  - `accepted_by_host`: the host forwarded the mutation but the ACP upstream gives no
+ *    tracked response (raw config writes for model/effort), so "applied" cannot be claimed. */
+export type MutationAckStatus = "applied_by_acp" | "accepted_by_host";
 
 /** child (mesh-host) -> parent (MeshManager) */
 export type ChildMsg =
@@ -28,6 +36,7 @@ export type ChildMsg =
   | { t: "replay"; events: SeqEvent[] }
   | { t: "snapshot"; events: MeshEvent[] }
   | { t: "respawnResult"; reqId: string; result?: RespawnResult; error?: string }
+  | { t: "cmdResult"; reqId: string; status?: MutationAckStatus; error?: string }
   | { t: "stopped" };
 
 /** parent (MeshManager) -> child (mesh-host) */
@@ -37,9 +46,9 @@ export type ParentMsg =
   | { t: "removeQueuedTurn"; target: string; turnId: string }
   | { t: "steer"; target: string; text: string; images?: PromptImageRef[] }
   | { t: "resolve"; requestId: string; optionId: string }
-  | { t: "setMode"; target: string; modeId: string }
-  | { t: "setModel"; target: string; modelId: string }
-  | { t: "setEffort"; target: string; effort?: string }
+  | { t: "setMode"; target: string; modeId: string; reqId: string }
+  | { t: "setModel"; target: string; modelId: string; reqId: string }
+  | { t: "setEffort"; target: string; effort?: string; reqId: string }
   | { t: "interrupt"; target: string }
   | { t: "newSession"; target: string }
   | { t: "respawn"; reqId: string; target: string; mode: RespawnMode }

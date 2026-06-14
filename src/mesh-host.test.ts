@@ -72,9 +72,9 @@ test("hello → ack(running, proto, seq); prompt relays a seq'd event; commands 
   expect(ev).toBeTruthy();
   expect(typeof ev.seq).toBe("number");
 
-  send({ t: "setMode", target: "codex-1", modeId: "read-only" });
-  send({ t: "setModel", target: "codex-1", modelId: "kimi-k2" });
-  send({ t: "setEffort", target: "codex-1", effort: "high" });
+  send({ t: "setMode", target: "codex-1", modeId: "read-only", reqId: "m1" });
+  send({ t: "setModel", target: "codex-1", modelId: "kimi-k2", reqId: "m2" });
+  send({ t: "setEffort", target: "codex-1", effort: "high", reqId: "m3" });
   send({ t: "removeQueuedTurn", target: "codex-1", turnId: "turn-1" });
   send({ t: "interrupt", target: "codex-1" });
   send({ t: "newSession", target: "codex-1" });
@@ -86,6 +86,10 @@ test("hello → ack(running, proto, seq); prompt relays a seq'd event; commands 
   expect(calls).toContain("setMode:codex-1:read-only");
   expect(calls).toContain("setModel:codex-1:kimi-k2");
   expect(calls).toContain("setEffort:codex-1:high");
+  // config mutations are acked with a cmdResult carrying the honest apply status
+  expect(got).toContainEqual({ t: "cmdResult", reqId: "m1", status: "applied_by_acp" });
+  expect(got).toContainEqual({ t: "cmdResult", reqId: "m2", status: "accepted_by_host" });
+  expect(got).toContainEqual({ t: "cmdResult", reqId: "m3", status: "accepted_by_host" });
   expect(calls).toContain("removeQueuedTurn:codex-1:turn-1");
   expect(calls).toContain("interrupt:codex-1");
   expect(calls).toContain("newSession:codex-1");
@@ -128,6 +132,52 @@ test("state-changing commands are applied in socket order", async () => {
   releaseMode();
   await Bun.sleep(50);
   expect(calls).toEqual(["setMode:start:codex-1:plan", "setMode:done:codex-1:plan", "newSession:codex-1"]);
+});
+
+test("a config mutation acks only AFTER the control-plane call settles", async () => {
+  const sock = join(dir, "ack-after.sock");
+  const { cp, calls } = fakeCp();
+  let releaseMode!: () => void;
+  (cp as any).setMode = async (target: string, modeId: string) => {
+    calls.push(`setMode:start:${target}:${modeId}`);
+    await new Promise<void>((resolve) => { releaseMode = resolve; });
+    calls.push(`setMode:done:${target}:${modeId}`);
+  };
+  daemon = new MeshHostDaemon(cp, { socketPath: sock });
+  await daemon.listen();
+  daemon.markReady();
+
+  const { got, send } = await connect(sock);
+  send({ t: "hello", proto: PROTO_VERSION, resumeFrom: 0 });
+  send({ t: "setMode", target: "codex-1", modeId: "plan", reqId: "r1" });
+  await Bun.sleep(50);
+  // The cp call is still in flight: no cmdResult yet.
+  expect(calls).toEqual(["setMode:start:codex-1:plan"]);
+  expect(got.some((m) => m.t === "cmdResult")).toBe(false);
+
+  releaseMode();
+  await Bun.sleep(50);
+  expect(got).toContainEqual({ t: "cmdResult", reqId: "r1", status: "applied_by_acp" });
+});
+
+test("a throwing config mutation returns an error result and the queue stays alive", async () => {
+  const sock = join(dir, "ack-error.sock");
+  const { cp, calls } = fakeCp();
+  (cp as any).setModel = async () => { throw new Error("no such model"); };
+  daemon = new MeshHostDaemon(cp, { socketPath: sock });
+  await daemon.listen();
+  daemon.markReady();
+
+  const { got, send } = await connect(sock);
+  send({ t: "hello", proto: PROTO_VERSION, resumeFrom: 0 });
+  send({ t: "setModel", target: "codex-1", modelId: "bad", reqId: "e1" });
+  // A later command on the same queue must still run despite the failure above.
+  send({ t: "setEffort", target: "codex-1", effort: "high", reqId: "e2" });
+  await Bun.sleep(50);
+
+  expect(got).toContainEqual({ t: "cmdResult", reqId: "e1", error: "no such model" });
+  expect(got).toContainEqual({ t: "cmdResult", reqId: "e2", status: "accepted_by_host" });
+  expect(calls).toContain("setEffort:codex-1:high");
 });
 
 test("events emitted before connect are replayed on hello(resumeFrom)", async () => {
