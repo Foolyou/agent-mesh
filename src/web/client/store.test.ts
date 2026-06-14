@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { test, expect, mock } from "bun:test";
 import { emptyState, applyMsg, createStore } from "./store";
 import type { GatewayState } from "../types";
 
@@ -230,15 +230,72 @@ test("assistant.status updates", () => {
   expect(s.assistant.status).toBe("absent");
 });
 
-test("store notifies subscribers when harnesses changed", () => {
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+test("store notifies subscribers when harnesses changed", async () => {
   const store = createStore();
   let calls = 0;
   const unsub = store.subscribe(() => {
     calls += 1;
   });
   store.apply({ t: "harnesses-changed", harnessId: "codex" });
+  await sleep(350);
   unsub();
   expect(calls).toBe(1);
+});
+
+test("store debounces repeated harness change notifications", async () => {
+  const store = createStore();
+  let calls = 0;
+  const unsub = store.subscribe(() => {
+    calls += 1;
+  });
+  store.apply({ t: "harnesses-changed", harnessId: "codex" });
+  store.apply({ t: "harnesses-changed", harnessId: "claude" });
+  store.apply({ t: "harnesses-changed", harnessId: "opencode" });
+  await sleep(350);
+  unsub();
+  expect(calls).toBe(1);
+});
+
+test("listHarnesses retries transient failures and toasts only after retry exhaustion", async () => {
+  const originalFetch = globalThis.fetch;
+  const responses = [
+    Promise.resolve(new Response(JSON.stringify({ error: { message: "warming up" } }), { status: 503, headers: { "content-type": "application/json" } })),
+    Promise.resolve(new Response(JSON.stringify({ error: { message: "still warming" } }), { status: 503, headers: { "content-type": "application/json" } })),
+    Promise.resolve(new Response(JSON.stringify({ error: { message: "not ready" } }), { status: 503, headers: { "content-type": "application/json" } })),
+  ];
+  const fetchMock = mock(() => responses.shift()!);
+  globalThis.fetch = fetchMock as any;
+  try {
+    const store = createStore();
+    await expect(store.listHarnesses()).rejects.toThrow("not ready");
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(store.getToasts().filter((t) => t.kind === "error" && t.text.includes("list harnesses"))).toHaveLength(1);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("listHarnesses shares an in-flight request across repeated refresh triggers", async () => {
+  const originalFetch = globalThis.fetch;
+  let resolveFetch: (res: Response) => void = () => {};
+  const fetchMock = mock(() => new Promise<Response>((resolve) => {
+    resolveFetch = resolve;
+  }));
+  globalThis.fetch = fetchMock as any;
+  try {
+    const store = createStore();
+    const first = store.listHarnesses();
+    const second = store.listHarnesses();
+    resolveFetch(new Response(JSON.stringify([{ id: "codex", label: "Codex", installed: true }]), { status: 200, headers: { "content-type": "application/json" } }));
+    expect(await first).toHaveLength(1);
+    expect(await second).toHaveLength(1);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(store.getToasts()).toHaveLength(0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test("events for an unknown mesh auto-create a perMesh container", () => {
