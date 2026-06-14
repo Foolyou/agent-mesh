@@ -17,7 +17,7 @@ import { artifactAgentDir, resolveArtifactFile } from "./web/artifacts";
 import { readSessionState, setMeshExpectedAlive, updateAgentMailCursor, updateAgentSession, clearAgentSession, type MeshSessionState } from "./session-storage";
 import { now, type AgentActivity, type AgentConfig, type AgentHealthSignalKind, type AgentId, type AgentTurn, type MeshConfig, type MeshEdge, type MeshEvent, type PromptImageRef, type SessionMode, type SessionModel, type ThinkingEffort, type TurnHealthReason } from "./acp/types";
 import { DEFAULT_AUTO_COMPACT_SETTINGS, MIN_AUTO_COMPACT_CONTEXT_WINDOW, evaluateCompactThreshold, parseCompactThreshold } from "./auto-compact";
-import { resolveContextWindow, type ContextWindowState } from "./acp/usage-compat";
+import { resolveContextWindow, lookupModelContextWindow, type ContextWindowState } from "./acp/usage-compat";
 
 const COMPACT_COOLDOWN_MS = 180_000;
 const NEAR_LIMIT_WARNING_COOLDOWN_MS = 10 * 60_000;
@@ -310,12 +310,20 @@ export class ControlPlane {
     this.emit({ kind: "log", text, ts: now() });
   }
 
-  /** The model id used to look up the context window: the live advertised model, falling
-   *  back to the agent's configured model when nothing has been advertised yet. */
+  /** The model id used to look up the context window: the live advertised model, falling back
+   *  to the agent's configured model. The fallback also fires when the advertised id does NOT
+   *  resolve to a known window but the configured one does — e.g. claude advertises a generic
+   *  "default" that shadows a config alias like "sonnet[1m]" which carries the real 1M window. */
   private currentModelId(id: AgentId): string | undefined {
     const advertised = this.sessionModels.get(id)?.current;
-    if (advertised) return advertised;
-    return this.mesh.agent(id)?.model;
+    const configured = this.mesh.agent(id)?.model;
+    if (advertised) {
+      if (lookupModelContextWindow(advertised) === null && configured && lookupModelContextWindow(configured) !== null) {
+        return configured;
+      }
+      return advertised;
+    }
+    return configured;
   }
 
   private updateAgentUsage(id: AgentId, usage: { used: number; size: number; percent: number; cost?: number }): void {

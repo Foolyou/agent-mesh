@@ -71,6 +71,36 @@ test("lookupModelContextWindow narrows the bare sonnet-4 rule to listed minors +
   expect(lookupModelContextWindow("claude-opus-4-9")).toBeNull();
 });
 
+test("lookupModelContextWindow honors an explicit [1m]/[200k] window marker", () => {
+  // Bare config alias with the 1M beta suffix — no model stem to match, but the bracket declares it.
+  expect(lookupModelContextWindow("sonnet[1m]")).toBe(1_000_000);
+  // A real stem glued to the [1m] suffix must still resolve to 1M (suffix stripped before stem match too).
+  expect(lookupModelContextWindow("claude-opus-4-8[1m]")).toBe(1_000_000);
+  expect(lookupModelContextWindow("claude-sonnet-4-5[1m]")).toBe(1_000_000);
+  // A [200k] marker resolves to 200K.
+  expect(lookupModelContextWindow("[200k]")).toBe(200_000);
+  expect(lookupModelContextWindow("claude-sonnet-4.5[200k]")).toBe(200_000);
+  // A generic "default" alias carries no window and must stay null (no global default → 1M mapping).
+  expect(lookupModelContextWindow("default")).toBeNull();
+});
+
+test("lookupModelContextWindow recognizes ONLY the exact [1m]/[200k] suffix markers", () => {
+  // Arbitrary bracket values are NOT honored as explicit windows — no stem, so null (never 2M/999M).
+  expect(lookupModelContextWindow("model[2m]")).toBeNull();
+  expect(lookupModelContextWindow("model[999m]")).toBeNull();
+  expect(lookupModelContextWindow("sonnet[2m]")).toBeNull();
+  expect(lookupModelContextWindow("model[300k]")).toBeNull();
+  // A marker that is not a trailing suffix is not an explicit window either.
+  expect(lookupModelContextWindow("foo[1m]bar")).toBeNull();
+  // An unsupported bracket is stripped, so a genuine stem still decides (opus-4-8 really is 1M);
+  // the window comes from the stem table, not from the "[2m]" text.
+  expect(lookupModelContextWindow("claude-opus-4-8[2m]")).toBe(1_000_000);
+});
+
+test("resolveContextWindow lifts a [1m]-aliased model off the under-reported size", () => {
+  expect(resolveContextWindow(undefined, "sonnet[1m]", 200000).window).toBe(1_000_000);
+});
+
 test("resolveContextWindow uses the table value as the authoritative denominator", () => {
   // Early under-reported size from the harness is overridden by the table window.
   expect(resolveContextWindow(undefined, "claude-opus-4-8", 200000)).toEqual({
