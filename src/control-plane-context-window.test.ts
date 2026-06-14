@@ -203,3 +203,60 @@ test("force respawn clears the sticky window so it recomputes fresh", async () =
     expect(cp.getAgentContextUsage("router")).toBeNull();
   });
 });
+
+// ── [1m]-aliased config model (context-window-1m-resolve) ─────────────────────
+/** Run a plane whose router has `agentModel` configured and whose session returns `session`. */
+async function withAgentModel(
+  agentModel: string,
+  session: unknown,
+  fn: (cp: ControlPlane, conn: WindowConnection) => Promise<void>,
+): Promise<void> {
+  const root = await mkdtemp(join(tmpdir(), "cp-ctx-alias-"));
+  let conn: WindowConnection | undefined;
+  const cfg: MeshConfig = {
+    name: "ctx-window",
+    agents: [{ id: "router", harness: "codex", project: root, role: "router", model: agentModel }],
+    edges: [],
+  };
+  const cp = new ControlPlane(cfg, {
+    mailboxPath: join(root, "mailbox.ndjson"),
+    turnFirstSignalTimeoutMs: 0,
+    connectionFactory: (opts) => {
+      conn = new (class extends WindowConnection {
+        async newSession(): Promise<unknown> { return session; }
+      })(opts);
+      return conn as unknown as AcpAgentConnection;
+    },
+  });
+  try {
+    await cp.start();
+    if (!conn) throw new Error("connection missing");
+    await fn(cp, conn);
+  } finally {
+    await cp.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+test("config model 'sonnet[1m]' with NO advertised models normalizes to the 1M window", async () => {
+  // Session advertises no models -> sessionModels stays empty -> the configured alias is used.
+  await withAgentModel("sonnet[1m]", { sessionId: "s-router" }, async (cp, conn) => {
+    conn.opts.onContextUsage?.({ used: 100000, size: 200000, percent: 0.5 });
+    await tick();
+    expect(cp.getAgentContextUsage("router")?.size).toBe(1_000_000);
+    expect(cp.getAgentContextUsage("router")?.percent).toBeCloseTo(0.1, 2);
+  });
+});
+
+test("advertised 'default' shadowing config 'sonnet[1m]' still resolves 1M via config fallback", async () => {
+  const session = {
+    sessionId: "s-router",
+    models: { currentModelId: "default", availableModels: [{ modelId: "default", name: "Default" }] },
+  };
+  await withAgentModel("sonnet[1m]", session, async (cp, conn) => {
+    conn.opts.onContextUsage?.({ used: 100000, size: 200000, percent: 0.5 });
+    await tick();
+    // advertised "default" → unknown window; falls back to the configured sonnet[1m] → 1M.
+    expect(cp.getAgentContextUsage("router")?.size).toBe(1_000_000);
+  });
+});

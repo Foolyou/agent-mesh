@@ -79,17 +79,28 @@ function idMatchesStem(id: string, stem: string): boolean {
   }
 }
 
+/** An explicit context-window beta marker in a model id, e.g. "claude-sonnet-4-5[1m]" or the
+ *  config alias "sonnet[1m]" (1M beta), "…[200k]". The bracket declares the window directly, so
+ *  it overrides the stem table and works even for ids whose stem isn't listed or is a bare alias. */
+const CONTEXT_WINDOW_MARKER = /\[(\d+)(m|k)\]/;
+
 /** Look up a model's context window from the static table, or null if unknown.
  *  Tolerant of separator/case variants ("Claude Opus 4.8" === "claude-opus-4-8"). */
 export function lookupModelContextWindow(modelId: string | null | undefined): number | null {
   if (typeof modelId !== "string") return null;
   const id = modelId.toLowerCase().replace(/[._\s]+/g, "-");
   if (!id) return null;
+  // An explicit "[1m]"/"[200k]" window marker is authoritative — honor it before the stem table
+  // (a harness/config may select the 1M beta via this suffix, e.g. "sonnet[1m]").
+  const marker = id.match(CONTEXT_WINDOW_MARKER);
+  if (marker) return Number(marker[1]) * (marker[2] === "m" ? ONE_MILLION : 1_000);
+  // Strip any bracket suffix so a stem like "claude-opus-4-8[…]" still matches the table.
+  const stemId = id.replace(/\[[^\]]*\]/g, "");
   // Longest stem first so an explicit minor ("sonnet-4-6") wins over the bare family
   // ("sonnet-4") and a real minor is never shadowed by the base alias.
   const stems = Object.keys(MODEL_CONTEXT_WINDOWS).sort((a, b) => b.length - a.length);
   for (const stem of stems) {
-    if (idMatchesStem(id, stem)) return MODEL_CONTEXT_WINDOWS[stem]!;
+    if (idMatchesStem(stemId, stem)) return MODEL_CONTEXT_WINDOWS[stem]!;
   }
   return null;
 }
