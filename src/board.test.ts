@@ -279,6 +279,16 @@ test("link_mail is system-only and idempotent; agents cannot call it", () => {
   expect(state.tasks[0].revision).toBe(revAfterFirst); // idempotent no-op
 });
 
+test("an unknown command type returns a structured invalid result (no undefined)", () => {
+  const board = createEmptyBoard("m");
+  const res = applyBoardCommand(board, { type: "bogus_command", id: 1 } as unknown as BoardCommand, ctx(board, router));
+  expect(res.ok).toBe(false);
+  if (!res.ok) {
+    expect(res.code).toBe("invalid");
+    expect(res.error).toContain("unknown board command");
+  }
+});
+
 test("not_found is returned for operations on missing entities", () => {
   const board = createEmptyBoard("m");
   const res = applyBoardCommand(board, { type: "set_task_status", id: 7, expectedRevision: 1, status: "done" }, ctx(board, router));

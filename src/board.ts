@@ -473,6 +473,12 @@ export function applyBoardCommand(state: BoardState, cmd: BoardCommand, ctx: Boa
       const updated: Task = { ...task, mailEventIds: [...task.mailEventIds, cmd.mailEventId], revision: task.revision + 1, updatedAt: now };
       return ok(replaceTask(state, updated), { entity: "task", taskId: task.id });
     }
+
+    default:
+      // Unknown command.type at RUNTIME (malformed/forward-compat JSON over the wire). The
+      // static union is exhaustive, so `cmd` is `never` here — return a structured invalid
+      // result rather than falling off the end and returning undefined.
+      return err("invalid", `unknown board command "${(cmd as { type?: unknown }).type ?? "?"}"`);
   }
 }
 

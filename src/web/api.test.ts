@@ -836,3 +836,11 @@ test("POST /api/meshes/:name/board rejects a missing command with 400", async ()
   expect((await handleApi(gw, "POST", "/api/meshes/demo/board", { expectedBoardRevision: 0 })).status).toBe(400);
   expect((await handleApi(gw, "POST", "/api/meshes/demo/board", { command: { type: "create_task", title: "x" } })).status).toBe(400);
 });
+
+test("POST /api/meshes/:name/board with an unknown command type maps to 400 (domain invalid)", async () => {
+  const m = fakeManager();
+  m.boardCommand = (async () => ({ ok: false, code: "invalid", error: 'unknown board command "frobnicate"' })) as any;
+  const gw = new WebGateway(m as any);
+  const r = await handleApi(gw, "POST", "/api/meshes/demo/board", { command: { type: "frobnicate" }, expectedBoardRevision: 0 });
+  expect(r.status).toBe(400);
+});

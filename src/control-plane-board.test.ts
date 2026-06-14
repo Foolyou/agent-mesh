@@ -172,6 +172,23 @@ test("snapshotEvents() always replays the current full board", async () => {
   }
 });
 
+test("an unknown command type is a clean invalid error, never a thrown exception", async () => {
+  const h = await setup();
+  try {
+    await h.handlers.applyBoard(router, { type: "create_task", title: "real" }, 0); // board rev → 1
+    // Malformed command (e.g. forward-compat JSON): must not throw, must not mutate.
+    const res = await (h.handlers.applyBoard as (c: any, cmd: any, ebr: number) => Promise<string>)(router, { type: "frobnicate" }, 1);
+    expect(res).toContain("error:");
+    expect(h.cp.getBoard().tasks).toHaveLength(1);
+    // a non-object command is also handled defensively
+    const res2 = await (h.handlers.applyBoard as (c: any, cmd: any, ebr: number) => Promise<string>)(router, null, 1);
+    expect(res2).toContain("error:");
+  } finally {
+    await h.cp.stop();
+    await rm(h.root, { recursive: true, force: true });
+  }
+});
+
 test("an existing board file is loaded into memory on start", async () => {
   const root = await mkdtemp(join(tmpdir(), "cp-board-load-"));
   try {

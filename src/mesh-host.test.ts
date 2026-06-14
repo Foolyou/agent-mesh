@@ -33,6 +33,7 @@ function fakeCp() {
       calls.push(`board:${command.type}:${actor.kind}:${ebr}`);
       if ((command as any).title === "boom") throw new Error("kaboom");
       if ((command as any).title === "stale") return { ok: false, code: "conflict", error: "revision conflict" };
+      if ((command as any).type === "frobnicate") return { ok: false, code: "invalid", error: "unknown board command" };
       return { ok: true, state: { mesh: "x", revision: ebr + 1, epicSeq: 0, taskSeq: 1, epics: [], tasks: [] }, change: { entity: "task", taskId: 1 } };
     },
     async newAllSessions() { calls.push("newAllSessions"); },
@@ -178,6 +179,7 @@ test("a board command returns a boardResult: ok, board-error-as-result, and thro
   send({ t: "board", reqId: "b1", actor: { kind: "human" }, command: { type: "create_task", title: "ok" }, expectedBoardRevision: 0 });
   send({ t: "board", reqId: "b2", actor: { kind: "human" }, command: { type: "create_task", title: "stale" }, expectedBoardRevision: 0 });
   send({ t: "board", reqId: "b3", actor: { kind: "human" }, command: { type: "create_task", title: "boom" }, expectedBoardRevision: 0 });
+  send({ t: "board", reqId: "b4", actor: { kind: "human" }, command: { type: "frobnicate" } as any, expectedBoardRevision: 0 });
   await Bun.sleep(50);
 
   const r1 = got.find((m) => m.t === "boardResult" && m.reqId === "b1");
@@ -190,6 +192,10 @@ test("a board command returns a boardResult: ok, board-error-as-result, and thro
 
   const r3 = got.find((m) => m.t === "boardResult" && m.reqId === "b3");
   expect(r3.error).toBe("kaboom"); // a thrown handler is a transport error
+
+  const r4 = got.find((m) => m.t === "boardResult" && m.reqId === "b4");
+  expect(r4.result).toMatchObject({ ok: false, code: "invalid" }); // unknown type resolves as a result
+  expect(r4.error).toBeUndefined();
 });
 
 test("MeshHostClient.boardCommand resolves with the structured result over the socket", async () => {

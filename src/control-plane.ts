@@ -1878,6 +1878,13 @@ export class ControlPlane {
    *  emit the full snapshot on success. The single mutation funnel for MCP, REST, and the
    *  internal mail-link path. */
   private async runBoardCommand(command: BoardCommand, actor: BoardActor, expectedBoardRevision: number): Promise<BoardCommandResult> {
+    // Defensive boundary: a non-object / typeless command (malformed daemon-RPC JSON) must
+    // become a structured invalid result, never a thrown exception the daemon reports as a
+    // transport error. The reducer's default handles unknown string types; this handles the
+    // shapes that would crash before the reducer's switch.
+    if (!command || typeof command !== "object" || typeof (command as { type?: unknown }).type !== "string") {
+      return { ok: false, code: "invalid", error: "invalid board command" };
+    }
     const res = applyBoardCommand(this.board, command, { actor, now: now(), expectedBoardRevision });
     if (res.ok) {
       this.board = res.state;
