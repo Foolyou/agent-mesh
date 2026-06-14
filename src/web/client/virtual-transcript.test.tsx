@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { estimateTranscriptItemSize, VirtualTranscript } from "./VirtualTranscript";
+import { estimateTranscriptItemSize, preservePrependAnchorOffset, shouldTriggerTranscriptBackfill, VirtualTranscript } from "./VirtualTranscript";
 import { initialBottomOffset, isVirtualAtBottom, shouldFollowAppend, shouldManuallyAdjustMeasuredHeight } from "./virtual-transcript-scroll";
 import { nextTranscriptStickState } from "./Transcript";
 import type { TranscriptItem } from "../types";
@@ -71,6 +71,29 @@ test("virtual transcript scroll helpers preserve chat semantics", () => {
   expect(shouldManuallyAdjustMeasuredHeight(120, 100, 500, "backward")).toBe(false);
   expect(shouldManuallyAdjustMeasuredHeight(0, 100, 500, "forward")).toBe(false);
   expect(initialBottomOffset(makeItems(3), 10)).toBeGreaterThan(0);
+});
+
+test("virtual transcript backfill helpers gate near-top loading and preserve anchor offsets", () => {
+  expect(shouldTriggerTranscriptBackfill({ firstVisibleIndex: 10, hasMore: true, inflight: false })).toBe(true);
+  expect(shouldTriggerTranscriptBackfill({ firstVisibleIndex: 20, hasMore: true, inflight: false })).toBe(false);
+  expect(shouldTriggerTranscriptBackfill({ firstVisibleIndex: 10, hasMore: false, inflight: false })).toBe(false);
+  expect(shouldTriggerTranscriptBackfill({ firstVisibleIndex: 10, hasMore: true, inflight: true })).toBe(false);
+  expect(preservePrependAnchorOffset({ currentStart: 420, previousTop: 80, containerTop: 20 })).toBe(360);
+});
+
+test("VirtualTranscript renders a loading marker while older transcript exists", () => {
+  const html = renderToStaticMarkup(
+    createElement(VirtualTranscript, {
+      items: makeItems(1000),
+      renderItem: (item: TranscriptItem) => createElement("div", { className: `row-${item.kind}` }, item.id),
+      initialRect: { width: 720, height: 720 },
+      initialOffset: 0,
+      hasMore: true,
+      onLoadOlder: async () => {},
+    }),
+  );
+
+  expect(html).toContain("virtual-transcript-loading");
 });
 
 test("virtual transcript stick state ignores layout-only and downward scroll drift", () => {

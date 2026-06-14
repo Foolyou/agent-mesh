@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { handleApi } from "./api";
-import { WebGateway } from "./gateway";
+import { MAX_SNAPSHOT_TRANSCRIPT_ITEMS, WebGateway } from "./gateway";
 import { artifactAgentDir } from "./artifacts";
 import type { MeshEvent, MeshConfig } from "../acp/types";
 import { HarnessInstallError, resetHarnessInstallJobsForTests, startHarnessInstall } from "../harness-install";
@@ -22,10 +22,17 @@ const sameOriginCtx = () => ({ headers: new Headers({ origin: SAME_ORIGIN }), ex
 
 function fakeManager(config: MeshConfig = CFG) {
   const calls: any[] = [];
+  let listener: ((n: string, e: MeshEvent) => void) | null = null;
   return {
     calls,
-    on(_l: (n: string, e: MeshEvent) => void) {
-      return () => {};
+    emit(n: string, e: MeshEvent) {
+      listener?.(n, e);
+    },
+    on(l: (n: string, e: MeshEvent) => void) {
+      listener = l;
+      return () => {
+        listener = null;
+      };
     },
     listMeshes() {
       return [{ name: "demo", defined: true, status: "running" as const }];
@@ -406,6 +413,55 @@ test("POST /api/meshes/demo/agents/codex-1/steer delegates to steerAgent", async
   const r = await handleApi(gw, "POST", "/api/meshes/demo/agents/codex-1/steer", { text: "urgent" });
   expect(r.status).toBe(200);
   expect(m.calls).toContainEqual(["steerAgent", "demo", "codex-1", "urgent", []]);
+});
+
+test("GET /api/meshes/:mesh/agents/:agent/transcript backfills older transcript items", async () => {
+  const m = fakeManager();
+  const gw = new WebGateway(m as any);
+  for (let i = 0; i < 1000; i++) {
+    m.emit("demo", { kind: "compact_started", agent: "codex-1", reason: `r${i}`, ts: 1000 + i } as any);
+  }
+
+  const snap = gw.snapshot().perMesh.demo.transcripts["codex-1"];
+  expect(snap.items).toHaveLength(MAX_SNAPSHOT_TRANSCRIPT_ITEMS);
+  expect(snap.hasMore).toBe(true);
+  expect(snap.items[0]).toMatchObject({ reason: "r500" });
+
+  const first = await handleApi(
+    gw,
+    "GET",
+    "/api/meshes/demo/agents/codex-1/transcript",
+    undefined,
+    new URLSearchParams({ before: snap.oldestSeq!, limit: "100" }),
+  );
+  expect(first.status).toBe(200);
+  expect(first.body.items).toHaveLength(100);
+  expect(first.body.items[0]).toMatchObject({ reason: "r400" });
+  expect(first.body.items.at(-1)).toMatchObject({ reason: "r499" });
+  expect(first.body.hasMore).toBe(true);
+
+  const second = await handleApi(
+    gw,
+    "GET",
+    "/api/meshes/demo/agents/codex-1/transcript",
+    undefined,
+    new URLSearchParams({ before: first.body.items[0].id, limit: "100" }),
+  );
+  expect(second.status).toBe(200);
+  expect(second.body.items).toHaveLength(100);
+  expect(second.body.items[0]).toMatchObject({ reason: "r300" });
+  expect(second.body.items.at(-1)).toMatchObject({ reason: "r399" });
+  expect(second.body.hasMore).toBe(true);
+});
+
+test("GET transcript backfill validates limits and unknown mesh or agent", async () => {
+  const gw = new WebGateway(fakeManager() as any);
+  const tooLarge = await handleApi(gw, "GET", "/api/meshes/demo/agents/codex-1/transcript", undefined, new URLSearchParams({ limit: "1000" }));
+  expect(tooLarge.status).toBe(400);
+  const missingMesh = await handleApi(gw, "GET", "/api/meshes/missing/agents/codex-1/transcript", undefined);
+  expect(missingMesh.status).toBe(404);
+  const missingAgent = await handleApi(gw, "GET", "/api/meshes/demo/agents/nope/transcript", undefined);
+  expect(missingAgent.status).toBe(404);
 });
 
 test("GET /api/meshes/:mesh/agents/:agent/artifacts/:path serves scoped artifacts", async () => {

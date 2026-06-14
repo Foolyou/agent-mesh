@@ -285,7 +285,19 @@ export function isTranscriptScrollIntentKey(key: string): boolean {
   return ["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(key);
 }
 
-export function Transcript({ items, author, cacheScope }: { items: TranscriptItem[]; author?: AuthorRef; cacheScope?: TranscriptMeasurementCacheScope }) {
+export function Transcript({
+  items,
+  author,
+  cacheScope,
+  hasMore,
+  onLoadOlder,
+}: {
+  items: TranscriptItem[];
+  author?: AuthorRef;
+  cacheScope?: TranscriptMeasurementCacheScope;
+  hasMore?: boolean;
+  onLoadOlder?: () => Promise<void>;
+}) {
   const { t } = useI18n();
   const endRef = useRef<HTMLDivElement>(null);
   // autoscroll to bottom when content changes, unless the user scrolled up
@@ -360,7 +372,7 @@ export function Transcript({ items, author, cacheScope }: { items: TranscriptIte
 
   if (!items.length) return <Empty>{t("empty.messages")}</Empty>;
   if (items.length > VIRTUAL_THRESHOLD) {
-    return <VirtualTranscript items={items} cacheScope={cacheScope} renderItem={(item) => <TranscriptRow item={item} author={author} />} />;
+    return <VirtualTranscript items={items} cacheScope={cacheScope} hasMore={hasMore} onLoadOlder={onLoadOlder} renderItem={(item) => <TranscriptRow item={item} author={author} />} />;
   }
   return (
     <div className="stream-shell">

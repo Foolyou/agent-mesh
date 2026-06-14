@@ -68,7 +68,7 @@ async function waitFor(cond: () => Promise<boolean> | boolean, timeoutMs = 12000
 
 async function transcriptText(agent: string): Promise<string> {
   const s = await state();
-  return JSON.stringify(s.perMesh?.[mesh]?.transcripts?.[agent] ?? []);
+  return JSON.stringify(s.perMesh?.[mesh]?.transcripts?.[agent]?.items ?? []);
 }
 
 let nonceSeq = 0;

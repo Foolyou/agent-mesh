@@ -265,6 +265,16 @@ export async function handleApi(
           }
         }
       }
+      // GET /api/meshes/:name/agents/:id/transcript?before=<item-id>&limit=<n>
+      if (method === "GET" && p.length === 5 && p[2] === "agents" && p[4] === "transcript") {
+        const rawLimit = query.get("limit");
+        const limit = rawLimit == null || rawLimit === "" ? 100 : Number.parseInt(rawLimit, 10);
+        if (!Number.isFinite(limit) || limit > 500) return fail(400, "limit must be between 1 and 500");
+        const clamped = Math.max(1, limit);
+        const result = gw.getOlderTranscriptItems(name, str(p[3]), query.get("before") ?? undefined, clamped);
+        if (!result) return fail(404, "transcript not found");
+        return ok(result);
+      }
       // DELETE /api/meshes/:name/agents/:id/queue/:turnId
       if (method === "DELETE" && p.length === 6 && p[2] === "agents" && p[4] === "queue") {
         gw.removeQueuedTurn(name, str(p[3]), str(p[5]));

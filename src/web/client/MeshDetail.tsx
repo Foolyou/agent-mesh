@@ -469,7 +469,9 @@ function ConversationPanel({
           ) : null}
         </div>
         <ChatPane
-          items={pm.transcripts[activeId] ?? []}
+          items={pm.transcripts[activeId]?.items ?? []}
+          hasMore={pm.transcripts[activeId]?.hasMore}
+          onLoadOlder={() => store.loadOlderTranscript(m.name, activeId)}
           queue={pm.queues?.[activeId]}
           author={{ meshId: m.name, agent: activeId }}
           placeholder={isRouter ? t("router.placeholder") : t("agent.placeholder", { id: activeId })}

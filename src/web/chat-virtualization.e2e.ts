@@ -10,6 +10,9 @@ const BASE = `http://localhost:${PORT}`;
 const MESH = "virtual-stress";
 const AGENTS = ["router", "codex-1", "codex-2", "opencode-1", "reviewer"];
 const ITEMS_PER_AGENT = 1000;
+const BACKFILL_ITEMS_PER_AGENT = 800;
+const SNAPSHOT_TRANSCRIPT_ITEMS = 500;
+const BACKFILL_LIMIT = 100;
 const TAIL_LIMIT = 30;
 const ROW_SELECTOR = ".msg, .thought, .tool, .mail, .plan, .session-divider, .compact-entry";
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -88,6 +91,43 @@ function transcript(agent: string): TranscriptItem[] {
   });
 }
 
+function backfillTranscript(agent: string): TranscriptItem[] {
+  return Array.from({ length: BACKFILL_ITEMS_PER_AGENT }, (_, i): TranscriptItem => {
+    const ts = new Date(Date.UTC(2026, 5, 9, 1, 0, i % 60)).toISOString();
+    if (i % 23 === 0) {
+      return {
+        id: `${agent}-backfill-tool-${i}`,
+        kind: "tool_call",
+        toolCallId: `${agent}-backfill-tc-${i}`,
+        title: `inspect history ${i}`,
+        status: "completed",
+        output: `older line ${i}\n`.repeat(24),
+        ts,
+        updatedTs: ts,
+      };
+    }
+    if (i % 17 === 0) return { id: `${agent}-backfill-mail-${i}`, kind: "mail", from: "lead", to: agent, body: `older mail ${i}\n`.repeat(5), ts };
+    if (i % 11 === 0) return { id: `${agent}-backfill-thought-${i}`, kind: "thought", text: `older thought ${i}\n`.repeat(20), complete: true, ts };
+    return {
+      id: `${agent}-backfill-msg-${i}`,
+      kind: "message",
+      role: i % 2 ? "agent" : "user",
+      text: `${agent} older message ${i} ` + "y".repeat(i % 13 === 0 ? 1200 : 100),
+      complete: true,
+      ts,
+    };
+  });
+}
+
+function seededBackfillState(): { state: GatewayState; full: TranscriptItem[]; tail: TranscriptItem[]; older: TranscriptItem[] } {
+  const full = backfillTranscript("router");
+  const tail = full.slice(BACKFILL_ITEMS_PER_AGENT - SNAPSHOT_TRANSCRIPT_ITEMS);
+  const older = full.slice(BACKFILL_ITEMS_PER_AGENT - SNAPSHOT_TRANSCRIPT_ITEMS - BACKFILL_LIMIT, BACKFILL_ITEMS_PER_AGENT - SNAPSHOT_TRANSCRIPT_ITEMS);
+  const state = seededState();
+  state.perMesh[MESH].transcripts.router = { items: tail, hasMore: true, oldestSeq: tail[0].id };
+  return { state, full, tail, older };
+}
+
 function seededState(): GatewayState {
   const agents: MeshSummary["agents"] = AGENTS.map((id, i) => ({
     id,
@@ -111,7 +151,7 @@ function seededState(): GatewayState {
   };
   const pm: PerMeshState = {
     config: { name: MESH, agents: [], edges: mesh.edges },
-    transcripts: Object.fromEntries(AGENTS.map((agent) => [agent, transcript(agent)])),
+    transcripts: Object.fromEntries(AGENTS.map((agent) => [agent, { items: transcript(agent), hasMore: false, oldestSeq: `${agent}-msg-0` }])),
     activity: [],
     mail: [],
     pending: [],
@@ -164,6 +204,13 @@ try {
   page.on("pageerror", (e) => errors.push(String(e)));
   await page.goto(BASE, { waitUntil: "domcontentloaded" });
   await page.waitForSelector(".brand", { timeout: 8000 });
+  await page.route(`**/api/meshes/${MESH}/agents/*/transcript?**`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ items: [], hasMore: false }),
+    });
+  });
   await seed(page);
 
   await step("Scenario A: large transcript tabs keep bounded DOM rows and jump to bottom", async () => {
@@ -315,6 +362,141 @@ try {
     const distance = await stream.evaluate((el) => Math.round(el.scrollHeight - el.scrollTop - el.clientHeight));
     metrics.scenarioE = { distanceFromBottom: distance };
     if (distance > 48) throw new Error(`layout-only scroll drift disabled bottom follow, distance=${distance}`);
+  });
+
+  await step("Scenario F: snapshot tail backfills older transcript without anchor jump", async () => {
+    const seeded = seededBackfillState();
+    let releaseBackfill: (() => void) | undefined;
+    let backfillRequested = false;
+    let scenarioFRequests = 0;
+    await page.route(`**/api/meshes/${MESH}/agents/router/transcript?**`, async (route) => {
+      backfillRequested = true;
+      scenarioFRequests += 1;
+      if (scenarioFRequests > 1) {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({ items: [], hasMore: false }),
+        });
+        return;
+      }
+      await new Promise<void>((resolve) => {
+        releaseBackfill = resolve;
+      });
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ items: seeded.older, hasMore: false }),
+      });
+    });
+
+    await page.evaluate((state) => {
+      (window as any).__meshStore.apply({ t: "snapshot", state });
+    }, seeded.state);
+    await page.locator(".conv-router-tab").click();
+    await page.waitForFunction(({ mesh, expected }) => {
+      return (window as any).__meshStore.getState().perMesh[mesh].transcripts.router.items.length === expected;
+    }, { mesh: MESH, expected: SNAPSHOT_TRANSCRIPT_ITEMS }, { timeout: 5000 });
+
+    const initial = await page.evaluate(({ mesh }) => {
+      const tr = (window as any).__meshStore.getState().perMesh[mesh].transcripts.router;
+      return { length: tr.items.length, hasMore: tr.hasMore, oldestSeq: tr.oldestSeq, firstId: tr.items[0].id };
+    }, { mesh: MESH });
+    if (initial.length !== SNAPSHOT_TRANSCRIPT_ITEMS) throw new Error(`snapshot length ${initial.length}`);
+    if (initial.hasMore !== true) throw new Error("snapshot missing hasMore");
+    if (initial.oldestSeq !== initial.firstId) throw new Error(`oldestSeq ${initial.oldestSeq} did not match first id ${initial.firstId}`);
+
+    const stream = await activeStream(page);
+    await stream.evaluate((el) => {
+      el.scrollTop = 0;
+      el.dispatchEvent(new Event("scroll", { bubbles: true }));
+    });
+    await page.waitForFunction(() => document.querySelector(".conv-panel .virtual-transcript-loading")?.textContent?.includes("Loading older"), null, { timeout: 3000 });
+    for (let i = 0; i < 20 && !backfillRequested; i++) await page.waitForTimeout(50);
+    if (!backfillRequested || !releaseBackfill) throw new Error("backfill request was not issued");
+
+    const anchor = await page.locator(".conv-panel").evaluate(() => {
+      const stream = document.querySelector(".conv-panel .stream.virtual-stream") as HTMLElement | null;
+      if (!stream) return null;
+      const streamBox = stream.getBoundingClientRect();
+      const rows = [...document.querySelectorAll(".conv-panel [data-virtual-row='true']")] as HTMLElement[];
+      const row = rows.find((candidate) => {
+        const box = candidate.getBoundingClientRect();
+        return box.top >= streamBox.top && box.bottom <= streamBox.bottom;
+      });
+      return row ? { index: row.getAttribute("data-index") ?? "", id: row.getAttribute("data-item-id") ?? "", top: row.getBoundingClientRect().top } : null;
+    });
+    if (!anchor) throw new Error("missing visible anchor before backfill");
+
+    releaseBackfill();
+    await page.waitForFunction(({ mesh, expected }) => {
+      return (window as any).__meshStore.getState().perMesh[mesh].transcripts.router.items.length === expected;
+    }, { mesh: MESH, expected: SNAPSHOT_TRANSCRIPT_ITEMS + BACKFILL_LIMIT }, { timeout: 5000 });
+    await page.waitForTimeout(120);
+
+    const after = await page.locator(".conv-panel").evaluate((_panel, arg: { anchorText: string }) => {
+      const rows = [...document.querySelectorAll(".conv-panel [data-virtual-row='true']")] as HTMLElement[];
+      const row = rows.find((candidate) => candidate.getAttribute("data-item-id") === arg.anchorText);
+      return row?.getBoundingClientRect().top ?? null;
+    }, { anchorText: anchor.id });
+    if (after == null) throw new Error("anchor row disappeared after backfill");
+    const delta = Math.abs(after - anchor.top);
+    const finalState = await page.evaluate(({ mesh }) => {
+      const tr = (window as any).__meshStore.getState().perMesh[mesh].transcripts.router;
+      return { length: tr.items.length, hasMore: tr.hasMore, oldestSeq: tr.oldestSeq, firstId: tr.items[0].id };
+    }, { mesh: MESH });
+    metrics.scenarioF = { initial, final: finalState, anchorDelta: Math.round(delta * 100) / 100 };
+    if (finalState.length !== SNAPSHOT_TRANSCRIPT_ITEMS + BACKFILL_LIMIT) throw new Error(`backfill length ${finalState.length}`);
+    if (finalState.oldestSeq !== seeded.older[0].id) throw new Error(`oldestSeq after backfill ${finalState.oldestSeq}`);
+    if (delta >= 20) throw new Error(`backfill anchor moved ${delta}px`);
+    await page.evaluate((mesh) => {
+      const state = structuredClone((window as any).__meshStore.getState());
+      const tr = state.perMesh[mesh].transcripts.router;
+      tr.hasMore = false;
+      (window as any).__meshStore.apply({ t: "snapshot", state });
+    }, MESH);
+    await page.unroute(`**/api/meshes/${MESH}/agents/router/transcript?**`);
+  });
+
+  await step("Scenario G: repeated near-top backfill stops when all history is loaded", async () => {
+    const seeded = seededBackfillState();
+    let requests = 0;
+    await page.route(`**/api/meshes/${MESH}/agents/router/transcript?**`, async (route) => {
+      const before = new URL(route.request().url()).searchParams.get("before");
+      requests += 1;
+      const beforeIndex = seeded.full.findIndex((item) => item.id === before);
+      const start = Math.max(0, beforeIndex - BACKFILL_LIMIT);
+      const items = beforeIndex >= 0 ? seeded.full.slice(start, beforeIndex) : [];
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ items, hasMore: start > 0 }),
+      });
+    });
+
+    await page.evaluate((state) => {
+      (window as any).__meshStore.apply({ t: "snapshot", state });
+    }, seeded.state);
+    await page.locator(".conv-router-tab").click();
+    for (const expected of [600, 700, 800]) {
+      await page.evaluate(({ mesh }) => (window as any).__meshStore.loadOlderTranscript(mesh, "router"), { mesh: MESH });
+      await page.waitForFunction(({ mesh, expected }) => {
+        return (window as any).__meshStore.getState().perMesh[mesh].transcripts.router.items.length >= expected;
+      }, { mesh: MESH, expected }, { timeout: 5000 });
+    }
+    const finalState = await page.evaluate(({ mesh }) => {
+      const tr = (window as any).__meshStore.getState().perMesh[mesh].transcripts.router;
+      return { length: tr.items.length, hasMore: tr.hasMore, oldestSeq: tr.oldestSeq, firstId: tr.items[0].id };
+    }, { mesh: MESH });
+    if (finalState.length !== BACKFILL_ITEMS_PER_AGENT) throw new Error(`loaded ${finalState.length} items`);
+    if (finalState.hasMore !== false) throw new Error("hasMore stayed true after full history loaded");
+    if (finalState.oldestSeq !== seeded.full[0].id) throw new Error(`oldestSeq ${finalState.oldestSeq}`);
+    const requestCountAfterComplete = requests;
+    await page.evaluate(({ mesh }) => (window as any).__meshStore.loadOlderTranscript(mesh, "router"), { mesh: MESH });
+    await page.waitForTimeout(250);
+    if (requests !== requestCountAfterComplete) throw new Error(`extra backfill after hasMore=false: ${requests}`);
+    metrics.scenarioG = { final: finalState, requests };
+    await page.unroute(`**/api/meshes/${MESH}/agents/router/transcript?**`);
   });
 
   await step("no console/page errors", async () => {

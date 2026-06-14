@@ -64,6 +64,8 @@ export function ChatPane({
   queue,
   author,
   transcriptCacheScope,
+  hasMore,
+  onLoadOlder,
 }: {
   items: TranscriptItem[];
   onSend: (text: string, images?: PromptImageRef[], opts?: { steer?: boolean }) => void | Promise<void>;
@@ -78,6 +80,8 @@ export function ChatPane({
   queue?: QueueSummary;
   author?: AuthorRef;
   transcriptCacheScope?: TranscriptMeasurementCacheScope;
+  hasMore?: boolean;
+  onLoadOlder?: () => Promise<void>;
 }) {
   const { t } = useI18n();
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -133,7 +137,7 @@ export function ChatPane({
 
   return (
     <div className="chat" onClick={focusOnClick}>
-      <Transcript items={items} author={author} cacheScope={transcriptCacheScope} />
+      <Transcript items={items} author={author} cacheScope={transcriptCacheScope} hasMore={hasMore} onLoadOlder={onLoadOlder} />
       {queue?.count && nav.item ? (
         <div
           className="queue-box"
