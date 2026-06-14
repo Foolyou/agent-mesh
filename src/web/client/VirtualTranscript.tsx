@@ -4,6 +4,7 @@ import type { TranscriptItem } from "../types";
 import { Empty } from "./ui";
 import { useI18n } from "./i18n";
 import { initialBottomOffset, isVirtualAtBottom, shouldFollowAppend, shouldManuallyAdjustMeasuredHeight, type VirtualScrollDirection } from "./virtual-transcript-scroll";
+import { didTranscriptScrollUp, isTranscriptScrollIntentKey, nextTranscriptStickState } from "./Transcript";
 import {
   initialTranscriptMeasurements,
   setTranscriptMeasuredHeight,
@@ -69,6 +70,8 @@ export function VirtualTranscript({
   const measuredSizesRef = useRef(new Map<string | number, number>());
   const previousScrollTopRef = useRef<number | null>(null);
   const scrollDirectionRef = useRef<VirtualScrollDirection>(null);
+  const userScrollIntentRef = useRef(false);
+  const userScrollIntentTimerRef = useRef<number | undefined>(undefined);
   const [stick, setStick] = useState(true);
   const [widthBucket, setWidthBucket] = useState(() => transcriptWidthBucket(initialRect.width));
   const initialMeasurementsCache =
@@ -110,6 +113,21 @@ export function VirtualTranscript({
     initialOffset: initialOffset ?? (() => initialBottomOffset(items, initialRect.height)),
   } as VirtualizerOptionsWithCompensationGuard);
 
+  function syncPreviousScrollTop() {
+    const el = parentRef.current;
+    if (el) previousScrollTopRef.current = el.scrollTop;
+  }
+
+  function markUserScrollIntent() {
+    syncPreviousScrollTop();
+    userScrollIntentRef.current = true;
+    if (userScrollIntentTimerRef.current !== undefined) window.clearTimeout(userScrollIntentTimerRef.current);
+    userScrollIntentTimerRef.current = window.setTimeout(() => {
+      userScrollIntentRef.current = false;
+      userScrollIntentTimerRef.current = undefined;
+    }, 350);
+  }
+
   useLayoutEffect(() => {
     const el = parentRef.current;
     if (!el || typeof ResizeObserver === "undefined") return;
@@ -127,29 +145,42 @@ export function VirtualTranscript({
     if (!shouldFollowAppend(stickRef.current, previousCount, items.length) && previousCount !== items.length) return;
     if (!stickRef.current) return;
     virtualizer.scrollToIndex(items.length - 1, { align: "end" });
+    syncPreviousScrollTop();
     const raf = requestAnimationFrame(() => {
-      if (stickRef.current) virtualizer.scrollToIndex(items.length - 1, { align: "end" });
+      if (stickRef.current) {
+        virtualizer.scrollToIndex(items.length - 1, { align: "end" });
+        syncPreviousScrollTop();
+      }
     });
     return () => cancelAnimationFrame(raf);
   }, [items.length, virtualizer]);
+  useLayoutEffect(() => {
+    return () => {
+      if (userScrollIntentTimerRef.current !== undefined) window.clearTimeout(userScrollIntentTimerRef.current);
+    };
+  }, []);
 
   function noteScrollPosition() {
     const el = parentRef.current;
     if (!el) return;
+    const scrollTop = el.scrollTop;
     const previous = previousScrollTopRef.current;
-    if (previous != null && el.scrollTop !== previous) {
-      scrollDirectionRef.current = el.scrollTop > previous ? "forward" : "backward";
+    const wentUp = didTranscriptScrollUp(scrollTop, previous ?? scrollTop);
+    if (previous != null && scrollTop !== previous) {
+      scrollDirectionRef.current = scrollTop > previous ? "forward" : "backward";
     }
-    previousScrollTopRef.current = el.scrollTop;
+    previousScrollTopRef.current = scrollTop;
     const atBottom = isVirtualAtBottom(el, virtualizer.getDistanceFromEnd());
-    stickRef.current = atBottom;
-    setStick(atBottom);
+    const nextStick = nextTranscriptStickState(stickRef.current, atBottom, userScrollIntentRef.current, wentUp);
+    stickRef.current = nextStick;
+    setStick(nextStick);
   }
 
   function jumpToBottom() {
     stickRef.current = true;
     setStick(true);
     virtualizer.scrollToIndex(items.length - 1, { align: "end" });
+    syncPreviousScrollTop();
     parentRef.current?.focus({ preventScroll: true });
   }
 
@@ -157,7 +188,17 @@ export function VirtualTranscript({
 
   return (
     <div className="stream-shell">
-      <div className="stream virtual-stream" ref={parentRef} onScroll={noteScrollPosition} tabIndex={-1}>
+      <div
+        className="stream virtual-stream"
+        ref={parentRef}
+        onScroll={noteScrollPosition}
+        onWheel={markUserScrollIntent}
+        onTouchMove={markUserScrollIntent}
+        onKeyDown={(e) => {
+          if (isTranscriptScrollIntentKey(e.key)) markUserScrollIntent();
+        }}
+        tabIndex={-1}
+      >
         <div className="virtual-transcript-spacer" style={{ height: `${virtualizer.getTotalSize()}px`, position: "relative" }}>
           {virtualizer.getVirtualItems().map((virtualRow) => {
             const item = items[virtualRow.index];

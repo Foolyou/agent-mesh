@@ -300,6 +300,7 @@ export function Transcript({ items, author, cacheScope }: { items: TranscriptIte
     if (el) lastScrollTopRef.current = el.scrollTop;
   }
   function markUserScrollIntent() {
+    syncLastScrollTop();
     userScrollIntentRef.current = true;
     if (userScrollIntentTimerRef.current !== undefined) window.clearTimeout(userScrollIntentTimerRef.current);
     userScrollIntentTimerRef.current = window.setTimeout(() => {

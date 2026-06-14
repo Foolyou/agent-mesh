@@ -178,10 +178,9 @@ try {
       if (count >= 80) throw new Error(`${agent} rendered ${count} rows`);
 
       const stream = await activeStream(page);
-      await stream.evaluate((el) => {
-        el.scrollTop = 0;
-        el.dispatchEvent(new Event("scroll", { bubbles: true }));
-      });
+      await stream.focus();
+      await page.keyboard.press("PageUp");
+      await page.waitForTimeout(80);
       await page.locator(".conv-panel .jump-bottom").waitFor({ timeout: 5000 });
       await page.locator(".conv-panel .jump-bottom").click();
       await page.waitForSelector(`.conv-panel:has-text("${agent} message 999 tail sentinel")`, { timeout: 5000 });
@@ -222,10 +221,17 @@ try {
     await page.locator(".conv-router-tab").click();
     const stream = await activeStream(page);
     await stream.evaluate((el) => {
-      el.scrollTop = 0;
+      el.scrollTop = el.scrollHeight;
       el.dispatchEvent(new Event("scroll", { bubbles: true }));
     });
+    await stream.hover();
+    await page.mouse.wheel(0, -2_000);
     await page.waitForTimeout(400);
+    await stream.evaluate((el) => {
+      el.scrollTop = 1_000;
+      el.dispatchEvent(new Event("scroll", { bubbles: true }));
+    });
+    await page.waitForTimeout(80);
     let probe: { anchorIndex: string; before: number } | null = null;
     for (const scrollTop of [8_000, 16_000, 24_000, 32_000, 40_000, 48_000, 56_000]) {
       await stream.evaluate((el, scrollTop) => {
@@ -283,6 +289,32 @@ try {
     const distance = await stream.evaluate((el) => Math.round(el.scrollHeight - el.scrollTop - el.clientHeight));
     metrics.scenarioD = { distanceFromBottom: distance };
     if (distance > 48) throw new Error(`append did not follow bottom, distance=${distance}`);
+  });
+
+  await step("Scenario E: layout-only virtual scroll drift does not break append follow", async () => {
+    await page.locator(".conv-router-tab").click();
+    const stream = await activeStream(page);
+    await stream.evaluate((el) => {
+      el.scrollTop = el.scrollHeight;
+      el.dispatchEvent(new Event("scroll", { bubbles: true }));
+    });
+    await page.waitForTimeout(80);
+    await stream.evaluate((el) => {
+      el.scrollTop = Math.max(0, el.scrollTop - 240);
+      el.dispatchEvent(new Event("scroll", { bubbles: true }));
+    });
+    const id = `router-msg-layout-drift-${Date.now()}`;
+    await page.evaluate(({ mesh, id }) => {
+      (window as any).__meshStore.apply({
+        t: "transcript.upsert",
+        conv: { scope: "mesh", mesh, agent: "router" },
+        item: { id, kind: "message", role: "agent", text: "router layout drift follow sentinel", complete: true, ts: new Date().toISOString() },
+      });
+    }, { mesh: MESH, id });
+    await page.waitForSelector('.conv-panel:has-text("router layout drift follow sentinel")', { timeout: 5000 });
+    const distance = await stream.evaluate((el) => Math.round(el.scrollHeight - el.scrollTop - el.clientHeight));
+    metrics.scenarioE = { distanceFromBottom: distance };
+    if (distance > 48) throw new Error(`layout-only scroll drift disabled bottom follow, distance=${distance}`);
   });
 
   await step("no console/page errors", async () => {

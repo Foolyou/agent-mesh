@@ -3,6 +3,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { estimateTranscriptItemSize, VirtualTranscript } from "./VirtualTranscript";
 import { initialBottomOffset, isVirtualAtBottom, shouldFollowAppend, shouldManuallyAdjustMeasuredHeight } from "./virtual-transcript-scroll";
+import { nextTranscriptStickState } from "./Transcript";
 import type { TranscriptItem } from "../types";
 
 const T = "2026-06-09T00:00:00.000Z";
@@ -70,4 +71,11 @@ test("virtual transcript scroll helpers preserve chat semantics", () => {
   expect(shouldManuallyAdjustMeasuredHeight(120, 100, 500, "backward")).toBe(false);
   expect(shouldManuallyAdjustMeasuredHeight(0, 100, 500, "forward")).toBe(false);
   expect(initialBottomOffset(makeItems(3), 10)).toBeGreaterThan(0);
+});
+
+test("virtual transcript stick state ignores layout-only and downward scroll drift", () => {
+  expect(nextTranscriptStickState(true, false, false, true)).toBe(true);
+  expect(nextTranscriptStickState(true, false, true, false)).toBe(true);
+  expect(nextTranscriptStickState(true, false, true, true)).toBe(false);
+  expect(nextTranscriptStickState(false, true, false, false)).toBe(true);
 });
