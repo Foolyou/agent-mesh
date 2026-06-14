@@ -60,6 +60,8 @@ const store = {
   deleteMesh: async () => {},
   startMesh: async () => {},
   respawnAgent: async () => {},
+  isTranscriptInitialLoaded: () => true,
+  loadInitialTranscript: async () => {},
 };
 
 test("MeshDetail renders context chip and self-awareness warnings in agent controls", () => {
