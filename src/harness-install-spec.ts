@@ -14,7 +14,7 @@ export const SELF_INSTALL_HINTS = {
     docsUrl: "https://opencode.ai/docs/",
   },
   kimi: {
-    command: "curl -LsSf https://code.kimi.com/install.sh | bash",
+    command: "curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash",
     docsUrl: "https://moonshotai.github.io/kimi-cli/en/guides/getting-started.html",
   },
 } as const;
