@@ -31,6 +31,18 @@ test("snapshot replaces state", () => {
   expect(s.appVersion).toBe("build-1");
 });
 
+test("a board message folds the full board into per-mesh state (replace, no merge)", () => {
+  const board = { mesh: "demo", revision: 2, epicSeq: 0, taskSeq: 1, epics: [], tasks: [{ id: 1, title: "t", status: "todo", priority: "normal", deps: [], subtasks: [], subtaskSeq: 0, revision: 1, createdBy: "a", createdAt: "T", updatedAt: "T", comments: [], mailEventIds: [] }] };
+  let s = applyMsg(seed(), { t: "board", name: "demo", board: board as any });
+  expect(s.perMesh.demo.board?.revision).toBe(2);
+  expect(s.perMesh.demo.board?.tasks).toHaveLength(1);
+  // a later full snapshot replaces (does not merge) the previous board
+  const board2 = { ...board, revision: 3, tasks: [] };
+  s = applyMsg(s, { t: "board", name: "demo", board: board2 as any });
+  expect(s.perMesh.demo.board?.revision).toBe(3);
+  expect(s.perMesh.demo.board?.tasks).toHaveLength(0);
+});
+
 test("store marks an upgrade available when a later snapshot has a different app version", () => {
   const store = createStore();
   store.apply({ t: "snapshot", state: { ...seed(), appVersion: "build-1" } });
