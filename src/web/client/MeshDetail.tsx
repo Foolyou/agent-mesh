@@ -98,7 +98,7 @@ function Header({ m, store, onDeleted, onEdit }: { m: MeshSummary; store: Store;
           <span className="row start-strategy" title={t("start.strategy.hint")}>
             <span className="sub">{t("start.strategy")}</span>
             <select
-              className="mode-sel select-control start-session-sel"
+              className="select-control start-session-sel"
               value={sessionStrategy}
               aria-label={t("start.strategy")}
               onChange={(e) => setSessionStrategy(e.target.value as StartSessionStrategy)}
@@ -435,7 +435,7 @@ function ConversationPanel({
             </span>
           ) : null}
           <span className="control-spacer" />
-          <EffortControl m={m} agent={cur.id} store={store} />
+          {live ? <EffortControl m={m} agent={cur.id} store={store} /> : null}
           {live ? (
             <ModeControl mesh={m.name} agent={cur.id} store={store} modes={pm.modes?.[cur.id]} />
           ) : null}
