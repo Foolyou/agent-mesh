@@ -14,9 +14,34 @@ import {
 
 const DEFAULT_OVERSCAN = 10;
 const DEFAULT_INITIAL_RECT: Rect = { width: 720, height: 720 };
+const OVERSCAN_NEAR_TOP = 20;
 type VirtualizerOptionsWithCompensationGuard = Parameters<typeof useVirtualizer<HTMLDivElement, HTMLDivElement>>[0] & {
   shouldAdjustScrollPositionOnItemSizeChange: () => false;
 };
+
+export function shouldTriggerTranscriptBackfill({
+  firstVisibleIndex,
+  hasMore,
+  inflight,
+}: {
+  firstVisibleIndex: number | undefined;
+  hasMore: boolean | undefined;
+  inflight: boolean;
+}): boolean {
+  return hasMore === true && !inflight && firstVisibleIndex !== undefined && firstVisibleIndex < OVERSCAN_NEAR_TOP;
+}
+
+export function preservePrependAnchorOffset({
+  currentStart,
+  previousTop,
+  containerTop,
+}: {
+  currentStart: number;
+  previousTop: number;
+  containerTop: number;
+}): number {
+  return Math.max(0, currentStart - (previousTop - containerTop));
+}
 
 function textBucket(chars: number): number {
   if (chars <= 120) return 0;
@@ -54,6 +79,8 @@ export function VirtualTranscript({
   overscan = DEFAULT_OVERSCAN,
   initialRect = DEFAULT_INITIAL_RECT,
   initialOffset,
+  hasMore,
+  onLoadOlder,
 }: {
   items: TranscriptItem[];
   renderItem: (item: TranscriptItem) => ReactNode;
@@ -62,6 +89,8 @@ export function VirtualTranscript({
   /** Test/SSR seed; real layout uses the scroll element rect. */
   initialRect?: Rect;
   initialOffset?: number;
+  hasMore?: boolean;
+  onLoadOlder?: () => Promise<void>;
 }) {
   const { t } = useI18n();
   const parentRef = useRef<HTMLDivElement>(null);
@@ -72,7 +101,11 @@ export function VirtualTranscript({
   const scrollDirectionRef = useRef<VirtualScrollDirection>(null);
   const userScrollIntentRef = useRef(false);
   const userScrollIntentTimerRef = useRef<number | undefined>(undefined);
+  const loadingOlderRef = useRef(false);
+  const prependAnchorRef = useRef<{ id: string; top: number; containerTop: number } | null>(null);
+  const previousFirstItemIdRef = useRef(items[0]?.id);
   const [stick, setStick] = useState(true);
+  const [loadingOlder, setLoadingOlder] = useState(false);
   const [widthBucket, setWidthBucket] = useState(() => transcriptWidthBucket(initialRect.width));
   const initialMeasurementsCache =
     cacheScope && widthBucket ? initialTranscriptMeasurements(items, cacheScope, widthBucket, estimateTranscriptItemSize) : undefined;
@@ -155,6 +188,26 @@ export function VirtualTranscript({
     return () => cancelAnimationFrame(raf);
   }, [items.length, virtualizer]);
   useLayoutEffect(() => {
+    const previousFirstItemId = previousFirstItemIdRef.current;
+    previousFirstItemIdRef.current = items[0]?.id;
+    if (previousFirstItemId === items[0]?.id) return;
+    const anchor = prependAnchorRef.current;
+    if (!anchor) return;
+    prependAnchorRef.current = null;
+    const index = items.findIndex((item) => item.id === anchor.id);
+    if (index < 0) return;
+    const raf = requestAnimationFrame(() => {
+      const row = virtualizer.getVirtualItems().find((item) => item.index === index);
+      if (!row) {
+        virtualizer.scrollToIndex(index, { align: "start" });
+        return;
+      }
+      virtualizer.scrollToOffset(preservePrependAnchorOffset({ currentStart: row.start, previousTop: anchor.top, containerTop: anchor.containerTop }));
+      syncPreviousScrollTop();
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [items, virtualizer]);
+  useLayoutEffect(() => {
     return () => {
       if (userScrollIntentTimerRef.current !== undefined) window.clearTimeout(userScrollIntentTimerRef.current);
     };
@@ -174,7 +227,37 @@ export function VirtualTranscript({
     const nextStick = nextTranscriptStickState(stickRef.current, atBottom, userScrollIntentRef.current, wentUp);
     stickRef.current = nextStick;
     setStick(nextStick);
+    maybeLoadOlder();
   }
+
+  function captureTopAnchor(): void {
+    const el = parentRef.current;
+    const first = virtualizer.getVirtualItems()[0];
+    const item = first ? items[first.index] : undefined;
+    if (!el || !item) return;
+    const row = el.querySelector<HTMLElement>(`[data-index="${first.index}"]`);
+    prependAnchorRef.current = {
+      id: item.id,
+      top: row?.getBoundingClientRect().top ?? el.getBoundingClientRect().top,
+      containerTop: el.getBoundingClientRect().top,
+    };
+  }
+
+  function maybeLoadOlder() {
+    if (!shouldTriggerTranscriptBackfill({ firstVisibleIndex: virtualizer.getVirtualItems()[0]?.index, hasMore, inflight: loadingOlderRef.current })) return;
+    if (!onLoadOlder) return;
+    captureTopAnchor();
+    loadingOlderRef.current = true;
+    setLoadingOlder(true);
+    void onLoadOlder().finally(() => {
+      loadingOlderRef.current = false;
+      setLoadingOlder(false);
+    });
+  }
+
+  useLayoutEffect(() => {
+    maybeLoadOlder();
+  });
 
   function jumpToBottom() {
     stickRef.current = true;
@@ -199,6 +282,11 @@ export function VirtualTranscript({
         }}
         tabIndex={-1}
       >
+        {hasMore ? (
+          <div className="virtual-transcript-loading" aria-live="polite">
+            {loadingOlder ? "Loading older..." : "Scroll up for older messages"}
+          </div>
+        ) : null}
         <div className="virtual-transcript-spacer" style={{ height: `${virtualizer.getTotalSize()}px`, position: "relative" }}>
           {virtualizer.getVirtualItems().map((virtualRow) => {
             const item = items[virtualRow.index];

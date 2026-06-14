@@ -475,6 +475,16 @@ body::after {
   outline: 2px solid var(--info);
   outline-offset: 2px;
 }
+.virtual-transcript-loading {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 4px 0 8px;
+  color: var(--fg-faint);
+  font-size: 11px;
+  text-align: center;
+  background: var(--bg);
+}
 /* The stream is a flex column that scrolls (overflow:auto). Its children must keep their
    content height and never be squished to fit — without this, an overflowing transcript
    lets flexbox shrink items, and any item with overflow:hidden (e.g. .tool cards, whose

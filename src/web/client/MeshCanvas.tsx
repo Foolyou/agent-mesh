@@ -595,6 +595,8 @@ export function MeshCanvas({
               >
                 <ChatPane
                   items={transcriptItems}
+                  hasMore={focused ? pm.transcripts[agent.id]?.hasMore : false}
+                  onLoadOlder={focused ? () => store.loadOlderTranscript(m.name, agent.id) : undefined}
                   queue={pm.queues?.[agent.id]}
                   author={{ meshId: m.name, agent: agent.id }}
                   transcriptCacheScope={{ meshId: m.name, agentId: agent.id }}
