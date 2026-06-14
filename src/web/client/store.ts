@@ -6,9 +6,12 @@ import { useSyncExternalStore } from "react";
 import type { AgentConfig, GatewayState, ServerMsg, PerMeshState, TranscriptItem, ConvRef, MeshConfig, MeshEdge, PromptImageRef, StartSessionStrategy, HarnessProbeRow, HarnessId, HarnessInstallEvent, RespawnMode } from "../types";
 
 const CAP = 500;
+const HARNESS_CHANGE_DEBOUNCE_MS = 300;
+const HARNESS_LIST_RETRY_DELAYS_MS = [200, 500];
 function cap<T>(a: T[], n: number): T[] {
   return a.length > n ? a.slice(a.length - n) : a;
 }
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 export function emptyState(): GatewayState {
   return { meshes: [], assistant: { status: "absent", transcript: [], capabilities: { image: false } }, perMesh: {} };
@@ -194,6 +197,8 @@ export function createStore(): Store {
   let loadedAppVersion: string | undefined;
   let upgrade: UpgradeState = { available: false };
   let toastSeq = 0;
+  let harnessChangeTimer: ReturnType<typeof setTimeout> | undefined;
+  let harnessListInFlight: Promise<HarnessProbeRow[]> | undefined;
   const subs = new Set<() => void>();
   const emit = () => {
     for (const s of subs) s();
@@ -215,7 +220,11 @@ export function createStore(): Store {
   function applyIncoming(msg: ServerMsg) {
     if (msg.t === "snapshot") noteSnapshotVersion(msg.state.appVersion);
     if (msg.t === "harnesses-changed") {
-      emit();
+      if (harnessChangeTimer !== undefined) clearTimeout(harnessChangeTimer);
+      harnessChangeTimer = setTimeout(() => {
+        harnessChangeTimer = undefined;
+        emit();
+      }, HARNESS_CHANGE_DEBOUNCE_MS);
       return;
     }
     set(applyMsg(state, msg));
@@ -235,6 +244,31 @@ export function createStore(): Store {
       pushToast("error", `${label}: ${String(e?.message ?? e)}`);
       throw e;
     });
+  }
+  async function withRetries<T>(fn: () => Promise<T>, retryDelaysMs: number[]): Promise<T> {
+    let lastError: unknown;
+    for (let attempt = 0; attempt <= retryDelaysMs.length; attempt++) {
+      try {
+        return await fn();
+      } catch (err) {
+        lastError = err;
+        const delayMs = retryDelaysMs[attempt];
+        if (delayMs === undefined) break;
+        await sleep(delayMs);
+      }
+    }
+    throw lastError;
+  }
+  function listHarnesses(): Promise<HarnessProbeRow[]> {
+    if (!harnessListInFlight) {
+      harnessListInFlight = guard(
+        withRetries(() => send("GET", "/api/harnesses") as Promise<HarnessProbeRow[]>, HARNESS_LIST_RETRY_DELAYS_MS),
+        "list harnesses",
+      ).finally(() => {
+        harnessListInFlight = undefined;
+      });
+    }
+    return harnessListInFlight;
   }
 
   let delay = 500;
@@ -363,7 +397,7 @@ export function createStore(): Store {
     newAgentSession: (n, a) => guard(post(`/api/meshes/${enc(n)}/agents/${enc(a)}/session`), `new session ${a}`),
     newAllSessions: (n) => guard(post(`/api/meshes/${enc(n)}/session`), `new sessions ${n}`),
     respawnAgent: (n, a, mode) => guard(post(`/api/meshes/${enc(n)}/agents/${enc(a)}/respawn`, { mode }), `respawn ${a}`),
-    listHarnesses: () => guard(send("GET", "/api/harnesses"), "list harnesses"),
+    listHarnesses,
     installHarness: (id) => guard(post(`/api/harnesses/${enc(id)}/install`), `install ${id}`),
     streamHarnessInstall,
     reprobeHarness: (id) => guard(post(`/api/harnesses/${enc(id)}/reprobe`), `reprobe ${id}`),
