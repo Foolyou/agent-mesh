@@ -1,7 +1,7 @@
 import { test, expect } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { didTranscriptScrollUp, isTranscriptAtBottom, isTranscriptScrollIntentKey, mailFoldButtonLabel, mailFoldInitialLineCount, nextMailExpanded, nextTranscriptStickState, Transcript, VIRTUAL_THRESHOLD } from "./Transcript";
+import { artifactCardUrls, didTranscriptScrollUp, isTranscriptAtBottom, isTranscriptScrollIntentKey, mailFoldButtonLabel, mailFoldInitialLineCount, nextMailExpanded, nextTranscriptStickState, Transcript, VIRTUAL_THRESHOLD } from "./Transcript";
 import type { TranscriptItem } from "../types";
 
 const T = "2026-06-09T00:00:00.000Z";
@@ -153,4 +153,63 @@ test("mail fold helpers switch between expand and collapse states", () => {
   expect(mailFoldButtonLabel(true, 47)).toBe("show less");
   expect(nextMailExpanded(false)).toBe(true);
   expect(nextMailExpanded(true)).toBe(false);
+});
+
+function renderWithAuthor(items: TranscriptItem[], author?: { meshId: string; agent: string }): string {
+  return renderToStaticMarkup(createElement(Transcript, { items, author }));
+}
+
+test("image attachment renders an inline image from the mesh-scoped artifact API url", () => {
+  const html = renderWithAuthor(
+    [{ id: "att:dev|out/chart.png|t1", kind: "attachment", agent: "dev", path: "out/chart.png", caption: "the chart", contentType: "image/png", ts: T }],
+    { meshId: "demo", agent: "dev" },
+  );
+  expect(html).toContain("<img");
+  expect(html).toContain('src="/api/meshes/demo/agents/dev/artifacts/out/chart.png"');
+  expect(html).toContain('href="/mesh/demo/agent/dev/artifact/out/chart.png"');
+  expect(html).toContain("the chart");
+});
+
+test("document attachment renders a viewer link (not an inline image)", () => {
+  const html = renderWithAuthor(
+    [{ id: "att:dev|report.md|t1", kind: "attachment", agent: "dev", path: "report.md", name: "Weekly report", contentType: "text/markdown; charset=utf-8", ts: T }],
+    { meshId: "demo", agent: "dev" },
+  );
+  expect(html).toContain('href="/mesh/demo/agent/dev/artifact/report.md"');
+  expect(html).toContain("Weekly report");
+  expect(html).not.toContain("<img");
+});
+
+test("attachment without an author context is inert (no artifact url, just a label)", () => {
+  const html = renderWithAuthor([
+    { id: "att:dev|secret.png|t1", kind: "attachment", agent: "dev", path: "secret.png", contentType: "image/png", ts: T },
+  ]);
+  expect(html).not.toContain("/api/meshes/");
+  expect(html).not.toContain("/artifact/");
+  expect(html).toContain("secret.png");
+});
+
+test("a published attachment from another agent forwards to that agent's artifact path", () => {
+  const html = renderWithAuthor(
+    [{ id: "att:builder|art.png|t1", kind: "attachment", agent: "builder", path: "art.png", contentType: "image/png", ts: T }],
+    { meshId: "demo", agent: "reviewer" },
+  );
+  // The card uses the attachment's own owner (builder), not the viewing author (reviewer).
+  expect(html).toContain('src="/api/meshes/demo/agents/builder/artifacts/art.png"');
+});
+
+test("user-bubble artifact: link stays inert without an author context", () => {
+  const html = render([
+    { id: "u1", kind: "message", role: "user", text: "see [report](artifact:report.md)", ts: T, complete: true },
+  ]);
+  // No AuthorContext on user bubbles → artifact: cannot resolve → rendered as plain text, no link.
+  expect(html).not.toContain("/api/meshes/");
+  expect(html).not.toContain("/artifact/");
+  expect(html).not.toContain("href=\"artifact:");
+});
+
+test("artifactCardUrls builds matching api + viewer urls and encodes segments", () => {
+  const { api, viewer } = artifactCardUrls("demo", "dev", "sub dir/a b.png");
+  expect(api).toBe("/api/meshes/demo/agents/dev/artifacts/sub%20dir/a%20b.png");
+  expect(viewer).toBe("/mesh/demo/agent/dev/artifact/sub%20dir/a%20b.png");
 });

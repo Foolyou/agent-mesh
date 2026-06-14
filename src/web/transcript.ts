@@ -356,6 +356,30 @@ export function reduceTranscript(
     return { items: next, ops };
   }
 
+  // Synthetic attachment card emitted by the gateway from an attachment_published event.
+  // The gateway passes a STABLE id derived from (agent, path, ts); using it (instead of a
+  // fresh nid) makes the fold idempotent — snapshotEvents() re-replays the same attachment
+  // on every backend reattach, and replacing-by-id keeps a single card instead of stacking.
+  // Distinct publishes carry a distinct ts → distinct id → distinct cards (no dedup).
+  if (k === "__attachment__") {
+    closeOpen();
+    const id = typeof update.id === "string" && update.id ? update.id : nid(now);
+    const item: TranscriptItem = {
+      id,
+      kind: "attachment",
+      agent: String(update.agent ?? ""),
+      path: String(update.path ?? ""),
+      caption: typeof update.caption === "string" ? update.caption : undefined,
+      name: typeof update.name === "string" ? update.name : undefined,
+      contentType: String(update.contentType ?? ""),
+      ts: now,
+    };
+    const idx = next.findIndex((it) => it.id === id);
+    next = idx >= 0 ? [...next.slice(0, idx), item, ...next.slice(idx + 1)] : [...next, item];
+    ops.push({ op: "upsert", item });
+    return { items: next, ops };
+  }
+
   // plan / available_commands_update / current_mode_update and anything unknown:
   // not part of the conversation transcript.
   return { items: next, ops: [] };

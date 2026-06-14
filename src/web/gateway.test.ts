@@ -861,3 +861,57 @@ test("deleteMesh delegates and prunes perMesh state", async () => {
   expect(m.calls).toContainEqual(["delete", "demo"]);
   expect(gw.snapshot().perMesh.demo).toBeUndefined();
 });
+
+test("attachment_published folds an attachment card into the publishing agent's transcript", () => {
+  const m = fakeManager();
+  const gw = new WebGateway(m as any);
+  const got: any[] = [];
+  gw.subscribe((msg) => got.push(msg));
+  m.emit("demo", {
+    kind: "attachment_published",
+    agent: "codex-1",
+    path: "out/chart.png",
+    caption: "the chart",
+    name: "Chart",
+    contentType: "image/png",
+    ts: "T1",
+  });
+  const items = transcriptItems(gw, "codex-1");
+  const card = items.find((it: any) => it.kind === "attachment") as any;
+  expect(card).toMatchObject({
+    kind: "attachment",
+    agent: "codex-1",
+    path: "out/chart.png",
+    caption: "the chart",
+    name: "Chart",
+    contentType: "image/png",
+  });
+  // The card carries everything the web layer needs to build the mesh-scoped artifact URL
+  // (/api/meshes/demo/agents/codex-1/artifacts/out/chart.png) exactly.
+  expect(got.some((msg) => msg.t === "transcript.upsert" && msg.item.kind === "attachment")).toBe(true);
+});
+
+test("re-ingesting the same attachment_published (snapshot reattach) does not duplicate the card", () => {
+  const m = fakeManager();
+  const gw = new WebGateway(m as any);
+  const ev = {
+    kind: "attachment_published" as const,
+    agent: "codex-1",
+    path: "report.md",
+    contentType: "text/markdown; charset=utf-8",
+    ts: "T1",
+  };
+  m.emit("demo", ev);
+  m.emit("demo", ev); // snapshotEvents() replays it on every backend reattach
+  const items = transcriptItems(gw, "codex-1");
+  expect(items.filter((it: any) => it.kind === "attachment")).toHaveLength(1);
+});
+
+test("distinct publishes (distinct ts) yield distinct attachment cards", () => {
+  const m = fakeManager();
+  const gw = new WebGateway(m as any);
+  m.emit("demo", { kind: "attachment_published", agent: "codex-1", path: "report.md", contentType: "text/markdown", ts: "T1" });
+  m.emit("demo", { kind: "attachment_published", agent: "codex-1", path: "report.md", contentType: "text/markdown", ts: "T2" });
+  const items = transcriptItems(gw, "codex-1");
+  expect(items.filter((it: any) => it.kind === "attachment")).toHaveLength(2);
+});

@@ -1,7 +1,7 @@
 // Renders an aggregated TranscriptItem[] as message bubbles, collapsible thought
 // blocks, and tool-call cards that update in place. The aggregation already happened
 // upstream (transcript reducer); this is pure presentation.
-import { useLayoutEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState, type MouseEvent } from "react";
 import type { TranscriptItem } from "../types";
 import { Empty, fmtTime } from "./ui";
 import { useI18n } from "./i18n";
@@ -244,6 +244,59 @@ function MailBubble({ item, meshId }: { item: Extract<TranscriptItem, { kind: "m
   );
 }
 
+// Encode each path segment but keep the slash separators, so a nested artifact path
+// (e.g. "out/chart.png") maps onto the mesh-scoped route exactly.
+function encodeArtifactPath(path: string): string {
+  return path.split("/").map(encodeURIComponent).join("/");
+}
+
+/** Build the two mesh-scoped URLs for a published artifact: the raw bytes (api, used for
+ *  inline images) and the FileViewer route (used to open documents). Mirrors the
+ *  artifact: rewrite in Markdown.tsx so a published card and an inline `artifact:` link
+ *  resolve to the same place. */
+export function artifactCardUrls(meshId: string, agent: string, path: string): { api: string; viewer: string } {
+  const enc = encodeArtifactPath(path);
+  return {
+    api: `/api/meshes/${encodeURIComponent(meshId)}/agents/${encodeURIComponent(agent)}/artifacts/${enc}`,
+    viewer: `/mesh/${encodeURIComponent(meshId)}/agent/${encodeURIComponent(agent)}/artifact/${enc}`,
+  };
+}
+
+function AttachmentCard({ item, meshId }: { item: Extract<TranscriptItem, { kind: "attachment" }>; meshId?: string }) {
+  const label = item.name || item.path.split("/").pop() || item.path;
+  // Without an author/mesh context we cannot build a safe mesh-scoped URL — render the
+  // attachment inert (name + caption only), mirroring how a context-less `artifact:` link
+  // degrades to plain text in Markdown.tsx.
+  if (!meshId) {
+    return (
+      <div className="attachment">
+        <span className="attachment-name">📎 {label}</span>
+        {item.caption ? <div className="attachment-caption">{item.caption}</div> : null}
+      </div>
+    );
+  }
+  const { api, viewer } = artifactCardUrls(meshId, item.agent, item.path);
+  const isImage = item.contentType.startsWith("image/");
+  const openViewer = (e: MouseEvent<HTMLAnchorElement>) => {
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return; // let the browser open a new tab
+    e.preventDefault();
+    history.pushState(null, "", viewer);
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  };
+  return (
+    <div className="attachment">
+      <a className="attachment-link" href={viewer} onClick={openViewer} title={label}>
+        {isImage ? (
+          <img className="attachment-image" src={api} alt={label} loading="lazy" referrerPolicy="no-referrer" style={{ maxWidth: "100%", maxHeight: "320px", borderRadius: "6px" }} />
+        ) : (
+          <span className="attachment-name">📎 {label}</span>
+        )}
+      </a>
+      {item.caption ? <div className="attachment-caption">{item.caption}</div> : null}
+    </div>
+  );
+}
+
 export function TranscriptRow({ item, author }: { item: TranscriptItem; author?: AuthorRef }) {
   return item.kind === "message" ? (
     <Msg item={item} author={author} />
@@ -253,6 +306,8 @@ export function TranscriptRow({ item, author }: { item: TranscriptItem; author?:
     <ToolCard item={item} />
   ) : item.kind === "mail" ? (
     <MailBubble item={item} meshId={author?.meshId} />
+  ) : item.kind === "attachment" ? (
+    <AttachmentCard item={item} meshId={author?.meshId} />
   ) : item.kind === "compact" ? (
     <CompactEntry item={item} />
   ) : item.kind === "divider" ? (
