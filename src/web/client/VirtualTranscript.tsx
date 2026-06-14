@@ -108,6 +108,9 @@ export function VirtualTranscript({
   const userScrollIntentRef = useRef(false);
   const userScrollIntentTimerRef = useRef<number | undefined>(undefined);
   const loadingOlderRef = useRef(false);
+  const backfillScrollTokenRef = useRef(0);
+  const consumedBackfillScrollTokenRef = useRef(0);
+  const backfillBlockedAtTopRef = useRef(false);
   const prependAnchorRef = useRef<{ id: string; top: number; containerTop: number } | null>(null);
   const previousFirstItemIdRef = useRef(items[0]?.id);
   const [stick, setStick] = useState(true);
@@ -255,10 +258,13 @@ export function VirtualTranscript({
       scrollDirectionRef.current = scrollTop > previous ? "forward" : "backward";
     }
     previousScrollTopRef.current = scrollTop;
+    const firstVisible = virtualizer.getVirtualItems()[0]?.index;
+    if (firstVisible !== 0) backfillBlockedAtTopRef.current = false;
     const atBottom = isVirtualAtBottom(el, virtualizer.getDistanceFromEnd());
     const nextStick = nextTranscriptStickState(stickRef.current, atBottom, userScrollIntentRef.current, wentUp);
     stickRef.current = nextStick;
     setStick(nextStick);
+    backfillScrollTokenRef.current += 1;
     maybeLoadOlder();
   }
 
@@ -283,6 +289,10 @@ export function VirtualTranscript({
   function maybeLoadOlder() {
     if (!shouldTriggerTranscriptBackfill({ firstVisibleIndex: virtualizer.getVirtualItems()[0]?.index, hasMore, inflight: loadingOlderRef.current })) return;
     if (!onLoadOlder) return;
+    if (backfillBlockedAtTopRef.current) return;
+    if (consumedBackfillScrollTokenRef.current === backfillScrollTokenRef.current) return;
+    consumedBackfillScrollTokenRef.current = backfillScrollTokenRef.current;
+    backfillBlockedAtTopRef.current = true;
     captureTopAnchor();
     loadingOlderRef.current = true;
     setLoadingOlder(true);
@@ -294,7 +304,6 @@ export function VirtualTranscript({
 
   useLayoutEffect(() => {
     setFirstVisibleIndex(virtualizer.getVirtualItems()[0]?.index);
-    maybeLoadOlder();
   });
 
   function jumpToBottom() {

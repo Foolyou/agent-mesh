@@ -572,6 +572,57 @@ try {
     await page.unroute(`**/api/meshes/${MESH}/agents/${agent}/transcript?**`);
   });
 
+  await step("Scenario I: scrolling a 100-item lazy transcript to top triggers backfill", async () => {
+    const agent = "codex-2";
+    const seeded = seededLazyInitialState(agent);
+    let tailRequests = 0;
+    let backfillRequests = 0;
+    await page.route(`**/api/meshes/${MESH}/agents/${agent}/transcript?**`, async (route) => {
+      const url = new URL(route.request().url());
+      const before = url.searchParams.get("before");
+      const limit = Number(url.searchParams.get("limit") ?? BACKFILL_LIMIT);
+      if (!before) {
+        tailRequests += 1;
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({ items: seeded.full.slice(-limit), hasMore: true }),
+        });
+        return;
+      }
+      backfillRequests += 1;
+      const beforeIndex = seeded.full.findIndex((item) => item.id === before);
+      const start = Math.max(0, beforeIndex - limit);
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ items: beforeIndex >= 0 ? seeded.full.slice(start, beforeIndex) : [], hasMore: start > 0 }),
+      });
+    });
+
+    await page.evaluate((state) => {
+      (window as any).__meshStore.apply({ t: "snapshot", state });
+    }, seeded.state);
+    await page.locator(`.conv-member-tab:has-text("${agent}")`).click();
+    await page.waitForFunction(({ mesh, agent, expected }) => {
+      return (window as any).__meshStore.getState().perMesh[mesh].transcripts[agent].items.length === expected;
+    }, { mesh: MESH, agent, expected: BACKFILL_LIMIT }, { timeout: 5000 });
+    const stream = await activeStream(page);
+    await page.waitForSelector(`.conv-panel [data-item-id="${agent}-backfill-msg-499"]`, { timeout: 5000 });
+    await page.waitForTimeout(120);
+    await stream.evaluate((el) => {
+      el.scrollTop = 0;
+      el.dispatchEvent(new Event("scroll", { bubbles: true }));
+    });
+    await page.waitForFunction(({ mesh, agent, expected }) => {
+      return (window as any).__meshStore.getState().perMesh[mesh].transcripts[agent].items.length === expected;
+    }, { mesh: MESH, agent, expected: BACKFILL_LIMIT * 2 }, { timeout: 5000 });
+    if (tailRequests !== 1) throw new Error(`initial tail requests ${tailRequests}`);
+    if (backfillRequests !== 1) throw new Error(`scroll backfill requests ${backfillRequests}`);
+    metrics.scenarioI = { tailRequests, backfillRequests };
+    await page.unroute(`**/api/meshes/${MESH}/agents/${agent}/transcript?**`);
+  });
+
   await step("no console/page errors", async () => {
     if (errors.length) throw new Error(errors.slice(0, 2).join(" || "));
   });
