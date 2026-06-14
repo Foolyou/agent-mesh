@@ -2,7 +2,7 @@
 // The deterministic global control plane. Owns mesh definitions (via MeshStore)
 // and supervises one MeshHostClient per running mesh. Independent of the assistant
 // agent: callable from the TUI, tests, and e2e.
-import { resolve, join } from "node:path";
+import { resolve, join, dirname } from "node:path";
 import { rm } from "node:fs/promises";
 import { MeshStore } from "./mesh-store";
 import { MeshHostClient, type MutationAck } from "./mesh-host-client";
@@ -18,6 +18,7 @@ import type { PromptImageRef } from "./acp/types";
 import type { RespawnMode, RespawnResult } from "./control-plane";
 import { deleteUploadBucket } from "./web/uploads";
 import { assertSafeArtifactName, deleteArtifactMesh } from "./web/artifacts";
+import { boardsDirFor, deleteBoard } from "./board-store";
 import { clearAgentSession, clearAllAgentSessions, setMeshExpectedAlive } from "./session-storage";
 
 export type MeshStatus = "stopped" | "starting" | "running" | "dead";
@@ -149,6 +150,10 @@ export class MeshManager {
     this.entries.delete(name);
     await deleteUploadBucket(this.root, name);
     await deleteArtifactMesh(this.root, name);
+    // Board lives at <root>/boards/<mesh>.json. Derive the dir from runDir exactly as the
+    // ControlPlane does (boardsDir = boardsDirFor(dirname(sessionRunDir)), sessionRunDir =
+    // runDir), so cleanup and creation never disagree on the location.
+    await deleteBoard(boardsDirFor(dirname(this.runDir)), name);
   }
 
   private require(name: string): Entry {
