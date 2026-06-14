@@ -1,7 +1,7 @@
 // ControlPlane: the single global control plane. Sole ACP client (holds one
 // AcpAgentConnection per agent), runs the Mesh Services MCP server, owns the
 // mailbox + event bus, and arbitrates permission escalations.
-import { join, resolve } from "node:path";
+import { join, relative, resolve } from "node:path";
 import { mkdir, stat } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { AcpAgentConnection, type AcpConnectionOptions, type PermissionDecision } from "./acp/client";
@@ -10,10 +10,10 @@ import { managedNpmBin } from "./harness-install-spec";
 import { isThinkingEffort, runtimeEffortConfig, runtimeEffortOptionsFromSession, type RuntimeEffortOptions } from "./harness-utils";
 import { Mesh } from "./mesh";
 import { buildMeshBriefing, MAIL_WAKE_GUIDANCE } from "./mesh-briefing";
-import { createMeshServicesServer, type MeshServicesHandlers, type MeshServicesServer, type MeshToolContext, type SendMailOptions } from "./mcp/mesh-services";
+import { createMeshServicesServer, type MeshServicesHandlers, type MeshServicesServer, type MeshToolContext, type PublishAttachmentOptions, type SendMailOptions } from "./mcp/mesh-services";
 import { compactMailbox, sendMail, readMailFor, readMailboxEvents, readRecentAddressedMail, readUnreadAddressedMail, type MailMeta } from "./mailbox";
 import { validateAddAgent, validateAddEdge } from "./mesh-validate";
-import { artifactAgentDir } from "./web/artifacts";
+import { artifactAgentDir, resolveArtifactFile } from "./web/artifacts";
 import { readSessionState, setMeshExpectedAlive, updateAgentMailCursor, updateAgentSession, clearAgentSession, type MeshSessionState } from "./session-storage";
 import { now, type AgentActivity, type AgentConfig, type AgentHealthSignalKind, type AgentId, type AgentTurn, type MeshConfig, type MeshEdge, type MeshEvent, type PromptImageRef, type SessionMode, type SessionModel, type ThinkingEffort, type TurnHealthReason } from "./acp/types";
 import { DEFAULT_AUTO_COMPACT_SETTINGS, MIN_AUTO_COMPACT_CONTEXT_WINDOW, evaluateCompactThreshold, parseCompactThreshold } from "./auto-compact";
@@ -239,6 +239,10 @@ export class ControlPlane {
   /** Recent durable mail, replayed via snapshotEvents() so reconnecting clients
    *  see mail history instead of only live deliveries. */
   private recentMail: { id: string; from: AgentId; to: AgentId; body: string; ts: string }[] = [];
+  /** Attachments agents have published, in publish order. Held here (not just in the
+   *  event ring) so snapshotEvents() can replay them on a backend reattach. Append-only
+   *  and capped; repeat publishes of the same file are kept as distinct cards. */
+  private publishedAttachments: { agent: AgentId; path: string; caption?: string; name?: string; contentType: string; ts: string }[] = [];
   /** Per-mesh monotonic short mail number; recovered from the mailbox on start. */
   private mailSeq = 0;
   /** seq → mail summary, for rendering "in reply to #N" quotes. Bounded. */
@@ -454,6 +458,9 @@ export class ControlPlane {
     }
     for (const m of this.recentMail) {
       events.push({ kind: "mail", id: m.id, from: m.from, to: m.to, body: m.body, ts: m.ts });
+    }
+    for (const att of this.publishedAttachments) {
+      events.push({ kind: "attachment_published", agent: att.agent, path: att.path, caption: att.caption, name: att.name, contentType: att.contentType, ts: att.ts });
     }
     return events;
   }
@@ -888,6 +895,7 @@ export class ControlPlane {
       steerTargets: (ctx) => this.steerTargets(ctx.agentId),
       checkMail: (ctx) => this.handleCheckMail(ctx),
       interrupt: (ctx, target, reason) => this.handleInterrupt(ctx, target, reason),
+      publishAttachment: (ctx, path, opts) => this.handlePublishAttachment(ctx, path, opts),
     });
 
     if (!this.sessionState.meshExpectedAlive) {
@@ -1648,6 +1656,34 @@ export class ControlPlane {
     this.emit({ kind: "interrupt", from: ctx.agentId, target, reason, ts: now() });
     await this.agent(target).cancel();
     return `interrupted ${target}`;
+  }
+
+  /** Publish one of the calling agent's own artifact files as an attachment card.
+   *  Ownership is non-negotiable: the owner is ALWAYS ctx.agentId — the caller cannot
+   *  name another agent/mesh (the tool layer never forwards such fields, and we never
+   *  read them here). The file goes through resolveArtifactFile, which enforces every
+   *  existing artifact guard (traversal/`..`/%2e%2e/NUL/backslash/absolute paths, the
+   *  extension whitelist incl. SVG rejection, image magic-byte sniffing, the 5MiB cap,
+   *  and symlink escapes); a rejected file emits NO event. */
+  private async handlePublishAttachment(ctx: MeshToolContext, path: string, opts?: PublishAttachmentOptions): Promise<string> {
+    if (!this.artifactsRoot) return "error: artifact storage is not configured for this mesh";
+    if (typeof path !== "string" || !path.trim()) return "error: path is required";
+    const owner = ctx.agentId;
+    let file;
+    try {
+      file = await resolveArtifactFile(this.artifactsRoot, this.mesh.name, owner, path);
+    } catch (err) {
+      return `error: ${err instanceof Error ? err.message : String(err)}`;
+    }
+    // Canonical mesh-relative path so the web layer can rebuild the artifact URL exactly.
+    const relPath = relative(artifactAgentDir(this.artifactsRoot, this.mesh.name, owner), file.path);
+    const caption = typeof opts?.caption === "string" && opts.caption.trim() ? opts.caption.trim() : undefined;
+    const name = typeof opts?.name === "string" && opts.name.trim() ? opts.name.trim() : undefined;
+    const record = { agent: owner, path: relPath, caption, name, contentType: file.contentType, ts: now() };
+    this.publishedAttachments.push(record);
+    if (this.publishedAttachments.length > 200) this.publishedAttachments.splice(0, this.publishedAttachments.length - 200);
+    this.emit({ kind: "attachment_published", ...record });
+    return `published ${relPath}`;
   }
 
   // ---- permission escalation ----

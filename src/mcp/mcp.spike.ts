@@ -27,6 +27,7 @@ const mcp = createMeshServicesServer({
     steerTargets: () => [],
     checkMail: () => "no mail",
     interrupt: () => "not implemented in spike",
+    publishAttachment: () => "not implemented in spike",
   },
 });
 
