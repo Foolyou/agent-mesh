@@ -34,6 +34,53 @@ async function shot(page: Page, name: string) {
   }
 }
 
+async function assertMobileDetailLayout(page: Page) {
+  const metrics = await page.evaluate(() => {
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    const docWidth = document.documentElement.scrollWidth;
+    const bodyWidth = document.body.scrollWidth;
+    const rectFor = (selector: string) => {
+      const el = document.querySelector(selector) as HTMLElement | null;
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width, height: r.height };
+    };
+    return {
+      viewportWidth,
+      viewportHeight,
+      docWidth,
+      bodyWidth,
+      app: rectFor(".app"),
+      detail: rectFor(".mdetail"),
+      tabs: rectFor(".mtabs"),
+      chat: rectFor(".mdetail .chat"),
+      composer: rectFor(".mdetail .composer"),
+    };
+  });
+  if (metrics.docWidth > metrics.viewportWidth + 1 || metrics.bodyWidth > metrics.viewportWidth + 1) {
+    throw new Error(`mobile detail overflows horizontally: viewport=${metrics.viewportWidth} doc=${metrics.docWidth} body=${metrics.bodyWidth}`);
+  }
+  for (const [name, box] of Object.entries({ app: metrics.app, detail: metrics.detail, tabs: metrics.tabs })) {
+    if (!box) throw new Error(`missing mobile layout box: ${name}`);
+    if (box.left < -1 || box.right > metrics.viewportWidth + 1) {
+      throw new Error(`mobile ${name} escapes viewport: ${JSON.stringify(box)} viewport=${metrics.viewportWidth}`);
+    }
+  }
+  if (!metrics.chat || !metrics.composer) throw new Error("missing mobile chat/composer boxes");
+  if (
+    metrics.composer.left < -1 ||
+    metrics.composer.right > metrics.viewportWidth + 1 ||
+    metrics.composer.top < -1 ||
+    metrics.composer.bottom > metrics.viewportHeight + 1
+  ) {
+    throw new Error(`mobile composer is outside viewport: ${JSON.stringify(metrics.composer)} viewport=${metrics.viewportWidth}x${metrics.viewportHeight}`);
+  }
+  if (Math.abs(metrics.chat.bottom - metrics.composer.bottom) > 2) {
+    throw new Error(`mobile composer is not pinned to chat bottom: chat=${JSON.stringify(metrics.chat)} composer=${JSON.stringify(metrics.composer)}`);
+  }
+}
+
 async function waitReady() {
   for (let i = 0; i < 80; i++) {
     try {
@@ -935,6 +982,7 @@ try {
     if (!interruptBox || interruptBox.width < 44 || interruptBox.height < 44) {
       throw new Error(`mobile interrupt touch target too small: ${interruptBox?.width}x${interruptBox?.height}`);
     }
+    await assertMobileDetailLayout(page);
 
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.waitForSelector(".drail", { timeout: 4000 });
