@@ -209,6 +209,25 @@ export class WebGateway {
     return snapshot;
   }
 
+  getOlderTranscriptItems(mesh: string, agent: AgentId, beforeId: string | undefined, limit: number): { items: TranscriptItem[]; hasMore: boolean } | null {
+    let config: MeshConfig;
+    try {
+      config = this.manager.configOf(mesh);
+    } catch {
+      return null;
+    }
+    if (!config.agents.some((a) => a.id === agent)) return null;
+    const transcript = this.state.perMesh[mesh]?.transcripts[agent];
+    const all = transcript?.items ?? [];
+    const beforeIndex = beforeId ? all.findIndex((item) => item.id === beforeId) : all.length;
+    if (beforeIndex < 0) return { items: [], hasMore: false };
+    const start = Math.max(0, beforeIndex - limit);
+    return {
+      items: structuredClone(all.slice(start, beforeIndex)),
+      hasMore: start > 0,
+    };
+  }
+
   // ── Mesh summary ─────────────────────────────────────────────────────────────
   private computeMeshes(): MeshSummary[] {
     return this.manager.listMeshes().map((m) => {
