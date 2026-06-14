@@ -55,8 +55,29 @@ test("agents can create tasks and subtasks but cannot pre-assign or set deps", (
   const preAssign = applyBoardCommand(board, { type: "create_task", title: "x", assignee: "bob" }, ctx(board, alice));
   expect(preAssign.ok).toBe(false);
 
-  board = ok(board, { type: "create_subtask", taskId: 1, title: "sub 1" }, bob);
+  board = ok(board, { type: "create_subtask", taskId: 1, expectedRevision: 1, title: "sub 1" }, bob);
   expect(board.tasks[0].subtasks[0]).toMatchObject({ id: "1.1", title: "sub 1", status: "todo", createdBy: "bob" });
+});
+
+test("create_subtask requires parent task CAS (missing → invalid, stale → conflict)", () => {
+  const { state, id } = seedTask(createEmptyBoard("m"), alice); // task #id, revision 1
+
+  const missing = applyBoardCommand(
+    state,
+    { type: "create_subtask", taskId: id, title: "s" } as unknown as BoardCommand,
+    ctx(state, alice),
+  );
+  expect(missing.ok).toBe(false);
+  if (!missing.ok) expect(missing.code).toBe("invalid");
+
+  const stale = applyBoardCommand(state, { type: "create_subtask", taskId: id, expectedRevision: 99, title: "s" }, ctx(state, alice));
+  expect(stale.ok).toBe(false);
+  if (!stale.ok) expect(stale.code).toBe("conflict");
+
+  // current parent revision succeeds and bumps the parent
+  const okState = ok(state, { type: "create_subtask", taskId: id, expectedRevision: 1, title: "s" }, alice);
+  expect(okState.tasks[0].subtasks).toHaveLength(1);
+  expect(okState.tasks[0].revision).toBe(2);
 });
 
 test("a non-privileged agent cannot create a high/urgent task (reject, not normalize)", () => {
@@ -205,8 +226,8 @@ test("parent progress: task progress derives from subtasks; epic from tasks", ()
   let board = createEmptyBoard("m");
   board = ok(board, { type: "create_epic", title: "Epic" }, router); // epic-1
   board = ok(board, { type: "create_task", title: "T1", epicId: "epic-1" }, router); // #1
-  board = ok(board, { type: "create_subtask", taskId: 1, title: "s1" }, router); // 1.1
-  board = ok(board, { type: "create_subtask", taskId: 1, title: "s2" }, router); // 1.2
+  board = ok(board, { type: "create_subtask", taskId: 1, expectedRevision: 1, title: "s1" }, router); // 1.1
+  board = ok(board, { type: "create_subtask", taskId: 1, expectedRevision: 2, title: "s2" }, router); // 1.2
 
   let task = board.tasks.find((t) => t.id === 1)!;
   expect(taskProgress(task)).toMatchObject({ done: 0, total: 2, ratio: 0 });

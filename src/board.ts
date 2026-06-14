@@ -112,7 +112,7 @@ export type BoardCommand =
   | { type: "assign_task"; id: number; expectedRevision: number; assignee?: string }
   | { type: "set_task_priority"; id: number; expectedRevision: number; priority: BoardPriority }
   | { type: "set_task_deps"; id: number; expectedRevision: number; deps: number[] }
-  | { type: "create_subtask"; taskId: number; title: string; assignee?: string }
+  | { type: "create_subtask"; taskId: number; expectedRevision: number; title: string; assignee?: string }
   | { type: "update_subtask"; taskId: number; subtaskId: string; expectedRevision: number; title?: string }
   | { type: "set_subtask_status"; taskId: number; subtaskId: string; expectedRevision: number; status: BoardStatus }
   | { type: "add_comment"; target: BoardTargetRef; expectedRevision: number; text: string }
@@ -377,6 +377,9 @@ export function applyBoardCommand(state: BoardState, cmd: BoardCommand, ctx: Boa
       const title = cleanText(cmd.title, 200);
       if (!title) return err("invalid", "subtask title is required");
       if (!isPrivileged(actor) && cmd.assignee) return err("forbidden", "only a router or operator may assign");
+      // Creating a subtask appends to and bumps the parent task, so it needs parent CAS.
+      const conflict = casCheck(task.revision, cmd.expectedRevision);
+      if (conflict) return conflict;
       const subSeq = task.subtaskSeq + 1;
       const subtask: Subtask = {
         id: `${task.id}.${subSeq}`,

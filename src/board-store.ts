@@ -152,11 +152,15 @@ function sanitizeDeps(v: unknown): number[] {
   return [...new Set(v.filter((d) => Number.isInteger(d) && (d as number) > 0) as number[])];
 }
 
-function sanitizeSubtask(raw: unknown, seen: Set<string>): Subtask | null {
+function sanitizeSubtask(raw: unknown, parentTaskId: number, seen: Set<string>): Subtask | null {
   const o = asObject(raw);
   if (!o) return null;
   const id = cleanStr(o.id, 200);
+  // Locked id shape is "<taskId>.<n>" (n a positive int) and must belong to THIS parent.
+  // Drop anything malformed rather than invent an identity mapping.
   if (!id || seen.has(id)) return null;
+  const m = /^(\d+)\.(\d+)$/.exec(id);
+  if (!m || Number(m[1]) !== parentTaskId || Number(m[2]) <= 0) return null;
   seen.add(id);
   return {
     id,
@@ -181,7 +185,7 @@ function sanitizeTask(raw: unknown, seenIds: Set<number>): Task | null {
   const subtasks: Subtask[] = [];
   if (Array.isArray(o.subtasks)) {
     for (const s of o.subtasks) {
-      const sub = sanitizeSubtask(s, seenSub);
+      const sub = sanitizeSubtask(s, id, seenSub);
       if (sub) subtasks.push(sub);
     }
   }
@@ -214,9 +218,14 @@ function sanitizeEpic(raw: unknown, seenIds: Set<string>): Epic | null {
   const o = asObject(raw);
   if (!o) return null;
   const id = cleanStr(o.id, 200);
+  // Locked id shape is "epic-N" (N a positive int). Drop malformed ids and derive seq from
+  // the id (it is authoritative) so the display label E{seq} can never drift from the id.
   if (!id || seenIds.has(id)) return null;
+  const m = /^epic-(\d+)$/.exec(id);
+  if (!m) return null;
+  const seq = Number(m[1]);
+  if (!Number.isInteger(seq) || seq <= 0) return null;
   seenIds.add(id);
-  const seq = intAtLeast(o.seq, 1);
   return {
     id,
     seq,

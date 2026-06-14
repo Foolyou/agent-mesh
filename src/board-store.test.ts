@@ -162,6 +162,44 @@ test("read drops malformed entities, dedups ids, normalizes status/revision/seq"
   }
 });
 
+test("read drops persisted ids that violate the locked epic-N / taskId.n shapes", async () => {
+  const dir = await tmp();
+  try {
+    await writeFile(
+      join(dir, "m.json"),
+      JSON.stringify({
+        epics: [
+          { id: "epic-2", seq: 99 }, // valid; seq derived from id (2), not the bogus 99
+          { id: "not-epic", seq: 3 }, // malformed id → dropped
+          { id: "epic-x" }, // malformed id → dropped
+        ],
+        tasks: [
+          {
+            id: 5,
+            subtasks: [
+              { id: "5.1", title: "ok" }, // valid
+              { id: "bad-sub", title: "nope" }, // malformed → dropped
+              { id: "9.2", title: "wrong parent" }, // belongs to #9, not #5 → dropped
+            ],
+          },
+        ],
+      }),
+      "utf8",
+    );
+    const board = await readBoard(dir, "m");
+
+    expect(board.epics.map((e) => e.id)).toEqual(["epic-2"]);
+    expect(board.epics[0].seq).toBe(2); // derived from the id, not the persisted 99
+    expect(board.epicSeq).toBe(2); // normalized from retained valid ids only
+
+    const t5 = board.tasks.find((t) => t.id === 5)!;
+    expect(t5.subtasks.map((s) => s.id)).toEqual(["5.1"]);
+    expect(t5.subtaskSeq).toBe(1); // derived from retained valid subtask suffix
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("withBoardLock serializes concurrent writers on the same path", async () => {
   const order: string[] = [];
   const path = "/virtual/lock-path";
