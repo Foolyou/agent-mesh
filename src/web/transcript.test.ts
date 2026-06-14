@@ -345,3 +345,54 @@ test("compact synthetic updates create compact transcript entries", () => {
   expect(r.items[0]).toMatchObject({ kind: "compact", status: "started", reason: "auto-threshold" });
   expect(r.ops[0]).toMatchObject({ op: "upsert", item: expect.objectContaining({ kind: "compact" }) });
 });
+
+test("__attachment__ folds into an attachment card carrying agent/path/contentType/caption/name", () => {
+  const r = reduceTranscript([], {
+    sessionUpdate: "__attachment__",
+    id: "att:dev|chart.png|t1",
+    agent: "dev",
+    path: "chart.png",
+    caption: "the chart",
+    name: "Chart",
+    contentType: "image/png",
+  }, T);
+  expect(r.ops).toHaveLength(1);
+  expect(r.ops[0].op).toBe("upsert");
+  expect(r.items[0]).toMatchObject({
+    id: "att:dev|chart.png|t1",
+    kind: "attachment",
+    agent: "dev",
+    path: "chart.png",
+    caption: "the chart",
+    name: "Chart",
+    contentType: "image/png",
+  });
+});
+
+test("__attachment__ folding is idempotent by stable id (snapshot replay does not duplicate)", () => {
+  const update = {
+    sessionUpdate: "__attachment__",
+    id: "att:dev|report.md|t1",
+    agent: "dev",
+    path: "report.md",
+    contentType: "text/markdown; charset=utf-8",
+  };
+  let items = reduceTranscript([], update, T).items;
+  items = reduceTranscript(items, update, T).items; // replay (e.g. backend reattach)
+  expect(items.filter((it) => it.kind === "attachment")).toHaveLength(1);
+});
+
+test("distinct publishes (distinct ids) produce distinct attachment cards", () => {
+  let items = reduceTranscript([], { sessionUpdate: "__attachment__", id: "att:dev|r.md|t1", agent: "dev", path: "r.md", contentType: "text/markdown" }, T).items;
+  items = reduceTranscript(items, { sessionUpdate: "__attachment__", id: "att:dev|r.md|t2", agent: "dev", path: "r.md", contentType: "text/markdown" }, T).items;
+  expect(items.filter((it) => it.kind === "attachment")).toHaveLength(2);
+});
+
+test("__attachment__ seals an open agent message before the card", () => {
+  const items = fold([
+    { sessionUpdate: "agent_message_chunk", content: { text: "see the file" } },
+    { sessionUpdate: "__attachment__", id: "att:dev|r.md|t1", agent: "dev", path: "r.md", contentType: "text/markdown" },
+  ]);
+  expect(items.map((i) => i.kind)).toEqual(["message", "attachment"]);
+  expect((items[0] as any).complete).toBe(true);
+});

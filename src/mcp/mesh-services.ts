@@ -17,6 +17,11 @@ export interface SendMailOptions {
   task?: string;
 }
 
+export interface PublishAttachmentOptions {
+  caption?: string;
+  name?: string;
+}
+
 export interface MeshServicesHandlers {
   meshStatus(ctx: MeshToolContext): Promise<string> | string;
   meshBriefing(ctx: MeshToolContext): Promise<string> | string;
@@ -25,6 +30,7 @@ export interface MeshServicesHandlers {
   steerTargets(ctx: MeshToolContext): Promise<string[]> | string[];
   checkMail(ctx: MeshToolContext): Promise<string> | string;
   interrupt(ctx: MeshToolContext, target: string, reason?: string): Promise<string> | string;
+  publishAttachment(ctx: MeshToolContext, path: string, opts?: PublishAttachmentOptions): Promise<string> | string;
 }
 
 export interface MeshServicesServer {
@@ -196,6 +202,30 @@ export function createMeshServicesServer(opts: {
           "Call mesh_briefing.",
       },
       () => guarded(agentId, "check_mail", () => opts.handlers.checkMail(ctx)),
+    );
+
+    server.registerTool(
+      "mesh_publish_attachment",
+      {
+        description:
+          "Publish a file you wrote under your $AGENT_MESH_ARTIFACTS directory as a first-class " +
+          "attachment card in your conversation, so the user sees the image/document directly " +
+          "without you having to write any Markdown. Pass `path` relative to your artifacts dir. " +
+          "Ownership is fixed to you — you cannot publish on another agent's behalf, and any " +
+          "owner/mesh/agent argument is ignored.",
+        inputSchema: {
+          path: z.string().describe("file path relative to your $AGENT_MESH_ARTIFACTS directory"),
+          caption: z.string().optional().describe("optional caption shown beneath the attachment"),
+          name: z.string().optional().describe("optional display name (defaults to the file's basename)"),
+        },
+      },
+      // Only {path, caption, name} are destructured — any impostor field (owner/mesh/agent) a
+      // caller tacks on is structurally dropped here and never reaches the handler, which in
+      // turn derives the owner solely from this agent's identity (ctx.agentId).
+      ({ path, caption, name }) =>
+        guarded(agentId, "mesh_publish_attachment", () =>
+          opts.handlers.publishAttachment(ctx, path, { caption, name }),
+        ),
     );
 
     // Router-only: interrupting another agent's run.

@@ -71,6 +71,9 @@ export function estimateTranscriptItemSize(item: TranscriptItem): number {
       return 60;
     case "compact":
       return 32;
+    case "attachment":
+      // Image cards render a thumbnail; document cards are a single link row.
+      return (item.contentType.startsWith("image/") ? 220 : 48) + (item.caption ? 24 : 0);
     case "plan":
       return 44 + item.entries.length * 24;
   }

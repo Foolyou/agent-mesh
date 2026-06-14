@@ -10,6 +10,7 @@ const handlers = {
   steerTargets: () => [] as string[],
   checkMail: noop,
   interrupt: noop,
+  publishAttachment: noop,
 };
 
 let server: MeshServicesServer | undefined;
@@ -150,6 +151,44 @@ test("a hung tool handler times out with an explicit error instead of pending fo
   const end = logs.find((l) => l.event === "tool_end");
   expect(end).toMatchObject({ agent: "A", tool: "check_mail", ok: false });
   expect(end.error).toContain("timed out");
+});
+
+test("mesh_publish_attachment is exposed and forwards only path/caption/name, never caller-supplied owner", async () => {
+  const calls: Array<{ ctx: any; path: string; opts: any }> = [];
+  server = createMeshServicesServer({
+    handlers: {
+      ...handlers,
+      publishAttachment: (ctx, path, opts) => {
+        calls.push({ ctx, path, opts });
+        return `published ${path}`;
+      },
+    },
+    log: () => {},
+  });
+  await server.register("A", "member");
+  const url = server.urlFor("A");
+  const session = await handshake(url);
+
+  expect(await listTools(url, session)).toContain("mesh_publish_attachment");
+
+  // Caller tacks on impostor ownership fields; they must be structurally dropped so the
+  // handler only ever sees path/caption/name and derives the owner from its own ctx.
+  const res = await callTool(url, session, "mesh_publish_attachment", {
+    path: "report.md",
+    caption: "hi",
+    name: "Report",
+    owner: "victim",
+    agent: "victim",
+    mesh: "other",
+  });
+  expect(res.result.content[0].text).toBe("published report.md");
+
+  expect(calls.length).toBe(1);
+  expect(calls[0].path).toBe("report.md");
+  expect(calls[0].ctx).toMatchObject({ agentId: "A", role: "member" });
+  expect(calls[0].opts).toEqual({ caption: "hi", name: "Report" });
+  // The impostor fields never reach the handler at all.
+  expect(JSON.stringify(calls[0])).not.toContain("victim");
 });
 
 test("initialize always succeeds across respawns, with or without an intervening re-register", async () => {

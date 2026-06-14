@@ -154,6 +154,11 @@ export type MeshEvent =
   | { kind: "replay_started"; agent: AgentId; ts: string }
   | { kind: "replay_finished"; agent: AgentId; ts: string }
   | { kind: "mail"; from: AgentId; to: AgentId; body: string; ts: string; id?: string }
+  // An agent published one of its own artifact files as a first-class attachment card.
+  // owner is ALWAYS the publishing agent (control-plane derives it from the caller's
+  // identity; it is never taken from tool input). Held in control-plane state and
+  // replayed via snapshotEvents() so a backend reattach rebuilds it without the ring.
+  | { kind: "attachment_published"; agent: AgentId; path: string; caption?: string; name?: string; contentType: string; ts: string }
   | { kind: "steer"; from: AgentId | "operator"; to: AgentId; body: string; ts: string }
   | {
       kind: "permission";

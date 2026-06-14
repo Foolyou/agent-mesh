@@ -82,6 +82,7 @@ export type TranscriptItem =
     }
   | { id: string; kind: "plan"; entries: PlanEntry[]; ts: string; updatedTs: string }
   | { id: string; kind: "mail"; from: AgentId; to: AgentId; body: string; ts: string }
+  | { id: string; kind: "attachment"; agent: AgentId; path: string; caption?: string; name?: string; contentType: string; ts: string }
   | { id: string; kind: "compact"; status: "started" | "completed" | "failed"; reason?: string; error?: string; ts: string }
   | { id: string; kind: "divider"; label: string; ts: string };
 

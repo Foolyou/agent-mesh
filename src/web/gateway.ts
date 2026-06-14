@@ -583,6 +583,22 @@ export class WebGateway {
         this.broadcast({ t: "activity", name, entry });
         break;
       }
+      case "attachment_published": {
+        // Fold into the publishing agent's transcript as a first-class attachment card.
+        // The stable id (agent|path|ts) makes the fold idempotent: snapshotEvents() replays
+        // this on every backend reattach, and the reducer replaces-by-id rather than stacking.
+        const id = `att:${e.agent}|${e.path}|${e.ts}`;
+        this.foldConv({ scope: "agent", mesh: name, agent: e.agent }, {
+          sessionUpdate: "__attachment__",
+          id,
+          agent: e.agent,
+          path: e.path,
+          caption: e.caption,
+          name: e.name,
+          contentType: e.contentType,
+        }, e.ts);
+        break;
+      }
       case "interrupt": {
         const entry = this.act("interrupt", `${e.from} → ${e.target}${e.reason ? `: ${e.reason}` : ""}`, e.ts);
         pm.activity.push(entry);
