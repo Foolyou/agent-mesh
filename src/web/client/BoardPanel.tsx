@@ -171,7 +171,7 @@ function TaskRow({
         <span className="board-tid">{taskDisplayId(task.id)}</span>
         <span className="board-title">{task.title}</span>
         {running ? (
-          <select className="select-control board-sel" value={task.status} onChange={(e) => apply({ type: "set_task_status", id: task.id, expectedRevision: task.revision, status: e.target.value as BoardStatus })}>
+          <select className="select-control board-sel" title="status" value={task.status} onChange={(e) => apply({ type: "set_task_status", id: task.id, expectedRevision: task.revision, status: e.target.value as BoardStatus })}>
             {BOARD_STATUSES.map((s) => (
               <option key={s} value={s}>{s}</option>
             ))}
@@ -212,7 +212,7 @@ function TaskRow({
               <span className="board-tid">{sub.id}</span>
               <span className="board-title">{sub.title}</span>
               {running ? (
-                <select className="select-control board-sel" value={sub.status} onChange={(e) => apply({ type: "set_subtask_status", taskId: task.id, subtaskId: sub.id, expectedRevision: sub.revision, status: e.target.value as BoardStatus })}>
+                <select className="select-control board-sel" title="status" value={sub.status} onChange={(e) => apply({ type: "set_subtask_status", taskId: task.id, subtaskId: sub.id, expectedRevision: sub.revision, status: e.target.value as BoardStatus })}>
                   {BOARD_STATUSES.map((s) => (
                     <option key={s} value={s}>{s}</option>
                   ))}
