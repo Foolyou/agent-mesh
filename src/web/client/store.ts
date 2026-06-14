@@ -3,7 +3,7 @@
 // the client. createStore() owns the socket + REST command helpers; useStore wires it
 // into React via useSyncExternalStore.
 import { useSyncExternalStore } from "react";
-import type { AgentConfig, GatewayState, ServerMsg, PerMeshState, TranscriptItem, ConvRef, MeshConfig, MeshEdge, PromptImageRef, StartSessionStrategy, HarnessProbeRow, HarnessId, HarnessInstallEvent, RespawnMode } from "../types";
+import type { AgentConfig, GatewayState, ServerMsg, PerMeshState, TranscriptItem, ConvRef, MeshConfig, MeshEdge, PromptImageRef, StartSessionStrategy, HarnessProbeRow, HarnessId, HarnessInstallEvent, RespawnMode, TranscriptSnapshot } from "../types";
 
 const CAP = 500;
 const HARNESS_CHANGE_DEBOUNCE_MS = 300;
@@ -31,13 +31,21 @@ function upsertItem(items: TranscriptItem[], item: TranscriptItem): TranscriptIt
 function patchItem(items: TranscriptItem[], id: string, p: Partial<TranscriptItem>): TranscriptItem[] {
   return items.map((it) => (it.id === id ? ({ ...it, ...p } as TranscriptItem) : it));
 }
+function transcriptSnapshot(items: TranscriptItem[], previous?: TranscriptSnapshot): TranscriptSnapshot {
+  const first = items[0];
+  return {
+    items,
+    hasMore: previous?.hasMore ?? false,
+    ...(first ? { oldestSeq: first.id } : {}),
+  };
+}
 function withTranscript(state: GatewayState, conv: ConvRef, fn: (items: TranscriptItem[]) => TranscriptItem[]): GatewayState {
   if (conv.scope === "assistant") {
     return { ...state, assistant: { ...state.assistant, transcript: fn(state.assistant.transcript) } };
   }
   return withPerMesh(state, conv.mesh, (pm) => ({
     ...pm,
-    transcripts: { ...pm.transcripts, [conv.agent]: fn(pm.transcripts[conv.agent] ?? []) },
+    transcripts: { ...pm.transcripts, [conv.agent]: transcriptSnapshot(fn(pm.transcripts[conv.agent]?.items ?? []), pm.transcripts[conv.agent]) },
   }));
 }
 

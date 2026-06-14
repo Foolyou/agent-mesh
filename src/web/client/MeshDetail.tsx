@@ -469,7 +469,7 @@ function ConversationPanel({
           ) : null}
         </div>
         <ChatPane
-          items={pm.transcripts[activeId] ?? []}
+          items={pm.transcripts[activeId]?.items ?? []}
           queue={pm.queues?.[activeId]}
           author={{ meshId: m.name, agent: activeId }}
           placeholder={isRouter ? t("router.placeholder") : t("agent.placeholder", { id: activeId })}

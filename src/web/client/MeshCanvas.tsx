@@ -550,7 +550,7 @@ export function MeshCanvas({
         {m.agents.map((agent) => {
           const r = layout.windows[agent.id];
           if (!r) return null;
-          const fullTranscript = pm.transcripts[agent.id] ?? [];
+          const fullTranscript = pm.transcripts[agent.id]?.items ?? [];
           const focused = agent.id === focusedAgentId;
           const transcriptItems = canvasTranscriptItems(fullTranscript, focused);
           const isRouter = agent.id === m.router;

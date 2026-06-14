@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { WebGateway } from "./gateway";
+import { MAX_SNAPSHOT_TRANSCRIPT_ITEMS, WebGateway } from "./gateway";
 import type { MeshEvent, MeshConfig } from "../acp/types";
 
 const CFG: MeshConfig = {
@@ -84,6 +84,10 @@ function fakeManager() {
   };
 }
 
+function transcriptItems(gw: WebGateway, agent: string) {
+  return gw.snapshot().perMesh.demo.transcripts[agent]?.items ?? [];
+}
+
 test("snapshot includes meshes with composed agent rows", () => {
   const m = fakeManager();
   const gw = new WebGateway(m as any);
@@ -112,7 +116,7 @@ test("update event folds into the agent transcript and broadcasts a transcript o
   const up = got.find((x) => x.t === "transcript.upsert");
   expect(up.conv).toMatchObject({ scope: "agent", mesh: "demo", agent: "router" });
   expect(up.item).toMatchObject({ kind: "message", text: "hi" });
-  expect((gw.snapshot().perMesh.demo.transcripts.router[0] as any).text).toBe("hi");
+  expect((transcriptItems(gw, "router")[0] as any).text).toBe("hi");
 });
 
 test("usage_update aggregates per-agent usage without entering transcript", () => {
@@ -136,7 +140,7 @@ test("usage_update aggregates per-agent usage without entering transcript", () =
 
   const s = gw.snapshot();
   expect(s.perMesh.demo.usage["codex-1"]).toEqual({ used: 150, size: 2000, cost: 0.05, ts: "T2" });
-  expect(s.perMesh.demo.transcripts["codex-1"] ?? []).toHaveLength(0);
+  expect(s.perMesh.demo.transcripts["codex-1"]?.items ?? []).toHaveLength(0);
   expect(got.filter((x) => x.t === "agent.usage").at(-1)).toEqual({
     t: "agent.usage",
     name: "demo",
@@ -154,11 +158,26 @@ test("compact events fold into transcript and activity", () => {
   m.emit("demo", { kind: "compact_started", agent: "codex-1", reason: "auto-threshold", ts: 1000 } as any);
   m.emit("demo", { kind: "compact_completed", agent: "codex-1", ts: 2000 } as any);
 
-  const items = gw.snapshot().perMesh.demo.transcripts["codex-1"];
+  const items = transcriptItems(gw, "codex-1");
   expect(items.filter((i: any) => i.kind === "compact")).toHaveLength(2);
   expect(items[0]).toMatchObject({ kind: "compact", status: "started", reason: "auto-threshold" });
   expect(got.some((x) => x.t === "transcript.upsert" && x.item.kind === "compact")).toBe(true);
   expect(got.some((x) => x.t === "activity" && x.entry.kind === "compact")).toBe(true);
+});
+
+test("snapshot truncates long agent transcripts to the latest tail with cursor metadata", () => {
+  const m = fakeManager();
+  const gw = new WebGateway(m as any);
+
+  for (let i = 0; i < MAX_SNAPSHOT_TRANSCRIPT_ITEMS + 20; i++) {
+    m.emit("demo", { kind: "compact_started", agent: "codex-1", reason: `r${i}`, ts: 1000 + i } as any);
+  }
+
+  const transcript = gw.snapshot().perMesh.demo.transcripts["codex-1"];
+  expect(transcript.items).toHaveLength(MAX_SNAPSHOT_TRANSCRIPT_ITEMS);
+  expect(transcript.hasMore).toBe(true);
+  expect(transcript.items[0]).toMatchObject({ kind: "compact", reason: "r20" });
+  expect(transcript.oldestSeq).toBe(transcript.items[0].id);
 });
 
 test("near-limit and silent-stop events update self-awareness state", () => {
@@ -235,7 +254,7 @@ test("agent health signal is exposed in snapshot and ws without transcript foldi
     turn: undefined,
     ts: "T",
   });
-  expect(s.perMesh.demo.transcripts.router ?? []).toHaveLength(0);
+  expect(s.perMesh.demo.transcripts.router?.items ?? []).toHaveLength(0);
   expect(got.find((x) => x.t === "agent.health")).toEqual({
     t: "agent.health",
     name: "demo",
@@ -268,7 +287,7 @@ test("a quiet-turn health warning surfaces as an activity entry (and is not a tr
   const s = gw.snapshot();
   const entry = s.perMesh.demo.activity.find((a) => a.text.includes("codex-1") && a.text.includes("quiet"));
   expect(entry).toBeTruthy();
-  expect(s.perMesh.demo.transcripts["codex-1"] ?? []).toHaveLength(0);
+  expect(s.perMesh.demo.transcripts["codex-1"]?.items ?? []).toHaveLength(0);
   expect(got.some((x) => x.t === "activity" && x.entry.text.includes("quiet"))).toBe(true);
 });
 
@@ -313,7 +332,7 @@ test("mail event emits both activity and mail entries without folding into trans
   expect(got.some((x) => x.t === "mail")).toBe(true);
   expect(got.some((x) => x.t === "activity")).toBe(true);
   expect(got.some((x) => x.t === "transcript.upsert" && x.conv.scope === "agent" && x.conv.agent === "codex-1" && x.item.kind === "mail")).toBe(false);
-  expect((s.perMesh.demo.transcripts["codex-1"] ?? []).some((i: any) => i.kind === "mail" && i.from === "router")).toBe(false);
+  expect((s.perMesh.demo.transcripts["codex-1"]?.items ?? []).some((i: any) => i.kind === "mail" && i.from === "router")).toBe(false);
 });
 
 test("mail events carrying a durable id are deduplicated across snapshot replays", () => {
@@ -346,7 +365,7 @@ test("steerAgent delegates to the manager without immediate transcript echo", ()
   const gw = new WebGateway(m as any);
   gw.steerAgent("demo", "codex-1", "urgent");
   expect(m.calls).toContainEqual(["steerAgent", "demo", "codex-1", "urgent", []]);
-  expect(gw.snapshot().perMesh.demo.transcripts["codex-1"] ?? []).toHaveLength(0);
+  expect(transcriptItems(gw, "codex-1")).toHaveLength(0);
 });
 
 test("turn queued updates queue summary and turn started folds into transcript", () => {
@@ -362,7 +381,7 @@ test("turn queued updates queue summary and turn started folds into transcript",
   } as any);
   let s = gw.snapshot();
   expect(s.perMesh.demo.queues["codex-1"]).toMatchObject({ count: 1, latestPreview: "you: please review this" });
-  expect(s.perMesh.demo.transcripts["codex-1"] ?? []).toHaveLength(0);
+  expect(s.perMesh.demo.transcripts["codex-1"]?.items ?? []).toHaveLength(0);
   expect(got.some((x) => x.t === "agent.queue" && x.agent === "codex-1" && x.summary.count === 1)).toBe(true);
 
   m.emit("demo", {
@@ -373,7 +392,7 @@ test("turn queued updates queue summary and turn started folds into transcript",
   } as any);
   s = gw.snapshot();
   expect(s.perMesh.demo.queues["codex-1"]?.count ?? 0).toBe(0);
-  expect(s.perMesh.demo.transcripts["codex-1"].some((i: any) => i.kind === "message" && i.role === "user" && i.text === "please review **this**")).toBe(true);
+  expect((s.perMesh.demo.transcripts["codex-1"]?.items ?? []).some((i: any) => i.kind === "message" && i.role === "user" && i.text === "please review **this**")).toBe(true);
 });
 
 test("queue summary includes browsable items with source metadata in queue order", () => {
@@ -505,7 +524,7 @@ test("mail turn started folds a sender-labeled mail item", () => {
     turn: { id: "mail-1", agent: "codex-1", source: "mail", from: "router", to: "codex-1", text: "ping", preview: "router: ping", ts: "T" },
     ts: "T2",
   } as any);
-  expect(gw.snapshot().perMesh.demo.transcripts["codex-1"].some((i: any) => i.kind === "mail" && i.from === "router" && i.body === "ping")).toBe(true);
+  expect(transcriptItems(gw, "codex-1").some((i: any) => i.kind === "mail" && i.from === "router" && i.body === "ping")).toBe(true);
 });
 
 test("mail turn consumed clears the queue and folds the mail as read context", () => {
@@ -522,7 +541,7 @@ test("mail turn consumed clears the queue and folds the mail as read context", (
   expect(s.perMesh.demo.queues["codex-1"]?.count ?? 0).toBe(0);
   expect(got.some((x) => x.t === "agent.queue" && x.agent === "codex-1" && x.summary.count === 0)).toBe(true);
   // The mail entered the agent's context via check_mail, so it must appear in the transcript exactly once.
-  expect(s.perMesh.demo.transcripts["codex-1"].filter((i: any) => i.kind === "mail" && i.from === "router" && i.body === "ping")).toHaveLength(1);
+  expect((s.perMesh.demo.transcripts["codex-1"]?.items ?? []).filter((i: any) => i.kind === "mail" && i.from === "router" && i.body === "ping")).toHaveLength(1);
 });
 
 test("removeQueuedTurn delegates only for queued operator turns", () => {
@@ -570,7 +589,7 @@ test("removed queue events clear the summary without adding transcript items", (
 
   const s = gw.snapshot();
   expect(s.perMesh.demo.queues["codex-1"]?.count ?? 0).toBe(0);
-  expect(s.perMesh.demo.transcripts["codex-1"] ?? []).toHaveLength(0);
+  expect(s.perMesh.demo.transcripts["codex-1"]?.items ?? []).toHaveLength(0);
 });
 
 test("a current_mode_update syncs the mode picker + broadcasts (claude has no echo)", () => {

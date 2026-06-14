@@ -89,6 +89,12 @@ export type TranscriptOp =
   | { op: "upsert"; item: TranscriptItem }
   | { op: "patch"; id: string; patch: Partial<TranscriptItem> };
 
+export interface TranscriptSnapshot {
+  items: TranscriptItem[];
+  hasMore: boolean;
+  oldestSeq?: string;
+}
+
 // ── Gateway state + WebSocket wire protocol ──────────────────────────────────
 export type MeshStatus = "stopped" | "starting" | "running" | "dead";
 
@@ -189,7 +195,7 @@ export interface QueueItem {
 
 export interface PerMeshState {
   config: MeshConfig;
-  transcripts: Record<AgentId, TranscriptItem[]>;
+  transcripts: Record<AgentId, TranscriptSnapshot>;
   activity: ActivityEntry[];
   mail: MailEntry[];
   pending: PermissionReq[];

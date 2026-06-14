@@ -29,6 +29,7 @@ import type {
   TranscriptItem,
   TranscriptOp,
   AgentUsage,
+  TranscriptSnapshot,
 } from "./types";
 
 /** The MeshManager surface the gateway depends on (structural — tests use a fake). */
@@ -73,9 +74,15 @@ export interface AssistantLike {
 const CAP = 500; // ring-buffer cap for activity / mail / history
 const TR_CAP = 1000; // per-conversation transcript cap
 const QUEUE_ITEM_CAP = 50; // keep queue WS payload bounded; count remains authoritative
+export const MAX_SNAPSHOT_TRANSCRIPT_ITEMS = 500;
 
 function cap<T>(arr: T[], n: number): T[] {
   return arr.length > n ? arr.slice(arr.length - n) : arr;
+}
+
+function transcriptSnapshot(items: TranscriptItem[], hasMore = false): TranscriptSnapshot {
+  const first = items[0];
+  return first ? { items, hasMore, oldestSeq: first.id } : { items, hasMore };
 }
 
 function configOptionOf(update: any): { category: "mode" | "model" | "effort"; configId: string; current: string; available: Array<{ id: string; name: string; description?: string }> } | undefined {
@@ -190,7 +197,16 @@ export class WebGateway {
     this.refreshMeshes();
     for (const m of this.state.meshes) this.ensureMesh(m.name);
     this.state.appVersion = this.opts.appVersion ?? this.state.appVersion ?? defaultAppVersion();
-    return structuredClone(this.state);
+    const snapshot = structuredClone(this.state);
+    for (const pm of Object.values(snapshot.perMesh)) {
+      for (const [agent, transcript] of Object.entries(pm.transcripts)) {
+        const full = transcript.items;
+        const hasMore = full.length > MAX_SNAPSHOT_TRANSCRIPT_ITEMS;
+        const items = hasMore ? full.slice(full.length - MAX_SNAPSHOT_TRANSCRIPT_ITEMS) : full;
+        pm.transcripts[agent] = transcriptSnapshot(items, hasMore);
+      }
+    }
+    return snapshot;
   }
 
   // ── Mesh summary ─────────────────────────────────────────────────────────────
@@ -317,9 +333,10 @@ export class WebGateway {
       return;
     }
     const pm = this.ensureMesh(conv.mesh);
-    const items = pm.transcripts[conv.agent] ?? [];
+    const transcript = pm.transcripts[conv.agent] ?? transcriptSnapshot([]);
+    const items = transcript.items;
     const r = reduceTranscript(items, update, ts);
-    pm.transcripts[conv.agent] = cap(r.items, TR_CAP);
+    pm.transcripts[conv.agent] = transcriptSnapshot(cap(r.items, TR_CAP), false);
     for (const op of r.ops) this.broadcastOp(conv, op);
   }
   private foldStartedTurn(name: string, turn: AgentTurn, ts: string): void {

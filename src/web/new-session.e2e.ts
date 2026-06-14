@@ -64,7 +64,7 @@ async function waitFor(cond: () => Promise<boolean> | boolean, timeoutMs = 8000)
 
 async function transcriptText(): Promise<string> {
   const s = await state();
-  return JSON.stringify(s.perMesh?.[mesh]?.transcripts?.r ?? []);
+  return JSON.stringify(s.perMesh?.[mesh]?.transcripts?.r?.items ?? []);
 }
 async function dividerCount(): Promise<number> {
   return (await transcriptText()).split('"kind":"divider"').length - 1;

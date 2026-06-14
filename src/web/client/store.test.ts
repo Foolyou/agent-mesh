@@ -118,14 +118,14 @@ test("transcript.upsert then patch on an agent conv", () => {
     conv: { scope: "agent", mesh: "demo", agent: "router" },
     item: { id: "i1", kind: "message", role: "agent", text: "hi", ts: "T", complete: false },
   });
-  expect((s.perMesh.demo.transcripts.router[0] as any).text).toBe("hi");
+  expect((s.perMesh.demo.transcripts.router.items[0] as any).text).toBe("hi");
   s = applyMsg(s, {
     t: "transcript.patch",
     conv: { scope: "agent", mesh: "demo", agent: "router" },
     id: "i1",
     patch: { text: "hi there" },
   });
-  expect((s.perMesh.demo.transcripts.router[0] as any).text).toBe("hi there");
+  expect((s.perMesh.demo.transcripts.router.items[0] as any).text).toBe("hi there");
 });
 
 test("transcript op on assistant conv targets the assistant transcript", () => {

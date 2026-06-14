@@ -32,7 +32,7 @@ function mesh(): MeshSummary {
 function perMesh(m: MeshSummary): PerMeshState {
   return {
     config: { name: m.name, agents: [], edges: [] },
-    transcripts: Object.fromEntries(m.agents.map((agent) => [agent.id, messages(agent.id, 250)])),
+    transcripts: Object.fromEntries(m.agents.map((agent) => [agent.id, { items: messages(agent.id, 250), hasMore: false, oldestSeq: `${agent.id}-msg-0` }])),
     activity: [],
     mail: [],
     pending: [],

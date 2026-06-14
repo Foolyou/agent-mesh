@@ -72,13 +72,13 @@ async function main() {
 
   for (let i = 0; i < 12; i++) {
     await sleep(10_000);
-    const items = state.perMesh["brief-demo"]?.transcripts?.["codex-1"] ?? [];
+    const items = state.perMesh["brief-demo"]?.transcripts?.["codex-1"]?.items ?? [];
     const lastMsg = items.filter((it: any) => it.kind === "message" && it.role === "agent").slice(-1)[0] as any;
     if (lastMsg?.complete) break;
     console.log(`  …waiting (${items.length} items so far)`);
   }
 
-  const items = state.perMesh["brief-demo"]?.transcripts?.["codex-1"] ?? [];
+  const items = state.perMesh["brief-demo"]?.transcripts?.["codex-1"]?.items ?? [];
   console.log("\n=== codex-1 transcript (agent messages) ===\n");
   for (const it of items as any[]) {
     if (it.kind === "message" && it.role === "agent") console.log(it.text + "\n");

@@ -111,7 +111,7 @@ function seededState(): GatewayState {
   };
   const pm: PerMeshState = {
     config: { name: MESH, agents: [], edges: mesh.edges },
-    transcripts: Object.fromEntries(AGENTS.map((agent) => [agent, transcript(agent)])),
+    transcripts: Object.fromEntries(AGENTS.map((agent) => [agent, { items: transcript(agent), hasMore: false, oldestSeq: `${agent}-msg-0` }])),
     activity: [],
     mail: [],
     pending: [],

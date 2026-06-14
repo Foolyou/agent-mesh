@@ -67,7 +67,7 @@ async function waitFor(cond: () => Promise<boolean> | boolean, timeoutMs = 8000)
 
 async function transcriptText(): Promise<string> {
   const s = await state();
-  return JSON.stringify(s.perMesh?.[mesh]?.transcripts?.r ?? []);
+  return JSON.stringify(s.perMesh?.[mesh]?.transcripts?.r?.items ?? []);
 }
 
 await mkdir(bin, { recursive: true });
