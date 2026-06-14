@@ -182,24 +182,14 @@ test("replay_started/replay_finished events drive transcript suppression end-to-
   expect(got.some((x) => x.t === "transcript.upsert" && x.conv.agent === "codex-1")).toBe(true);
 });
 
-test("usage_update aggregates per-agent usage without entering transcript", () => {
+test("normalized agent_usage aggregates per-agent usage and broadcasts it", () => {
   const m = fakeManager();
   const gw = new WebGateway(m as any);
   const got: any[] = [];
   gw.subscribe((msg) => got.push(msg));
 
-  m.emit("demo", {
-    kind: "update",
-    agent: "codex-1",
-    update: { sessionUpdate: "usage_update", used: 100, size: 2000, cost: 0.03 },
-    ts: "T1",
-  } as any);
-  m.emit("demo", {
-    kind: "update",
-    agent: "codex-1",
-    update: { sessionUpdate: "usage_update", used: 150, size: 2000, cost: 0.05 },
-    ts: "T2",
-  } as any);
+  m.emit("demo", { kind: "agent_usage", agent: "codex-1", used: 100, size: 2000, percent: 0.05, cost: 0.03, ts: "T1" } as any);
+  m.emit("demo", { kind: "agent_usage", agent: "codex-1", used: 150, size: 2000, percent: 0.075, cost: 0.05, ts: "T2" } as any);
 
   const s = gw.snapshot();
   expect(s.perMesh.demo.usage["codex-1"]).toEqual({ used: 150, size: 2000, cost: 0.05, ts: "T2" });
@@ -210,6 +200,47 @@ test("usage_update aggregates per-agent usage without entering transcript", () =
     agent: "codex-1",
     usage: { used: 150, size: 2000, cost: 0.05, ts: "T2" },
   });
+});
+
+test("raw usage_update frames are swallowed: no transcript item, no second denominator", () => {
+  const m = fakeManager();
+  const gw = new WebGateway(m as any);
+  const got: any[] = [];
+  gw.subscribe((msg) => got.push(msg));
+
+  // The harness's raw frame reports a 200K window; the gateway must NOT turn this into a
+  // chip denominator (that's the control-plane's normalized agent_usage's job) and must
+  // not let it leak into the transcript.
+  m.emit("demo", {
+    kind: "update",
+    agent: "codex-1",
+    update: { sessionUpdate: "usage_update", used: 230331, size: 200000, cost: 0.03 },
+    ts: "T1",
+  } as any);
+
+  expect(gw.snapshot().perMesh.demo.usage["codex-1"]).toBeUndefined();
+  expect(got.filter((x) => x.t === "agent.usage")).toHaveLength(0);
+  expect(gw.snapshot().perMesh.demo.transcripts["codex-1"]?.items ?? []).toHaveLength(0);
+});
+
+test("the chip denominator follows the normalized event, not the raw usage_update.size", () => {
+  const m = fakeManager();
+  const gw = new WebGateway(m as any);
+  const got: any[] = [];
+  gw.subscribe((msg) => got.push(msg));
+
+  // Raw frame would suggest a 200K window (115% over); normalized event carries the real 1M.
+  m.emit("demo", {
+    kind: "update",
+    agent: "codex-1",
+    update: { sessionUpdate: "usage_update", used: 230331, size: 200000 },
+    ts: "T1",
+  } as any);
+  m.emit("demo", { kind: "agent_usage", agent: "codex-1", used: 230331, size: 1_000_000, percent: 0.23, ts: "T2" } as any);
+
+  const usage = gw.snapshot().perMesh.demo.usage["codex-1"];
+  expect(usage).toEqual({ used: 230331, size: 1_000_000, ts: "T2" });
+  expect(got.filter((x) => x.t === "agent.usage").at(-1)?.usage.size).toBe(1_000_000);
 });
 
 test("compact events fold into transcript and activity", () => {

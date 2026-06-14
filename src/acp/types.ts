@@ -146,6 +146,12 @@ export type MeshEvent =
   | { kind: "compact_completed"; agent: AgentId; ts: number }
   | { kind: "compact_failed"; agent: AgentId; error: string; ts: number }
   | { kind: "near_context_limit_no_compact"; agent: AgentId; usagePercent: number; ts: number }
+  // Per-agent context usage AFTER the control-plane normalizes the denominator against the
+  // Zed-style model→window table (see resolveContextWindow). `size` is the authoritative
+  // window, not the harness's possibly-too-small reported size; `percent` is used/size.
+  // The control-plane is the single normalization point — the web consumes this instead of
+  // recomputing from raw usage_update frames. Replayed by snapshotEvents() on reattach.
+  | { kind: "agent_usage"; agent: AgentId; used: number; size: number; percent: number; cost?: number; ts: string }
   // Brackets a loadSession() history replay: the harness re-emits the whole session as a
   // flood of session/update events. The gateway folds them into state but suppresses the
   // per-item broadcast so reattached WS clients learn the result from the snapshot instead

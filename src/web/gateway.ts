@@ -108,19 +108,6 @@ function configOptionOf(update: any): { category: "mode" | "model" | "effort"; c
   return { category, configId: String(option.id ?? category), current, available: available as Array<{ id: string; name: string; description?: string }> };
 }
 
-function usageOf(update: any, ts: string): AgentUsage | undefined {
-  if (!update || update.sessionUpdate !== "usage_update") return undefined;
-  const used = Number(update.used ?? update.context?.used);
-  const size = Number(update.size ?? update.context?.size);
-  const costRaw = update.cost ?? update.totalCost ?? update.total_cost;
-  const cost = costRaw === undefined ? undefined : Number(costRaw);
-  const usage: AgentUsage = { ts };
-  if (Number.isFinite(used)) usage.used = used;
-  if (Number.isFinite(size)) usage.size = size;
-  if (cost !== undefined && Number.isFinite(cost)) usage.cost = cost;
-  return usage.used !== undefined || usage.size !== undefined || usage.cost !== undefined ? usage : undefined;
-}
-
 function compareSemver(a: string, b: string): number {
   const pa = a.split(/[.-]/).map((p) => Number.parseInt(p, 10) || 0);
   const pb = b.split(/[.-]/).map((p) => Number.parseInt(p, 10) || 0);
@@ -398,12 +385,11 @@ export class WebGateway {
         // A mode change the agent reports mid-session (operator- or self-initiated) rides
         // the normal session-update stream; keep the picker's selection in sync with it.
         const u = e.update as any;
-        const usage = usageOf(u, e.ts || now());
-        if (usage) {
-          pm.usage[e.agent] = usage;
-          this.broadcast({ t: "agent.usage", name, agent: e.agent, usage });
-          break;
-        }
+        // Context usage is normalized by the control-plane and delivered via the
+        // dedicated agent_usage event; swallow the raw frame here so the gateway never
+        // computes a second denominator off the harness's (possibly too-small) size and
+        // so the raw frame doesn't leak into the transcript.
+        if (u && u.sessionUpdate === "usage_update") break;
         if (u && u.sessionUpdate === "current_mode_update" && u.currentModeId) {
           const am = pm.modes[e.agent];
           if (am && am.current !== u.currentModeId) {
@@ -469,6 +455,16 @@ export class WebGateway {
         pm.activity = cap(pm.activity, CAP);
         this.broadcast({ t: "activity", name, entry });
         this.publishSelfAwareness(name, e.agent);
+        break;
+      }
+      case "agent_usage": {
+        // The control-plane already normalized the denominator (Zed-style model→window
+        // table); the gateway just forwards it so mesh_status, the web chip, and
+        // auto-compact all share one authoritative size.
+        const usage: AgentUsage = { ts: e.ts || now(), used: e.used, size: e.size };
+        if (e.cost !== undefined) usage.cost = e.cost;
+        pm.usage[e.agent] = usage;
+        this.broadcast({ t: "agent.usage", name, agent: e.agent, usage });
         break;
       }
       case "near_context_limit_no_compact": {
