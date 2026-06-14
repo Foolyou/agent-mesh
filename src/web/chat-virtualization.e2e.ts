@@ -623,6 +623,50 @@ try {
     await page.unroute(`**/api/meshes/${MESH}/agents/${agent}/transcript?**`);
   });
 
+  await step("Scenario J: live append does not force a scrolled-up transcript to bottom", async () => {
+    await page.evaluate((state) => {
+      (window as any).__meshStore.apply({ t: "snapshot", state });
+    }, seededState());
+    await page.locator(".conv-router-tab").click();
+    const stream = await activeStream(page);
+    await page.waitForSelector(".conv-panel [data-item-id='router-msg-999']", { timeout: 5000 });
+    await page.waitForTimeout(300);
+    await stream.focus();
+    await page.keyboard.press("PageUp");
+    await page.locator(".conv-panel .jump-bottom").waitFor({ timeout: 5000 });
+    const before = await stream.evaluate((el) => ({
+      scrollTop: el.scrollTop,
+      distanceFromBottom: el.scrollHeight - el.scrollTop - el.clientHeight,
+    }));
+    if (before.scrollTop <= 0) throw new Error(`expected non-zero scrollTop before append, got ${before.scrollTop}`);
+    if (before.distanceFromBottom <= 80) throw new Error(`expected to be away from bottom before append, distance=${before.distanceFromBottom}`);
+
+    await page.evaluate(({ mesh }) => {
+      (window as any).__meshStore.apply({
+        t: "transcript.upsert",
+        conv: { scope: "agent", mesh, agent: "router" },
+        item: {
+          id: "router-live-append-mf6",
+          kind: "message",
+          role: "agent",
+          text: "router live append should not yank scrolled-up transcript to bottom",
+          complete: true,
+          ts: new Date(Date.UTC(2026, 5, 9, 2, 0, 0)).toISOString(),
+        },
+      });
+    }, { mesh: MESH });
+    await page.waitForFunction(({ mesh }) => {
+      return (window as any).__meshStore.getState().perMesh[mesh].transcripts.router.items.some((item: TranscriptItem) => item.id === "router-live-append-mf6");
+    }, { mesh: MESH }, { timeout: 5000 });
+    await page.waitForTimeout(180);
+    const after = await stream.evaluate((el) => ({
+      scrollTop: el.scrollTop,
+      distanceFromBottom: el.scrollHeight - el.scrollTop - el.clientHeight,
+    }));
+    if (after.distanceFromBottom <= 80) throw new Error(`live append forced transcript to bottom: before=${before.distanceFromBottom}, after=${after.distanceFromBottom}`);
+    metrics.scenarioJ = { before, after };
+  });
+
   await step("no console/page errors", async () => {
     if (errors.length) throw new Error(errors.slice(0, 2).join(" || "));
   });

@@ -209,7 +209,7 @@ export function VirtualTranscript({
       });
       return () => cancelAnimationFrame(raf);
     }
-  }, [activeId, items.length, virtualizer]);
+  }, [activeId]);
   useLayoutEffect(() => {
     const previousFirstItemId = previousFirstItemIdRef.current;
     previousFirstItemIdRef.current = items[0]?.id;
