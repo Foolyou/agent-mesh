@@ -68,5 +68,5 @@ test("probeHarnesses marks npm and self installer metadata", async () => {
   expect(rows.find((r) => r.id === "claude")).toMatchObject({ installable: "npm", installSpec: { npmPackage: "@agentclientprotocol/claude-agent-acp", pinnedVersion: "0.44.0" } });
   expect(rows.find((r) => r.id === "codex")).toMatchObject({ installable: "npm", installSpec: { npmPackage: "@zed-industries/codex-acp", pinnedVersion: "0.16.0" } });
   expect(rows.find((r) => r.id === "opencode")).toMatchObject({ installable: "self", installHint: { command: "curl -fsSL https://opencode.ai/install | bash" } });
-  expect(rows.find((r) => r.id === "kimi")).toMatchObject({ installable: "self", installHint: { command: "curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash" } });
+  expect(rows.find((r) => r.id === "kimi")).toMatchObject({ installable: "self", installHint: { command: "curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash", docsUrl: "https://moonshotai.github.io/kimi-code/en/" } });
 });

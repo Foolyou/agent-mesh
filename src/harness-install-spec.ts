@@ -15,7 +15,7 @@ export const SELF_INSTALL_HINTS = {
   },
   kimi: {
     command: "curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash",
-    docsUrl: "https://moonshotai.github.io/kimi-cli/en/guides/getting-started.html",
+    docsUrl: "https://moonshotai.github.io/kimi-code/en/",
   },
 } as const;
 
