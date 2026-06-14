@@ -55,6 +55,22 @@ test("lookupModelContextWindow is tolerant of separators/case and rejects unknow
   expect(lookupModelContextWindow("")).toBeNull();
 });
 
+test("lookupModelContextWindow narrows the bare sonnet-4 rule to listed minors + base/dated ids", () => {
+  // Listed minors stay 1M.
+  expect(lookupModelContextWindow("claude-sonnet-4-5")).toBe(1_000_000);
+  expect(lookupModelContextWindow("claude-sonnet-4-6")).toBe(1_000_000);
+  // Base alias and dated release ids resolve to the base sonnet-4 window.
+  expect(lookupModelContextWindow("claude-sonnet-4")).toBe(1_000_000);
+  expect(lookupModelContextWindow("claude-sonnet-4-20250514")).toBe(1_000_000);
+  expect(lookupModelContextWindow("claude-sonnet-4-latest")).toBe(1_000_000);
+  // Unlisted numeric minors must NOT be claimed by the static table — they fall through.
+  expect(lookupModelContextWindow("claude-sonnet-4-7")).toBeNull();
+  expect(lookupModelContextWindow("claude-sonnet-4-10")).toBeNull();
+  // The same boundary applies to opus (dated id ok, unlisted minor rejected).
+  expect(lookupModelContextWindow("claude-opus-4-8-20250805")).toBe(1_000_000);
+  expect(lookupModelContextWindow("claude-opus-4-9")).toBeNull();
+});
+
 test("resolveContextWindow uses the table value as the authoritative denominator", () => {
   // Early under-reported size from the harness is overridden by the table window.
   expect(resolveContextWindow(undefined, "claude-opus-4-8", 200000)).toEqual({

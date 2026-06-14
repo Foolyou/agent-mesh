@@ -52,17 +52,29 @@ export const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
   "sonnet-4-6": ONE_MILLION,
 };
 
-/** True when `token` appears in `id` at an alphanumeric boundary, so "opus-4-1"
- *  never matches inside "opus-4-10" and a token isn't glued to a longer run. */
-function idIncludesToken(id: string, token: string): boolean {
+/** Decide whether the suffix that follows a matched stem keeps the stem authoritative.
+ *  Accepts the bare stem ("claude-sonnet-4"), a dated release ("…-4-20250514"), and a
+ *  non-numeric qualifier ("…-4-latest", "…-4-thinking"); REJECTS a different numeric minor
+ *  ("…-4-7", "…-4-10", "…-4-50") so an unknown Sonnet/Opus 4.x falls through to the reported
+ *  size instead of being treated as an authoritative window it was never listed for. */
+function tailKeepsStemAuthoritative(tail: string): boolean {
+  if (tail === "") return true; // exact id / base alias
+  if (tail[0] !== "-") return false; // glued to a longer alphanumeric run, not our model
+  const rest = tail.slice(1);
+  if (/^\d{8}(?:-.*)?$/.test(rest)) return true; // dated release id (YYYYMMDD[, then more])
+  if (/^[a-z]/.test(rest)) return true; // non-numeric qualifier (latest/thinking/…)
+  return false; // a numeric minor version not explicitly listed in the table
+}
+
+/** True when `stem` appears in `id` at boundaries that make it the model the stem names —
+ *  not glued into a longer family token and not a different numeric minor of it. */
+function idMatchesStem(id: string, stem: string): boolean {
   for (let from = 0; ; ) {
-    const i = id.indexOf(token, from);
+    const i = id.indexOf(stem, from);
     if (i < 0) return false;
     const before = i === 0 ? "" : id[i - 1]!;
-    const after = id[i + token.length] ?? "";
     const beforeOk = before === "" || !/[a-z0-9]/.test(before);
-    const afterOk = after === "" || !/[0-9]/.test(after);
-    if (beforeOk && afterOk) return true;
+    if (beforeOk && tailKeepsStemAuthoritative(id.slice(i + stem.length))) return true;
     from = i + 1;
   }
 }
@@ -73,9 +85,11 @@ export function lookupModelContextWindow(modelId: string | null | undefined): nu
   if (typeof modelId !== "string") return null;
   const id = modelId.toLowerCase().replace(/[._\s]+/g, "-");
   if (!id) return null;
-  const tokens = Object.keys(MODEL_CONTEXT_WINDOWS).sort((a, b) => b.length - a.length);
-  for (const token of tokens) {
-    if (idIncludesToken(id, token)) return MODEL_CONTEXT_WINDOWS[token]!;
+  // Longest stem first so an explicit minor ("sonnet-4-6") wins over the bare family
+  // ("sonnet-4") and a real minor is never shadowed by the base alias.
+  const stems = Object.keys(MODEL_CONTEXT_WINDOWS).sort((a, b) => b.length - a.length);
+  for (const stem of stems) {
+    if (idMatchesStem(id, stem)) return MODEL_CONTEXT_WINDOWS[stem]!;
   }
   return null;
 }
