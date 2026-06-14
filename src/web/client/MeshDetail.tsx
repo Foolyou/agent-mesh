@@ -8,6 +8,7 @@ import type { GatewayState, MeshSummary, PerMeshState, ActivityEntry, MailEntry,
 import { effortOptionsForHarness, supportsRuntimeEffort, supportsThinkingToggle, kimiThinkingEnabled, kimiModelForThinking } from "../../harness-utils";
 import { Dot, Btn, Empty, ConfirmButton, InfoIcon, fmtTime } from "./ui";
 import { ChatPane } from "./ChatPane";
+import { BoardPanel } from "./BoardPanel";
 import { MeshCanvas } from "./MeshCanvas";
 import { Topology } from "./Topology";
 import { ContextUsageChip, ContextWaterline } from "./health";
@@ -608,9 +609,9 @@ function History({ history, className, style }: { history: ResolvedPermission[];
 }
 
 // The desktop rail's reference logs as one compact segmented card.
-function RailLogs({ pm }: { pm: PerMeshState }) {
+function RailLogs({ pm, mesh, running, agents, store }: { pm: PerMeshState; mesh: string; running: boolean; agents: string[]; store: Store }) {
   const { t } = useI18n();
-  const [tab, setTab] = useState<"activity" | "mail" | "history">("activity");
+  const [tab, setTab] = useState<"activity" | "mail" | "board" | "history">("activity");
   return (
     <div className="panel">
       <div className="head">
@@ -621,12 +622,23 @@ function RailLogs({ pm }: { pm: PerMeshState }) {
           <button className={`seg-tab ${tab === "mail" ? "sel" : ""}`} onClick={() => setTab("mail")}>
             {t("tab.mail")}
           </button>
+          <button className={`seg-tab ${tab === "board" ? "sel" : ""}`} onClick={() => setTab("board")}>
+            {t("tab.board")} {pm.board && pm.board.tasks.length ? `· ${pm.board.tasks.length}` : ""}
+          </button>
           <button className={`seg-tab ${tab === "history" ? "sel" : ""}`} onClick={() => setTab("history")}>
             {t("tab.history")} {pm.history.length ? `· ${pm.history.length}` : ""}
           </button>
         </span>
       </div>
-      {tab === "activity" ? <Timeline activity={pm.activity} className="body-scroll" /> : tab === "mail" ? <Mailbox mail={pm.mail} className="body-scroll" /> : <History history={pm.history} className="body-scroll" />}
+      {tab === "activity" ? (
+        <Timeline activity={pm.activity} className="body-scroll" />
+      ) : tab === "mail" ? (
+        <Mailbox mail={pm.mail} className="body-scroll" />
+      ) : tab === "board" ? (
+        <BoardPanel mesh={mesh} board={pm.board} running={running} agents={agents} store={store} className="body-scroll" />
+      ) : (
+        <History history={pm.history} className="body-scroll" />
+      )}
     </div>
   );
 }
@@ -672,6 +684,7 @@ export function MeshDetail({
       health: {},
       selfAwareness: {},
       queues: {},
+      board: null,
     };
   // interrupt flash: highlight a node briefly when a new interrupt activity arrives
   const { t } = useI18n();
@@ -842,6 +855,15 @@ export function MeshDetail({
       <History history={pm.history} className="body-scroll" style={{ maxHeight: mobile ? undefined : 200 }} />
     </div>
   );
+  const boardPanel = (
+    <div className="panel">
+      <div className="head">
+        <span className="ttl">{t("tab.board")}</span>
+        <span className="sub">{pm.board ? pm.board.tasks.length : 0}</span>
+      </div>
+      <BoardPanel mesh={meshName} board={pm.board} running={m.status === "running"} agents={m.agents.map((a) => a.id)} store={store} className="body-scroll" />
+    </div>
+  );
   const permissionEl = <PermissionCards pending={pm.pending} mesh={m.name} store={store} />;
 
   // ── Mobile: a focused segment switcher (Chat / Map / Log) with the
@@ -865,6 +887,7 @@ export function MeshDetail({
             <div className="mlog">
               {activityPanel}
               {mailboxPanel}
+              {boardPanel}
               {historyPanel}
             </div>
           ) : null}
@@ -915,7 +938,7 @@ export function MeshDetail({
           <div className="dchat">{conversationPanel}</div>
           <div className="drail">
             {railTopology}
-            <RailLogs pm={pm} />
+            <RailLogs pm={pm} mesh={meshName} running={m.status === "running"} agents={m.agents.map((a) => a.id)} store={store} />
           </div>
         </div>
       )}

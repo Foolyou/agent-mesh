@@ -20,7 +20,7 @@ function seed(): GatewayState {
     ],
     assistant: { status: "ready", transcript: [] },
     perMesh: {
-      demo: { config: { name: "demo", agents: [], edges: [] }, transcripts: {}, activity: [], mail: [], pending: [], history: [], modes: {}, models: {}, efforts: {}, capabilities: {}, usage: {}, health: {}, selfAwareness: {}, queues: {} },
+      demo: { config: { name: "demo", agents: [], edges: [] }, transcripts: {}, activity: [], mail: [], pending: [], history: [], modes: {}, models: {}, efforts: {}, capabilities: {}, usage: {}, health: {}, selfAwareness: {}, queues: {}, board: null },
     },
   };
 }
@@ -29,6 +29,18 @@ test("snapshot replaces state", () => {
   const s = applyMsg(emptyState(), { t: "snapshot", state: seed() });
   expect(s.meshes[0].name).toBe("demo");
   expect(s.appVersion).toBe("build-1");
+});
+
+test("a board message folds the full board into per-mesh state (replace, no merge)", () => {
+  const board = { mesh: "demo", revision: 2, epicSeq: 0, taskSeq: 1, epics: [], tasks: [{ id: 1, title: "t", status: "todo", priority: "normal", deps: [], subtasks: [], subtaskSeq: 0, revision: 1, createdBy: "a", createdAt: "T", updatedAt: "T", comments: [], mailEventIds: [] }] };
+  let s = applyMsg(seed(), { t: "board", name: "demo", board: board as any });
+  expect(s.perMesh.demo.board?.revision).toBe(2);
+  expect(s.perMesh.demo.board?.tasks).toHaveLength(1);
+  // a later full snapshot replaces (does not merge) the previous board
+  const board2 = { ...board, revision: 3, tasks: [] };
+  s = applyMsg(s, { t: "board", name: "demo", board: board2 as any });
+  expect(s.perMesh.demo.board?.revision).toBe(3);
+  expect(s.perMesh.demo.board?.tasks).toHaveLength(0);
 });
 
 test("store marks an upgrade available when a later snapshot has a different app version", () => {
@@ -741,6 +753,60 @@ test("a transport/HTTP failure still rejects and toasts like any command", async
     const store = createStore();
     await expect(store.setMode("demo", "codex-1", "plan")).rejects.toThrow(/boom/);
     expect(store.getToasts()).toContainEqual(expect.objectContaining({ kind: "error", text: expect.stringContaining("set mode codex-1: boom") }));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("ensureBoardLoaded fetches the durable board once and folds it into state", async () => {
+  const originalFetch = globalThis.fetch;
+  const board = { mesh: "demo", revision: 4, epicSeq: 0, taskSeq: 1, epics: [], tasks: [{ id: 1, title: "persisted", status: "todo", priority: "normal", deps: [], subtasks: [], subtaskSeq: 0, revision: 1, createdBy: "x", createdAt: "T", updatedAt: "T", comments: [], mailEventIds: [] }] };
+  const fetchMock = mock(() => Promise.resolve(responseJson(board)));
+  globalThis.fetch = fetchMock as any;
+  try {
+    const store = createStore();
+    // a stopped mesh whose folded board is still null
+    store.apply({ t: "snapshot", state: { ...seed(), perMesh: { demo: { ...seed().perMesh.demo, board: null } } } });
+    expect(store.getState().perMesh.demo.board).toBeNull();
+
+    await store.ensureBoardLoaded("demo");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(store.getState().perMesh.demo.board?.tasks).toHaveLength(1);
+    expect(store.getState().perMesh.demo.board?.revision).toBe(4);
+
+    // one-shot: a second call does not refetch
+    await store.ensureBoardLoaded("demo");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("ensureBoardLoaded coalesces concurrent callers into a single fetch", async () => {
+  const originalFetch = globalThis.fetch;
+  const board = { mesh: "demo", revision: 1, epicSeq: 0, taskSeq: 0, epics: [], tasks: [] };
+  const fetchMock = mock(() => Promise.resolve(responseJson(board)));
+  globalThis.fetch = fetchMock as any;
+  try {
+    const store = createStore();
+    store.apply({ t: "snapshot", state: { ...seed(), perMesh: { demo: { ...seed().perMesh.demo, board: null } } } });
+    await Promise.all([store.ensureBoardLoaded("demo"), store.ensureBoardLoaded("demo"), store.ensureBoardLoaded("demo")]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("ensureBoardLoaded skips the fetch when a board is already present", async () => {
+  const originalFetch = globalThis.fetch;
+  const fetchMock = mock(() => Promise.resolve(responseJson({ mesh: "demo", revision: 1, epicSeq: 0, taskSeq: 0, epics: [], tasks: [] })));
+  globalThis.fetch = fetchMock as any;
+  try {
+    const store = createStore();
+    const board = { mesh: "demo", revision: 9, epicSeq: 0, taskSeq: 0, epics: [], tasks: [] };
+    store.apply({ t: "snapshot", state: { ...seed(), perMesh: { demo: { ...seed().perMesh.demo, board: board as any } } } });
+    await store.ensureBoardLoaded("demo");
+    expect(fetchMock).not.toHaveBeenCalled();
   } finally {
     globalThis.fetch = originalFetch;
   }

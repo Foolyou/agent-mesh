@@ -223,6 +223,26 @@ test("raw usage_update frames are swallowed: no transcript item, no second denom
   expect(gw.snapshot().perMesh.demo.transcripts["codex-1"]?.items ?? []).toHaveLength(0);
 });
 
+test("board_snapshot folds the full board into per-mesh state and broadcasts t:\"board\"", () => {
+  const m = fakeManager();
+  const gw = new WebGateway(m as any);
+  const got: any[] = [];
+  gw.subscribe((msg) => got.push(msg));
+
+  const board = { mesh: "demo", revision: 2, epicSeq: 0, taskSeq: 1, epics: [], tasks: [{ id: 1, title: "t", status: "todo", priority: "normal", deps: [], subtasks: [], subtaskSeq: 0, revision: 1, createdBy: "alice", createdAt: "T", updatedAt: "T", comments: [], mailEventIds: [] }] };
+  m.emit("demo", { kind: "board_snapshot", board, ts: "T1" } as any);
+
+  expect(gw.snapshot().perMesh.demo.board).toEqual(board as any);
+  const last = got.filter((x) => x.t === "board").at(-1);
+  expect(last).toEqual({ t: "board", name: "demo", board: board as any });
+
+  // a later snapshot fully replaces the folded copy (no deltas)
+  const board2 = { ...board, revision: 3, tasks: [] };
+  m.emit("demo", { kind: "board_snapshot", board: board2, ts: "T2" } as any);
+  expect(gw.snapshot().perMesh.demo.board?.revision).toBe(3);
+  expect(gw.snapshot().perMesh.demo.board?.tasks).toHaveLength(0);
+});
+
 test("the chip denominator follows the normalized event, not the raw usage_update.size", () => {
   const m = fakeManager();
   const gw = new WebGateway(m as any);

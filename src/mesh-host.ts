@@ -10,6 +10,7 @@ import { rm, mkdir } from "node:fs/promises";
 import { appendFileSync } from "node:fs";
 import { ControlPlane, type ControlPlaneStopReason } from "./control-plane";
 import type { RespawnMode, RespawnResult } from "./control-plane";
+import type { BoardActor, BoardCommand, BoardCommandResult } from "./board";
 import { LineBuffer, encodeFrame, PROTO_VERSION, type MutationAckStatus, type ParentMsg, type SeqEvent } from "./protocol";
 import { writeRecord, removeRecord } from "./mesh-registry";
 import { now, type AgentConfig, type MeshConfig, type MeshEdge, type MeshEvent, type PromptImageRef } from "./acp/types";
@@ -41,6 +42,7 @@ export interface BridgeControlPlane {
   interrupt(target: string): Promise<void>;
   newSession(target: string): Promise<void>;
   respawnAgent?(target: string, mode: RespawnMode): Promise<RespawnResult>;
+  applyBoard?(actor: BoardActor, command: BoardCommand, expectedBoardRevision: number): Promise<BoardCommandResult>;
   newAllSessions(): Promise<void>;
   wakeAgent(target: string): Promise<void>;
   stopAgent(target: string): Promise<void>;
@@ -224,6 +226,17 @@ export class MeshHostDaemon {
             this.write(sock, { t: "respawnResult", reqId: msg.reqId, result });
           } catch (err: any) {
             this.write(sock, { t: "respawnResult", reqId: msg.reqId, error: String(err?.message ?? err) });
+          }
+        });
+        break;
+      case "board":
+        this.enqueue(async () => {
+          try {
+            if (!this.cp.applyBoard) throw new Error("board unsupported");
+            const result = await this.cp.applyBoard(msg.actor, msg.command, msg.expectedBoardRevision);
+            this.write(sock, { t: "boardResult", reqId: msg.reqId, result });
+          } catch (err: any) {
+            this.write(sock, { t: "boardResult", reqId: msg.reqId, error: String(err?.message ?? err) });
           }
         });
         break;

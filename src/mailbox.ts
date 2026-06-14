@@ -101,6 +101,10 @@ export type MailMeta = {
   seq?: number;
   /** seq of the mail this one replies to. */
   replyTo?: number;
+  /** Board task this mail is associated with (the mail→task half of the link; the task→mail
+   *  half lives in Task.mailEventIds). Set when the send_mail `task` field parsed to "#N"/"N"
+   *  and that task exists. */
+  boardTaskId?: number;
 };
 
 /** Send an addressed inter-agent message (mesh mailbox). */
@@ -116,6 +120,8 @@ export async function sendMail(input: {
   replyTo?: number;
   /** Task thread this mail belongs to (e.g. a task slug); lands on event.taskId. */
   task?: string;
+  /** Resolved board task id ("#N"/"N") for the mail↔board link, when applicable. */
+  boardTaskId?: number;
 }): Promise<MailboxEvent> {
   return sendMailboxEvent({
     mailboxPath: input.mailboxPath,
@@ -129,6 +135,7 @@ export async function sendMail(input: {
       ...(input.steer ? { steer: true } : {}),
       ...(input.seq !== undefined ? { seq: input.seq } : {}),
       ...(input.replyTo !== undefined ? { replyTo: input.replyTo } : {}),
+      ...(input.boardTaskId !== undefined ? { boardTaskId: input.boardTaskId } : {}),
     } satisfies MailMeta,
   });
 }

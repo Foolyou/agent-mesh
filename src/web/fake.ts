@@ -6,6 +6,7 @@ import type { AgentConfig, MeshConfig, MeshEdge, MeshEvent, AgentId } from "../a
 import { now } from "../acp/types";
 import type { MeshStatus } from "./types";
 import { deleteArtifactMesh } from "./artifacts";
+import { applyBoardCommand, createEmptyBoard, type BoardActor, type BoardCommand, type BoardCommandResult, type BoardState } from "../board";
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -48,6 +49,8 @@ export class FakeManager {
   private modeOf = new Map<string, string>();
   /** current model per `${mesh}:${agent}` so setModel reflects back into the picker */
   private modelOf = new Map<string, string>();
+  /** in-memory board per mesh (the fake stands in for ControlPlane + board-store) */
+  private boards = new Map<string, BoardState>();
 
   constructor(private root?: string) {
     this.meshes.set("demo", { config: DEMO, status: "stopped" });
@@ -93,6 +96,7 @@ export class FakeManager {
     const e = this.meshes.get(name);
     if (e && (e.status === "running" || e.status === "starting")) throw new Error(`mesh "${name}" is running`);
     this.meshes.delete(name);
+    this.boards.delete(name); // mirror prod lifecycle: delete/recreate must not expose stale board state
     await deleteArtifactMesh(this.root, name);
   }
   async loadDefinitions(): Promise<void> {}
@@ -194,6 +198,26 @@ export class FakeManager {
   }
   async newAllSessions(name: string): Promise<void> {
     for (const a of this.require(name).config.agents) this.update(name, a.id, { sessionUpdate: "__session_reset__" });
+  }
+
+  // ── collaboration board (fake stands in for ControlPlane + board-store) ──────
+  async readBoard(name: string): Promise<BoardState> {
+    this.require(name);
+    return this.boards.get(name) ?? createEmptyBoard(name);
+  }
+  async boardCommand(name: string, actor: BoardActor, command: BoardCommand, expectedBoardRevision: number): Promise<BoardCommandResult> {
+    const e = this.require(name);
+    if (e.status !== "running") throw new Error(`mesh "${name}" is not running`);
+    if (!command || typeof command !== "object" || typeof (command as { type?: unknown }).type !== "string") {
+      return { ok: false, code: "invalid", error: "invalid board command" };
+    }
+    const board = this.boards.get(name) ?? createEmptyBoard(name);
+    const res = applyBoardCommand(board, command, { actor, now: now(), expectedBoardRevision });
+    if (res.ok) {
+      this.boards.set(name, res.state);
+      this.emit(name, { kind: "board_snapshot", board: res.state, ts: now() });
+    }
+    return res;
   }
   async setAgentEffort(name: string, agentId: string, effort?: any): Promise<void> {
     const e = this.require(name);

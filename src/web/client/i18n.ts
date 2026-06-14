@@ -128,6 +128,15 @@ const DICT: Record<string, Entry> = {
   "tab.activity": ["activity", "活动"],
   "tab.mail": ["mail", "邮件"],
   "tab.history": ["history", "历史"],
+  "tab.board": ["board", "看板"],
+  "board.newEpic": ["+ epic", "+ 史诗"],
+  "board.newTask": ["+ task", "+ 任务"],
+  "board.addSubtask": ["+ subtask", "+ 子任务"],
+  "board.comment": ["comment…", "评论…"],
+  "board.noEpic": ["no epic", "无史诗"],
+  "board.unassigned": ["unassigned", "未指派"],
+  "board.deps": ["deps", "依赖"],
+  "board.depsPlaceholder": ["deps e.g. 1,2", "依赖 如 1,2"],
   "tabs.allMembers": ["all {n} members", "全部 {n} 个成员"],
 
   // ── empties ──
@@ -136,6 +145,7 @@ const DICT: Record<string, Entry> = {
   "empty.activity": ["no activity yet", "暂无活动"],
   "empty.mail": ["no mail yet", "暂无邮件"],
   "empty.history": ["no resolved permissions", "暂无已处理权限"],
+  "empty.board": ["board is empty", "看板为空"],
   "empty.select": ["select a mesh from the list", "从列表选择一个 mesh"],
 
   // ── permission ──

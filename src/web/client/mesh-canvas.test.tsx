@@ -45,6 +45,7 @@ function perMesh(m: MeshSummary): PerMeshState {
     health: {},
     selfAwareness: {},
     queues: {},
+    board: null,
   };
 }
 
@@ -82,6 +83,9 @@ function store(state: GatewayState): Store {
     newAgentSession: noop,
     newAllSessions: noop,
     respawnAgent: noop,
+    getBoard: async () => ({ mesh: "", revision: 0, epicSeq: 0, taskSeq: 0, epics: [], tasks: [] }),
+    boardCommand: async () => ({ board: { mesh: "", revision: 0, epicSeq: 0, taskSeq: 0, epics: [], tasks: [] }, change: {} }),
+    ensureBoardLoaded: async () => {},
     isTranscriptInitialLoaded: () => true,
     loadInitialTranscript: noop,
     loadOlderTranscript: noop,

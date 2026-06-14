@@ -13,6 +13,7 @@ import { LineBuffer, encodeFrame, PROTO_VERSION, type ChildMsg, type MutationAck
 import type { AgentConfig, MeshConfig, MeshEdge, MeshEvent } from "./acp/types";
 import type { PromptImageRef } from "./acp/types";
 import type { RespawnMode, RespawnResult } from "./control-plane";
+import type { BoardActor, BoardCommand, BoardCommandResult } from "./board";
 
 /** Host-side acknowledgement for a config mutation (setMode/setModel/setEffort). */
 export interface MutationAck {
@@ -228,6 +229,11 @@ export class MeshHostClient {
       case "cmdResult":
         this.settleRpc(msg.reqId, msg.error, msg.status ? { status: msg.status } : undefined);
         break;
+      case "boardResult":
+        // A board-level error (conflict/forbidden/...) rides inside `result` (it RESOLVES so
+        // the REST layer can map it to a status); only a transport/exception uses `error`.
+        this.settleRpc(msg.reqId, msg.error, msg.result);
+        break;
       case "stopped":
         this.stoppedResolve?.();
         break;
@@ -297,6 +303,12 @@ export class MeshHostClient {
     const reqId = `respawn-${++this.rpcSeq}`;
     const waiting = this.awaitRpc<RespawnResult>(reqId, this.respawnTimeoutMs, `respawn ${target}`);
     this.send({ t: "respawn", reqId, target, mode });
+    return waiting;
+  }
+  boardCommand(actor: BoardActor, command: BoardCommand, expectedBoardRevision: number): Promise<BoardCommandResult> {
+    const reqId = `board-${++this.rpcSeq}`;
+    const waiting = this.awaitRpc<BoardCommandResult>(reqId, this.mutationTimeoutMs, `board ${command.type}`);
+    this.send({ t: "board", reqId, actor, command, expectedBoardRevision });
     return waiting;
   }
   newAllSessions(): void { this.send({ t: "newAllSessions" }); }

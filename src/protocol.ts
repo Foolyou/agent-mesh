@@ -10,12 +10,15 @@
 import type { AgentConfig, MeshEdge, MeshEvent } from "./acp/types";
 import type { RespawnMode, RespawnResult } from "./control-plane";
 import type { PromptImageRef } from "./acp/types";
+import type { BoardActor, BoardCommand, BoardCommandResult } from "./board";
 
 /** Bumped when the wire protocol changes incompatibly; a reconnecting parent that
  *  speaks a different version refuses to attach to an old daemon.
  *  13: config mutations (setMode/setModel/setEffort) carry a reqId and are acked with a
- *      `cmdResult` frame; hard bump (no dual-mode). */
-export const PROTO_VERSION = 13;
+ *      `cmdResult` frame; hard bump (no dual-mode).
+ *  14: collaboration board — `board` command (reqId/actor/command/expectedBoardRevision)
+ *      acked with a `boardResult` frame, and `board_snapshot` events stream the full board. */
+export const PROTO_VERSION = 14;
 
 export interface SeqEvent {
   seq: number;
@@ -37,6 +40,7 @@ export type ChildMsg =
   | { t: "snapshot"; events: MeshEvent[] }
   | { t: "respawnResult"; reqId: string; result?: RespawnResult; error?: string }
   | { t: "cmdResult"; reqId: string; status?: MutationAckStatus; error?: string }
+  | { t: "boardResult"; reqId: string; result?: BoardCommandResult; error?: string }
   | { t: "stopped" };
 
 /** parent (MeshManager) -> child (mesh-host) */
@@ -52,6 +56,7 @@ export type ParentMsg =
   | { t: "interrupt"; target: string }
   | { t: "newSession"; target: string }
   | { t: "respawn"; reqId: string; target: string; mode: RespawnMode }
+  | { t: "board"; reqId: string; actor: BoardActor; command: BoardCommand; expectedBoardRevision: number }
   | { t: "newAllSessions" }
   | { t: "wake"; target: string }
   | { t: "stopAgent"; target: string }

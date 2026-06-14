@@ -3146,3 +3146,140 @@ legend.builder-section-head {
 .topbar .info-icon {
   margin-left: 0;
 }
+
+/* ── collaboration board (#42) ─────────────────────────────────────────────── */
+.board {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+}
+.board-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 2px 0;
+}
+.board-warn {
+  color: #e6b450;
+  cursor: help;
+}
+.board-create {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+}
+.board-input {
+  background: var(--bg-inset);
+  border: 1px solid var(--line);
+  color: var(--fg);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 12px;
+  min-width: 0;
+}
+.board-input:focus {
+  outline: none;
+  border-color: var(--line-bright);
+}
+.board-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.board-epic {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.board-epic-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 2px;
+}
+.board-eid {
+  color: var(--accent);
+  font-weight: 600;
+}
+.board-title {
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.board-epic-head .board-title {
+  font-weight: 600;
+}
+.board-x {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: var(--fg-faint);
+  cursor: pointer;
+  padding: 0 4px;
+}
+.board-x:hover {
+  color: #e0707a;
+}
+.board-task {
+  display: flex;
+  flex-direction: column;
+  padding-left: 6px;
+}
+.board-task-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.board-twirl {
+  background: none;
+  border: none;
+  color: var(--fg-faint);
+  cursor: pointer;
+  padding: 0;
+  width: 12px;
+}
+.board-tid {
+  color: var(--fg-dim);
+  font-variant-numeric: tabular-nums;
+}
+.board-sel {
+  font-size: 11px;
+  padding: 0 2px;
+}
+.board-meta {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+  white-space: nowrap;
+}
+.board-task-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 2px 0 4px 18px;
+}
+.board-subtask,
+.board-row,
+.board-comment {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.board-ctext {
+  color: var(--fg-dim);
+}
+.pill {
+  border-radius: 3px;
+  padding: 0 5px;
+  font-size: 10px;
+  background: var(--line);
+  color: var(--fg-dim);
+}
+.pill.st-in_progress { color: #8ec7ff; }
+.pill.st-in_review { color: var(--accent); }
+.pill.st-done { color: #7fd6a0; }
+.pill.st-cancelled { color: var(--fg-faint); text-decoration: line-through; }

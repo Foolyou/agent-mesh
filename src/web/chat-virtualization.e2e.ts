@@ -171,6 +171,7 @@ function seededState(): GatewayState {
     health: {},
     selfAwareness: {},
     queues: {},
+    board: null,
   };
   return { meshes: [mesh], assistant: { status: "absent", transcript: [], capabilities: { image: false } }, perMesh: { [MESH]: pm } };
 }

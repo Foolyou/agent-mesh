@@ -414,6 +414,43 @@ test("deleteMesh removes mesh artifact bucket", async () => {
   }
 });
 
+test("deleteMesh removes the mesh's durable board file", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mgr-board-root-"));
+  const m = new MeshManager({ root, hostScript: FIXTURE });
+  const { existsSync } = await import("node:fs");
+  const boardFile = join(root, "boards", "echo.json");
+  try {
+    await m.defineMesh(cfg);
+    await mkdir(join(root, "boards"), { recursive: true });
+    await writeFile(boardFile, JSON.stringify({ mesh: "echo", revision: 1, epicSeq: 0, taskSeq: 1, epics: [], tasks: [] }));
+    expect(existsSync(boardFile)).toBe(true);
+    await m.deleteMesh("echo");
+    expect(existsSync(boardFile)).toBe(false);
+  } finally {
+    await m.stopAll();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("readBoard reads the durable board file for a stopped mesh", async () => {
+  await mgr.defineMesh(cfg);
+  await mkdir(join(dir, "boards"), { recursive: true });
+  await writeFile(
+    join(dir, "boards", "echo.json"),
+    JSON.stringify({ mesh: "echo", revision: 1, epicSeq: 0, taskSeq: 1, epics: [], tasks: [{ id: 1, title: "persisted", status: "todo", priority: "normal", deps: [], subtasks: [], subtaskSeq: 0, revision: 1, createdBy: "x", createdAt: "T", updatedAt: "T", comments: [], mailEventIds: [] }] }),
+  );
+  const board = await mgr.readBoard("echo");
+  expect(board.tasks).toHaveLength(1);
+  expect(board.tasks[0].title).toBe("persisted");
+});
+
+test("boardCommand refuses a stopped mesh (running-only, no stopped write path)", async () => {
+  await mgr.defineMesh(cfg);
+  await expect(
+    mgr.boardCommand("echo", { kind: "human" }, { type: "create_task", title: "x" }, 0),
+  ).rejects.toThrow(/not running/i);
+});
+
 test("loadDefinitions rejects manually edited unsafe artifact names", async () => {
   await mkdir(join(dir, "meshes"), { recursive: true });
   await writeFile(

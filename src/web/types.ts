@@ -4,6 +4,8 @@
 import type { AgentConfig, MeshConfig, AgentId, AgentStatus, AgentActivity, AgentRole, HarnessId, SessionMode, SessionModel, SessionEffort, PromptImageRef, ThinkingEffort, MeshEdge, AgentTurnSource, AgentHealthSignalKind, AgentTurn } from "../acp/types";
 import type { MutationAckStatus } from "../protocol";
 export type { MutationAckStatus };
+import type { BoardDocument } from "../board";
+export type { BoardDocument };
 export type { SessionMode };
 export type { SessionModel };
 export type { PromptImageRef };
@@ -231,6 +233,9 @@ export interface PerMeshState {
   /** Per-agent mesh-host self-awareness diagnostics. */
   selfAwareness: Record<AgentId, AgentSelfAwareness>;
   queues: Record<AgentId, QueueSummary>;
+  /** The full collaboration board, folded from board_snapshot events. Null until the first
+   *  snapshot arrives (e.g. a stopped mesh with no running daemon). */
+  board: BoardDocument | null;
 }
 
 export type AssistantStatus = "absent" | "starting" | "ready" | "stopped";
@@ -261,6 +266,7 @@ export type ServerMsg =
   | { t: "transcript.patch"; conv: ConvRef; id: string; patch: Partial<TranscriptItem> }
   | { t: "activity"; name: string; entry: ActivityEntry }
   | { t: "mail"; name: string; entry: MailEntry }
+  | { t: "board"; name: string; board: BoardDocument }
   | { t: "permission.add"; name: string; req: PermissionReq }
   | { t: "permission.remove"; name: string; resolved: ResolvedPermission }
   | { t: "assistant.status"; status: AssistantStatus; working?: boolean }

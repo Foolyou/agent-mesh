@@ -3,7 +3,8 @@
 // the client. createStore() owns the socket + REST command helpers; useStore wires it
 // into React via useSyncExternalStore.
 import { useSyncExternalStore } from "react";
-import type { AgentConfig, GatewayState, ServerMsg, PerMeshState, TranscriptItem, ConvRef, MeshConfig, MeshEdge, PromptImageRef, StartSessionStrategy, HarnessProbeRow, HarnessId, HarnessInstallEvent, RespawnMode, TranscriptSnapshot, AgentStatus, MutationApplyResult } from "../types";
+import type { AgentConfig, GatewayState, ServerMsg, PerMeshState, TranscriptItem, ConvRef, MeshConfig, MeshEdge, PromptImageRef, StartSessionStrategy, HarnessProbeRow, HarnessId, HarnessInstallEvent, RespawnMode, TranscriptSnapshot, AgentStatus, MutationApplyResult, BoardDocument } from "../types";
+import type { BoardCommand } from "../../board";
 
 const CAP = 500;
 const HARNESS_CHANGE_DEBOUNCE_MS = 300;
@@ -22,7 +23,7 @@ export function shouldLoadInitialTranscript(agentStatus: AgentStatus | undefined
 }
 
 function emptyPerMesh(name: string): PerMeshState {
-  return { config: { name, agents: [], edges: [] }, transcripts: {}, activity: [], mail: [], pending: [], history: [], modes: {}, models: {}, efforts: {}, capabilities: {}, usage: {}, health: {}, selfAwareness: {}, queues: {} };
+  return { config: { name, agents: [], edges: [] }, transcripts: {}, activity: [], mail: [], pending: [], history: [], modes: {}, models: {}, efforts: {}, capabilities: {}, usage: {}, health: {}, selfAwareness: {}, queues: {}, board: null };
 }
 function withPerMesh(state: GatewayState, name: string, fn: (pm: PerMeshState) => PerMeshState): GatewayState {
   const pm = state.perMesh[name] ?? emptyPerMesh(name);
@@ -133,6 +134,9 @@ export function applyMsg(state: GatewayState, msg: ServerMsg): GatewayState {
       return withPerMesh(state, msg.name, (pm) => ({ ...pm, activity: cap([...pm.activity, msg.entry], CAP) }));
     case "mail":
       return withPerMesh(state, msg.name, (pm) => ({ ...pm, mail: cap([...pm.mail, msg.entry], CAP) }));
+    case "board":
+      // Full board snapshot (no deltas): replace the folded copy wholesale.
+      return withPerMesh(state, msg.name, (pm) => ({ ...pm, board: msg.board }));
     case "permission.add":
       return withPerMesh(state, msg.name, (pm) => ({ ...pm, pending: [...pm.pending, msg.req] }));
     case "permission.remove":
@@ -194,6 +198,15 @@ export interface Store {
   newAgentSession(name: string, agentId: string): Promise<any>;
   newAllSessions(name: string): Promise<any>;
   respawnAgent(name: string, agentId: string, mode: RespawnMode): Promise<any>;
+  /** Read the board (works for stopped and running meshes). Live updates also arrive via the
+   *  board_snapshot WS message; this is for an explicit fetch (e.g. first open). */
+  getBoard(name: string): Promise<BoardDocument>;
+  /** Apply a board mutation as the operator. Resolves with the new board on success; rejects
+   *  (and toasts) on CAS conflict (409) / auth (403) / invalid (400) / not-running (409). */
+  boardCommand(name: string, command: BoardCommand, expectedBoardRevision: number): Promise<{ board: BoardDocument; change: unknown }>;
+  /** Lazily fetch + fold the durable board for a mesh whose folded copy is null. One-shot
+   *  per mesh, coalesced; safe to call from a render effect. */
+  ensureBoardLoaded(name: string): Promise<void>;
   isTranscriptInitialLoaded(mesh: string, agentId: string): boolean;
   loadInitialTranscript(mesh: string, agentId: string): Promise<void>;
   loadOlderTranscript(mesh: string, agentId: string): Promise<void>;
@@ -217,6 +230,10 @@ export function createStore(): Store {
   const initialLoadedTranscripts = new Set<string>();
   const loadingInitialTranscript = new Map<string, Promise<void>>();
   const loadingOlderTranscript = new Map<string, Promise<void>>();
+  // One board fetch per mesh per session (live board_snapshot keeps it fresh afterwards);
+  // `boardFetched` stops a render loop even if the fetch fails, `boardFetching` coalesces.
+  const boardFetched = new Set<string>();
+  const boardFetching = new Map<string, Promise<void>>();
   const subs = new Set<() => void>();
   const emit = () => {
     for (const s of subs) s();
@@ -479,6 +496,27 @@ export function createStore(): Store {
   }
   if (typeof window !== "undefined") connect();
 
+  /** Fetch the durable board once for a mesh whose folded copy is still null (a freshly
+   *  loaded page, or a stopped mesh with no live daemon to push board_snapshot). Coalesced
+   *  and one-shot per mesh; the result is folded via the normal board reducer path. */
+  function ensureBoardLoaded(name: string): Promise<void> {
+    if (boardFetched.has(name) || state.perMesh[name]?.board) return Promise.resolve();
+    const inflight = boardFetching.get(name);
+    if (inflight) return inflight;
+    const p = (async () => {
+      try {
+        const board = await guard(send("GET", `/api/meshes/${enc(name)}/board`), `load board ${name}`);
+        applyIncoming({ t: "board", name, board });
+      } catch {
+        /* guard already toasted; boardFetched still set in finally to avoid a render loop */
+      } finally {
+        boardFetched.add(name);
+        boardFetching.delete(name);
+      }
+    })();
+    boardFetching.set(name, p);
+    return p;
+  }
   async function send(method: string, path: string, body?: unknown): Promise<any> {
     const res = await fetch(path, {
       method,
@@ -568,6 +606,9 @@ export function createStore(): Store {
     newAgentSession: (n, a) => guard(post(`/api/meshes/${enc(n)}/agents/${enc(a)}/session`), `new session ${a}`),
     newAllSessions: (n) => guard(post(`/api/meshes/${enc(n)}/session`), `new sessions ${n}`),
     respawnAgent: (n, a, mode) => guard(post(`/api/meshes/${enc(n)}/agents/${enc(a)}/respawn`, { mode }), `respawn ${a}`),
+    getBoard: (n) => guard(send("GET", `/api/meshes/${enc(n)}/board`), `load board ${n}`),
+    boardCommand: (n, command, expectedBoardRevision) => guard(post(`/api/meshes/${enc(n)}/board`, { command, expectedBoardRevision }), `board ${command.type}`),
+    ensureBoardLoaded,
     isTranscriptInitialLoaded,
     loadInitialTranscript,
     loadOlderTranscript,

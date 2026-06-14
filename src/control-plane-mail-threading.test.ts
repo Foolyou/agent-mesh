@@ -159,6 +159,59 @@ test("mesh_briefing returns the live briefing with a generated banner; unknown a
   }
 });
 
+test('send_mail task "#N"/"N" links the mail to the board task in both directions', async () => {
+  const root = await mkdtemp(join(tmpdir(), "mesh-mail-board-link-"));
+  const conns: Record<string, FakeConnection> = {};
+  const cp = makePlane(root, conns);
+  try {
+    await cp.start();
+    const router = { agentId: "router", role: "router" as const };
+    const member = { agentId: "member", role: "member" as const };
+
+    // router creates task #1
+    const created = await (cp as any).handleApplyBoard(router, { type: "create_task", title: "shared work" }, 0);
+    expect(created).toContain("ok: task #1");
+
+    // member mails router referencing "#1" → both halves of the link land
+    await (cp as any).handleSendMail(member, "router", "[FYI] on it", { task: "#1" });
+    const board = (cp as any).getBoard();
+    expect(board.tasks[0].mailEventIds).toHaveLength(1);
+
+    const events = await readMailboxEvents(join(root, "mailbox.ndjson"));
+    expect(events.some((e) => (e.meta as any)?.boardTaskId === 1)).toBe(true);
+
+    // bare "N" also links (a second mail → second event id)
+    await (cp as any).handleSendMail(member, "router", "more", { task: "1" });
+    expect((cp as any).getBoard().tasks[0].mailEventIds).toHaveLength(2);
+  } finally {
+    await cp.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("send_mail with a non-task ref or an arbitrary slug links nothing (backward compatible)", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mesh-mail-board-nolink-"));
+  const conns: Record<string, FakeConnection> = {};
+  const cp = makePlane(root, conns);
+  try {
+    await cp.start();
+    const router = { agentId: "router", role: "router" as const };
+    const member = { agentId: "member", role: "member" as const };
+    await (cp as any).handleApplyBoard(router, { type: "create_task", title: "t" }, 0); // #1 exists
+
+    await (cp as any).handleSendMail(member, "router", "x", { task: "#99" }); // no such task
+    await (cp as any).handleSendMail(member, "router", "y", { task: "fix-ports" }); // a real slug
+
+    expect((cp as any).getBoard().tasks[0].mailEventIds).toHaveLength(0);
+    const events = await readMailboxEvents(join(root, "mailbox.ndjson"));
+    expect(events.some((e) => (e.meta as any)?.boardTaskId !== undefined)).toBe(false);
+    expect(events.some((e) => e.taskId === "fix-ports")).toBe(true); // slug preserved on the event
+  } finally {
+    await cp.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("mail seq survives a daemon restart and keeps increasing", async () => {
   const root = await mkdtemp(join(tmpdir(), "mesh-mail-threading-restart-"));
   const conns: Record<string, FakeConnection> = {};
