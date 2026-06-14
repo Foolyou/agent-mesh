@@ -128,6 +128,13 @@ function seededBackfillState(): { state: GatewayState; full: TranscriptItem[]; t
   return { state, full, tail, older };
 }
 
+function seededLazyInitialState(agent = "codex-1"): { state: GatewayState; full: TranscriptItem[] } {
+  const full = backfillTranscript(agent).slice(0, SNAPSHOT_TRANSCRIPT_ITEMS);
+  const state = seededState();
+  state.perMesh[MESH].transcripts[agent] = { items: [], hasMore: true };
+  return { state, full };
+}
+
 function seededState(): GatewayState {
   const agents: MeshSummary["agents"] = AGENTS.map((id, i) => ({
     id,
@@ -497,6 +504,72 @@ try {
     if (requests !== requestCountAfterComplete) throw new Error(`extra backfill after hasMore=false: ${requests}`);
     metrics.scenarioG = { final: finalState, requests };
     await page.unroute(`**/api/meshes/${MESH}/agents/router/transcript?**`);
+  });
+
+  await step("Scenario H: empty snapshot transcript lazy-loads tail before older backfill", async () => {
+    const agent = "codex-1";
+    const seeded = seededLazyInitialState(agent);
+    let tailRequests = 0;
+    let backfillRequests = 0;
+    await page.unroute(`**/api/meshes/${MESH}/agents/*/transcript?**`);
+    await page.route(`**/api/meshes/${MESH}/agents/${agent}/transcript?**`, async (route) => {
+      const url = new URL(route.request().url());
+      const before = url.searchParams.get("before");
+      const limit = Number(url.searchParams.get("limit") ?? BACKFILL_LIMIT);
+      if (!before) {
+        tailRequests += 1;
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({ items: seeded.full.slice(-limit), hasMore: true }),
+        });
+        return;
+      }
+      backfillRequests += 1;
+      const beforeIndex = seeded.full.findIndex((item) => item.id === before);
+      const start = Math.max(0, beforeIndex - limit);
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ items: beforeIndex >= 0 ? seeded.full.slice(start, beforeIndex) : [], hasMore: start > 0 }),
+      });
+    });
+
+    await page.evaluate((state) => {
+      (window as any).__meshStore.apply({ t: "snapshot", state });
+    }, seeded.state);
+    const beforeSwitch = await page.evaluate(({ mesh, agent }) => {
+      return (window as any).__meshStore.getState().perMesh[mesh].transcripts[agent].items.length;
+    }, { mesh: MESH, agent });
+    if (beforeSwitch !== 0) throw new Error(`expected empty snapshot transcript, got ${beforeSwitch}`);
+
+    await page.locator(`.conv-member-tab:has-text("${agent}")`).click();
+    await page.waitForFunction(({ mesh, agent, expected }) => {
+      return (window as any).__meshStore.getState().perMesh[mesh].transcripts[agent].items.length === expected;
+    }, { mesh: MESH, agent, expected: BACKFILL_LIMIT }, { timeout: 5000 });
+    const afterInitial = await page.evaluate(({ mesh, agent }) => {
+      const tr = (window as any).__meshStore.getState().perMesh[mesh].transcripts[agent];
+      return { length: tr.items.length, hasMore: tr.hasMore, oldestSeq: tr.oldestSeq, firstId: tr.items[0].id };
+    }, { mesh: MESH, agent });
+    if (tailRequests !== 1) throw new Error(`initial tail requests ${tailRequests}`);
+    if (afterInitial.length !== BACKFILL_LIMIT) throw new Error(`lazy tail length ${afterInitial.length}`);
+    if (afterInitial.hasMore !== true) throw new Error("lazy tail missing hasMore");
+    if (afterInitial.oldestSeq !== afterInitial.firstId) throw new Error(`oldestSeq ${afterInitial.oldestSeq} did not match first id ${afterInitial.firstId}`);
+
+    for (const expected of [200, 300]) {
+      await page.evaluate(({ mesh, agent }) => (window as any).__meshStore.loadOlderTranscript(mesh, agent), { mesh: MESH, agent });
+      await page.waitForFunction(({ mesh, agent, expected }) => {
+        return (window as any).__meshStore.getState().perMesh[mesh].transcripts[agent].items.length >= expected;
+      }, { mesh: MESH, agent, expected }, { timeout: 5000 });
+    }
+    const finalState = await page.evaluate(({ mesh, agent }) => {
+      const tr = (window as any).__meshStore.getState().perMesh[mesh].transcripts[agent];
+      return { length: tr.items.length, hasMore: tr.hasMore, oldestSeq: tr.oldestSeq, firstId: tr.items[0].id };
+    }, { mesh: MESH, agent });
+    if (finalState.length !== 300) throw new Error(`loaded ${finalState.length} items after backfill`);
+    if (finalState.oldestSeq !== seeded.full[SNAPSHOT_TRANSCRIPT_ITEMS - 300].id) throw new Error(`oldestSeq ${finalState.oldestSeq}`);
+    metrics.scenarioH = { initial: afterInitial, final: finalState, tailRequests, backfillRequests };
+    await page.unroute(`**/api/meshes/${MESH}/agents/${agent}/transcript?**`);
   });
 
   await step("no console/page errors", async () => {

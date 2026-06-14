@@ -322,6 +322,10 @@ export function createStore(): Store {
     const current = state.perMesh[mesh]?.transcripts[agentId];
     if (!current?.hasMore || initialLoadedTranscripts.has(transcriptKey(mesh, agentId))) return Promise.resolve();
     const key = transcriptKey(mesh, agentId);
+    if (current.items.length > 0) {
+      initialLoadedTranscripts.add(key);
+      return Promise.resolve();
+    }
     const existing = loadingInitialTranscript.get(key);
     if (existing) return existing;
     const params = new URLSearchParams();

@@ -358,7 +358,7 @@ test("loadInitialTranscript replaces placeholder items and updates cursor metada
           demo: {
             ...seed().perMesh.demo,
             transcripts: {
-              "codex-1": { items: [message("placeholder")], hasMore: true, oldestSeq: "placeholder" },
+              "codex-1": { items: [], hasMore: true },
             },
           },
         },
@@ -448,6 +448,37 @@ test("loadInitialTranscript coalesces concurrent requests and skips after succes
     const transcript = store.getState().perMesh.demo.transcripts["codex-1"];
     expect(transcript.items.map((item) => item.id)).toEqual(["tail-0"]);
     expect(transcript.hasMore).toBe(true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("loadInitialTranscript marks preloaded snapshot items without fetching", async () => {
+  const originalFetch = globalThis.fetch;
+  const fetchMock = mock(() => Promise.resolve(responseJson({ items: [], hasMore: false })));
+  globalThis.fetch = fetchMock as any;
+  try {
+    const store = createStore();
+    store.apply({
+      t: "snapshot",
+      state: {
+        ...seed(),
+        perMesh: {
+          demo: {
+            ...seed().perMesh.demo,
+            transcripts: {
+              "codex-1": { items: [message("snapshot-tail")], hasMore: true, oldestSeq: "snapshot-tail" },
+            },
+          },
+        },
+      },
+    });
+
+    await store.loadInitialTranscript("demo", "codex-1");
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(store.isTranscriptInitialLoaded("demo", "codex-1")).toBe(true);
+    expect(store.getState().perMesh.demo.transcripts["codex-1"].items.map((item) => item.id)).toEqual(["snapshot-tail"]);
   } finally {
     globalThis.fetch = originalFetch;
   }
