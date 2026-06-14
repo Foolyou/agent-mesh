@@ -29,6 +29,12 @@ function fakeCp() {
     async setEffort(target, effort) { calls.push(`setEffort:${target}:${effort ?? "default"}`); },
     async interrupt(target) { calls.push(`interrupt:${target}`); },
     async newSession(target) { calls.push(`newSession:${target}`); },
+    async applyBoard(actor, command, ebr) {
+      calls.push(`board:${command.type}:${actor.kind}:${ebr}`);
+      if ((command as any).title === "boom") throw new Error("kaboom");
+      if ((command as any).title === "stale") return { ok: false, code: "conflict", error: "revision conflict" };
+      return { ok: true, state: { mesh: "x", revision: ebr + 1, epicSeq: 0, taskSeq: 1, epics: [], tasks: [] }, change: { entity: "task", taskId: 1 } };
+    },
     async newAllSessions() { calls.push("newAllSessions"); },
     async wakeAgent(target) { calls.push(`wake:${target}`); },
     async stopAgent(target) { calls.push(`stopAgent:${target}`); },
@@ -158,6 +164,52 @@ test("a config mutation acks only AFTER the control-plane call settles", async (
   releaseMode();
   await Bun.sleep(50);
   expect(got).toContainEqual({ t: "cmdResult", reqId: "r1", status: "applied_by_acp" });
+});
+
+test("a board command returns a boardResult: ok, board-error-as-result, and throw-as-error", async () => {
+  const sock = join(dir, "board-rpc.sock");
+  const { cp } = fakeCp();
+  daemon = new MeshHostDaemon(cp, { socketPath: sock });
+  await daemon.listen();
+  daemon.markReady();
+
+  const { got, send } = await connect(sock);
+  send({ t: "hello", proto: PROTO_VERSION, resumeFrom: 0 });
+  send({ t: "board", reqId: "b1", actor: { kind: "human" }, command: { type: "create_task", title: "ok" }, expectedBoardRevision: 0 });
+  send({ t: "board", reqId: "b2", actor: { kind: "human" }, command: { type: "create_task", title: "stale" }, expectedBoardRevision: 0 });
+  send({ t: "board", reqId: "b3", actor: { kind: "human" }, command: { type: "create_task", title: "boom" }, expectedBoardRevision: 0 });
+  await Bun.sleep(50);
+
+  const r1 = got.find((m) => m.t === "boardResult" && m.reqId === "b1");
+  expect(r1.result).toMatchObject({ ok: true, change: { entity: "task", taskId: 1 } });
+  expect(r1.error).toBeUndefined();
+
+  const r2 = got.find((m) => m.t === "boardResult" && m.reqId === "b2");
+  expect(r2.result).toMatchObject({ ok: false, code: "conflict" }); // board error rides in result
+  expect(r2.error).toBeUndefined();
+
+  const r3 = got.find((m) => m.t === "boardResult" && m.reqId === "b3");
+  expect(r3.error).toBe("kaboom"); // a thrown handler is a transport error
+});
+
+test("MeshHostClient.boardCommand resolves with the structured result over the socket", async () => {
+  const sock = join(dir, "board-client.sock");
+  const { cp } = fakeCp();
+  daemon = new MeshHostDaemon(cp, { socketPath: sock });
+  await daemon.listen();
+  daemon.markReady();
+
+  const config: MeshConfig = { name: "board-client", agents: [{ id: "router", harness: "claude", project: ".", role: "router" }], edges: [] };
+  const client = new MeshHostClient({ name: config.name, config, socketPath: sock, onEvent: () => {} });
+  await client.attach({ pid: process.pid }, 0);
+  try {
+    const ok = await client.boardCommand({ kind: "human" }, { type: "create_task", title: "x" }, 0);
+    expect(ok).toMatchObject({ ok: true, change: { entity: "task", taskId: 1 } });
+    const conflict = await client.boardCommand({ kind: "human" }, { type: "create_task", title: "stale" }, 0);
+    expect(conflict).toMatchObject({ ok: false, code: "conflict" });
+  } finally {
+    client.disconnect();
+  }
 });
 
 test("a throwing config mutation returns an error result and the queue stays alive", async () => {

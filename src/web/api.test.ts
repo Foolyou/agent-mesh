@@ -98,6 +98,14 @@ function fakeManager(config: MeshConfig = CFG) {
     async newAllSessions(n: string) {
       calls.push(["newAllSessions", n]);
     },
+    async readBoard(n: string) {
+      calls.push(["readBoard", n]);
+      return { mesh: n, revision: 3, epicSeq: 0, taskSeq: 1, epics: [], tasks: [{ id: 1, title: "t", status: "todo", priority: "normal", deps: [], subtasks: [], subtaskSeq: 0, revision: 1, createdBy: "x", createdAt: "T", updatedAt: "T", comments: [], mailEventIds: [] }] };
+    },
+    async boardCommand(n: string, actor: any, command: any, ebr: number) {
+      calls.push(["boardCommand", n, actor, command, ebr]);
+      return { ok: true, state: { mesh: n, revision: ebr + 1, epicSeq: 0, taskSeq: 1, epics: [], tasks: [] }, change: { entity: "task", taskId: 1 } };
+    },
     async defineMesh(c: MeshConfig) {
       calls.push(["define", c.name]);
     },
@@ -777,4 +785,54 @@ test("GET /api/agents/:name/files serves agent files with security headers and m
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("GET /api/meshes/:name/board returns the board (stopped or running)", async () => {
+  const gw = new WebGateway(fakeManager() as any);
+  const r = await handleApi(gw, "GET", "/api/meshes/demo/board", undefined);
+  expect(r.status).toBe(200);
+  expect(r.body.tasks).toHaveLength(1);
+  expect(r.body.tasks[0].title).toBe("t");
+});
+
+test("POST /api/meshes/:name/board applies a mutation and returns the new board", async () => {
+  const gw = new WebGateway(fakeManager() as any);
+  const r = await handleApi(gw, "POST", "/api/meshes/demo/board", { command: { type: "create_task", title: "x" }, expectedBoardRevision: 0 });
+  expect(r.status).toBe(200);
+  expect(r.body.board.revision).toBe(1);
+  expect(r.body.change).toEqual({ entity: "task", taskId: 1 });
+});
+
+test("POST /api/meshes/:name/board maps a CAS conflict to HTTP 409", async () => {
+  const m = fakeManager();
+  m.boardCommand = (async () => ({ ok: false, code: "conflict", error: "revision conflict" })) as any;
+  const gw = new WebGateway(m as any);
+  const r = await handleApi(gw, "POST", "/api/meshes/demo/board", { command: { type: "set_task_status", id: 1, expectedRevision: 1, status: "done" }, expectedBoardRevision: 9 });
+  expect(r.status).toBe(409);
+});
+
+test("POST /api/meshes/:name/board maps forbidden to 403 and not_found to 404", async () => {
+  const m = fakeManager();
+  m.boardCommand = (async () => ({ ok: false, code: "forbidden", error: "router only" })) as any;
+  let gw = new WebGateway(m as any);
+  expect((await handleApi(gw, "POST", "/api/meshes/demo/board", { command: { type: "create_epic", title: "E" }, expectedBoardRevision: 0 })).status).toBe(403);
+
+  const m2 = fakeManager();
+  m2.boardCommand = (async () => ({ ok: false, code: "not_found", error: "no task" })) as any;
+  gw = new WebGateway(m2 as any);
+  expect((await handleApi(gw, "POST", "/api/meshes/demo/board", { command: { type: "set_task_status", id: 7, expectedRevision: 1, status: "done" }, expectedBoardRevision: 0 })).status).toBe(404);
+});
+
+test("POST /api/meshes/:name/board on a stopped mesh is 409 (running-only)", async () => {
+  const m = fakeManager();
+  m.boardCommand = async () => { throw new Error('mesh "demo" is not running'); };
+  const gw = new WebGateway(m as any);
+  const r = await handleApi(gw, "POST", "/api/meshes/demo/board", { command: { type: "create_task", title: "x" }, expectedBoardRevision: 0 });
+  expect(r.status).toBe(409);
+});
+
+test("POST /api/meshes/:name/board rejects a missing command with 400", async () => {
+  const gw = new WebGateway(fakeManager() as any);
+  expect((await handleApi(gw, "POST", "/api/meshes/demo/board", { expectedBoardRevision: 0 })).status).toBe(400);
+  expect((await handleApi(gw, "POST", "/api/meshes/demo/board", { command: { type: "create_task", title: "x" } })).status).toBe(400);
 });

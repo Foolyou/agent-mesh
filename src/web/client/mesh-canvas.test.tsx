@@ -45,6 +45,7 @@ function perMesh(m: MeshSummary): PerMeshState {
     health: {},
     selfAwareness: {},
     queues: {},
+    board: null,
   };
 }
 

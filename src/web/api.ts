@@ -165,6 +165,29 @@ export async function handleApi(
       }
       // GET /api/meshes/:name/config
       if (method === "GET" && p.length === 3 && p[2] === "config") return ok(gw.configOf(name));
+      // GET /api/meshes/:name/board — works for stopped (BoardStore) and running (live snapshot)
+      if (method === "GET" && p.length === 3 && p[2] === "board") {
+        return ok(await gw.getBoard(name));
+      }
+      // POST /api/meshes/:name/board — operator mutation; running-only; CAS → 409
+      if (method === "POST" && p.length === 3 && p[2] === "board") {
+        const command = body?.command;
+        const expectedBoardRevision = Number(body?.expectedBoardRevision);
+        if (!command || typeof command !== "object") return fail(400, "command is required");
+        if (!Number.isInteger(expectedBoardRevision)) return fail(400, "expectedBoardRevision must be an integer");
+        let result;
+        try {
+          result = await gw.applyBoard(name, command, expectedBoardRevision);
+        } catch (e: any) {
+          const msg = str(e?.message ?? e);
+          return fail(/not running/.test(msg) ? 409 : 400, msg); // stopped meshes are read-only
+        }
+        if (!result.ok) {
+          const status = result.code === "conflict" ? 409 : result.code === "forbidden" ? 403 : result.code === "not_found" ? 404 : 400;
+          return fail(status, result.error);
+        }
+        return ok({ board: result.state, change: result.change });
+      }
       // POST /api/meshes/:name/edges
       if (method === "POST" && p.length === 3 && p[2] === "edges") {
         await gw.addEdge(name, { from: str(body?.from), to: str(body?.to), steer: body?.steer === true } as MeshEdge);

@@ -22,7 +22,7 @@ export function shouldLoadInitialTranscript(agentStatus: AgentStatus | undefined
 }
 
 function emptyPerMesh(name: string): PerMeshState {
-  return { config: { name, agents: [], edges: [] }, transcripts: {}, activity: [], mail: [], pending: [], history: [], modes: {}, models: {}, efforts: {}, capabilities: {}, usage: {}, health: {}, selfAwareness: {}, queues: {} };
+  return { config: { name, agents: [], edges: [] }, transcripts: {}, activity: [], mail: [], pending: [], history: [], modes: {}, models: {}, efforts: {}, capabilities: {}, usage: {}, health: {}, selfAwareness: {}, queues: {}, board: null };
 }
 function withPerMesh(state: GatewayState, name: string, fn: (pm: PerMeshState) => PerMeshState): GatewayState {
   const pm = state.perMesh[name] ?? emptyPerMesh(name);

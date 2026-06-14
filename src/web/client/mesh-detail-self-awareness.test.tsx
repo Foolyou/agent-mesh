@@ -36,6 +36,7 @@ const state: GatewayState = {
         },
       },
       queues: {},
+      board: null,
     },
   },
 };

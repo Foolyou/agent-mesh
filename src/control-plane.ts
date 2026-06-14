@@ -1867,6 +1867,13 @@ export class ControlPlane {
     return ctx.role === "router" ? { kind: "router", agentId: ctx.agentId } : { kind: "agent", agentId: ctx.agentId };
   }
 
+  /** Apply a board command on behalf of an explicit actor (the daemon RPC / REST path). The
+   *  actor is supplied by the caller (e.g. {kind:"human"} for the web operator); the reducer
+   *  still enforces every permission. Returns the structured result for HTTP status mapping. */
+  applyBoard(actor: BoardActor, command: BoardCommand, expectedBoardRevision: number): Promise<BoardCommandResult> {
+    return this.runBoardCommand(command, actor, expectedBoardRevision);
+  }
+
   /** Apply a board command against the in-memory board: persist the mirror (best-effort) and
    *  emit the full snapshot on success. The single mutation funnel for MCP, REST, and the
    *  internal mail-link path. */

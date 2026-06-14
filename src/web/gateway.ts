@@ -8,6 +8,7 @@ import { resolve } from "node:path";
 import type { AgentConfig, MeshConfig, MeshEdge, MeshEvent, AgentId, AgentStatus, AgentActivity, AgentTurn, PromptImageRef, HarnessId } from "../acp/types";
 import type { MutationApplyResult, StartMeshOptions } from "../mesh-manager";
 import type { RespawnMode, RespawnResult } from "../control-plane";
+import type { BoardActor, BoardCommand, BoardCommandResult, BoardDocument } from "../board";
 import { readUpload, storeUploads, uploadPath, type UploadFileLike } from "./uploads";
 import { AgentFileError, resolveAgentFile } from "./agent-files";
 import { resolveArtifactFile } from "./artifacts";
@@ -55,6 +56,8 @@ export interface ManagerLike {
   stopAgent(name: string, agentId: string): void;
   newAgentSession(name: string, agentId: string): Promise<void>;
   respawnAgent(name: string, agentId: string, mode: RespawnMode): Promise<RespawnResult>;
+  readBoard(name: string): Promise<BoardDocument>;
+  boardCommand(name: string, actor: BoardActor, command: BoardCommand, expectedBoardRevision: number): Promise<BoardCommandResult>;
   newAllSessions(name: string): Promise<void>;
   defineMesh(config: MeshConfig): Promise<void>;
   deleteMesh(name: string): Promise<void>;
@@ -296,7 +299,7 @@ export class WebGateway {
       } catch {
         config = { name, agents: [], edges: [] };
       }
-      pm = { config, transcripts: {}, activity: [], mail: [], pending: [], history: [], modes: {}, models: {}, efforts: {}, capabilities: {}, usage: {}, health: {}, selfAwareness: {}, queues: {} };
+      pm = { config, transcripts: {}, activity: [], mail: [], pending: [], history: [], modes: {}, models: {}, efforts: {}, capabilities: {}, usage: {}, health: {}, selfAwareness: {}, queues: {}, board: null };
       this.state.perMesh[name] = pm;
     }
     return pm;
@@ -465,6 +468,12 @@ export class WebGateway {
         if (e.cost !== undefined) usage.cost = e.cost;
         pm.usage[e.agent] = usage;
         this.broadcast({ t: "agent.usage", name, agent: e.agent, usage });
+        break;
+      }
+      case "board_snapshot": {
+        // Full board only (Phase 1, no deltas). Replace the folded copy and fan it out.
+        pm.board = e.board;
+        this.broadcast({ t: "board", name, board: e.board });
         break;
       }
       case "near_context_limit_no_compact": {
@@ -748,6 +757,20 @@ export class WebGateway {
   async newAllSessions(name: string): Promise<void> {
     await this.manager.newAllSessions(name);
     this.refreshMeshes();
+  }
+
+  /** Read the board for REST GET. Prefer the live folded snapshot (running mesh); fall back to
+   *  the durable file for stopped meshes (or before any snapshot has arrived). */
+  async getBoard(name: string): Promise<BoardDocument> {
+    const pm = this.state.perMesh[name];
+    if (pm?.board) return pm.board;
+    return this.manager.readBoard(name);
+  }
+
+  /** Apply a board mutation for the web operator (full rights). Running-only; the resulting
+   *  board_snapshot rides back through the event stream and refreshes pm.board. */
+  async applyBoard(name: string, command: BoardCommand, expectedBoardRevision: number): Promise<BoardCommandResult> {
+    return this.manager.boardCommand(name, { kind: "human" }, command, expectedBoardRevision);
   }
   async promptAssistant(text: string, images: PromptImageRef[] = []): Promise<void> {
     if (!this.assistant) throw new Error("Mesh Assistant is not configured");
