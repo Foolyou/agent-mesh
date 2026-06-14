@@ -269,9 +269,15 @@ export function isTranscriptAtBottom(
   return scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight <= threshold;
 }
 
-export function nextTranscriptStickState(current: boolean, atBottom: boolean, userInitiatedScroll: boolean): boolean {
+export const TRANSCRIPT_SCROLL_DIR_THRESHOLD = 4;
+
+export function didTranscriptScrollUp(currentScrollTop: number, previousScrollTop: number, threshold = TRANSCRIPT_SCROLL_DIR_THRESHOLD): boolean {
+  return currentScrollTop < previousScrollTop - threshold;
+}
+
+export function nextTranscriptStickState(current: boolean, atBottom: boolean, userInitiatedScroll: boolean, wentUp: boolean): boolean {
   if (atBottom) return true;
-  if (userInitiatedScroll) return false;
+  if (userInitiatedScroll && wentUp) return false;
   return current;
 }
 
@@ -287,7 +293,12 @@ export function Transcript({ items, author, cacheScope }: { items: TranscriptIte
   const stickRef = useRef(true);
   const userScrollIntentRef = useRef(false);
   const userScrollIntentTimerRef = useRef<number | undefined>(undefined);
+  const lastScrollTopRef = useRef(0);
   const [stick, setStick] = useState(true);
+  function syncLastScrollTop() {
+    const el = wrapRef.current;
+    if (el) lastScrollTopRef.current = el.scrollTop;
+  }
   function markUserScrollIntent() {
     userScrollIntentRef.current = true;
     if (userScrollIntentTimerRef.current !== undefined) window.clearTimeout(userScrollIntentTimerRef.current);
@@ -297,9 +308,15 @@ export function Transcript({ items, author, cacheScope }: { items: TranscriptIte
     }, 350);
   }
   useLayoutEffect(() => {
-    if (stickRef.current) endRef.current?.scrollIntoView({ block: "end" });
+    if (stickRef.current) {
+      endRef.current?.scrollIntoView({ block: "end" });
+      syncLastScrollTop();
+    }
     const raf = requestAnimationFrame(() => {
-      if (stickRef.current) endRef.current?.scrollIntoView({ block: "end" });
+      if (stickRef.current) {
+        endRef.current?.scrollIntoView({ block: "end" });
+        syncLastScrollTop();
+      }
     });
     return () => cancelAnimationFrame(raf);
   }, [items, stick]);
@@ -307,7 +324,10 @@ export function Transcript({ items, author, cacheScope }: { items: TranscriptIte
     const tail = endRef.current?.previousElementSibling;
     if (!tail || !stick || typeof ResizeObserver === "undefined") return;
     const ro = new ResizeObserver(() => {
-      if (stickRef.current) endRef.current?.scrollIntoView({ block: "end" });
+      if (stickRef.current) {
+        endRef.current?.scrollIntoView({ block: "end" });
+        syncLastScrollTop();
+      }
     });
     ro.observe(tail);
     return () => ro.disconnect();
@@ -321,8 +341,11 @@ export function Transcript({ items, author, cacheScope }: { items: TranscriptIte
   function onScroll() {
     const el = wrapRef.current;
     if (!el) return;
+    const scrollTop = el.scrollTop;
+    const wentUp = didTranscriptScrollUp(scrollTop, lastScrollTopRef.current);
+    lastScrollTopRef.current = scrollTop;
     const atBottom = isTranscriptAtBottom(el);
-    const nextStick = nextTranscriptStickState(stickRef.current, atBottom, userScrollIntentRef.current);
+    const nextStick = nextTranscriptStickState(stickRef.current, atBottom, userScrollIntentRef.current, wentUp);
     stickRef.current = nextStick;
     setStick(nextStick);
   }
@@ -331,6 +354,7 @@ export function Transcript({ items, author, cacheScope }: { items: TranscriptIte
     stickRef.current = true;
     setStick(true);
     wrapRef.current?.focus({ preventScroll: true });
+    syncLastScrollTop();
   }
 
   if (!items.length) return <Empty>{t("empty.messages")}</Empty>;
