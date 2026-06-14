@@ -3,7 +3,7 @@
 // the client. createStore() owns the socket + REST command helpers; useStore wires it
 // into React via useSyncExternalStore.
 import { useSyncExternalStore } from "react";
-import type { AgentConfig, GatewayState, ServerMsg, PerMeshState, TranscriptItem, ConvRef, MeshConfig, MeshEdge, PromptImageRef, StartSessionStrategy, HarnessProbeRow, HarnessId, HarnessInstallEvent, RespawnMode, TranscriptSnapshot, AgentStatus } from "../types";
+import type { AgentConfig, GatewayState, ServerMsg, PerMeshState, TranscriptItem, ConvRef, MeshConfig, MeshEdge, PromptImageRef, StartSessionStrategy, HarnessProbeRow, HarnessId, HarnessInstallEvent, RespawnMode, TranscriptSnapshot, AgentStatus, MutationApplyResult } from "../types";
 
 const CAP = 500;
 const HARNESS_CHANGE_DEBOUNCE_MS = 300;
@@ -183,9 +183,9 @@ export interface Store {
   steerAgent(name: string, agentId: string, text: string, images?: PromptImageRef[]): Promise<any>;
   promptAssistant(text: string, images?: PromptImageRef[]): Promise<any>;
   resolvePermission(name: string, requestId: string, optionId: string): Promise<any>;
-  setMode(name: string, agentId: string, modeId: string): Promise<any>;
-  setModel(name: string, agentId: string, modelId: string): Promise<any>;
-  setEffort(name: string, agentId: string, effort?: string): Promise<any>;
+  setMode(name: string, agentId: string, modeId: string): Promise<MutationApplyResult>;
+  setModel(name: string, agentId: string, modelId: string): Promise<MutationApplyResult>;
+  setEffort(name: string, agentId: string, effort?: string): Promise<MutationApplyResult>;
   addEdge(name: string, edge: MeshEdge): Promise<any>;
   addAgent(name: string, agent: AgentConfig, edges?: MeshEdge[]): Promise<any>;
   interruptAgent(name: string, agentId: string): Promise<any>;
@@ -279,6 +279,32 @@ export function createStore(): Store {
       pushToast("error", `${label}: ${String(e?.message ?? e)}`);
       throw e;
     });
+  }
+
+  /** Surface a config mutation's outcome so the user can tell apart: the change applied live,
+   *  it was only accepted by the host (apply not confirmed), it was persisted but takes effect
+   *  on next start, or the live apply failed (without pretending success). Persistence /
+   *  validation / transport failures still reject and toast like any other command. */
+  function guardMutation(p: Promise<MutationApplyResult>, label: string): Promise<MutationApplyResult> {
+    return p.then(
+      (result) => {
+        if (result?.error) {
+          // desired was persisted (or attempted) but the live apply failed — never a plain success
+          pushToast("error", `${label}: saved, but live apply failed — ${result.error}`);
+        } else if (result?.applied && result.ackStatus === "accepted_by_host") {
+          pushToast("info", `${label}: accepted (apply not confirmed)`);
+        } else if (result?.applied) {
+          pushToast("info", `${label}: applied`);
+        } else if (result?.saved) {
+          pushToast("info", `${label}: saved — applies on next start`);
+        }
+        return result;
+      },
+      (e: any) => {
+        pushToast("error", `${label}: ${String(e?.message ?? e)}`);
+        throw e;
+      },
+    );
   }
   async function withRetries<T>(fn: () => Promise<T>, retryDelaysMs: number[]): Promise<T> {
     let lastError: unknown;
@@ -525,9 +551,9 @@ export function createStore(): Store {
     promptAssistant: (t, images) => guard(post(`/api/assistant/prompt`, { text: t, images }), "assistant"),
     interruptAssistant: () => guard(post(`/api/assistant/interrupt`), "interrupt assistant"),
     resolvePermission: (n, r, o) => guard(post(`/api/meshes/${enc(n)}/permissions/${enc(r)}/resolve`, { optionId: o }), "resolve permission"),
-    setMode: (n, a, m) => guard(post(`/api/meshes/${enc(n)}/agents/${enc(a)}/mode`, { modeId: m }), `set mode ${a}`),
-    setModel: (n, a, m) => guard(post(`/api/meshes/${enc(n)}/agents/${enc(a)}/model`, { modelId: m }), `set model ${a}`),
-    setEffort: (n, a, e) => guard(post(`/api/meshes/${enc(n)}/agents/${enc(a)}/effort`, { effort: e }), `set effort ${a}`),
+    setMode: (n, a, m) => guardMutation(post(`/api/meshes/${enc(n)}/agents/${enc(a)}/mode`, { modeId: m }), `set mode ${a}`),
+    setModel: (n, a, m) => guardMutation(post(`/api/meshes/${enc(n)}/agents/${enc(a)}/model`, { modelId: m }), `set model ${a}`),
+    setEffort: (n, a, e) => guardMutation(post(`/api/meshes/${enc(n)}/agents/${enc(a)}/effort`, { effort: e }), `set effort ${a}`),
     addEdge: (n, edge) => guard(post(`/api/meshes/${enc(n)}/edges`, edge), `add edge ${edge.from}->${edge.to}`),
     addAgent: (n, agent, edges = []) => guard(post(`/api/meshes/${enc(n)}/agents`, { agent, edges }), `add agent ${agent.id}`),
     interruptAgent: (n, a) => guard(post(`/api/meshes/${enc(n)}/agents/${enc(a)}/interrupt`), `interrupt ${a}`),

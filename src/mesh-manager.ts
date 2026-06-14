@@ -6,7 +6,7 @@ import { resolve, join } from "node:path";
 import { rm } from "node:fs/promises";
 import { MeshStore } from "./mesh-store";
 import { MeshHostClient, type MutationAck } from "./mesh-host-client";
-import type { MutationAckStatus } from "./protocol";
+import type { MutationApplyResult } from "./web/types";
 import { listLiveRecords, readRecord, removeRecord, pidAlive, type MeshHostRecord } from "./mesh-registry";
 import { Mesh } from "./mesh";
 import { validateAddAgent, validateAddEdge } from "./mesh-validate";
@@ -23,19 +23,7 @@ import { clearAgentSession, clearAllAgentSessions, setMeshExpectedAlive } from "
 export type MeshStatus = "stopped" | "starting" | "running" | "dead";
 export type StartSessionStrategy = "resume" | "fresh";
 
-/** Outcome of a config mutation (setMode/setModel/setEffort). The desired value and the live
- *  apply are tracked independently so callers can distinguish "persisted, takes effect next
- *  start" from "live apply attempted but failed" — a live failure is NEVER reported as success.
- *  - saved:   desired value persisted to disk (replayed on next start).
- *  - applied: the live mutation reached a running daemon and was acked.
- *  - ackStatus: strongest applied guarantee, present only when applied.
- *  - error:   present only when a live apply was attempted and failed (desired may still be saved). */
-export interface MutationApplyResult {
-  saved: boolean;
-  applied: boolean;
-  ackStatus?: MutationAckStatus;
-  error?: string;
-}
+export type { MutationApplyResult };
 
 export interface StartMeshOptions {
   sessionStrategy?: StartSessionStrategy;
