@@ -290,12 +290,14 @@ export function Transcript({
   author,
   cacheScope,
   hasMore,
+  loadingTranscript,
   onLoadOlder,
 }: {
   items: TranscriptItem[];
   author?: AuthorRef;
   cacheScope?: TranscriptMeasurementCacheScope;
   hasMore?: boolean;
+  loadingTranscript?: boolean;
   onLoadOlder?: () => Promise<void>;
 }) {
   const { t } = useI18n();
@@ -370,7 +372,7 @@ export function Transcript({
     syncLastScrollTop();
   }
 
-  if (!items.length) return <Empty>{t("empty.messages")}</Empty>;
+  if (!items.length) return <Empty>{loadingTranscript ? t("transcript.loading") : t("empty.messages")}</Empty>;
   if (items.length > VIRTUAL_THRESHOLD) {
     return <VirtualTranscript items={items} cacheScope={cacheScope} hasMore={hasMore} onLoadOlder={onLoadOlder} renderItem={(item) => <TranscriptRow item={item} author={author} />} />;
   }

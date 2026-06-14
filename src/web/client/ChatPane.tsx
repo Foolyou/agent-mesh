@@ -65,6 +65,7 @@ export function ChatPane({
   author,
   transcriptCacheScope,
   hasMore,
+  loadingTranscript,
   onLoadOlder,
 }: {
   items: TranscriptItem[];
@@ -81,6 +82,7 @@ export function ChatPane({
   author?: AuthorRef;
   transcriptCacheScope?: TranscriptMeasurementCacheScope;
   hasMore?: boolean;
+  loadingTranscript?: boolean;
   onLoadOlder?: () => Promise<void>;
 }) {
   const { t } = useI18n();
@@ -137,7 +139,7 @@ export function ChatPane({
 
   return (
     <div className="chat" onClick={focusOnClick}>
-      <Transcript items={items} author={author} cacheScope={transcriptCacheScope} hasMore={hasMore} onLoadOlder={onLoadOlder} />
+      <Transcript items={items} author={author} cacheScope={transcriptCacheScope} hasMore={hasMore} loadingTranscript={loadingTranscript} onLoadOlder={onLoadOlder} />
       {queue?.count && nav.item ? (
         <div
           className="queue-box"

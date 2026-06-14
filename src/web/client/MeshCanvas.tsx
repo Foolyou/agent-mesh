@@ -292,6 +292,12 @@ export function MeshCanvas({
   const live = m.status === "running" || m.status === "starting";
 
   useEffect(() => {
+    const transcript = pm.transcripts[focusedAgentId];
+    if (!transcript?.hasMore || store.isTranscriptInitialLoaded(m.name, focusedAgentId)) return;
+    void store.loadInitialTranscript(m.name, focusedAgentId);
+  }, [focusedAgentId, m.name, pm.transcripts, store]);
+
+  useEffect(() => {
     if (!menuOpen) return;
     const onDoc = (e: MouseEvent) => {
       if (!actionsRef.current?.contains(e.target as Node)) setMenuOpen(false);
@@ -552,6 +558,8 @@ export function MeshCanvas({
           if (!r) return null;
           const fullTranscript = pm.transcripts[agent.id]?.items ?? [];
           const focused = agent.id === focusedAgentId;
+          const transcript = pm.transcripts[agent.id];
+          const loadingTranscript = focused && !!transcript?.hasMore && !store.isTranscriptInitialLoaded(m.name, agent.id) && (transcript.items?.length ?? 0) === 0;
           const transcriptItems = canvasTranscriptItems(fullTranscript, focused);
           const isRouter = agent.id === m.router;
           const z = 20 + order.indexOf(agent.id);
@@ -595,7 +603,8 @@ export function MeshCanvas({
               >
                 <ChatPane
                   items={transcriptItems}
-                  hasMore={focused ? pm.transcripts[agent.id]?.hasMore : false}
+                  hasMore={focused ? transcript?.hasMore : false}
+                  loadingTranscript={loadingTranscript}
                   onLoadOlder={focused ? () => store.loadOlderTranscript(m.name, agent.id) : undefined}
                   queue={pm.queues?.[agent.id]}
                   author={{ meshId: m.name, agent: agent.id }}

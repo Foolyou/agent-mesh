@@ -146,6 +146,7 @@ const DICT: Record<string, Entry> = {
   plan: ["plan", "计划"],
   "mail.from": ["from {from}", "来自 {from}"],
   "transcript.jumpBottom": ["Jump to bottom", "回到底部"],
+  "transcript.loading": ["loading transcript...", "正在加载对话..."],
 
   // ── mobile segments ──
   "seg.chat": ["Chat", "对话"],

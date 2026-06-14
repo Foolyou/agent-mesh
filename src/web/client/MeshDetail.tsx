@@ -332,11 +332,19 @@ function ConversationPanel({
   const refreshHarnesses = async () => {
     setHarnessRows(await store.listHarnesses().catch(() => []));
   };
+  const transcript = pm.transcripts[activeId];
+  const transcriptInitialLoaded = store.isTranscriptInitialLoaded(m.name, activeId);
+  const loadingTranscript = !!transcript?.hasMore && !transcriptInitialLoaded && (transcript.items?.length ?? 0) === 0;
 
   useEffect(() => {
     if (activeId === m.router) return;
     tabRefs.current[activeId]?.scrollIntoView({ block: "nearest", inline: "nearest" });
   }, [activeId, m.router]);
+
+  useEffect(() => {
+    if (!transcript?.hasMore || transcriptInitialLoaded) return;
+    void store.loadInitialTranscript(m.name, activeId);
+  }, [activeId, m.name, store, transcript?.hasMore, transcriptInitialLoaded]);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -469,8 +477,9 @@ function ConversationPanel({
           ) : null}
         </div>
         <ChatPane
-          items={pm.transcripts[activeId]?.items ?? []}
-          hasMore={pm.transcripts[activeId]?.hasMore}
+          items={transcript?.items ?? []}
+          hasMore={transcript?.hasMore}
+          loadingTranscript={loadingTranscript}
           onLoadOlder={() => store.loadOlderTranscript(m.name, activeId)}
           queue={pm.queues?.[activeId]}
           author={{ meshId: m.name, agent: activeId }}

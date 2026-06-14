@@ -190,6 +190,8 @@ export interface Store {
   newAgentSession(name: string, agentId: string): Promise<any>;
   newAllSessions(name: string): Promise<any>;
   respawnAgent(name: string, agentId: string, mode: RespawnMode): Promise<any>;
+  isTranscriptInitialLoaded(mesh: string, agentId: string): boolean;
+  loadInitialTranscript(mesh: string, agentId: string): Promise<void>;
   loadOlderTranscript(mesh: string, agentId: string): Promise<void>;
   listHarnesses(): Promise<HarnessProbeRow[]>;
   installHarness(id: HarnessId): Promise<{ jobId: string; status: "running" | "done"; harnessId: HarnessId; pkgSpec: string }>;
@@ -208,6 +210,8 @@ export function createStore(): Store {
   let toastSeq = 0;
   let harnessChangeTimer: ReturnType<typeof setTimeout> | undefined;
   let harnessListInFlight: Promise<HarnessProbeRow[]> | undefined;
+  const initialLoadedTranscripts = new Set<string>();
+  const loadingInitialTranscript = new Map<string, Promise<void>>();
   const loadingOlderTranscript = new Map<string, Promise<void>>();
   const subs = new Set<() => void>();
   const emit = () => {
@@ -280,6 +284,20 @@ export function createStore(): Store {
     }
     return harnessListInFlight;
   }
+  const transcriptKey = (mesh: string, agentId: string) => `${mesh}:${agentId}`;
+  function replaceTranscriptItems(mesh: string, agentId: string, items: TranscriptItem[], hasMore: boolean): void {
+    set(withPerMesh(state, mesh, (pm) => ({
+      ...pm,
+      transcripts: {
+        ...pm.transcripts,
+        [agentId]: {
+          items,
+          hasMore,
+          ...(items[0] ? { oldestSeq: items[0].id } : {}),
+        },
+      },
+    })));
+  }
   function prependTranscriptItems(mesh: string, agentId: string, items: TranscriptItem[], hasMore: boolean): void {
     set(withPerMesh(state, mesh, (pm) => {
       const previous = pm.transcripts[agentId];
@@ -296,6 +314,32 @@ export function createStore(): Store {
         },
       };
     }));
+  }
+  function isTranscriptInitialLoaded(mesh: string, agentId: string): boolean {
+    return initialLoadedTranscripts.has(transcriptKey(mesh, agentId));
+  }
+  function loadInitialTranscript(mesh: string, agentId: string): Promise<void> {
+    const current = state.perMesh[mesh]?.transcripts[agentId];
+    if (!current?.hasMore || initialLoadedTranscripts.has(transcriptKey(mesh, agentId))) return Promise.resolve();
+    const key = transcriptKey(mesh, agentId);
+    const existing = loadingInitialTranscript.get(key);
+    if (existing) return existing;
+    const params = new URLSearchParams();
+    params.set("limit", "100");
+    const request = guard(
+      send("GET", `/api/meshes/${enc(mesh)}/agents/${enc(agentId)}/transcript?${params.toString()}`) as Promise<{ items?: TranscriptItem[]; hasMore?: boolean }>,
+      `load transcript ${agentId}`,
+    )
+      .then((res) => {
+        const items = Array.isArray(res.items) ? res.items : [];
+        initialLoadedTranscripts.add(key);
+        replaceTranscriptItems(mesh, agentId, items, res.hasMore === true);
+      })
+      .finally(() => {
+        loadingInitialTranscript.delete(key);
+      });
+    loadingInitialTranscript.set(key, request);
+    return request;
   }
   function loadOlderTranscript(mesh: string, agentId: string): Promise<void> {
     const current = state.perMesh[mesh]?.transcripts[agentId];
@@ -446,6 +490,8 @@ export function createStore(): Store {
     newAgentSession: (n, a) => guard(post(`/api/meshes/${enc(n)}/agents/${enc(a)}/session`), `new session ${a}`),
     newAllSessions: (n) => guard(post(`/api/meshes/${enc(n)}/session`), `new sessions ${n}`),
     respawnAgent: (n, a, mode) => guard(post(`/api/meshes/${enc(n)}/agents/${enc(a)}/respawn`, { mode }), `respawn ${a}`),
+    isTranscriptInitialLoaded,
+    loadInitialTranscript,
     loadOlderTranscript,
     listHarnesses,
     installHarness: (id) => guard(post(`/api/harnesses/${enc(id)}/install`), `install ${id}`),
