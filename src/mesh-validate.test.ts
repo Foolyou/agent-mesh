@@ -24,7 +24,7 @@ test("validates effort per harness", () => {
   const accepted: Record<HarnessId, ThinkingEffort[]> = {
     codex: ["low", "medium", "high", "xhigh"],
     claude: ["low", "medium", "high", "xhigh", "max"],
-    kimi: ["low", "high"],
+    kimi: [], // kimi has no reasoning-effort ladder — thinking is a model-variant toggle
     opencode: [],
   };
   const all = ["minimal", "low", "medium", "high", "xhigh", "max"] as const;

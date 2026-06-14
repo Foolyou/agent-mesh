@@ -7,7 +7,7 @@ import { randomUUID } from "node:crypto";
 import { AcpAgentConnection, type AcpConnectionOptions, type PermissionDecision } from "./acp/client";
 import { spawnConfigFor } from "./harness";
 import { managedNpmBin } from "./harness-install-spec";
-import { isThinkingEffort, runtimeEffortConfig, runtimeEffortOptionsFromSession, type RuntimeEffortOptions } from "./harness-utils";
+import { effortOptionsForHarness, isThinkingEffort, runtimeEffortConfig, runtimeEffortOptionsFromSession, type RuntimeEffortOptions } from "./harness-utils";
 import { Mesh } from "./mesh";
 import { buildMeshBriefing, MAIL_WAKE_GUIDANCE } from "./mesh-briefing";
 import { createMeshServicesServer, type MeshServicesHandlers, type MeshServicesServer, type MeshToolContext, type PublishAttachmentOptions, type SendMailOptions } from "./mcp/mesh-services";
@@ -879,7 +879,11 @@ export class ControlPlane {
         this.emit({ kind: "agent_efforts", agent: id, configId: next.configId, current: next.current, available: next.available, ts: now() });
       }
     }
-    if (effort === undefined || isThinkingEffort(effort)) await this.persistRuntimeSessionFields(id, { effort });
+    // Only persist an effort for harnesses that actually have a reasoning-effort ladder.
+    // Kimi/opencode carry no effort (kimi's thinking is a model variant), so we never write
+    // a stale effort field for them.
+    if (effortOptionsForHarness(agent.harness).length > 0 && (effort === undefined || isThinkingEffort(effort)))
+      await this.persistRuntimeSessionFields(id, { effort });
   }
 
 

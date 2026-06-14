@@ -653,20 +653,23 @@ test("setEffort dynamically switches supported thought_level config options and 
   try {
     await cp.start();
     await cp.setEffort("claude", "high");
+    // kimi has no reasoning-effort config option (thinking is a model variant) — setEffort is a no-op.
     await cp.setEffort("kimi", "low");
     await cp.setEffort("codex", "high");
     await cp.setEffort("cold", "medium");
 
     expect(created.claude.setConfigOptions).toContainEqual({ configId: "thought_level", value: "high" });
-    expect(created.kimi.setConfigOptions).toContainEqual({ configId: "thinking", value: "off" });
+    expect(created.kimi.setConfigOptions).toEqual([]); // no setConfigOption("thinking") anymore
     expect(created.codex.setConfigOptions).toEqual([]);
-    expect(await readSessionState(runDir, "dynamic-effort")).toEqual(expect.objectContaining({
+    const persisted = await readSessionState(runDir, "dynamic-effort");
+    expect(persisted).toEqual(expect.objectContaining({
       agents: expect.objectContaining({
         claude: expect.objectContaining({ effort: "high" }),
-        kimi: expect.objectContaining({ effort: "low" }),
         codex: expect.objectContaining({ effort: "high" }),
       }),
     }));
+    // kimi does not persist an effort field — thinking lives in the model variant.
+    expect((persisted.agents as any).kimi?.effort).toBeUndefined();
     expect(created.cold).toBeUndefined();
   } finally {
     await cp.stop();
@@ -762,7 +765,11 @@ test("claude runtime effort can select advertised values outside static config s
   }
 });
 
-test("kimi runtime effort uses advertised thinking values behind low/high UI options", async () => {
+test("kimi exposes no runtime effort option (thinking is a model variant)", async () => {
+  // plan X: kimi's thinking is toggled via the session-model variant (base vs base,thinking)
+  // through setModel, NOT a runtime effort config option. So even when the session advertises
+  // a "thinking" config option, kimi surfaces no agent_efforts and setEffort is a no-op
+  // (no setConfigOption("thinking")). The actual on/off switch rides the generic setModel path.
   const root = await mkdtemp(join(tmpdir(), "mesh-control-plane-kimi-effort-options-"));
   class KimiThinkingConnection extends ConfigOptionsConnection {
     async newSession(): Promise<unknown> {
@@ -797,18 +804,11 @@ test("kimi runtime effort uses advertised thinking values behind low/high UI opt
 
   try {
     await cp.start();
-    expect(events.find((e) => e.kind === "agent_efforts" && e.agent === "kimi")).toMatchObject({
-      configId: "thinking",
-      current: "high",
-      available: [{ id: "low", name: "low" }, { id: "high", name: "high" }],
-    });
+    expect(events.find((e) => e.kind === "agent_efforts" && e.agent === "kimi")).toBeUndefined();
 
     await cp.setEffort("kimi", "low");
-    expect(created?.setConfigOptions).toContainEqual({ configId: "thinking", value: "disabled" });
-    expect(events.filter((e) => e.kind === "agent_efforts" && e.agent === "kimi").at(-1)).toMatchObject({
-      current: "low",
-      available: [{ id: "low", name: "low" }, { id: "high", name: "high" }],
-    });
+    expect(created?.setConfigOptions).toEqual([]); // deprecated: no setConfigOption("thinking")
+    expect(events.some((e) => e.kind === "agent_efforts" && e.agent === "kimi")).toBe(false);
   } finally {
     await cp.stop();
     await rm(root, { recursive: true, force: true });
