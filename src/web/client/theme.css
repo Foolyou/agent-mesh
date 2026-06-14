@@ -18,6 +18,9 @@
   --bad: #f0584b; /* dead */
   --off: #5a6068; /* stopped */
   --info: #5ac8e0; /* mail / interactive hint */
+  --good: #6cd39a; /* syntax: strings */
+  --accent: #b9a3f0; /* thinking / compacting accent */
+  --focus: #5ac8e0; /* focus ring */
   --sel-bg: #e4e6e1;
   --sel-fg: #0a0b0d;
   /* Latin first (the terminal look), then quality CJK faces — per-glyph fallback gives
@@ -399,7 +402,11 @@ body::after {
   transform: translateY(1px);
 }
 .btn:disabled {
-  opacity: 0.35;
+  /* Disabled affordance WITHOUT opacity: opacity fades dark text toward a light surface
+     and collapses contrast below the 3.0 usability floor on light themes. Use the muted
+     fg-faint text role (still ≥4.5) + a dimmed border + not-allowed cursor instead. */
+  color: var(--fg-faint);
+  border-color: var(--line);
   cursor: not-allowed;
 }
 .btn.go:hover {
@@ -472,7 +479,7 @@ body::after {
   }
 }
 .jump-bottom:focus-visible {
-  outline: 2px solid var(--info);
+  outline: 2px solid var(--focus);
   outline-offset: 2px;
 }
 .virtual-transcript-loading {
@@ -562,7 +569,7 @@ body::after {
   text-underline-offset: 2px;
 }
 .mail-expand-btn:focus-visible {
-  outline: 2px solid var(--info);
+  outline: 2px solid var(--focus);
   outline-offset: 2px;
   border-radius: 3px;
 }
@@ -817,7 +824,9 @@ body::after {
   color: var(--fg-dim);
 }
 .tool .badge.pending {
-  color: var(--off);
+  /* a word badge needs a text-tier color: --off is the dot/indicator role (3.0 only) and
+     fails AA as text, so use the AA-tuned muted text role for the same muted look. */
+  color: var(--fg-faint);
 }
 .tool .badge.in_progress {
   color: var(--warn);
@@ -851,8 +860,9 @@ body::after {
   overflow: auto;
 }
 .msg .who .t {
+  /* fg-faint is already the AA-tuned "faint" text role; an extra opacity would drop the
+     timestamp below 4.5 (caught by the rendered a11y crawler), so keep it at full alpha. */
   color: var(--fg-faint);
-  opacity: 0.7;
 }
 
 /* ── plan card ─────────────────────────────────────────────────────────── */
@@ -966,7 +976,9 @@ body::after {
   line-height: 1;
 }
 .queue-nav-btn:disabled {
-  opacity: 0.35;
+  /* see .btn:disabled — muted fg-faint instead of contrast-collapsing opacity */
+  color: var(--fg-faint);
+  border-color: var(--line);
   cursor: not-allowed;
 }
 .queue-remove-btn {
@@ -1036,11 +1048,15 @@ body::after {
   display: none;
 }
 .compose-interrupt:disabled {
-  opacity: 0.35;
+  /* neutralize the bad-tinted bg too so muted grey text reads cleanly as disabled */
+  color: var(--fg-faint);
+  border-color: var(--line);
+  background: var(--bg-inset);
   cursor: not-allowed;
 }
 .attach-btn:disabled {
-  opacity: 0.35;
+  color: var(--fg-faint);
+  border-color: var(--line);
   cursor: not-allowed;
 }
 .attach-strip,
@@ -1242,7 +1258,10 @@ body::after {
   color: var(--fg-faint);
 }
 .composer.disabled {
-  opacity: 0.5;
+  /* inactive composer: signal via inset fill + not-allowed cursor rather than an opacity
+     fade that would drop the inner text/placeholder below the usability floor. */
+  background: var(--bg-inset);
+  cursor: not-allowed;
 }
 
 /* ── timelines ─────────────────────────────────────────────────────────── */
@@ -2007,7 +2026,8 @@ select.inp {
   background: rgba(240, 88, 75, 0.08);
 }
 .builder-tab-remove:disabled {
-  opacity: 0.35;
+  /* muted instead of opacity-faded; pointer-events:none keeps it inert */
+  color: var(--fg-faint);
   pointer-events: none;
 }
 .builder-section {

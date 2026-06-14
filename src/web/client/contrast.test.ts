@@ -1,54 +1,50 @@
-// Enforces the WCAG contrast contract for every built-in theme. If someone tweaks a
-// palette color and drops a role pairing below threshold, this fails. The thresholds
-// mirror src/web/a11y-audit.ts (which prints the full table for humans).
+// Enforces the WCAG contrast contract for every built-in theme. The pairing contract
+// (which fg/bg pairs the UI paints + the threshold each must meet) lives in contrast.ts
+// as AUDIT_PAIRS and is shared with the human audit (src/web/a11y-audit.ts), so the gate
+// and the printed table can never drift. AA (4.5 text / 3.0 non-text) is the hard gate;
+// AAA (7:1) is advisory only and never fails here.
 import { test, expect } from "bun:test";
-import { BUILTIN_THEMES } from "./themes";
-import { contrastRatio, hexToRgb, blend, AA_TEXT, UI_COMPONENT } from "./contrast";
+import { BUILTIN_THEMES, THEME_KEYS } from "./themes";
+import { AUDIT_PAIRS, evalPair, FAMILY_THRESHOLD, contrastRatio, AAA_TEXT, type Family } from "./contrast";
 
-const SURFACES = ["bg", "bg-raise", "bg-inset"] as const;
-const TEXT_ROLES = ["fg", "fg-dim", "fg-faint"] as const;
-const STATUS_ROLES = ["ok", "warn", "bad", "info", "off"] as const;
+const GATED_FAMILIES: Family[] = Object.keys(FAMILY_THRESHOLD) as Family[];
 
 for (const theme of BUILTIN_THEMES) {
   const p = theme.palette;
 
-  test(`${theme.name}: every text role meets AA (4.5:1) on every surface`, () => {
-    for (const role of TEXT_ROLES) {
-      for (const surf of SURFACES) {
-        const r = contrastRatio(p[role], p[surf]);
-        expect(r, `${role} on ${surf} = ${r.toFixed(2)}:1`).toBeGreaterThanOrEqual(AA_TEXT);
-      }
+  // Every non-advisory pair in the contract must meet its family threshold. One test
+  // per theme reports the first offender with its id + measured ratio.
+  test(`${theme.name}: all audited pairs meet their WCAG threshold`, () => {
+    for (const pair of AUDIT_PAIRS) {
+      if (pair.advisory) continue;
+      const r = evalPair(pair, p);
+      expect(r.pass, `${pair.id} = ${r.ratio.toFixed(2)}:1 (need ${r.need}, ${pair.family})`).toBe(true);
     }
-  });
-
-  test(`${theme.name}: text on the inverted selection surface meets AA`, () => {
-    const r = contrastRatio(p["sel-fg"], p["sel-bg"]);
-    expect(r, `sel-fg on sel-bg = ${r.toFixed(2)}:1`).toBeGreaterThanOrEqual(AA_TEXT);
-  });
-
-  test(`${theme.name}: status indicators + control borders meet non-text 3:1`, () => {
-    for (const role of STATUS_ROLES) {
-      const r = contrastRatio(p[role], p["bg"]);
-      expect(r, `${role} on bg = ${r.toFixed(2)}:1`).toBeGreaterThanOrEqual(UI_COMPONENT);
-    }
-    // control/divider border must be perceivable on the darkest AND the raised surface
-    for (const surf of ["bg", "bg-raise"] as const) {
-      const r = contrastRatio(p["line-bright"], p[surf]);
-      expect(r, `line-bright on ${surf} = ${r.toFixed(2)}:1`).toBeGreaterThanOrEqual(UI_COMPONENT);
-    }
-  });
-
-  test(`${theme.name}: markdown link info role meets AA on transcript surfaces`, () => {
-    for (const surf of ["bg-inset", "bg-raise"] as const) {
-      const r = contrastRatio(p.info, p[surf]);
-      expect(r, `info on ${surf} = ${r.toFixed(2)}:1`).toBeGreaterThanOrEqual(AA_TEXT);
-    }
-  });
-
-  test(`${theme.name}: the subtle hover wash keeps fg-dim readable`, () => {
-    // .mrow:hover paints rgba(255,255,255,0.03) over bg; secondary text must survive it.
-    const washed = blend({ r: 255, g: 255, b: 255 }, 0.03, hexToRgb(p["bg"]));
-    const r = contrastRatio(hexToRgb(p["fg-dim"]), washed);
-    expect(r, `fg-dim on hover-wash = ${r.toFixed(2)}:1`).toBeGreaterThanOrEqual(AA_TEXT);
   });
 }
+
+// The contract must actually exercise every gated family on a representative theme, so a
+// future refactor can't silently drop a whole role family from coverage.
+test("contract covers every gated role family", () => {
+  const covered = new Set(AUDIT_PAIRS.map((pr) => pr.family));
+  for (const fam of GATED_FAMILIES) expect(covered.has(fam), `family "${fam}" has no audited pairs`).toBe(true);
+});
+
+// The new first-class tokens (good/accent/focus) must be part of every palette so the
+// audit can reach them — guards against re-introducing a bare, unthemed var(--accent).
+test("good/accent/focus are first-class palette tokens", () => {
+  for (const k of ["good", "accent", "focus"] as const) expect(THEME_KEYS).toContain(k);
+  for (const theme of BUILTIN_THEMES)
+    for (const k of ["good", "accent", "focus"] as const)
+      expect((theme.palette as any)[k], `${theme.name}.${k}`).toMatch(/^#[0-9a-fA-F]{6}$/);
+});
+
+// AAA is advisory: we don't fail on it, but we DO assert primary body text clears AAA on
+// every surface in every theme — that's a deliberate quality bar, not a stretch goal.
+test("primary text (fg) clears AAA on every surface in every theme", () => {
+  for (const theme of BUILTIN_THEMES)
+    for (const surf of ["bg", "bg-raise", "bg-inset"] as const) {
+      const r = contrastRatio(theme.palette.fg, theme.palette[surf]);
+      expect(r, `${theme.name}: fg on ${surf} = ${r.toFixed(2)}:1`).toBeGreaterThanOrEqual(AAA_TEXT);
+    }
+});
