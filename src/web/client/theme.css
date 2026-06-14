@@ -2383,7 +2383,22 @@ legend.builder-section-head {
   font-size: 10px;
 }
 .start-session-sel {
+  /* Base select styling formerly inherited from .mode-sel; kept self-contained so the
+     start-strategy picker no longer shares the runtime mode-picker class. */
+  font: inherit;
+  font-size: 11px;
+  color: var(--fg-dim);
+  background: var(--bg-inset);
+  border: 1px solid var(--line-bright);
+  border-radius: var(--r);
+  padding: 1px 6px;
+  cursor: pointer;
+  outline: none;
   max-width: 158px;
+}
+.start-session-sel:hover {
+  color: var(--fg);
+  border-color: var(--fg-faint);
 }
 .split {
   display: grid;
