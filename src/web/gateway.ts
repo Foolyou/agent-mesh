@@ -74,7 +74,9 @@ export interface AssistantLike {
 const CAP = 500; // ring-buffer cap for activity / mail / history
 const TR_CAP = 1000; // per-conversation transcript cap
 const QUEUE_ITEM_CAP = 50; // keep queue WS payload bounded; count remains authoritative
-export const MAX_SNAPSHOT_TRANSCRIPT_ITEMS = 500;
+export const MAX_SNAPSHOT_TRANSCRIPT_ITEMS = 0;
+export const DEFAULT_BACKFILL_LIMIT = 100;
+export const MAX_BACKFILL_LIMIT = 500;
 
 function cap<T>(arr: T[], n: number): T[] {
   return arr.length > n ? arr.slice(arr.length - n) : arr;
@@ -200,10 +202,7 @@ export class WebGateway {
     const snapshot = structuredClone(this.state);
     for (const pm of Object.values(snapshot.perMesh)) {
       for (const [agent, transcript] of Object.entries(pm.transcripts)) {
-        const full = transcript.items;
-        const hasMore = full.length > MAX_SNAPSHOT_TRANSCRIPT_ITEMS;
-        const items = hasMore ? full.slice(full.length - MAX_SNAPSHOT_TRANSCRIPT_ITEMS) : full;
-        pm.transcripts[agent] = transcriptSnapshot(items, hasMore);
+        pm.transcripts[agent] = transcriptSnapshot([], transcript.items.length > 0 || transcript.hasMore);
       }
     }
     return snapshot;

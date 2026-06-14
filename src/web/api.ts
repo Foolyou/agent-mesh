@@ -2,7 +2,7 @@
 // (method, path, body) and returns { status, body }. server.ts adapts Bun requests
 // to this; tests drive it directly without a socket.
 import { validateMeshConfig } from "../mesh-validate";
-import type { WebGateway } from "./gateway";
+import { DEFAULT_BACKFILL_LIMIT, MAX_BACKFILL_LIMIT, type WebGateway } from "./gateway";
 import type { AgentConfig, MeshConfig, MeshEdge, PromptImageRef } from "../acp/types";
 import type { StartMeshOptions } from "../mesh-manager";
 import type { UploadFileLike } from "./uploads";
@@ -268,8 +268,8 @@ export async function handleApi(
       // GET /api/meshes/:name/agents/:id/transcript?before=<item-id>&limit=<n>
       if (method === "GET" && p.length === 5 && p[2] === "agents" && p[4] === "transcript") {
         const rawLimit = query.get("limit");
-        const limit = rawLimit == null || rawLimit === "" ? 100 : Number.parseInt(rawLimit, 10);
-        if (!Number.isFinite(limit) || limit > 500) return fail(400, "limit must be between 1 and 500");
+        const limit = rawLimit == null || rawLimit === "" ? DEFAULT_BACKFILL_LIMIT : Number.parseInt(rawLimit, 10);
+        if (!Number.isFinite(limit) || limit > MAX_BACKFILL_LIMIT) return fail(400, `limit must be between 1 and ${MAX_BACKFILL_LIMIT}`);
         const clamped = Math.max(1, limit);
         const result = gw.getOlderTranscriptItems(name, str(p[3]), query.get("before") ?? undefined, clamped);
         if (!result) return fail(404, "transcript not found");

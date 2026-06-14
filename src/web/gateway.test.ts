@@ -85,7 +85,7 @@ function fakeManager() {
 }
 
 function transcriptItems(gw: WebGateway, agent: string) {
-  return gw.snapshot().perMesh.demo.transcripts[agent]?.items ?? [];
+  return gw.getOlderTranscriptItems("demo", agent, undefined, 1000)?.items ?? [];
 }
 
 test("snapshot includes meshes with composed agent rows", () => {
@@ -165,7 +165,7 @@ test("compact events fold into transcript and activity", () => {
   expect(got.some((x) => x.t === "activity" && x.entry.kind === "compact")).toBe(true);
 });
 
-test("snapshot truncates long agent transcripts to the latest tail with cursor metadata", () => {
+test("snapshot omits agent transcript items and advertises lazy backfill", () => {
   const m = fakeManager();
   const gw = new WebGateway(m as any);
 
@@ -174,10 +174,10 @@ test("snapshot truncates long agent transcripts to the latest tail with cursor m
   }
 
   const transcript = gw.snapshot().perMesh.demo.transcripts["codex-1"];
-  expect(transcript.items).toHaveLength(MAX_SNAPSHOT_TRANSCRIPT_ITEMS);
+  expect(MAX_SNAPSHOT_TRANSCRIPT_ITEMS).toBe(0);
+  expect(transcript.items).toHaveLength(0);
   expect(transcript.hasMore).toBe(true);
-  expect(transcript.items[0]).toMatchObject({ kind: "compact", reason: "r20" });
-  expect(transcript.oldestSeq).toBe(transcript.items[0].id);
+  expect(transcript.oldestSeq).toBeUndefined();
 });
 
 test("near-limit and silent-stop events update self-awareness state", () => {
@@ -392,7 +392,7 @@ test("turn queued updates queue summary and turn started folds into transcript",
   } as any);
   s = gw.snapshot();
   expect(s.perMesh.demo.queues["codex-1"]?.count ?? 0).toBe(0);
-  expect((s.perMesh.demo.transcripts["codex-1"]?.items ?? []).some((i: any) => i.kind === "message" && i.role === "user" && i.text === "please review **this**")).toBe(true);
+  expect(transcriptItems(gw, "codex-1").some((i: any) => i.kind === "message" && i.role === "user" && i.text === "please review **this**")).toBe(true);
 });
 
 test("queue summary includes browsable items with source metadata in queue order", () => {
@@ -541,7 +541,7 @@ test("mail turn consumed clears the queue and folds the mail as read context", (
   expect(s.perMesh.demo.queues["codex-1"]?.count ?? 0).toBe(0);
   expect(got.some((x) => x.t === "agent.queue" && x.agent === "codex-1" && x.summary.count === 0)).toBe(true);
   // The mail entered the agent's context via check_mail, so it must appear in the transcript exactly once.
-  expect((s.perMesh.demo.transcripts["codex-1"]?.items ?? []).filter((i: any) => i.kind === "mail" && i.from === "router" && i.body === "ping")).toHaveLength(1);
+  expect(transcriptItems(gw, "codex-1").filter((i: any) => i.kind === "mail" && i.from === "router" && i.body === "ping")).toHaveLength(1);
 });
 
 test("removeQueuedTurn delegates only for queued operator turns", () => {

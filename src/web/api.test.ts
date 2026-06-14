@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { handleApi } from "./api";
-import { MAX_SNAPSHOT_TRANSCRIPT_ITEMS, WebGateway } from "./gateway";
+import { DEFAULT_BACKFILL_LIMIT, MAX_SNAPSHOT_TRANSCRIPT_ITEMS, WebGateway } from "./gateway";
 import { artifactAgentDir } from "./artifacts";
 import type { MeshEvent, MeshConfig } from "../acp/types";
 import { HarnessInstallError, resetHarnessInstallJobsForTests, startHarnessInstall } from "../harness-install";
@@ -425,19 +425,31 @@ test("GET /api/meshes/:mesh/agents/:agent/transcript backfills older transcript 
   const snap = gw.snapshot().perMesh.demo.transcripts["codex-1"];
   expect(snap.items).toHaveLength(MAX_SNAPSHOT_TRANSCRIPT_ITEMS);
   expect(snap.hasMore).toBe(true);
-  expect(snap.items[0]).toMatchObject({ reason: "r500" });
+  expect(snap.oldestSeq).toBeUndefined();
+
+  const tail = await handleApi(
+    gw,
+    "GET",
+    "/api/meshes/demo/agents/codex-1/transcript",
+    undefined,
+  );
+  expect(tail.status).toBe(200);
+  expect(tail.body.items).toHaveLength(DEFAULT_BACKFILL_LIMIT);
+  expect(tail.body.items[0]).toMatchObject({ reason: "r900" });
+  expect(tail.body.items.at(-1)).toMatchObject({ reason: "r999" });
+  expect(tail.body.hasMore).toBe(true);
 
   const first = await handleApi(
     gw,
     "GET",
     "/api/meshes/demo/agents/codex-1/transcript",
     undefined,
-    new URLSearchParams({ before: snap.oldestSeq!, limit: "100" }),
+    new URLSearchParams({ before: tail.body.items[0].id, limit: "100" }),
   );
   expect(first.status).toBe(200);
   expect(first.body.items).toHaveLength(100);
-  expect(first.body.items[0]).toMatchObject({ reason: "r400" });
-  expect(first.body.items.at(-1)).toMatchObject({ reason: "r499" });
+  expect(first.body.items[0]).toMatchObject({ reason: "r800" });
+  expect(first.body.items.at(-1)).toMatchObject({ reason: "r899" });
   expect(first.body.hasMore).toBe(true);
 
   const second = await handleApi(
@@ -449,8 +461,8 @@ test("GET /api/meshes/:mesh/agents/:agent/transcript backfills older transcript 
   );
   expect(second.status).toBe(200);
   expect(second.body.items).toHaveLength(100);
-  expect(second.body.items[0]).toMatchObject({ reason: "r300" });
-  expect(second.body.items.at(-1)).toMatchObject({ reason: "r399" });
+  expect(second.body.items[0]).toMatchObject({ reason: "r700" });
+  expect(second.body.items.at(-1)).toMatchObject({ reason: "r799" });
   expect(second.body.hasMore).toBe(true);
 });
 
