@@ -76,8 +76,8 @@ test("setAgentEffort forwards runtime-only advertised values without persisting 
 
   expect(calls).toEqual([{ agent: "r", effort: "max" }]);
   expect(mgr.configOf("echo").agents[0].effort).toBeUndefined();
-  // runtime-only: forwarded live, never persisted, host can only accept (not apply)
-  expect(result).toEqual({ saved: false, applied: true, ackStatus: "accepted_by_host" });
+  // runtime-only: forwarded live, never persisted; host can only accept (not apply)
+  expect(result).toEqual({ saved: false, applied: false, ackStatus: "accepted_by_host" });
 });
 
 
@@ -184,7 +184,8 @@ test("setModel reports accepted_by_host (model writes are not tracked by ACP)", 
     setModel: () => Promise.resolve({ status: "accepted_by_host" }),
   };
   const result = await mgr.setModel("echo", "r", "test-model");
-  expect(result).toEqual({ saved: true, applied: true, ackStatus: "accepted_by_host" });
+  // accepted_by_host is NOT applied: ACP does not confirm raw model writes
+  expect(result).toEqual({ saved: true, applied: false, ackStatus: "accepted_by_host" });
 });
 
 test("a live apply failure is surfaced but the desired value stays persisted", async () => {

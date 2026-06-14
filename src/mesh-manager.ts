@@ -322,7 +322,9 @@ export class MeshManager {
     if (!send) return { saved, applied: false };
     try {
       const ack = await send();
-      return { saved, applied: true, ackStatus: ack.status };
+      // Only an ACP-confirmed apply (setSessionMode) counts as applied. Model/effort are raw
+      // config writes the host can only accept, so they report applied:false + accepted_by_host.
+      return { saved, applied: ack.status === "applied_by_acp", ackStatus: ack.status };
     } catch (err: any) {
       return { saved, applied: false, error: String(err?.message ?? err) };
     }

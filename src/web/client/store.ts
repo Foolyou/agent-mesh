@@ -289,12 +289,18 @@ export function createStore(): Store {
     return p.then(
       (result) => {
         if (result?.error) {
-          // desired was persisted (or attempted) but the live apply failed — never a plain success
-          pushToast("error", `${label}: saved, but live apply failed — ${result.error}`);
-        } else if (result?.applied && result.ackStatus === "accepted_by_host") {
-          pushToast("info", `${label}: accepted (apply not confirmed)`);
-        } else if (result?.applied) {
+          // Live apply failed — never a plain success. Only claim "saved" when the desired value
+          // was actually persisted (runtime-only effort writes nothing, so saved:false there).
+          pushToast(
+            "error",
+            result.saved
+              ? `${label}: saved, but live apply failed — ${result.error}`
+              : `${label}: live apply failed — ${result.error}`,
+          );
+        } else if (result?.ackStatus === "applied_by_acp") {
           pushToast("info", `${label}: applied`);
+        } else if (result?.ackStatus === "accepted_by_host") {
+          pushToast("info", `${label}: accepted (apply not confirmed)`);
         } else if (result?.saved) {
           pushToast("info", `${label}: saved — applies on next start`);
         }

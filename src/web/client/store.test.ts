@@ -706,7 +706,8 @@ test("setMode applied_by_acp surfaces an 'applied' info toast", async () => {
 });
 
 test("setModel accepted_by_host surfaces an 'accepted (apply not confirmed)' toast", async () => {
-  const toasts = await mutationToast({ saved: true, applied: true, ackStatus: "accepted_by_host" }, (s) =>
+  // accepted_by_host is reported as applied:false; the toast keys off ackStatus, not applied
+  const toasts = await mutationToast({ saved: true, applied: false, ackStatus: "accepted_by_host" }, (s) =>
     s.setModel("demo", "codex-1", "kimi-k2"));
   expect(toasts).toContainEqual(expect.objectContaining({ kind: "info", text: expect.stringContaining("accepted (apply not confirmed)") }));
 });
@@ -720,7 +721,16 @@ test("a stopped mesh's saved-without-apply surfaces a 'next start' toast", async
 test("a live-apply failure surfaces an error toast WITHOUT pretending success", async () => {
   const toasts = await mutationToast({ saved: true, applied: false, error: "host exploded" }, (s) =>
     s.setMode("demo", "codex-1", "plan"));
-  expect(toasts).toContainEqual(expect.objectContaining({ kind: "error", text: expect.stringContaining("live apply failed — host exploded") }));
+  expect(toasts).toContainEqual(expect.objectContaining({ kind: "error", text: expect.stringContaining("saved, but live apply failed — host exploded") }));
+  expect(toasts.some((t) => t.kind === "info")).toBe(false);
+});
+
+test("a runtime-only effort failure (saved:false) does NOT claim 'saved'", async () => {
+  const toasts = await mutationToast({ saved: false, applied: false, error: "runtime rejected" }, (s) =>
+    s.setEffort("demo", "codex-1", "max"));
+  const err = toasts.find((t) => t.kind === "error");
+  expect(err?.text).toContain("live apply failed — runtime rejected");
+  expect(err?.text).not.toContain("saved"); // nothing was persisted, so don't imply it was
   expect(toasts.some((t) => t.kind === "info")).toBe(false);
 });
 
