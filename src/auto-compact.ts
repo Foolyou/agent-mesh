@@ -1,4 +1,4 @@
-export const DEFAULT_AUTO_COMPACT_SETTINGS = { enabled: true, threshold: "90%" } as const;
+export const DEFAULT_AUTO_COMPACT_SETTINGS = { enabled: true, threshold: "85%" } as const;
 export const MIN_AUTO_COMPACT_CONTEXT_WINDOW = 80_000;
 
 export type CompactThreshold =

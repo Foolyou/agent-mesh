@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
 import { DEFAULT_AUTO_COMPACT_SETTINGS, MIN_AUTO_COMPACT_CONTEXT_WINDOW, evaluateCompactThreshold, parseCompactThreshold } from "./auto-compact";
 
-test("default auto compact settings match Zed threshold parity", () => {
-  expect(DEFAULT_AUTO_COMPACT_SETTINGS).toEqual({ enabled: true, threshold: "90%" });
+test("default auto compact settings enable compaction at 85%", () => {
+  expect(DEFAULT_AUTO_COMPACT_SETTINGS).toEqual({ enabled: true, threshold: "85%" });
   expect(MIN_AUTO_COMPACT_CONTEXT_WINDOW).toBe(80_000);
 });
 
