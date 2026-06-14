@@ -146,6 +146,13 @@ export type MeshEvent =
   | { kind: "compact_completed"; agent: AgentId; ts: number }
   | { kind: "compact_failed"; agent: AgentId; error: string; ts: number }
   | { kind: "near_context_limit_no_compact"; agent: AgentId; usagePercent: number; ts: number }
+  // Brackets a loadSession() history replay: the harness re-emits the whole session as a
+  // flood of session/update events. The gateway folds them into state but suppresses the
+  // per-item broadcast so reattached WS clients learn the result from the snapshot instead
+  // of a one-by-one upsert storm. Pairing is replay-safe: the ring buffer evicts oldest
+  // first, so a replayed "started" always carries its later "finished".
+  | { kind: "replay_started"; agent: AgentId; ts: string }
+  | { kind: "replay_finished"; agent: AgentId; ts: string }
   | { kind: "mail"; from: AgentId; to: AgentId; body: string; ts: string; id?: string }
   | { kind: "steer"; from: AgentId | "operator"; to: AgentId; body: string; ts: string }
   | {

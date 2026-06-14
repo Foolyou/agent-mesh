@@ -1022,11 +1022,17 @@ export class ControlPlane {
       let loaded = false;
       let session: unknown;
       if (!opts.forceFresh && conn.supportsLoadSession && saved?.sessionId) {
+        // loadSession replays the whole session as a session/update flood; bracket it so the
+        // gateway folds the history into state without fanning out a per-item upsert storm to
+        // reattached WS clients. finally guarantees the flag clears even if the resume throws.
+        this.emit({ kind: "replay_started", agent: a.id, ts: now() });
         try {
           session = await conn.loadSession(saved.sessionId, saved.cwd, mcpServers);
           loaded = true;
         } catch (err) {
           this.log(`resume ${a.id} failed: ${String(err)}; starting fresh`);
+        } finally {
+          this.emit({ kind: "replay_finished", agent: a.id, ts: now() });
         }
       }
       if (!session) {

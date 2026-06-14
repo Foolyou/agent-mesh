@@ -472,6 +472,14 @@ export class WebGateway {
         this.publishSelfAwareness(name, e.agent);
         break;
       }
+      case "replay_started": {
+        this.beginInitialReplay(name, e.agent);
+        break;
+      }
+      case "replay_finished": {
+        this.endInitialReplay(name, e.agent);
+        break;
+      }
       case "silent_task_complete": {
         const current = pm.selfAwareness[e.agent]?.silentTaskCompletes ?? { count: 0, lastAt: null };
         pm.selfAwareness[e.agent] = { ...(pm.selfAwareness[e.agent] ?? {}), silentTaskCompletes: { count: current.count + 1, lastAt: e.ts } };

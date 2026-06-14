@@ -147,6 +147,40 @@ test("initial replay folds transcript state without broadcasting transcript ops 
   expect(got.some((x) => x.t === "transcript.patch" && x.conv.agent === "codex-1")).toBe(true);
 });
 
+test("replay_started/replay_finished events drive transcript suppression end-to-end", () => {
+  const m = fakeManager();
+  const gw = new WebGateway(m as any);
+  const got: any[] = [];
+  gw.subscribe((msg) => got.push(msg));
+
+  // The control-plane brackets a loadSession history replay with these events; the gateway
+  // must fold the flood into state but suppress the per-item fan-out to WS clients.
+  m.emit("demo", { kind: "replay_started", agent: "codex-1", ts: "T0" });
+  for (let i = 0; i < 5; i++) {
+    m.emit("demo", {
+      kind: "update",
+      agent: "codex-1",
+      update: { sessionUpdate: "agent_message_chunk", content: { text: `history ${i}` } } as any,
+      ts: `T${i}`,
+    });
+  }
+
+  // History reduced into state (chunks concatenate into the message), but zero transcript ops
+  // fanned out during the replay window.
+  expect(transcriptItems(gw, "codex-1").some((i: any) => i.kind === "message" && i.text?.includes("history 4"))).toBe(true);
+  expect(got.some((x) => (x.t === "transcript.upsert" || x.t === "transcript.patch") && x.conv?.agent === "codex-1")).toBe(false);
+
+  // After the replay ends, a live update fans out normally.
+  m.emit("demo", { kind: "replay_finished", agent: "codex-1", ts: "T9" });
+  m.emit("demo", {
+    kind: "update",
+    agent: "codex-1",
+    update: { sessionUpdate: "user_message_chunk", content: { text: "live prompt" } } as any,
+    ts: "T10",
+  });
+  expect(got.some((x) => x.t === "transcript.upsert" && x.conv.agent === "codex-1")).toBe(true);
+});
+
 test("usage_update aggregates per-agent usage without entering transcript", () => {
   const m = fakeManager();
   const gw = new WebGateway(m as any);
