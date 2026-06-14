@@ -41,6 +41,7 @@ try {
   await step("stopped mesh shows NO mode picker", async () => {
     if (await page.locator(".mode-sel").count()) throw new Error("mode picker visible before the mesh is running");
     if (await page.locator(".model-sel").count()) throw new Error("model picker visible before the mesh is running");
+    if (await page.locator(".effort-sel").count()) throw new Error("effort picker visible before the mesh is running");
   });
 
   await step("start mesh → member tab shows the advertised modes", async () => {
