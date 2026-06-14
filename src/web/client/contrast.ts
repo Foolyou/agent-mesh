@@ -83,7 +83,7 @@ export type Family =
   | "syntax" // code syntax-highlight token on the code (inset) surface — AA 4.5
   | "border" // control / divider border that must be perceivable — non-text 3.0
   | "tinted-text" // text sitting on a translucent status-tinted panel — AA 4.5
-  | "disabled"; // disabled control text — advisory usability floor, sub-AA but legible
+  | "disabled"; // disabled control text — HARD 3.0 usability floor (perceptible, not faded out)
 
 export const FAMILY_THRESHOLD: Record<Family, number> = {
   text: AA_TEXT,
@@ -94,7 +94,7 @@ export const FAMILY_THRESHOLD: Record<Family, number> = {
   syntax: AA_TEXT,
   border: UI_COMPONENT,
   "tinted-text": AA_TEXT,
-  disabled: 3.0, // usability floor: below AA on purpose, but must stay perceptible
+  disabled: UI_COMPONENT, // hard 3.0 usability floor: WCAG exempts disabled, but prdmgr requires perceptibility
 };
 
 export interface AuditPair {
@@ -179,11 +179,13 @@ function buildPairs(): AuditPair[] {
   for (const bg of ["bg", "bg-raise"] as ThemeVar[])
     pairs.push({ id: `border:line-bright/${bg}`, family: "border", fg: "line-bright", bg, note: `control border on ${surfaceLabel[bg]} surface` });
 
-  // 9. Disabled controls (.btn:disabled etc. drop to opacity ~0.35) — an ADVISORY
-  //    usability floor: intentionally below AA (the control reads as inert) but it must
-  //    stay perceptible. Reported, never gated. Model the faded text as fg-dim composited
-  //    at 35% over the base surface.
-  pairs.push({ id: "disabled:control", family: "disabled", fg: { mix: "fg-dim", pct: 35, over: "bg" }, bg: "bg", advisory: true, note: "disabled control label (opacity ~0.35)" });
+  // 9. Disabled controls — a HARD 3.0 usability floor (prdmgr requirement; WCAG 1.4.3
+  //    technically exempts disabled controls). Disabled text uses the muted --fg-faint
+  //    role, NOT an opacity fade: opacity collapses dark-on-light text below 3.0 on light
+  //    themes (~1.8:1 at 0.35), so theme.css disables via explicit fg-faint + dimmed
+  //    border + not-allowed cursor instead. Gated on every surface a control can sit on.
+  for (const bg of SURFACES)
+    pairs.push({ id: `disabled:${bg}`, family: "disabled", fg: "fg-faint", bg, note: `disabled control label on ${surfaceLabel[bg]} surface` });
 
   return pairs;
 }

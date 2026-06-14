@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { BUILTIN_THEMES, THEME_KEYS, isPalette, migratePalette, themeByName } from "./themes";
+import { BUILTIN_THEMES, THEME_KEYS, isPalette, isHexColor, migratePalette, themeByName } from "./themes";
 
 test("every built-in theme defines all keys as valid hex colors", () => {
   expect(BUILTIN_THEMES.length).toBeGreaterThanOrEqual(4);
@@ -58,4 +58,28 @@ test("migratePalette rejects values that are not a palette at all", () => {
   expect(migratePalette(null)).toBeNull();
   expect(migratePalette(42)).toBeNull();
   expect(migratePalette({ nope: 1 })).toBeNull(); // no surfaces/text → not adopted
+});
+
+test("isHexColor accepts #rgb / #rrggbb and rejects arbitrary strings", () => {
+  for (const ok of ["#fff", "#FFFFFF", "#0a0b0d", " #1c1b18 "]) expect(isHexColor(ok)).toBe(true);
+  for (const bad of ["red", "#zzz", "#12", "#1234", "rgb(0,0,0)", "", 42, null, "javascript:alert(1)"])
+    expect(isHexColor(bad as any)).toBe(false);
+});
+
+test("migratePalette defaults malformed token values instead of writing them into CSS vars", () => {
+  const custom: Record<string, unknown> = {};
+  for (const k of THEME_KEYS) custom[k] = (BUILTIN_THEMES[2].palette as any)[k];
+  custom["accent"] = "red"; // not hex
+  custom["focus"] = "#zzzzzz"; // malformed hex
+  custom["good"] = "url(evil)"; // arbitrary string
+  const m = migratePalette(custom)!;
+  expect(isPalette(m)).toBe(true); // every value is a valid hex
+  expect(m.bg).toBe(BUILTIN_THEMES[2].palette.bg); // valid value preserved
+  expect(m.accent).toBe(BUILTIN_THEMES[0].palette.accent); // malformed → default
+  expect(m.focus).toBe(BUILTIN_THEMES[0].palette.focus);
+  expect(m.good).toBe(BUILTIN_THEMES[0].palette.good);
+});
+
+test("migratePalette rejects an object whose only anchor colors are malformed", () => {
+  expect(migratePalette({ bg: "nope", fg: "alsonope", line: "#fff" })).toBeNull();
 });

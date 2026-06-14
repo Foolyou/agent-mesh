@@ -6,8 +6,9 @@
 //      meets WCAG AA (normal 4.5, large text 3.0). This catches structural bugs the
 //      static palette audit can't: a control that keeps its dark-surface color on the
 //      inverted (light) selection row (the start-button bug), a badge using the wrong
-//      token, status words rendered too light, etc. Disabled controls fall to an advisory
-//      3.0 usability floor. Reviewed exceptions are explicit and logged.
+//      token, status words rendered too light, etc. Disabled controls are held to a HARD
+//      3.0 usability floor (same threshold the static contract gates). Reviewed exceptions
+//      are explicit and logged.
 //   2. DIRECTED — a handful of non-text / SVG / focus checks the crawler can't see from
 //      text color alone (canvas window border, idle + active canvas edge strokes).
 //

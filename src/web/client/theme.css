@@ -402,7 +402,11 @@ body::after {
   transform: translateY(1px);
 }
 .btn:disabled {
-  opacity: 0.35;
+  /* Disabled affordance WITHOUT opacity: opacity fades dark text toward a light surface
+     and collapses contrast below the 3.0 usability floor on light themes. Use the muted
+     fg-faint text role (still ≥4.5) + a dimmed border + not-allowed cursor instead. */
+  color: var(--fg-faint);
+  border-color: var(--line);
   cursor: not-allowed;
 }
 .btn.go:hover {
@@ -475,7 +479,7 @@ body::after {
   }
 }
 .jump-bottom:focus-visible {
-  outline: 2px solid var(--info);
+  outline: 2px solid var(--focus);
   outline-offset: 2px;
 }
 .virtual-transcript-loading {
@@ -565,7 +569,7 @@ body::after {
   text-underline-offset: 2px;
 }
 .mail-expand-btn:focus-visible {
-  outline: 2px solid var(--info);
+  outline: 2px solid var(--focus);
   outline-offset: 2px;
   border-radius: 3px;
 }
@@ -972,7 +976,9 @@ body::after {
   line-height: 1;
 }
 .queue-nav-btn:disabled {
-  opacity: 0.35;
+  /* see .btn:disabled — muted fg-faint instead of contrast-collapsing opacity */
+  color: var(--fg-faint);
+  border-color: var(--line);
   cursor: not-allowed;
 }
 .queue-remove-btn {
@@ -1042,11 +1048,15 @@ body::after {
   display: none;
 }
 .compose-interrupt:disabled {
-  opacity: 0.35;
+  /* neutralize the bad-tinted bg too so muted grey text reads cleanly as disabled */
+  color: var(--fg-faint);
+  border-color: var(--line);
+  background: var(--bg-inset);
   cursor: not-allowed;
 }
 .attach-btn:disabled {
-  opacity: 0.35;
+  color: var(--fg-faint);
+  border-color: var(--line);
   cursor: not-allowed;
 }
 .attach-strip,
@@ -1248,7 +1258,10 @@ body::after {
   color: var(--fg-faint);
 }
 .composer.disabled {
-  opacity: 0.5;
+  /* inactive composer: signal via inset fill + not-allowed cursor rather than an opacity
+     fade that would drop the inner text/placeholder below the usability floor. */
+  background: var(--bg-inset);
+  cursor: not-allowed;
 }
 
 /* ── timelines ─────────────────────────────────────────────────────────── */
@@ -2013,7 +2026,8 @@ select.inp {
   background: rgba(240, 88, 75, 0.08);
 }
 .builder-tab-remove:disabled {
-  opacity: 0.35;
+  /* muted instead of opacity-faded; pointer-events:none keeps it inert */
+  color: var(--fg-faint);
   pointer-events: none;
 }
 .builder-section {

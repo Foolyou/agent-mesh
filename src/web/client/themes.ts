@@ -237,16 +237,22 @@ export const BUILTIN_THEMES: Theme[] = [
 const ACTIVE_KEY = "mesh.theme";
 const CUSTOM_KEY = "mesh.theme.custom";
 
+/** A CSS hex color: #rgb or #rrggbb. We only ever write hex into the theme CSS vars, so
+ *  this is the validation boundary for stored / imported palette values. */
+export const HEX_RE = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
+export const isHexColor = (v: unknown): v is string => typeof v === "string" && HEX_RE.test(v.trim());
+
 export function isPalette(v: unknown): v is Palette {
-  return !!v && typeof v === "object" && THEME_KEYS.every((k) => typeof (v as any)[k] === "string");
+  return !!v && typeof v === "object" && THEME_KEYS.every((k) => isHexColor((v as any)[k]));
 }
 
-/** Forward-migrate a possibly-stale stored palette: a custom palette saved before a
- *  token was introduced (e.g. good/accent/focus) is missing keys. Rather than reject
- *  it (which would snap the user back to the default theme and lose their colors), we
- *  fill every missing token from the default preset so the palette stays complete and
- *  the app never crashes on an out-of-date localStorage value. Returns null only when
- *  the input is not a usable object at all. */
+/** Forward-migrate AND sanitize a possibly-stale / untrusted stored palette. A custom
+ *  palette saved before a token was introduced (e.g. good/accent/focus) is missing keys;
+ *  an imported / hand-edited one may carry malformed or arbitrary values. For every token
+ *  we keep the stored value ONLY if it is a valid hex color, otherwise fall back to the
+ *  default preset — so the result is always a complete, all-hex palette and we never push
+ *  an arbitrary string into a CSS var. Returns null only when the input isn't a palette at
+ *  all (not an object, or carries neither a valid bg nor fg to anchor on). */
 export function migratePalette(v: unknown): Palette | null {
   if (!v || typeof v !== "object") return null;
   const src = v as Record<string, unknown>;
@@ -254,16 +260,15 @@ export function migratePalette(v: unknown): Palette | null {
   let filledAny = false;
   const out = {} as Palette;
   for (const k of THEME_KEYS) {
-    const val = src[k];
-    if (typeof val === "string") out[k] = val;
+    if (isHexColor(src[k])) out[k] = (src[k] as string).trim();
     else {
       out[k] = base[k];
       filledAny = true;
     }
   }
-  // require at least the legacy core to have been present — a totally unrelated object
-  // (no surfaces/text at all) is not a palette we should silently adopt.
-  if (filledAny && typeof src["bg"] !== "string" && typeof src["fg"] !== "string") return null;
+  // a totally unrelated object (no valid surface/text color at all) is not a palette we
+  // should silently adopt — only forgive missing/malformed tokens around a real anchor.
+  if (filledAny && !isHexColor(src["bg"]) && !isHexColor(src["fg"])) return null;
   return out;
 }
 
@@ -291,7 +296,9 @@ export function loadCustomPalette(): Palette {
 
 export function saveCustomPalette(p: Palette): void {
   try {
-    localStorage.setItem(CUSTOM_KEY, JSON.stringify(p));
+    // sanitize at the persistence boundary: any malformed value typed into the editor is
+    // normalized to a valid hex (or the default) before it ever reaches localStorage / CSS.
+    localStorage.setItem(CUSTOM_KEY, JSON.stringify(migratePalette(p) ?? BUILTIN_THEMES[0].palette));
   } catch {
     /* unavailable */
   }

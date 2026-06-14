@@ -54,19 +54,43 @@ function auditTheme(name: string, p: Palette): { fails: number; advisories: stri
 const NON_COLOR_VARS = new Set(["mono", "r", "pad", "mesh-vvh"]);
 const KNOWN_VARS = new Set<string>([...THEME_KEYS, ...NON_COLOR_VARS]);
 
-function lintThemeCss(): { unknownVars: string[]; hardcoded: string[] } {
+// Is an rgb/rgba/hsl literal effectively neutral (a shadow / scrim / white-or-black
+// overlay)? Those legitimately bypass the palette; only CHROMATIC literals (a hardcoded
+// status hue etc.) are worth surfacing. Achromatic = all channels within a small spread.
+function isNeutralColorLiteral(lit: string): boolean {
+  const rgb = lit.match(/rgba?\(([^)]+)\)/i);
+  if (rgb) {
+    const n = rgb[1].split(/[,\s/]+/).filter(Boolean).map(Number);
+    if (n.length >= 3 && n.slice(0, 3).every((x) => Number.isFinite(x))) {
+      const [r, g, b] = n;
+      return Math.max(r, g, b) - Math.min(r, g, b) <= 12; // grey-ish → neutral overlay
+    }
+    return false;
+  }
+  const hsl = lit.match(/hsla?\(([^)]+)\)/i);
+  if (hsl) return parseFloat(hsl[1].split(/[,\s/]+/).filter(Boolean)[1] || "0") <= 5; // saturation %
+  return false; // color(...) etc. — surface it
+}
+
+function lintThemeCss(): { unknownVars: string[]; literals: string[] } {
   const css = readFileSync(resolve(import.meta.dir, "client/theme.css"), "utf8");
   // 1. every var(--X) reference must name a known token (catches the old bare --accent bug).
   const unknownVars = new Set<string>();
   for (const m of css.matchAll(/var\(\s*--([a-z][a-z0-9-]*)/g)) if (!KNOWN_VARS.has(m[1])) unknownVars.add(m[1]);
 
-  // 2. hardcoded hex color literals outside the :root token block are un-themeable and
-  //    bypass the palette → flag for review. Strip the :root block (where tokens are
-  //    legitimately defined) first, then scan declarations.
+  // 2. color literals outside the :root token block bypass theming. Strip :root (where
+  //    tokens are legitimately defined), then flag any hardcoded hex AND any CHROMATIC
+  //    rgb()/rgba()/hsl()/color() literal — neutral white/black/grey overlays (shadows,
+  //    scrims, hover washes) are allowlisted so the advisory stays signal, not noise.
+  //    Advisory only: a colored literal is a theming gap to review, not a build break.
   const body = css.replace(/:root\s*\{[\s\S]*?\}/, "");
-  const hardcoded = new Set<string>();
-  for (const m of body.matchAll(/(^|[\s:,(])(#[0-9a-fA-F]{3,8})\b/g)) hardcoded.add(m[2].toLowerCase());
-  return { unknownVars: [...unknownVars].sort(), hardcoded: [...hardcoded].sort() };
+  const literals = new Set<string>();
+  for (const m of body.matchAll(/(^|[\s:,(])(#[0-9a-fA-F]{3,8})\b/g)) literals.add(m[2].toLowerCase());
+  for (const m of body.matchAll(/\b(rgba?|hsla?|color)\([^)]*\)/gi)) {
+    if (/^color-mix/i.test(m[0])) continue; // color-mix of tokens is themed, not a literal
+    if (!isNeutralColorLiteral(m[0])) literals.add(m[0].replace(/\s+/g, " ").toLowerCase());
+  }
+  return { unknownVars: [...unknownVars].sort(), literals: [...literals].sort() };
 }
 
 let total = 0;
@@ -78,17 +102,17 @@ for (const t of BUILTIN_THEMES) {
 }
 
 console.log(`\n${"━".repeat(74)}\n  STATIC theme.css LINT`);
-const { unknownVars, hardcoded } = lintThemeCss();
+const { unknownVars, literals } = lintThemeCss();
 if (unknownVars.length) {
   console.log(`   ✗ unknown var(--*) references (no such token): ${unknownVars.map((v) => `--${v}`).join(", ")}`);
   total += unknownVars.length;
 } else {
   console.log("   ✓ every var(--*) reference resolves to a known token");
 }
-if (hardcoded.length) {
-  console.log(`   · ${hardcoded.length} hardcoded color literal(s) outside :root (advisory — review for theming): ${hardcoded.join(", ")}`);
+if (literals.length) {
+  console.log(`   · ${literals.length} un-themed color literal(s) outside :root — hex + chromatic rgb/hsl/color() (advisory; neutral overlays allowlisted): ${literals.join(", ")}`);
 } else {
-  console.log("   ✓ no hardcoded color literals outside the :root token block");
+  console.log("   ✓ no un-themed color literals outside the :root token block");
 }
 
 if (allAdvisories.length) {
