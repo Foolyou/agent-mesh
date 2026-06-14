@@ -72,9 +72,23 @@ function findConfigOption(session: unknown, predicate: (option: any) => boolean)
 
 export function runtimeEffortOptionsFromSession(harness: HarnessId, session: unknown): RuntimeEffortOptions | undefined {
   if (harness === "claude") {
-    const option = findConfigOption(session, (o) => o?.category === "effort" || o?.id === "thought_level" || o?.id === "output_config.effort");
+    // The installed Claude ACP wrapper advertises the effort option as
+    // `{ id: "effort", category: "thought_level" }`. Match that real shape AND the legacy
+    // aliases (`category: "effort"`, `id: "thought_level"`, `id: "output_config.effort"`)
+    // so discovery works across wrapper versions; before this, none matched and discovery
+    // fell back to the stale static list, capping the picker at the static set.
+    const option = findConfigOption(
+      session,
+      (o) =>
+        o?.id === "effort" ||
+        o?.id === "thought_level" ||
+        o?.id === "output_config.effort" ||
+        o?.category === "effort" ||
+        o?.category === "thought_level",
+    );
     const available = advertisedOptions(option);
     if (!option || available.length === 0) return undefined;
+    // Forward the option's REAL id (e.g. "effort") so setConfigOption targets the right key.
     return { configId: String(option.id ?? "thought_level"), current: String(option.currentValue ?? option.current_value ?? option.current ?? available[0]?.id ?? ""), available };
   }
   if (harness === "kimi") {

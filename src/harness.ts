@@ -1,5 +1,5 @@
 // Registry mapping a harness id to the command that launches it as an ACP agent.
-import type { AgentConfig, HarnessId, ThinkingEffort } from "./acp/types";
+import type { AgentConfig, HarnessId } from "./acp/types";
 
 export interface HarnessSpec {
   command: string;
@@ -19,17 +19,12 @@ export function resolveHarness(id: HarnessId): HarnessSpec {
   return spec;
 }
 
-// claude reads MAX_THINKING_TOKENS at session start; map the effort levels to token budgets.
-const CLAUDE_THINK_TOKENS: Record<Extract<ThinkingEffort, "minimal" | "low" | "medium" | "high">, number> = {
-  minimal: 1024,
-  low: 4096,
-  medium: 12000,
-  high: 24000,
-};
-
 /** Resolve the spawn command/args/env for an agent, applying its thinking effort per harness:
  *  - codex: `-c model_reasoning_effort=<effort>` (defaults to "low" for responsiveness)
- *  - claude: `MAX_THINKING_TOKENS` env (only when an effort is set; else the harness default)
+ *  - claude: NO spawn-time effort — aligned with Zed, effort is passed as an enum through
+ *    the runtime ACP effort config option (control-plane applies the configured effort
+ *    right after session init). The old `MAX_THINKING_TOKENS` token-budget mapping is
+ *    dropped: it could not express xhigh/max and diverged from Zed's enum passthrough.
  *  - opencode/kimi: no spawn-time effort mechanism — ignored.
  *  Some harnesses also support runtime switching via ACP config options. */
 export function spawnConfigFor(a: AgentConfig): { command: string; args: string[]; env: Record<string, string> } {
@@ -40,9 +35,9 @@ export function spawnConfigFor(a: AgentConfig): { command: string; args: string[
   }
   if (a.harness === "claude") {
     // Permission level is a session mode (default / acceptEdits / bypassPermissions / …),
-    // set via `mode` and switchable live over ACP — no spawn flag needed.
-    const env: Record<string, string> = a.effort && a.effort in CLAUDE_THINK_TOKENS ? { MAX_THINKING_TOKENS: String(CLAUDE_THINK_TOKENS[a.effort as keyof typeof CLAUDE_THINK_TOKENS]) } : {};
-    return { command: spec.command, args: spec.args, env };
+    // set via `mode` and switchable live over ACP — no spawn flag needed. Effort is applied
+    // at runtime via the ACP effort config option, not a spawn-time env.
+    return { command: spec.command, args: spec.args, env: {} };
   }
   if (a.harness === "opencode" && a.opencodePermission === "allow") {
     // opencode exposes no ACP permission mode — its permission policy is the

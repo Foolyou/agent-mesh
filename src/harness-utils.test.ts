@@ -60,3 +60,48 @@ test("derives runtime effort options from advertised ACP config options by harne
   expect(runtimeEffortOptionsFromSession("codex", session)).toBeUndefined();
   expect(runtimeEffortOptionsFromSession("opencode", session)).toBeUndefined();
 });
+
+test("recognizes the real Claude wrapper effort shape { id: 'effort', category: 'thought_level' }", () => {
+  // This is the shape the installed Claude ACP wrapper actually advertises. Before the
+  // parser fix it matched none of the predicates and discovery fell back to the static list.
+  const session = {
+    configOptions: [
+      {
+        id: "effort",
+        category: "thought_level",
+        currentValue: "high",
+        options: [
+          { value: "low", name: "Low" },
+          { value: "medium", name: "Medium" },
+          { value: "high", name: "High" },
+          { value: "xhigh", name: "X-High" },
+          { value: "max", name: "Max" },
+        ],
+      },
+    ],
+  };
+  expect(runtimeEffortOptionsFromSession("claude", session)).toEqual({
+    configId: "effort", // forwards the real option id so setConfigOption targets it
+    current: "high",
+    available: [
+      { id: "low", name: "Low" },
+      { id: "medium", name: "Medium" },
+      { id: "high", name: "High" },
+      { id: "xhigh", name: "X-High" },
+      { id: "max", name: "Max" },
+    ],
+  });
+});
+
+test("still recognizes the legacy output_config.effort alias", () => {
+  const session = {
+    configOptions: [
+      { id: "output_config.effort", currentValue: "max", options: [{ value: "high", name: "High" }, { value: "max", name: "Max" }] },
+    ],
+  };
+  expect(runtimeEffortOptionsFromSession("claude", session)).toEqual({
+    configId: "output_config.effort",
+    current: "max",
+    available: [{ id: "high", name: "High" }, { id: "max", name: "Max" }],
+  });
+});
