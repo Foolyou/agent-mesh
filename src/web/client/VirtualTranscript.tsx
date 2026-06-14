@@ -193,17 +193,29 @@ export function VirtualTranscript({
     if (previousFirstItemId === items[0]?.id) return;
     const anchor = prependAnchorRef.current;
     if (!anchor) return;
-    prependAnchorRef.current = null;
     const index = items.findIndex((item) => item.id === anchor.id);
     if (index < 0) return;
     const raf = requestAnimationFrame(() => {
-      const row = virtualizer.getVirtualItems().find((item) => item.index === index);
-      if (!row) {
-        virtualizer.scrollToIndex(index, { align: "start" });
-        return;
-      }
-      virtualizer.scrollToOffset(preservePrependAnchorOffset({ currentStart: row.start, previousTop: anchor.top, containerTop: anchor.containerTop }));
-      syncPreviousScrollTop();
+      let attempts = 0;
+      const adjust = () => {
+        attempts += 1;
+        const scroll = parentRef.current;
+        const row = scroll?.querySelector<HTMLElement>(`[data-item-id="${CSS.escape(anchor.id)}"]`);
+        if (!scroll || !row) {
+          virtualizer.scrollToIndex(index, { align: "start" });
+          if (attempts < 6) requestAnimationFrame(adjust);
+          return;
+        }
+        const delta = row.getBoundingClientRect().top - anchor.top;
+        scroll.scrollTop += delta;
+        syncPreviousScrollTop();
+        if (Math.abs(delta) >= 1 && attempts < 6) {
+          requestAnimationFrame(adjust);
+          return;
+        }
+        prependAnchorRef.current = null;
+      };
+      adjust();
     });
     return () => cancelAnimationFrame(raf);
   }, [items, virtualizer]);
@@ -232,14 +244,19 @@ export function VirtualTranscript({
 
   function captureTopAnchor(): void {
     const el = parentRef.current;
-    const first = virtualizer.getVirtualItems()[0];
-    const item = first ? items[first.index] : undefined;
-    if (!el || !item) return;
-    const row = el.querySelector<HTMLElement>(`[data-index="${first.index}"]`);
+    if (!el) return;
+    const streamBox = el.getBoundingClientRect();
+    const row = [...el.querySelectorAll<HTMLElement>("[data-virtual-row='true']")].find((candidate) => {
+      const box = candidate.getBoundingClientRect();
+      return box.bottom > streamBox.top && box.top < streamBox.bottom;
+    });
+    const index = row ? Number(row.getAttribute("data-index")) : undefined;
+    const item = Number.isInteger(index) ? items[index!] : undefined;
+    if (!item) return;
     prependAnchorRef.current = {
       id: item.id,
-      top: row?.getBoundingClientRect().top ?? el.getBoundingClientRect().top,
-      containerTop: el.getBoundingClientRect().top,
+      top: row?.getBoundingClientRect().top ?? streamBox.top,
+      containerTop: streamBox.top,
     };
   }
 
@@ -296,6 +313,7 @@ export function VirtualTranscript({
                 key={virtualRow.key}
                 ref={virtualizer.measureElement}
                 data-index={virtualRow.index}
+                data-item-id={item.id}
                 data-virtual-row="true"
                 className="virtual-transcript-row"
                 style={{
