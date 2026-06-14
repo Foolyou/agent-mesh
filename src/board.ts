@@ -91,6 +91,10 @@ export type BoardActor =
 export interface BoardContext {
   actor: BoardActor;
   now: string; // ISO timestamp, supplied by the caller for determinism
+  /** Board-level optimistic-concurrency token; must equal state.revision. Required for
+   *  EVERY mutation (creates included) so a stale client can never apply onto a board it
+   *  has not seen. Enforced at the top of applyBoardCommand before any mutation. */
+  expectedBoardRevision: number;
 }
 
 export type BoardTargetRef =
@@ -111,8 +115,8 @@ export type BoardCommand =
   | { type: "create_subtask"; taskId: number; title: string; assignee?: string }
   | { type: "update_subtask"; taskId: number; subtaskId: string; expectedRevision: number; title?: string }
   | { type: "set_subtask_status"; taskId: number; subtaskId: string; expectedRevision: number; status: BoardStatus }
-  | { type: "add_comment"; target: BoardTargetRef; text: string }
-  | { type: "link_mail"; taskId: number; mailEventId: string };
+  | { type: "add_comment"; target: BoardTargetRef; expectedRevision: number; text: string }
+  | { type: "link_mail"; taskId: number; expectedRevision: number; mailEventId: string };
 
 export type BoardErrorCode = "not_found" | "conflict" | "forbidden" | "invalid";
 
@@ -120,7 +124,10 @@ export type BoardCommandResult =
   | { ok: true; state: BoardState; change: BoardChange }
   | { ok: false; code: BoardErrorCode; error: string };
 
-/** What a successful command touched, so callers can emit a focused event/log. */
+/** What a successful command touched. INTERNAL diagnostic/logging only — Phase 1 emits a
+ *  single full-board snapshot event (board_snapshot), NEVER a partial delta derived from
+ *  this. A command can mutate more than one entity (e.g. delete_epic orphans many tasks),
+ *  so do not reconstruct external updates from BoardChange. */
 export interface BoardChange {
   entity: "epic" | "task" | "subtask";
   epicId?: EpicId;
@@ -189,6 +196,13 @@ export function applyBoardCommand(state: BoardState, cmd: BoardCommand, ctx: Boa
   const { actor, now } = ctx;
   const author = actorLabel(actor);
 
+  // Board-level CAS gates EVERY mutation (creates included): a stale or malformed token is
+  // rejected before anything is touched.
+  if (!Number.isInteger(ctx.expectedBoardRevision)) return err("invalid", "expectedBoardRevision must be an integer");
+  if (ctx.expectedBoardRevision !== state.revision) {
+    return err("conflict", `board revision conflict: expected ${ctx.expectedBoardRevision}, found ${state.revision} (reload and retry)`);
+  }
+
   switch (cmd.type) {
     case "create_epic": {
       if (!isPrivileged(actor)) return err("forbidden", "only a router or operator may create epics");
@@ -247,12 +261,15 @@ export function applyBoardCommand(state: BoardState, cmd: BoardCommand, ctx: Boa
     case "create_task": {
       const title = cleanText(cmd.title, 200);
       if (!title) return err("invalid", "task title is required");
-      if (cmd.epicId && !state.epics.some((e) => e.id === cmd.epicId)) return err("not_found", `no epic "${cmd.epicId}"`);
       if (cmd.priority && !BOARD_PRIORITIES.includes(cmd.priority)) return err("invalid", `invalid priority "${cmd.priority}"`);
-      // Only a privileged actor may pre-assign or set deps/priority at creation time.
-      if (!isPrivileged(actor) && (cmd.assignee || (cmd.deps && cmd.deps.length))) {
-        return err("forbidden", "only a router or operator may assign or set dependencies");
+      // Epic membership, assignment, priority>normal, and deps are all router/human-only —
+      // reject (do not silently normalize) when a non-privileged agent supplies them.
+      if (!isPrivileged(actor)) {
+        if (cmd.epicId) return err("forbidden", "only a router or operator may file a task under an epic");
+        if (cmd.assignee || (cmd.deps && cmd.deps.length)) return err("forbidden", "only a router or operator may assign or set dependencies");
+        if (cmd.priority && cmd.priority !== "normal") return err("forbidden", `only a router or operator may set "${cmd.priority}" priority`);
       }
+      if (cmd.epicId && !state.epics.some((e) => e.id === cmd.epicId)) return err("not_found", `no epic "${cmd.epicId}"`);
       const deps = normalizeDeps(cmd.deps);
       const missing = deps.find((d) => !state.tasks.some((t) => t.id === d));
       if (missing !== undefined) return err("not_found", `dependency task #${missing} does not exist`);
@@ -283,6 +300,8 @@ export function applyBoardCommand(state: BoardState, cmd: BoardCommand, ctx: Boa
       const task = state.tasks.find((t) => t.id === cmd.id);
       if (!task) return err("not_found", `no task #${cmd.id}`);
       if (!isPrivileged(actor) && !ownsItem(actor, task)) return err("forbidden", "only the owner, a router, or operator may edit this task");
+      // Re-parenting (changing epic membership) is router/human-only, like epic CRUD.
+      if (cmd.epicId !== undefined && !isPrivileged(actor)) return err("forbidden", "only a router or operator may change a task's epic");
       const conflict = casCheck(task.revision, cmd.expectedRevision);
       if (conflict) return conflict;
       let epicId = task.epicId;
@@ -407,15 +426,20 @@ export function applyBoardCommand(state: BoardState, cmd: BoardCommand, ctx: Boa
       if (!text) return err("invalid", "comment text is required");
       const comment: BoardComment = { author, text, ts: now };
       const ref = cmd.target;
+      // A comment still mutates the target entity, so it needs entity CAS too.
       if (ref.kind === "epic") {
         const epic = state.epics.find((e) => e.id === ref.id);
         if (!epic) return err("not_found", `no epic "${ref.id}"`);
+        const conflict = casCheck(epic.revision, cmd.expectedRevision);
+        if (conflict) return conflict;
         const updated: Epic = { ...epic, comments: [...epic.comments, comment], revision: epic.revision + 1, updatedAt: now };
         return ok(replaceEpic(state, updated), { entity: "epic", epicId: epic.id });
       }
       if (ref.kind === "task") {
         const task = state.tasks.find((t) => t.id === ref.id);
         if (!task) return err("not_found", `no task #${ref.id}`);
+        const conflict = casCheck(task.revision, cmd.expectedRevision);
+        if (conflict) return conflict;
         const updated: Task = { ...task, comments: [...task.comments, comment], revision: task.revision + 1, updatedAt: now };
         return ok(replaceTask(state, updated), { entity: "task", taskId: task.id });
       }
@@ -423,14 +447,21 @@ export function applyBoardCommand(state: BoardState, cmd: BoardCommand, ctx: Boa
       if (!task) return err("not_found", `no task #${ref.taskId}`);
       const subtask = task.subtasks.find((s) => s.id === ref.subtaskId);
       if (!subtask) return err("not_found", `no subtask "${ref.subtaskId}"`);
+      const conflict = casCheck(subtask.revision, cmd.expectedRevision);
+      if (conflict) return conflict;
       const updatedSub: Subtask = { ...subtask, comments: [...subtask.comments, comment], revision: subtask.revision + 1, updatedAt: now };
       return ok(replaceSubtask(state, task, updatedSub), { entity: "subtask", taskId: task.id, subtaskId: subtask.id });
     }
 
     case "link_mail": {
+      // Internal-only: the ControlPlane send_mail path applies this; agents/operators
+      // never call it directly.
+      if (actor.kind !== "system") return err("forbidden", "link_mail is an internal operation");
       const task = state.tasks.find((t) => t.id === cmd.taskId);
       if (!task) return err("not_found", `no task #${cmd.taskId}`);
       if (!cmd.mailEventId) return err("invalid", "mailEventId is required");
+      const conflict = casCheck(task.revision, cmd.expectedRevision);
+      if (conflict) return conflict;
       if (task.mailEventIds.includes(cmd.mailEventId)) return ok(state, { entity: "task", taskId: task.id }); // idempotent
       const updated: Task = { ...task, mailEventIds: [...task.mailEventIds, cmd.mailEventId], revision: task.revision + 1, updatedAt: now };
       return ok(replaceTask(state, updated), { entity: "task", taskId: task.id });
@@ -438,8 +469,10 @@ export function applyBoardCommand(state: BoardState, cmd: BoardCommand, ctx: Boa
   }
 }
 
-function casCheck(actual: number, expected: number | undefined): BoardCommandResult | null {
-  if (expected === undefined) return null; // no CAS requested
+/** Entity-level CAS. Every mutation of an existing entity must carry the entity's last-seen
+ *  revision; a missing/non-integer token is invalid, a mismatched one is a conflict. */
+function casCheck(actual: number, expected: number): BoardCommandResult | null {
+  if (!Number.isInteger(expected)) return err("invalid", "expectedRevision must be an integer");
   if (actual !== expected) {
     return err("conflict", `revision conflict: expected ${expected}, found ${actual} (reload and retry)`);
   }

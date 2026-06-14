@@ -7,7 +7,18 @@
 // board in memory as the source of truth, but the lock keeps the on-disk mirror coherent.
 import { mkdir, readFile, writeFile, rename, chmod, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { createEmptyBoard, type BoardState } from "./board";
+import {
+  BOARD_PRIORITIES,
+  BOARD_STATUSES,
+  createEmptyBoard,
+  type BoardComment,
+  type BoardPriority,
+  type BoardState,
+  type BoardStatus,
+  type Epic,
+  type Subtask,
+  type Task,
+} from "./board";
 
 /** The boards directory under the agent-mesh data root (sibling of `meshes/`, `run/`). */
 export function boardsDirFor(root: string): string {
@@ -88,20 +99,169 @@ export async function deleteBoard(boardsDir: string | undefined, mesh: string): 
   await withBoardLock(path, () => rm(path, { force: true }));
 }
 
-/** Coerce arbitrary parsed JSON into a well-formed BoardState, dropping anything malformed.
- *  Defensive against hand-edited / version-skewed files; never throws. */
+// ── defensive sanitization ──────────────────────────────────────────────────
+// Hand-edited or version-skewed board files must never crash the daemon or the derived
+// helpers (computeBoardWarnings, taskProgress). We rebuild every entity from scratch with
+// validated fields, DROP entries we cannot address (bad/duplicate id), and normalize
+// seq/revision so id allocation never collides with a retained item.
+
+const EPOCH = "1970-01-01T00:00:00.000Z";
+
+function asObject(v: unknown): Record<string, unknown> | null {
+  return typeof v === "object" && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
+}
+function cleanStr(v: unknown, max: number): string | undefined {
+  if (typeof v !== "string") return undefined;
+  const t = v.trim();
+  return t ? t.slice(0, max) : undefined;
+}
+function isoOr(v: unknown): string {
+  return typeof v === "string" && v ? v : EPOCH;
+}
+function statusOr(v: unknown): BoardStatus {
+  return typeof v === "string" && (BOARD_STATUSES as readonly string[]).includes(v) ? (v as BoardStatus) : "todo";
+}
+function priorityOr(v: unknown): BoardPriority {
+  return typeof v === "string" && (BOARD_PRIORITIES as readonly string[]).includes(v) ? (v as BoardPriority) : "normal";
+}
+function intAtLeast(v: unknown, min: number): number {
+  return typeof v === "number" && Number.isInteger(v) && v >= min ? v : min;
+}
+function sanitizeComments(v: unknown): BoardComment[] {
+  if (!Array.isArray(v)) return [];
+  const out: BoardComment[] = [];
+  for (const raw of v) {
+    const o = asObject(raw);
+    const text = o ? cleanStr(o.text, 4000) : undefined;
+    if (!text) continue;
+    out.push({ author: cleanStr(o!.author, 200) ?? "unknown", text, ts: isoOr(o!.ts) });
+  }
+  return out;
+}
+function sanitizeStrArray(v: unknown, max: number): string[] {
+  if (!Array.isArray(v)) return [];
+  const out: string[] = [];
+  for (const item of v) {
+    const s = cleanStr(item, max);
+    if (s) out.push(s);
+  }
+  return [...new Set(out)];
+}
+function sanitizeDeps(v: unknown): number[] {
+  if (!Array.isArray(v)) return [];
+  return [...new Set(v.filter((d) => Number.isInteger(d) && (d as number) > 0) as number[])];
+}
+
+function sanitizeSubtask(raw: unknown, seen: Set<string>): Subtask | null {
+  const o = asObject(raw);
+  if (!o) return null;
+  const id = cleanStr(o.id, 200);
+  if (!id || seen.has(id)) return null;
+  seen.add(id);
+  return {
+    id,
+    title: cleanStr(o.title, 200) ?? "(untitled)",
+    status: statusOr(o.status),
+    assignee: cleanStr(o.assignee, 200),
+    revision: intAtLeast(o.revision, 1),
+    createdBy: cleanStr(o.createdBy, 200) ?? "unknown",
+    createdAt: isoOr(o.createdAt),
+    updatedAt: isoOr(o.updatedAt),
+    comments: sanitizeComments(o.comments),
+  };
+}
+
+function sanitizeTask(raw: unknown, seenIds: Set<number>): Task | null {
+  const o = asObject(raw);
+  if (!o) return null;
+  const id = o.id;
+  if (typeof id !== "number" || !Number.isInteger(id) || id <= 0 || seenIds.has(id)) return null;
+  seenIds.add(id);
+  const seenSub = new Set<string>();
+  const subtasks: Subtask[] = [];
+  if (Array.isArray(o.subtasks)) {
+    for (const s of o.subtasks) {
+      const sub = sanitizeSubtask(s, seenSub);
+      if (sub) subtasks.push(sub);
+    }
+  }
+  const maxSubSeq = subtasks.reduce((m, s) => {
+    const n = Number(s.id.split(".")[1]);
+    return Number.isInteger(n) ? Math.max(m, n) : m;
+  }, 0);
+  const epicId = cleanStr(o.epicId, 200);
+  return {
+    id,
+    epicId,
+    title: cleanStr(o.title, 200) ?? "(untitled)",
+    description: cleanStr(o.description, 4000),
+    status: statusOr(o.status),
+    assignee: cleanStr(o.assignee, 200),
+    priority: priorityOr(o.priority),
+    deps: sanitizeDeps(o.deps).filter((d) => d !== id),
+    subtasks,
+    subtaskSeq: Math.max(intAtLeast(o.subtaskSeq, 0), maxSubSeq),
+    revision: intAtLeast(o.revision, 1),
+    createdBy: cleanStr(o.createdBy, 200) ?? "unknown",
+    createdAt: isoOr(o.createdAt),
+    updatedAt: isoOr(o.updatedAt),
+    comments: sanitizeComments(o.comments),
+    mailEventIds: sanitizeStrArray(o.mailEventIds, 200),
+  };
+}
+
+function sanitizeEpic(raw: unknown, seenIds: Set<string>): Epic | null {
+  const o = asObject(raw);
+  if (!o) return null;
+  const id = cleanStr(o.id, 200);
+  if (!id || seenIds.has(id)) return null;
+  seenIds.add(id);
+  const seq = intAtLeast(o.seq, 1);
+  return {
+    id,
+    seq,
+    title: cleanStr(o.title, 200) ?? "(untitled)",
+    description: cleanStr(o.description, 4000),
+    status: statusOr(o.status),
+    revision: intAtLeast(o.revision, 1),
+    createdBy: cleanStr(o.createdBy, 200) ?? "unknown",
+    createdAt: isoOr(o.createdAt),
+    updatedAt: isoOr(o.updatedAt),
+    comments: sanitizeComments(o.comments),
+  };
+}
+
+/** Rebuild a well-formed BoardState from arbitrary parsed JSON. Top-level non-object falls
+ *  back to an empty board; malformed entity entries are dropped; seq/revision are normalized
+ *  so newly-allocated ids never collide with retained items. Never throws. */
 function sanitizeBoard(mesh: string, parsed: unknown): BoardState {
-  const base = createEmptyBoard(mesh);
-  if (typeof parsed !== "object" || parsed === null) return base;
-  const obj = parsed as Record<string, unknown>;
-  const epics = Array.isArray(obj.epics) ? (obj.epics as BoardState["epics"]) : [];
-  const tasks = Array.isArray(obj.tasks) ? (obj.tasks as BoardState["tasks"]) : [];
-  const num = (v: unknown, fallback: number) => (typeof v === "number" && Number.isFinite(v) ? v : fallback);
+  const obj = asObject(parsed);
+  if (!obj) return createEmptyBoard(mesh);
+
+  const epics: Epic[] = [];
+  const seenEpicIds = new Set<string>();
+  if (Array.isArray(obj.epics)) {
+    for (const e of obj.epics) {
+      const epic = sanitizeEpic(e, seenEpicIds);
+      if (epic) epics.push(epic);
+    }
+  }
+  const tasks: Task[] = [];
+  const seenTaskIds = new Set<number>();
+  if (Array.isArray(obj.tasks)) {
+    for (const t of obj.tasks) {
+      const task = sanitizeTask(t, seenTaskIds);
+      if (task) tasks.push(task);
+    }
+  }
+
+  const maxEpicSeq = epics.reduce((m, e) => Math.max(m, e.seq), 0);
+  const maxTaskId = tasks.reduce((m, t) => Math.max(m, t.id), 0);
   return {
     mesh,
-    revision: num(obj.revision, 0),
-    epicSeq: num(obj.epicSeq, epics.reduce((m, e) => Math.max(m, e?.seq ?? 0), 0)),
-    taskSeq: num(obj.taskSeq, tasks.reduce((m, t) => Math.max(m, t?.id ?? 0), 0)),
+    revision: intAtLeast(obj.revision, 0),
+    epicSeq: Math.max(intAtLeast(obj.epicSeq, 0), maxEpicSeq),
+    taskSeq: Math.max(intAtLeast(obj.taskSeq, 0), maxTaskId),
     epics,
     tasks,
   };
