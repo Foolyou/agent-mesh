@@ -119,6 +119,34 @@ test("update event folds into the agent transcript and broadcasts a transcript o
   expect((transcriptItems(gw, "router")[0] as any).text).toBe("hi");
 });
 
+test("initial replay folds transcript state without broadcasting transcript ops until replay ends", () => {
+  const m = fakeManager();
+  const gw = new WebGateway(m as any);
+  const got: any[] = [];
+  gw.subscribe((msg) => got.push(msg));
+
+  gw.beginInitialReplay("demo", "codex-1");
+  m.emit("demo", {
+    kind: "update",
+    agent: "codex-1",
+    update: { sessionUpdate: "agent_message_chunk", content: { text: "replayed history" } } as any,
+    ts: "T1",
+  });
+
+  expect(transcriptItems(gw, "codex-1").some((i: any) => i.kind === "message" && i.text === "replayed history")).toBe(true);
+  expect(got.some((x) => x.t === "transcript.upsert" && x.conv.agent === "codex-1")).toBe(false);
+
+  gw.endInitialReplay("demo", "codex-1");
+  m.emit("demo", {
+    kind: "update",
+    agent: "codex-1",
+    update: { sessionUpdate: "agent_message_chunk", content: { text: " live" } } as any,
+    ts: "T2",
+  });
+
+  expect(got.some((x) => x.t === "transcript.patch" && x.conv.agent === "codex-1")).toBe(true);
+});
+
 test("usage_update aggregates per-agent usage without entering transcript", () => {
   const m = fakeManager();
   const gw = new WebGateway(m as any);

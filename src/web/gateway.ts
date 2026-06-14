@@ -144,6 +144,7 @@ export class WebGateway {
   private agStatus = new Map<string, Map<AgentId, AgentStatus>>();
   private agActivity = new Map<string, Map<AgentId, AgentActivity>>();
   private queues = new Map<string, Map<AgentId, AgentTurn[]>>();
+  private initialReplay = new Set<string>();
   private uidc = 0;
   private unsubMgr?: () => void;
   private unsubAssistant?: () => void;
@@ -192,6 +193,15 @@ export class WebGateway {
   private broadcastOp(conv: ConvRef, op: TranscriptOp): void {
     if (op.op === "upsert") this.broadcast({ t: "transcript.upsert", conv, item: op.item });
     else this.broadcast({ t: "transcript.patch", conv, id: op.id, patch: op.patch });
+  }
+  private replayKey(mesh: string, agent: AgentId): string {
+    return `${mesh}:${agent}`;
+  }
+  beginInitialReplay(mesh: string, agent: AgentId): void {
+    this.initialReplay.add(this.replayKey(mesh, agent));
+  }
+  endInitialReplay(mesh: string, agent: AgentId): void {
+    this.initialReplay.delete(this.replayKey(mesh, agent));
   }
 
   /** A fresh, structurally-cloned copy of the full state. */
@@ -355,6 +365,7 @@ export class WebGateway {
     const items = transcript.items;
     const r = reduceTranscript(items, update, ts);
     pm.transcripts[conv.agent] = transcriptSnapshot(cap(r.items, TR_CAP), false);
+    if (this.initialReplay.has(this.replayKey(conv.mesh, conv.agent))) return;
     for (const op of r.ops) this.broadcastOp(conv, op);
   }
   private foldStartedTurn(name: string, turn: AgentTurn, ts: string): void {
