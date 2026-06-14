@@ -23,8 +23,8 @@ test("rejects unsafe names", () => {
 test("validates effort per harness", () => {
   const accepted: Record<HarnessId, ThinkingEffort[]> = {
     codex: ["low", "medium", "high", "xhigh"],
-    claude: ["minimal", "low", "medium", "high"],
-    kimi: ["low", "high"],
+    claude: ["low", "medium", "high", "xhigh", "max"],
+    kimi: [], // kimi has no reasoning-effort ladder — thinking is a model-variant toggle
     opencode: [],
   };
   const all = ["minimal", "low", "medium", "high", "xhigh", "max"] as const;

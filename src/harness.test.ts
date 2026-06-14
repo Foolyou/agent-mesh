@@ -12,17 +12,19 @@ test("codex applies model_reasoning_effort, defaulting to low", () => {
   expect(spawnConfigFor(A({ harness: "codex" })).command).toBe("codex-acp");
 });
 
-test("claude sets MAX_THINKING_TOKENS only when an effort is chosen", () => {
+test("claude applies no spawn-time effort env (effort is a runtime ACP config option)", () => {
+  // Aligned with Zed: effort is passed as an enum through the runtime effort config option,
+  // not a spawn-time MAX_THINKING_TOKENS budget. Spawn env stays empty regardless of effort.
   expect(spawnConfigFor(A({ harness: "claude" })).env).toEqual({});
   expect(spawnConfigFor(A({ harness: "claude" })).args).toEqual([]);
-  expect(spawnConfigFor(A({ harness: "claude", effort: "high" })).env).toEqual({ MAX_THINKING_TOKENS: "24000" });
-  expect(spawnConfigFor(A({ harness: "claude", effort: "minimal" })).env).toEqual({ MAX_THINKING_TOKENS: "1024" });
+  expect(spawnConfigFor(A({ harness: "claude", effort: "high" })).env).toEqual({});
+  expect(spawnConfigFor(A({ harness: "claude", effort: "max" })).env).toEqual({});
 });
 
 test("claude adds no permission spawn flag (permission is a session mode)", () => {
   const c = spawnConfigFor(A({ harness: "claude", effort: "high" }));
   expect(c.args).toEqual([]);
-  expect(c.env).toEqual({ MAX_THINKING_TOKENS: "24000" });
+  expect(c.env).toEqual({});
 });
 
 test("opencode permission=allow sets the spawn permission environment variable", () => {

@@ -115,6 +115,10 @@ const DICT: Record<string, Entry> = {
   "effort.high": ["high", "高"],
   "effort.xhigh": ["xhigh", "超高"],
   "effort.max": ["max", "最大"],
+  // ("thinking" label already defined below for transcript thinking blocks — reused here.)
+  "thinking.hint": ["kimi thinking mode — toggles the model's ,thinking variant at runtime", "kimi 思考模式 —— 运行时切换模型的 ,thinking 变体"],
+  "thinking.off": ["off", "关"],
+  "thinking.on": ["on", "开"],
   activity: ["activity", "活动"],
   "activity.sub": ["mail · steer · interrupt · permission · log", "邮件 · 引导 · 中断 · 权限 · 日志"],
   mailbox: ["mailbox", "邮箱"],

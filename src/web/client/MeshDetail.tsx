@@ -5,7 +5,7 @@ import { useEffect, useRef, useState, type CSSProperties } from "react";
 import type { Store } from "./store";
 import { shouldLoadInitialTranscript } from "./store";
 import type { GatewayState, MeshSummary, PerMeshState, ActivityEntry, MailEntry, ResolvedPermission, PermissionReq, AgentModes, AgentModels, HarnessId, StartSessionStrategy, HarnessProbeRow } from "../types";
-import { effortOptionsForHarness, supportsRuntimeEffort } from "../../harness-utils";
+import { effortOptionsForHarness, supportsRuntimeEffort, supportsThinkingToggle, kimiThinkingEnabled, kimiModelForThinking } from "../../harness-utils";
 import { Dot, Btn, Empty, ConfirmButton, InfoIcon, fmtTime } from "./ui";
 import { ChatPane } from "./ChatPane";
 import { MeshCanvas } from "./MeshCanvas";
@@ -262,15 +262,17 @@ function StaleHarnessNotice({
   );
 }
 
-// Per-agent thinking-effort picker. Claude and Kimi can switch thought level at runtime;
-// Codex remains spawn-time only, and OpenCode is pending binary verification.
+// Per-agent reasoning-effort picker. Claude switches effort at runtime (ACP config option);
+// Codex is spawn-time only. Kimi has NO reasoning effort (its thinking is a model-variant
+// toggle — rendered separately), and OpenCode has no effort entry at all; both report an
+// empty capability set, so this control renders nothing for them.
 function EffortControl({ m, agent, store }: { m: MeshSummary; agent: string; store: Store }) {
   const { t } = useI18n();
   const a = m.agents.find((x) => x.id === agent);
   if (!a) return null;
   const advertised = store.getState().perMesh[m.name]?.efforts?.[agent];
   const efforts = advertised?.available.length ? advertised.available.map((o) => o.id) : effortOptionsForHarness(a.harness);
-  if (efforts.length === 0) return null;
+  if (efforts.length === 0) return null; // codex/claude only — kimi & opencode hidden here
   const live = m.status === "running" || m.status === "starting";
   const runtime = supportsRuntimeEffort(a.harness);
   return (
@@ -293,6 +295,37 @@ function EffortControl({ m, agent, store }: { m: MeshSummary; agent: string; sto
             {advertised?.available.find((o) => o.id === eff)?.name ?? t(`effort.${eff}`)}
           </option>
         ))}
+      </select>
+    </span>
+  );
+}
+
+// Kimi's "thinking" is a binary mode, NOT a reasoning effort: it is toggled by switching the
+// session MODEL between the base id and its `,thinking` variant via the existing setModel
+// path (independent of the effort capability). Runtime-only; needs a known current model to
+// derive the variant from.
+function KimiThinkingControl({ m, agent, store, models }: { m: MeshSummary; agent: string; store: Store; models?: AgentModels }) {
+  const { t } = useI18n();
+  const a = m.agents.find((x) => x.id === agent);
+  if (!a || !supportsThinkingToggle(a.harness)) return null;
+  const current = models?.current; // runtime-advertised current model id (may carry the ,thinking variant)
+  if (!current) return null; // no base model known yet → nothing to toggle against
+  const on = kimiThinkingEnabled(current);
+  return (
+    <span className="row" style={{ gap: 5 }}>
+      <span className="sub" style={{ fontSize: 10 }}>
+        {t("thinking")}
+      </span>
+      <select
+        className="thinking-sel select-control"
+        value={on ? "on" : "off"}
+        aria-label={t("thinking")}
+        title={t("thinking.hint")}
+        onKeyDown={(e) => e.stopPropagation()}
+        onChange={(e) => void store.setModel(m.name, agent, kimiModelForThinking(current, e.target.value === "on"))}
+      >
+        <option value="off">{t("thinking.off")}</option>
+        <option value="on">{t("thinking.on")}</option>
       </select>
     </span>
   );
@@ -441,6 +474,9 @@ function ConversationPanel({
           ) : null}
           {live ? (
             <ModelControl mesh={m.name} agent={cur.id} store={store} models={pm.models?.[cur.id]} />
+          ) : null}
+          {live ? (
+            <KimiThinkingControl m={m} agent={cur.id} store={store} models={pm.models?.[cur.id]} />
           ) : null}
           {canWake ? (
             <Btn small kind="go" onClick={() => void store.wakeAgent(m.name, cur.id)} title={t("wake.hint")}>

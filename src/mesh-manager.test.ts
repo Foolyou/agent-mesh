@@ -72,9 +72,12 @@ test("setAgentEffort forwards runtime-only advertised values without persisting 
     },
   };
 
-  const result = await mgr.setAgentEffort("echo", "r", "max");
+  // A value that is NOT in claude's static capability set is treated as runtime-only:
+  // forwarded live to the host but never persisted. ("max" is now a first-class claude
+  // effort and would persist, so use an advertised-only sentinel here.)
+  const result = await mgr.setAgentEffort("echo", "r", "turbo");
 
-  expect(calls).toEqual([{ agent: "r", effort: "max" }]);
+  expect(calls).toEqual([{ agent: "r", effort: "turbo" }]);
   expect(mgr.configOf("echo").agents[0].effort).toBeUndefined();
   // runtime-only: forwarded live, never persisted; host can only accept (not apply)
   expect(result).toEqual({ saved: false, applied: false, ackStatus: "accepted_by_host" });
