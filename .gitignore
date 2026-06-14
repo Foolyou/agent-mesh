@@ -22,3 +22,9 @@ secrets/
 
 # brainstorm visual-companion sessions
 .superpowers/
+
+# agent / e2e run products (per-worktree, not source)
+artifacts/
+e2e-logs/
+.playwright-mcp/
+STATUS.md
