@@ -3,7 +3,7 @@
 // the client. createStore() owns the socket + REST command helpers; useStore wires it
 // into React via useSyncExternalStore.
 import { useSyncExternalStore } from "react";
-import type { AgentConfig, GatewayState, ServerMsg, PerMeshState, TranscriptItem, ConvRef, MeshConfig, MeshEdge, PromptImageRef, StartSessionStrategy, HarnessProbeRow, HarnessId, HarnessInstallEvent, RespawnMode, TranscriptSnapshot } from "../types";
+import type { AgentConfig, GatewayState, ServerMsg, PerMeshState, TranscriptItem, ConvRef, MeshConfig, MeshEdge, PromptImageRef, StartSessionStrategy, HarnessProbeRow, HarnessId, HarnessInstallEvent, RespawnMode, TranscriptSnapshot, AgentStatus } from "../types";
 
 const CAP = 500;
 const HARNESS_CHANGE_DEBOUNCE_MS = 300;
@@ -15,6 +15,10 @@ const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve,
 
 export function emptyState(): GatewayState {
   return { meshes: [], assistant: { status: "absent", transcript: [], capabilities: { image: false } }, perMesh: {} };
+}
+
+export function shouldLoadInitialTranscript(agentStatus: AgentStatus | undefined, itemCount: number): boolean {
+  return agentStatus === "ready" || itemCount > 0;
 }
 
 function emptyPerMesh(name: string): PerMeshState {
@@ -231,8 +235,24 @@ export function createStore(): Store {
       upgrade = { available: true, current: loadedAppVersion, next };
     }
   }
+  function reconcileTranscriptLoadMarkersForSnapshot(next: GatewayState) {
+    const snapshotKeys = new Set<string>();
+    for (const [mesh, pm] of Object.entries(next.perMesh)) {
+      for (const [agentId, transcript] of Object.entries(pm.transcripts)) {
+        const key = transcriptKey(mesh, agentId);
+        snapshotKeys.add(key);
+        if (transcript.hasMore && transcript.items.length === 0) initialLoadedTranscripts.delete(key);
+      }
+    }
+    for (const key of initialLoadedTranscripts) {
+      if (!snapshotKeys.has(key)) initialLoadedTranscripts.delete(key);
+    }
+  }
   function applyIncoming(msg: ServerMsg) {
-    if (msg.t === "snapshot") noteSnapshotVersion(msg.state.appVersion);
+    if (msg.t === "snapshot") {
+      noteSnapshotVersion(msg.state.appVersion);
+      reconcileTranscriptLoadMarkersForSnapshot(msg.state);
+    }
     if (msg.t === "harnesses-changed") {
       if (harnessChangeTimer !== undefined) clearTimeout(harnessChangeTimer);
       harnessChangeTimer = setTimeout(() => {
@@ -242,6 +262,7 @@ export function createStore(): Store {
       return;
     }
     set(applyMsg(state, msg));
+    if (msg.t === "agent.status" && msg.status === "ready") markTranscriptNeedsInitialLoad(msg.name, msg.agent);
   }
   function pushToast(kind: Toast["kind"], text: string) {
     const id = ++toastSeq;
@@ -326,12 +347,22 @@ export function createStore(): Store {
   function isTranscriptInitialLoaded(mesh: string, agentId: string): boolean {
     return initialLoadedTranscripts.has(transcriptKey(mesh, agentId));
   }
+  function agentReady(mesh: string, agentId: string): boolean {
+    return state.meshes.find((m) => m.name === mesh)?.agents.find((a) => a.id === agentId)?.status === "ready";
+  }
+  function markTranscriptNeedsInitialLoad(mesh: string, agentId: string): void {
+    const current = state.perMesh[mesh]?.transcripts[agentId];
+    if (!current || current.items.length > 0 || current.hasMore) return;
+    initialLoadedTranscripts.delete(transcriptKey(mesh, agentId));
+    replaceTranscriptItems(mesh, agentId, [], true);
+  }
   function loadInitialTranscript(mesh: string, agentId: string): Promise<void> {
     const current = state.perMesh[mesh]?.transcripts[agentId];
     if (!current?.hasMore || initialLoadedTranscripts.has(transcriptKey(mesh, agentId))) return Promise.resolve();
     const key = transcriptKey(mesh, agentId);
     const existing = loadingInitialTranscript.get(key);
     if (existing) return existing;
+    const readyAtRequestStart = agentReady(mesh, agentId);
     const params = new URLSearchParams();
     params.set("limit", "100");
     const request = guard(
@@ -340,6 +371,11 @@ export function createStore(): Store {
     )
       .then((res) => {
         const fetched = Array.isArray(res.items) ? res.items : [];
+        if (fetched.length === 0 && !readyAtRequestStart) {
+          initialLoadedTranscripts.delete(key);
+          replaceTranscriptItems(mesh, agentId, [], true);
+          return;
+        }
         const latest = state.perMesh[mesh]?.transcripts[agentId]?.items ?? [];
         const items = mergeInitialTranscriptItems(latest, fetched);
         initialLoadedTranscripts.add(key);

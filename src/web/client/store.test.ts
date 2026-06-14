@@ -1,5 +1,5 @@
 import { test, expect, mock } from "bun:test";
-import { emptyState, applyMsg, createStore } from "./store";
+import { emptyState, applyMsg, createStore, shouldLoadInitialTranscript } from "./store";
 import type { GatewayState, TranscriptItem } from "../types";
 
 function seed(): GatewayState {
@@ -45,6 +45,14 @@ test("store ignores snapshots without an app version for upgrade detection", () 
   store.apply({ t: "snapshot", state: { ...seed(), appVersion: undefined } });
   store.apply({ t: "snapshot", state: { ...seed(), appVersion: undefined } });
   expect(store.getUpgrade()).toEqual({ available: false });
+});
+
+test("initial transcript loads wait for empty cold-started agents to become ready", () => {
+  expect(shouldLoadInitialTranscript("dead", 0)).toBe(false);
+  expect(shouldLoadInitialTranscript("spawning", 0)).toBe(false);
+  expect(shouldLoadInitialTranscript("cold", 0)).toBe(false);
+  expect(shouldLoadInitialTranscript("ready", 0)).toBe(true);
+  expect(shouldLoadInitialTranscript("dead", 1)).toBe(true);
 });
 
 test("mesh.status updates the summary", () => {
@@ -451,6 +459,101 @@ test("loadInitialTranscript coalesces concurrent requests and skips after succes
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test("snapshot lazy transcript placeholders clear the initial-load marker after reconnect", async () => {
+  const originalFetch = globalThis.fetch;
+  const fetchMock = mock(() => Promise.resolve(responseJson({ items: [message("tail-0")], hasMore: true })));
+  globalThis.fetch = fetchMock as any;
+  try {
+    const store = createStore();
+    const snapshotWithPlaceholder = {
+      ...seed(),
+      perMesh: {
+        demo: {
+          ...seed().perMesh.demo,
+          transcripts: {
+            "codex-1": { items: [], hasMore: true },
+          },
+        },
+      },
+    };
+    store.apply({ t: "snapshot", state: snapshotWithPlaceholder });
+    await store.loadInitialTranscript("demo", "codex-1");
+    expect(store.isTranscriptInitialLoaded("demo", "codex-1")).toBe(true);
+
+    store.apply({ t: "snapshot", state: snapshotWithPlaceholder });
+
+    expect(store.isTranscriptInitialLoaded("demo", "codex-1")).toBe(false);
+    await store.loadInitialTranscript("demo", "codex-1");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("empty initial transcript fetched before agent readiness is not marked loaded", async () => {
+  const originalFetch = globalThis.fetch;
+  const fetchMock = mock(() => Promise.resolve(responseJson({ items: [], hasMore: false })));
+  globalThis.fetch = fetchMock as any;
+  try {
+    const store = createStore();
+    store.apply({
+      t: "snapshot",
+      state: {
+        ...seed(),
+        meshes: [
+          {
+            ...seed().meshes[0],
+            status: "stopped",
+            agents: seed().meshes[0].agents.map((agent) => ({ ...agent, status: "dead" })),
+          },
+        ],
+        perMesh: {
+          demo: {
+            ...seed().perMesh.demo,
+            transcripts: {
+              "codex-1": { items: [], hasMore: true },
+            },
+          },
+        },
+      },
+    });
+
+    await store.loadInitialTranscript("demo", "codex-1");
+
+    const transcript = store.getState().perMesh.demo.transcripts["codex-1"];
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(transcript.items).toHaveLength(0);
+    expect(transcript.hasMore).toBe(true);
+    expect(store.isTranscriptInitialLoaded("demo", "codex-1")).toBe(false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("agent ready after an early empty transcript fetch re-arms initial loading", async () => {
+  const store = createStore();
+  store.apply({
+    t: "snapshot",
+    state: {
+      ...seed(),
+      perMesh: {
+        demo: {
+          ...seed().perMesh.demo,
+          transcripts: {
+            "codex-1": { items: [], hasMore: false },
+          },
+        },
+      },
+    },
+  });
+  store.apply({ t: "agent.status", name: "demo", agent: "codex-1", status: "ready" });
+
+  const transcript = store.getState().perMesh.demo.transcripts["codex-1"];
+  expect(transcript.items).toHaveLength(0);
+  expect(transcript.hasMore).toBe(true);
+  expect(store.isTranscriptInitialLoaded("demo", "codex-1")).toBe(false);
 });
 
 test("loadInitialTranscript fetches tail when live items arrived before initial load", async () => {

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import type { Store } from "./store";
+import { shouldLoadInitialTranscript } from "./store";
 import type { MeshSummary, PerMeshState, TranscriptItem } from "../types";
 import { Btn, ConfirmButton, Dot } from "./ui";
 import { ChatPane } from "./ChatPane";
@@ -289,13 +290,15 @@ export function MeshCanvas({
   const sig = useMemo(() => signature(m), [m]);
   const edgeKeys = useMemo(() => new Set(m.edges.map((edge) => edgeKey(edge.from, edge.to))), [m.edges]);
   const focusedAgentId = order[order.length - 1] ?? m.router;
+  const focusedAgentStatus = m.agents.find((agent) => agent.id === focusedAgentId)?.status;
   const live = m.status === "running" || m.status === "starting";
 
   useEffect(() => {
     const transcript = pm.transcripts[focusedAgentId];
+    if (!shouldLoadInitialTranscript(focusedAgentStatus, transcript?.items.length ?? 0)) return;
     if (!transcript?.hasMore || store.isTranscriptInitialLoaded(m.name, focusedAgentId)) return;
     void store.loadInitialTranscript(m.name, focusedAgentId);
-  }, [focusedAgentId, m.name, pm.transcripts, store]);
+  }, [focusedAgentId, focusedAgentStatus, m.name, pm.transcripts, store]);
 
   useEffect(() => {
     if (!menuOpen) return;

@@ -3,6 +3,7 @@
 // permission-history timelines for the selected mesh.
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import type { Store } from "./store";
+import { shouldLoadInitialTranscript } from "./store";
 import type { GatewayState, MeshSummary, PerMeshState, ActivityEntry, MailEntry, ResolvedPermission, PermissionReq, AgentModes, AgentModels, HarnessId, StartSessionStrategy, HarnessProbeRow } from "../types";
 import { effortOptionsForHarness, supportsRuntimeEffort } from "../../harness-utils";
 import { Dot, Btn, Empty, ConfirmButton, InfoIcon, fmtTime } from "./ui";
@@ -334,6 +335,7 @@ function ConversationPanel({
   };
   const transcript = pm.transcripts[activeId];
   const transcriptInitialLoaded = store.isTranscriptInitialLoaded(m.name, activeId);
+  const canLoadInitialTranscript = shouldLoadInitialTranscript(cur?.status, transcript?.items.length ?? 0);
   const loadingTranscript = !!transcript?.hasMore && !transcriptInitialLoaded && (transcript.items?.length ?? 0) === 0;
 
   useEffect(() => {
@@ -342,9 +344,10 @@ function ConversationPanel({
   }, [activeId, m.router]);
 
   useEffect(() => {
+    if (!canLoadInitialTranscript) return;
     if (!transcript?.hasMore || transcriptInitialLoaded) return;
     void store.loadInitialTranscript(m.name, activeId);
-  }, [activeId, m.name, store, transcript?.hasMore, transcriptInitialLoaded]);
+  }, [activeId, m.name, store, transcript?.hasMore, transcriptInitialLoaded, canLoadInitialTranscript]);
 
   useEffect(() => {
     if (!menuOpen) return;
