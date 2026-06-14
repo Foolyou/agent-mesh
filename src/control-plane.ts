@@ -17,6 +17,7 @@ import { artifactAgentDir, resolveArtifactFile } from "./web/artifacts";
 import { readSessionState, setMeshExpectedAlive, updateAgentMailCursor, updateAgentSession, clearAgentSession, type MeshSessionState } from "./session-storage";
 import { now, type AgentActivity, type AgentConfig, type AgentHealthSignalKind, type AgentId, type AgentTurn, type MeshConfig, type MeshEdge, type MeshEvent, type PromptImageRef, type SessionMode, type SessionModel, type ThinkingEffort, type TurnHealthReason } from "./acp/types";
 import { DEFAULT_AUTO_COMPACT_SETTINGS, MIN_AUTO_COMPACT_CONTEXT_WINDOW, evaluateCompactThreshold, parseCompactThreshold } from "./auto-compact";
+import { resolveContextWindow, type ContextWindowState } from "./acp/usage-compat";
 
 const COMPACT_COOLDOWN_MS = 180_000;
 const NEAR_LIMIT_WARNING_COOLDOWN_MS = 10 * 60_000;
@@ -58,8 +59,10 @@ interface HealthFailureSummary {
 
 export interface ContextUsage {
   used: number;
+  /** Authoritative context window (normalized denominator), not the raw harness size. */
   size: number;
   percent: number;
+  cost?: number;
   updatedAt: number;
 }
 
@@ -256,6 +259,10 @@ export class ControlPlane {
   private sessionState: MeshSessionState = { meshExpectedAlive: true, agents: {} };
   private resolvedHarnesses = new Map<AgentId, ResolvedHarnessInfo>();
   private agentContextUsage = new Map<AgentId, ContextUsage>();
+  /** Per-agent sticky context-window denominator, normalized against the model→window
+   *  table. Held so a later usage frame never shrinks the window mid-session; reset on
+   *  respawn/new-session and recomputed when the agent's model changes. */
+  private agentContextWindow = new Map<AgentId, ContextWindowState>();
   private agentAdvertisedCommands = new Map<AgentId, Set<string>>();
   private agentSilentTaskCompletes = new Map<AgentId, SilentTaskCompletes>();
   private agentLastOutboundMail = new Map<AgentId, number>();
@@ -303,9 +310,28 @@ export class ControlPlane {
     this.emit({ kind: "log", text, ts: now() });
   }
 
-  private updateAgentUsage(id: AgentId, usage: { used: number; size: number; percent: number }): void {
-    this.agentContextUsage.set(id, { ...usage, updatedAt: Date.now() });
-    void this.maybeAutoCompact(id, usage);
+  /** The model id used to look up the context window: the live advertised model, falling
+   *  back to the agent's configured model when nothing has been advertised yet. */
+  private currentModelId(id: AgentId): string | undefined {
+    const advertised = this.sessionModels.get(id)?.current;
+    if (advertised) return advertised;
+    return this.mesh.agent(id)?.model;
+  }
+
+  private updateAgentUsage(id: AgentId, usage: { used: number; size: number; percent: number; cost?: number }): void {
+    // Normalize the denominator against the Zed-style model→window table so an early,
+    // under-reported harness size (claude-agent-acp's DEFAULT_CONTEXT_WINDOW=200000) does
+    // not drive the UI waterline or auto-compact. The window is sticky per model and never
+    // shrinks within a session; a model switch recomputes it from scratch.
+    const resolved = resolveContextWindow(this.agentContextWindow.get(id), this.currentModelId(id), usage.size);
+    this.agentContextWindow.set(id, resolved);
+    const window = resolved.window;
+    const percent = window > 0 ? usage.used / window : usage.percent;
+    const normalized: ContextUsage = { used: usage.used, size: window, percent, updatedAt: Date.now() };
+    if (usage.cost !== undefined) normalized.cost = usage.cost;
+    this.agentContextUsage.set(id, normalized);
+    this.emit({ kind: "agent_usage", agent: id, used: normalized.used, size: normalized.size, percent: normalized.percent, cost: normalized.cost, ts: now() });
+    void this.maybeAutoCompact(id, normalized);
   }
 
   private updateAgentCommands(id: AgentId, commands: string[]): void {
@@ -314,6 +340,7 @@ export class ControlPlane {
 
   private clearAgentSelfAwareness(id: AgentId): void {
     this.agentContextUsage.delete(id);
+    this.agentContextWindow.delete(id);
     this.agentAdvertisedCommands.delete(id);
     this.agentLastCompactAt.delete(id);
     this.agentNearLimitWarnedAt.delete(id);
@@ -523,6 +550,12 @@ export class ControlPlane {
       const models = this.sessionModels.get(a.id);
       if (models) {
         events.push({ kind: "agent_models", agent: a.id, current: models.current, available: models.available, ts });
+      }
+      // Replay the normalized usage so a reattaching client restores the context chip with
+      // the authoritative window denominator instead of briefly showing raw/empty state.
+      const usage = this.agentContextUsage.get(a.id);
+      if (usage) {
+        events.push({ kind: "agent_usage", agent: a.id, used: usage.used, size: usage.size, percent: usage.percent, cost: usage.cost, ts: new Date(usage.updatedAt).toISOString() });
       }
       for (const turn of this.queuedTurns.get(a.id) ?? []) {
         events.push({ kind: "agent_turn", phase: "queued", turn, ts });
@@ -1005,6 +1038,7 @@ export class ControlPlane {
     this.loadedSessions.clear();
     this.resumePendingValidation.clear();
     this.agentContextUsage.clear();
+    this.agentContextWindow.clear();
     this.agentAdvertisedCommands.clear();
   }
 

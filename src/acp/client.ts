@@ -137,7 +137,7 @@ export interface AcpConnectionOptions {
   onPromptStarted?: (turn: AgentTurn) => void;
   onPromptSignal?: (turn: AgentTurn | undefined, signal: unknown) => void;
   onExtNotification?: (method: string, params: unknown, turn: AgentTurn | undefined) => void;
-  onContextUsage?: (usage: { used: number; size: number; percent: number }) => void;
+  onContextUsage?: (usage: { used: number; size: number; percent: number; cost?: number }) => void;
   onAvailableCommands?: (commands: string[]) => void;
 }
 
@@ -156,7 +156,7 @@ export class AcpAgentConnection {
   sessionId?: string;
   supportsLoadSession = false;
   alive = false;
-  contextUsage: { used: number; size: number; percent: number } | null = null;
+  contextUsage: { used: number; size: number; percent: number; cost?: number } | null = null;
   advertisedCommands = new Set<string>();
   private child?: ReturnType<typeof Bun.spawn>;
   private conn?: ClientSideConnection;
@@ -269,7 +269,8 @@ export class AcpAgentConnection {
   private recordStreamState(update: unknown): void {
     const usage = parseUsageUpdate(update);
     if (usage) {
-      const contextUsage = { used: usage.used, size: usage.size, percent: usage.usagePercent };
+      const contextUsage: { used: number; size: number; percent: number; cost?: number } = { used: usage.used, size: usage.size, percent: usage.usagePercent };
+      if (usage.cost !== undefined) contextUsage.cost = usage.cost;
       this.contextUsage = contextUsage;
       this.opts.onContextUsage?.(contextUsage);
     }
