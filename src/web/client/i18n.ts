@@ -78,6 +78,7 @@ const DICT: Record<string, Entry> = {
   "router chat": ["router chat", "router 对话"],
   interrupt: ["interrupt", "中断"],
   "interrupt.current": ["interrupt current agent", "中断当前 agent 回合"],
+  send: ["send message", "发送消息"],
   wake: ["start", "启动"],
   "wake.hint": ["start this agent", "启动这个 agent"],
   "agent.stop": ["stop", "停止"],

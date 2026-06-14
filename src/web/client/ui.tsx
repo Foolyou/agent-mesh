@@ -77,6 +77,31 @@ export function Panel({
 
 /** Auto-growing, wrapping multi-line input. Enter sends, Shift+Enter inserts a
  *  newline. Exposes its <textarea> via ref so a parent can focus-on-click. */
+// Flat, dependency-free line icons for the composer action buttons (feather-style strokes,
+// inheriting currentColor). aria-hidden — the buttons carry the accessible label.
+function AttachIcon() {
+  return (
+    <svg className="compose-btn-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M21.44 11.05l-9.19 9.19a5 5 0 0 1-7.07-7.07l9.19-9.19a3.5 3.5 0 0 1 4.95 4.95l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+    </svg>
+  );
+}
+function SendIcon() {
+  return (
+    <svg className="compose-btn-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <line x1="22" y1="2" x2="11" y2="13" />
+      <polygon points="22 2 15 22 11 13 2 9 22 2" />
+    </svg>
+  );
+}
+function StopIcon() {
+  return (
+    <svg className="compose-btn-icon" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <rect x="6" y="6" width="12" height="12" rx="2" />
+    </svg>
+  );
+}
+
 export const Composer = forwardRef<HTMLTextAreaElement, {
   onSend: (text: string, images?: PromptImageRef[], opts?: { steer?: boolean }) => void | Promise<void>;
   onInterrupt?: () => void | Promise<void>;
@@ -187,7 +212,11 @@ export const Composer = forwardRef<HTMLTextAreaElement, {
   }
 
   const canAttach = !disabled;
-  const showInterrupt = !!onInterrupt;
+  // Only show the interrupt button while the agent actually has an in-flight turn; when idle the
+  // primary action is "send" instead. (Idle gating — the interrupt is not merely disabled, it is
+  // not rendered.)
+  const showInterrupt = !!onInterrupt && !!working;
+  const canSend = !disabled && !sending && (v.trim().length > 0 || pending.length > 0);
   // images were attached to an agent that can't receive them — they'll be dropped on send
   const imagesWontSend = pending.length > 0 && imageEnabled === false;
   return (
@@ -220,30 +249,39 @@ export const Composer = forwardRef<HTMLTextAreaElement, {
         {err ? <div className="compose-error">{err}</div> : null}
       </div>
       <div className="compose-actions">
+        <button
+          className="compose-btn attach-btn"
+          type="button"
+          disabled={!canAttach || sending}
+          title={imageEnabled ? "attach image" : imageDisabledReason ?? "this agent may not accept images"}
+          aria-label={imageEnabled ? "attach image" : imageDisabledReason ?? "attach image"}
+          onClick={() => fileRef.current?.click()}
+        >
+          <AttachIcon />
+        </button>
         {showInterrupt ? (
           <button
-            className="compose-interrupt"
+            className="compose-btn compose-interrupt"
             type="button"
-            disabled={disabled || sending || !working}
+            disabled={disabled || sending}
             title={t("interrupt.current")}
             aria-label={t("interrupt.current")}
             onClick={() => void onInterrupt?.()}
           >
-            <span className="compose-interrupt-text">{t("interrupt")}</span>
-            <span className="compose-interrupt-icon" aria-hidden="true">
-              ⏹
-            </span>
+            <StopIcon />
           </button>
-        ) : null}
-        <button
-          className="attach-btn"
-          type="button"
-          disabled={!canAttach || sending}
-          title={imageEnabled ? "attach image" : imageDisabledReason ?? "this agent may not accept images"}
-          onClick={() => fileRef.current?.click()}
-        >
-          📎
-        </button>
+        ) : (
+          <button
+            className="compose-btn compose-send"
+            type="button"
+            disabled={!canSend}
+            title={t("send")}
+            aria-label={t("send")}
+            onClick={() => void submit()}
+          >
+            <SendIcon />
+          </button>
+        )}
       </div>
       <input
         ref={fileRef}
