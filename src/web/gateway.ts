@@ -6,7 +6,7 @@ import { reduceTranscript } from "./transcript";
 import { now } from "../acp/types";
 import { resolve } from "node:path";
 import type { AgentConfig, MeshConfig, MeshEdge, MeshEvent, AgentId, AgentStatus, AgentActivity, AgentTurn, PromptImageRef, HarnessId } from "../acp/types";
-import type { StartMeshOptions } from "../mesh-manager";
+import type { MutationApplyResult, StartMeshOptions } from "../mesh-manager";
 import type { RespawnMode, RespawnResult } from "../control-plane";
 import { readUpload, storeUploads, uploadPath, type UploadFileLike } from "./uploads";
 import { AgentFileError, resolveAgentFile } from "./agent-files";
@@ -45,9 +45,9 @@ export interface ManagerLike {
   removeQueuedTurn(name: string, agentId: string, turnId: string): void;
   steerAgent(name: string, agentId: string, text: string, images?: PromptImageRef[]): void;
   resolvePermission(name: string, requestId: string, optionId: string): void;
-  setMode(name: string, agentId: string, modeId: string): Promise<void>;
-  setModel(name: string, agentId: string, modelId: string): Promise<void>;
-  setAgentEffort(name: string, agentId: string, effort?: string): Promise<void>;
+  setMode(name: string, agentId: string, modeId: string): Promise<MutationApplyResult>;
+  setModel(name: string, agentId: string, modelId: string): Promise<MutationApplyResult>;
+  setAgentEffort(name: string, agentId: string, effort?: string): Promise<MutationApplyResult>;
   addEdge(name: string, edge: MeshEdge): Promise<void>;
   addAgent(name: string, agent: AgentConfig, edges?: MeshEdge[]): Promise<void>;
   interruptAgent(name: string, agentId: string): void;
@@ -708,17 +708,20 @@ export class WebGateway {
   resolvePermission(name: string, requestId: string, optionId: string): void {
     this.manager.resolvePermission(name, requestId, optionId);
   }
-  async setEffort(name: string, agentId: string, effort?: string): Promise<void> {
-    await this.manager.setAgentEffort(name, agentId, effort);
+  async setEffort(name: string, agentId: string, effort?: string): Promise<MutationApplyResult> {
+    const result = await this.manager.setAgentEffort(name, agentId, effort);
     this.refreshMeshes(); // re-broadcast the summary so the picker reflects the new value
+    return result;
   }
-  async setMode(name: string, agentId: string, modeId: string): Promise<void> {
-    await this.manager.setMode(name, agentId, modeId);
+  async setMode(name: string, agentId: string, modeId: string): Promise<MutationApplyResult> {
+    const result = await this.manager.setMode(name, agentId, modeId);
     this.refreshMeshes();
+    return result;
   }
-  async setModel(name: string, agentId: string, modelId: string): Promise<void> {
-    await this.manager.setModel(name, agentId, modelId);
+  async setModel(name: string, agentId: string, modelId: string): Promise<MutationApplyResult> {
+    const result = await this.manager.setModel(name, agentId, modelId);
     this.refreshMeshes();
+    return result;
   }
   async addEdge(name: string, edge: MeshEdge): Promise<void> {
     await this.manager.addEdge(name, edge);
