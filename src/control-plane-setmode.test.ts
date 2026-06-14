@@ -678,8 +678,9 @@ test("setEffort dynamically switches supported thought_level config options and 
   }
 });
 
-test("start emits advertised runtime effort options and setEffort uses their config id", async () => {
+test("start emits advertised runtime effort options and setEffort forwards + persists max", async () => {
   const root = await mkdtemp(join(tmpdir(), "mesh-control-plane-effort-options-"));
+  const runDir = await mkdtemp(join(tmpdir(), "mesh-control-plane-effort-options-run-"));
   const config: MeshConfig = {
     name: "dynamic-effort-options",
     agents: [{ id: "claude", harness: "claude", project: root, role: "router" }],
@@ -689,6 +690,7 @@ test("start emits advertised runtime effort options and setEffort uses their con
   let created: ConfigOptionsConnection | undefined;
   const cp = new ControlPlane(config, {
     mailboxPath: join(root, "mailbox.ndjson"),
+    sessionRunDir: runDir,
     connectionFactory: (opts) => {
       created = new ConfigOptionsConnection(opts);
       return created as unknown as AcpAgentConnection;
@@ -705,11 +707,14 @@ test("start emits advertised runtime effort options and setEffort uses their con
       available: [{ id: "low", name: "Low" }, { id: "high", name: "High" }, { id: "max", name: "Max" }],
     });
 
-    await cp.setEffort("claude", "max" as any);
+    await cp.setEffort("claude", "max");
     expect(created?.setConfigOptions).toContainEqual({ configId: "thought_level", value: "max" });
+    // max is a first-class claude effort → it is persisted to the session record.
+    expect((await readSessionState(runDir, "dynamic-effort-options")).agents.claude?.effort).toBe("max");
   } finally {
     await cp.stop();
     await rm(root, { recursive: true, force: true });
+    await rm(runDir, { recursive: true, force: true });
   }
 });
 
@@ -753,7 +758,7 @@ test("claude runtime effort can select advertised values outside static config s
       available: [{ id: "low", name: "Low" }, { id: "xhigh", name: "X High" }],
     });
 
-    await cp.setEffort("claude", "xhigh" as any);
+    await cp.setEffort("claude", "xhigh");
     expect(created?.setConfigOptions).toContainEqual({ configId: "thought_level", value: "xhigh" });
     expect(events.filter((e) => e.kind === "agent_efforts" && e.agent === "claude").at(-1)).toMatchObject({
       current: "xhigh",
