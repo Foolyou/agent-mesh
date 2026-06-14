@@ -63,6 +63,22 @@ try {
     if ((await model.inputValue()) !== "kimi-k2") throw new Error(`current model "${await model.inputValue()}" != "kimi-k2"`);
   });
 
+  await step("effort picker shows per-harness: codex present (disabled while running), opencode hidden", async () => {
+    // codex-1 is selected; codex has a spawn-time effort ladder → picker present but disabled
+    // at runtime (codex is not runtime-switchable), and includes xhigh.
+    const codexEffort = page.locator(".conv-control .effort-sel");
+    await codexEffort.waitFor({ timeout: 6000 });
+    if (!(await codexEffort.isDisabled())) throw new Error("codex effort picker should be disabled while running (spawn-time only)");
+    const effOpts = await codexEffort.locator("option").allTextContents();
+    if (!effOpts.includes("xhigh")) throw new Error(`codex effort options missing xhigh: ${JSON.stringify(effOpts)}`);
+    // opencode has no effort entry at all → the picker must not render for it.
+    await page.locator('.conv-member-tab:has-text("opencode-1")').click();
+    await sleep(200);
+    if (await page.locator(".conv-control .effort-sel").count()) throw new Error("opencode shows an effort picker but should not");
+    await page.locator('.conv-member-tab:has-text("codex-1")').click();
+    await sleep(150);
+  });
+
   await step("switching mode round-trips back into the picker + logs the change", async () => {
     await page.locator(".conv-control .mode-sel").selectOption("read-only");
     // the fake echoes agent.modes with the new current → the select reflects it

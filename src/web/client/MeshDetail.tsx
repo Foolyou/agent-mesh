@@ -262,15 +262,17 @@ function StaleHarnessNotice({
   );
 }
 
-// Per-agent thinking-effort picker. Claude and Kimi can switch thought level at runtime;
-// Codex remains spawn-time only, and OpenCode is pending binary verification.
+// Per-agent reasoning-effort picker. Claude switches effort at runtime (ACP config option);
+// Codex is spawn-time only. Kimi has NO reasoning effort (its thinking is a model-variant
+// toggle — rendered separately), and OpenCode has no effort entry at all; both report an
+// empty capability set, so this control renders nothing for them.
 function EffortControl({ m, agent, store }: { m: MeshSummary; agent: string; store: Store }) {
   const { t } = useI18n();
   const a = m.agents.find((x) => x.id === agent);
   if (!a) return null;
   const advertised = store.getState().perMesh[m.name]?.efforts?.[agent];
   const efforts = advertised?.available.length ? advertised.available.map((o) => o.id) : effortOptionsForHarness(a.harness);
-  if (efforts.length === 0) return null;
+  if (efforts.length === 0) return null; // codex/claude only — kimi & opencode hidden here
   const live = m.status === "running" || m.status === "starting";
   const runtime = supportsRuntimeEffort(a.harness);
   return (
