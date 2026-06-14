@@ -23,7 +23,7 @@ test("rejects unsafe names", () => {
 test("validates effort per harness", () => {
   const accepted: Record<HarnessId, ThinkingEffort[]> = {
     codex: ["low", "medium", "high", "xhigh"],
-    claude: ["minimal", "low", "medium", "high"],
+    claude: ["low", "medium", "high", "xhigh", "max"],
     kimi: ["low", "high"],
     opencode: [],
   };

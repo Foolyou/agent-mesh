@@ -118,7 +118,7 @@ test("create and update mesh expose optional per-agent configuration fields", as
     expect(agentProperties.instructions.type).toBe("string");
     expect(agentProperties.instructions.description).toContain("per-agent instructions");
     expect(agentProperties.lazy.type).toBe("boolean");
-    expect(agentProperties.effort.enum).toEqual(["minimal", "low", "medium", "high", "xhigh"]);
+    expect(agentProperties.effort.enum).toEqual(["minimal", "low", "medium", "high", "xhigh", "max"]);
     expect(agentProperties.opencodePermission.enum).toEqual(["allow", "ask"]);
     expect(agentProperties.mode.type).toBe("string");
     expect(agentProperties.model.type).toBe("string");

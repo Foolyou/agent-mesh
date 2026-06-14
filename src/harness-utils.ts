@@ -1,6 +1,6 @@
 import type { HarnessId, SessionEffort, ThinkingEffort } from "./acp/types";
 
-export const ALL_THINKING_EFFORTS = ["minimal", "low", "medium", "high", "xhigh"] as const satisfies readonly ThinkingEffort[];
+export const ALL_THINKING_EFFORTS = ["minimal", "low", "medium", "high", "xhigh", "max"] as const satisfies readonly ThinkingEffort[];
 
 export interface HarnessEffortCapability {
   options: readonly ThinkingEffort[];
@@ -9,7 +9,9 @@ export interface HarnessEffortCapability {
 
 export const HARNESS_EFFORT_CAPABILITIES: Record<HarnessId, HarnessEffortCapability> = {
   codex: { options: ["low", "medium", "high", "xhigh"], runtimeSwitchable: false },
-  claude: { options: ["minimal", "low", "medium", "high"], runtimeSwitchable: true },
+  // Aligns with Zed's Anthropic effort set (low|medium|high|xhigh|max, capability-driven,
+  // no `minimal`). Runtime-switchable via the ACP effort config option.
+  claude: { options: ["low", "medium", "high", "xhigh", "max"], runtimeSwitchable: true },
   kimi: { options: ["low", "high"], runtimeSwitchable: true },
   opencode: { options: [], runtimeSwitchable: false },
 };

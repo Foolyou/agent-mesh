@@ -27,10 +27,13 @@ export function normalizeMeshEdges(edges: readonly MeshEdgeInput[] = []): MeshEd
   return edges.map((edge) => normalizeMeshEdge(edge));
 }
 
-/** Reasoning / thinking effort for an agent. Some harnesses apply it at spawn
- *  (codex: model_reasoning_effort; claude: MAX_THINKING_TOKENS) and some can
- *  switch compatible runtime thought-level config options. `undefined` = default. */
-export type ThinkingEffort = "minimal" | "low" | "medium" | "high" | "xhigh";
+/** Reasoning / thinking effort for an agent — the global union of effort levels across
+ *  harnesses. Legal values are constrained PER HARNESS by HARNESS_EFFORT_CAPABILITIES
+ *  (e.g. Claude = low|medium|high|xhigh|max; codex = low|medium|high|xhigh). `minimal` is
+ *  retained for back-compat with older persisted configs but is no longer offered by any
+ *  harness. Some harnesses apply effort at spawn (codex: model_reasoning_effort) and some
+ *  switch it at runtime via ACP config options. `undefined` = harness default. */
+export type ThinkingEffort = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
 export interface AgentConfig {
   id: AgentId;
