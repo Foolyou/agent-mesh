@@ -255,6 +255,11 @@ export class ControlPlane {
   private agentLastTurnCompleted = new Map<AgentId, number>();
   private agentLastCompactAt = new Map<AgentId, number>();
   private agentNearLimitWarnedAt = new Map<AgentId, number>();
+  /** Per-agent in-flight /compact turn, shared by the reactive (post-reply) and the
+   *  pre-send guard paths. Concurrent triggers for one agent coalesce onto this single
+   *  promise so a target never has two /compact turns queued at once; the promise
+   *  resolves (never rejects) when the compaction settles, so awaiters proceed either way. */
+  private compactInFlight = new Map<AgentId, Promise<void>>();
   private activeTurnIds = new Map<AgentId, string>();
   private turnOutboundMailCount = new Map<string, number>();
   private pendingRespawns = new Map<AgentId, ReturnType<typeof setTimeout>>();
@@ -305,6 +310,7 @@ export class ControlPlane {
     this.agentAdvertisedCommands.delete(id);
     this.agentLastCompactAt.delete(id);
     this.agentNearLimitWarnedAt.delete(id);
+    this.compactInFlight.delete(id);
   }
 
   private emitNearContextLimitWarning(id: AgentId, usage: { percent: number }): void {
@@ -315,23 +321,68 @@ export class ControlPlane {
     this.emit({ kind: "near_context_limit_no_compact", agent: id, usagePercent: usage.percent, ts: nowMs });
   }
 
-  private async maybeAutoCompact(agentId: AgentId, usage: { used: number; size: number; percent: number }): Promise<void> {
-    if (usage.size < MIN_AUTO_COMPACT_CONTEXT_WINDOW) return;
+  /** Pure eligibility decision shared by the reactive and pre-send compaction paths.
+   *  Deliberately excludes the busy guard (turnCounts) and the cooldown/in-flight checks,
+   *  which differ between the two callers and carry side effects. */
+  private compactEligibility(
+    agentId: AgentId,
+    usage: { used: number; size: number; percent: number },
+  ): "compact" | "not-advertised" | "skip" {
+    if (usage.size < MIN_AUTO_COMPACT_CONTEXT_WINDOW) return "skip";
 
     const settings = this.mesh.config.autoCompact ?? DEFAULT_AUTO_COMPACT_SETTINGS;
-    if (!settings.enabled) return;
+    if (!settings.enabled) return "skip";
 
     let threshold;
     try {
       threshold = parseCompactThreshold(settings.threshold);
     } catch (err) {
       this.log(`autoCompact threshold invalid for ${agentId}: ${String(err)}`);
-      return;
+      return "skip";
     }
-    if (!evaluateCompactThreshold(threshold, usage.used, usage.size)) return;
+    if (!evaluateCompactThreshold(threshold, usage.used, usage.size)) return "skip";
 
     const commands = this.agentAdvertisedCommands.get(agentId) ?? new Set<string>();
-    if (!commands.has("compact")) {
+    if (!commands.has("compact")) return "not-advertised";
+
+    return "compact";
+  }
+
+  private compactOnCooldown(agentId: AgentId, nowMs: number): boolean {
+    const last = this.agentLastCompactAt.get(agentId);
+    return last !== undefined && nowMs - last < COMPACT_COOLDOWN_MS;
+  }
+
+  /** Start (or coalesce onto) a single /compact turn for one agent and return a promise
+   *  that resolves — never rejects — when it settles. Telemetry mirrors the original
+   *  reactive path; failures are surfaced as compact_failed and swallowed so callers that
+   *  await this (the pre-send guard) still go on to deliver the real prompt. */
+  private runCompact(agentId: AgentId, nowMs: number, reason: string): Promise<void> {
+    const existing = this.compactInFlight.get(agentId);
+    if (existing) return existing;
+    this.agentLastCompactAt.set(agentId, nowMs);
+    this.emit({ kind: "compact_started", agent: agentId, reason, ts: nowMs });
+    const run = (async () => {
+      try {
+        await this.sendBarePrompt(agentId, "/compact", { reason });
+        this.emit({ kind: "compact_completed", agent: agentId, ts: Date.now() });
+      } catch (err) {
+        this.emit({ kind: "compact_failed", agent: agentId, error: String(err), ts: Date.now() });
+      }
+    })();
+    this.compactInFlight.set(agentId, run);
+    void run.finally(() => {
+      if (this.compactInFlight.get(agentId) === run) this.compactInFlight.delete(agentId);
+    });
+    return run;
+  }
+
+  /** Reactive (post-reply) auto-compaction: fires from usage updates and on turn completion,
+   *  only while the agent is idle. */
+  private async maybeAutoCompact(agentId: AgentId, usage: { used: number; size: number; percent: number }): Promise<void> {
+    const decision = this.compactEligibility(agentId, usage);
+    if (decision === "skip") return;
+    if (decision === "not-advertised") {
       this.emitNearContextLimitWarning(agentId, usage);
       return;
     }
@@ -339,17 +390,35 @@ export class ControlPlane {
     if ((this.turnCounts.get(agentId) ?? 0) > 0) return;
 
     const nowMs = Date.now();
-    const lastCompact = this.agentLastCompactAt.get(agentId);
-    if (lastCompact && nowMs - lastCompact < COMPACT_COOLDOWN_MS) return;
-    this.agentLastCompactAt.set(agentId, nowMs);
-    this.emit({ kind: "compact_started", agent: agentId, reason: "auto-threshold", ts: nowMs });
+    if (this.compactOnCooldown(agentId, nowMs)) return;
+    if (this.compactInFlight.has(agentId)) return;
+    await this.runCompact(agentId, nowMs, "auto-threshold");
+  }
 
-    try {
-      await this.sendBarePrompt(agentId, "/compact", { reason: "auto-threshold" });
-      this.emit({ kind: "compact_completed", agent: agentId, ts: Date.now() });
-    } catch (err) {
-      this.emit({ kind: "compact_failed", agent: agentId, error: String(err), ts: Date.now() });
+  /** Pre-send guard: before a real (non-steer) prompt reaches an agent whose context is
+   *  already over threshold, /compact must run first so the turn does not start on the red
+   *  line. Unlike the reactive path this has NO busy guard — enqueuing /compact while the agent
+   *  is mid-turn is exactly right, since sendBarePrompt serializes it through the connection's
+   *  FIFO and the caller awaits its completion before sending the real prompt. Concurrent
+   *  callers for one target coalesce onto the single in-flight compaction.
+   *
+   *  Returns a promise to await ONLY when a compaction is actually warranted; otherwise returns
+   *  undefined so the caller can deliver the prompt in the same synchronous tick (preserving the
+   *  control plane's synchronous enqueue ordering for the common no-compact case). */
+  private compactBeforePrompt(id: AgentId): Promise<void> | undefined {
+    const inflight = this.compactInFlight.get(id);
+    if (inflight) return inflight;
+    const usage = this.agentContextUsage.get(id);
+    if (!usage) return undefined;
+    const decision = this.compactEligibility(id, usage);
+    if (decision === "skip") return undefined;
+    if (decision === "not-advertised") {
+      this.emitNearContextLimitWarning(id, usage);
+      return undefined;
     }
+    const nowMs = Date.now();
+    if (this.compactOnCooldown(id, nowMs)) return undefined;
+    return this.runCompact(id, nowMs, "pre-send");
   }
 
   private clearAgentSilentTaskCompletes(id: AgentId): void {
@@ -1222,7 +1291,13 @@ export class ControlPlane {
       id,
       "You may have pending mail that arrived while you were cold or spawning. Please call check_mail now and handle all pending messages.",
     );
-    this.trackTurn(id, () => conn.prompt(prompt)).catch((err) => this.log(`drainPendingMail(${id}) failed: ${String(err)}`));
+    // This path sends conn.prompt directly (bypassing sendPromptWithResumeFallback), so apply
+    // the same pre-send compaction guard before delivering the drain prompt.
+    const send = () =>
+      this.trackTurn(id, () => conn.prompt(prompt)).catch((err) => this.log(`drainPendingMail(${id}) failed: ${String(err)}`));
+    const pending = this.compactBeforePrompt(id);
+    if (pending) void pending.then(send);
+    else send();
   }
 
   async wakeAgent(id: AgentId): Promise<void> {
@@ -1276,6 +1351,14 @@ export class ControlPlane {
     conn: AcpAgentConnection,
     turn?: AgentTurn,
   ): Promise<unknown> {
+    // Pre-send guard: compact an over-threshold context before a real prompt lands, so the
+    // turn does not start on the red line. Steer prompts are interrupts that must jump the
+    // queue, so they deliberately skip this. Only awaits when a compaction is actually needed,
+    // so the no-compact path still enqueues the prompt synchronously.
+    if (!steer) {
+      const pending = this.compactBeforePrompt(id);
+      if (pending) await pending;
+    }
     const prompt = this.compose(id, text);
     try {
       const result = await this.trackTurn(
