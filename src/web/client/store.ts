@@ -190,6 +190,7 @@ export interface Store {
   newAgentSession(name: string, agentId: string): Promise<any>;
   newAllSessions(name: string): Promise<any>;
   respawnAgent(name: string, agentId: string, mode: RespawnMode): Promise<any>;
+  loadOlderTranscript(mesh: string, agentId: string): Promise<void>;
   listHarnesses(): Promise<HarnessProbeRow[]>;
   installHarness(id: HarnessId): Promise<{ jobId: string; status: "running" | "done"; harnessId: HarnessId; pkgSpec: string }>;
   streamHarnessInstall(id: HarnessId, jobId: string, onEvent: (event: HarnessInstallEvent) => void, onClose?: (err?: Error) => void): Promise<void>;
@@ -207,6 +208,7 @@ export function createStore(): Store {
   let toastSeq = 0;
   let harnessChangeTimer: ReturnType<typeof setTimeout> | undefined;
   let harnessListInFlight: Promise<HarnessProbeRow[]> | undefined;
+  const loadingOlderTranscript = new Map<string, Promise<void>>();
   const subs = new Set<() => void>();
   const emit = () => {
     for (const s of subs) s();
@@ -277,6 +279,45 @@ export function createStore(): Store {
       });
     }
     return harnessListInFlight;
+  }
+  function prependTranscriptItems(mesh: string, agentId: string, items: TranscriptItem[], hasMore: boolean): void {
+    set(withPerMesh(state, mesh, (pm) => {
+      const previous = pm.transcripts[agentId];
+      const nextItems = [...items, ...(previous?.items ?? [])];
+      return {
+        ...pm,
+        transcripts: {
+          ...pm.transcripts,
+          [agentId]: {
+            items: nextItems,
+            hasMore,
+            ...(nextItems[0] ? { oldestSeq: nextItems[0].id } : {}),
+          },
+        },
+      };
+    }));
+  }
+  function loadOlderTranscript(mesh: string, agentId: string): Promise<void> {
+    const current = state.perMesh[mesh]?.transcripts[agentId];
+    if (!current?.hasMore) return Promise.resolve();
+    const key = `${mesh}:${agentId}`;
+    const existing = loadingOlderTranscript.get(key);
+    if (existing) return existing;
+    const params = new URLSearchParams();
+    if (current.oldestSeq) params.set("before", current.oldestSeq);
+    params.set("limit", "100");
+    const request = guard(
+      send("GET", `/api/meshes/${enc(mesh)}/agents/${enc(agentId)}/transcript?${params.toString()}`) as Promise<{ items?: TranscriptItem[]; hasMore?: boolean }>,
+      `load older transcript ${agentId}`,
+    )
+      .then((res) => {
+        prependTranscriptItems(mesh, agentId, Array.isArray(res.items) ? res.items : [], res.hasMore === true);
+      })
+      .finally(() => {
+        loadingOlderTranscript.delete(key);
+      });
+    loadingOlderTranscript.set(key, request);
+    return request;
   }
 
   let delay = 500;
@@ -405,6 +446,7 @@ export function createStore(): Store {
     newAgentSession: (n, a) => guard(post(`/api/meshes/${enc(n)}/agents/${enc(a)}/session`), `new session ${a}`),
     newAllSessions: (n) => guard(post(`/api/meshes/${enc(n)}/session`), `new sessions ${n}`),
     respawnAgent: (n, a, mode) => guard(post(`/api/meshes/${enc(n)}/agents/${enc(a)}/respawn`, { mode }), `respawn ${a}`),
+    loadOlderTranscript,
     listHarnesses,
     installHarness: (id) => guard(post(`/api/harnesses/${enc(id)}/install`), `install ${id}`),
     streamHarnessInstall,

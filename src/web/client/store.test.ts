@@ -1,6 +1,6 @@
 import { test, expect, mock } from "bun:test";
 import { emptyState, applyMsg, createStore } from "./store";
-import type { GatewayState } from "../types";
+import type { GatewayState, TranscriptItem } from "../types";
 
 function seed(): GatewayState {
   return {
@@ -232,6 +232,14 @@ test("assistant.status updates", () => {
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
+function message(id: string): TranscriptItem {
+  return { id, kind: "message", role: "agent", text: id, ts: "T", complete: true };
+}
+
+function responseJson(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+}
+
 test("store notifies subscribers when harnesses changed", async () => {
   const store = createStore();
   let calls = 0;
@@ -293,6 +301,97 @@ test("listHarnesses shares an in-flight request across repeated refresh triggers
     expect(await second).toHaveLength(1);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(store.getToasts()).toHaveLength(0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("loadOlderTranscript prepends older items and updates cursor metadata", async () => {
+  const originalFetch = globalThis.fetch;
+  const older = Array.from({ length: 100 }, (_, i) => message(`old-${i}`));
+  const fetchMock = mock(() => Promise.resolve(responseJson({ items: older, hasMore: true })));
+  globalThis.fetch = fetchMock as any;
+  try {
+    const store = createStore();
+    store.apply({
+      t: "snapshot",
+      state: {
+        ...seed(),
+        perMesh: {
+          demo: {
+            ...seed().perMesh.demo,
+            transcripts: {
+              "codex-1": { items: Array.from({ length: 100 }, (_, i) => message(`new-${i}`)), hasMore: true, oldestSeq: "new-0" },
+            },
+          },
+        },
+      },
+    });
+
+    await store.loadOlderTranscript("demo", "codex-1");
+
+    const transcript = store.getState().perMesh.demo.transcripts["codex-1"];
+    expect(fetchMock).toHaveBeenCalledWith("/api/meshes/demo/agents/codex-1/transcript?before=new-0&limit=100", { method: "GET", headers: {}, body: undefined });
+    expect(transcript.items).toHaveLength(200);
+    expect(transcript.items[0].id).toBe("old-0");
+    expect(transcript.items[99].id).toBe("old-99");
+    expect(transcript.items[100].id).toBe("new-0");
+    expect(transcript.oldestSeq).toBe("old-0");
+    expect(transcript.hasMore).toBe(true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("loadOlderTranscript coalesces concurrent requests for the same agent", async () => {
+  const originalFetch = globalThis.fetch;
+  let resolveFetch: (res: Response) => void = () => {};
+  const fetchMock = mock(() => new Promise<Response>((resolve) => {
+    resolveFetch = resolve;
+  }));
+  globalThis.fetch = fetchMock as any;
+  try {
+    const store = createStore();
+    store.apply({
+      t: "snapshot",
+      state: {
+        ...seed(),
+        perMesh: {
+          demo: {
+            ...seed().perMesh.demo,
+            transcripts: {
+              "codex-1": { items: [message("new-0")], hasMore: true, oldestSeq: "new-0" },
+            },
+          },
+        },
+      },
+    });
+
+    const first = store.loadOlderTranscript("demo", "codex-1");
+    const second = store.loadOlderTranscript("demo", "codex-1");
+    resolveFetch(responseJson({ items: [message("old-0")], hasMore: false }));
+    await Promise.all([first, second]);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const transcript = store.getState().perMesh.demo.transcripts["codex-1"];
+    expect(transcript.items.map((item) => item.id)).toEqual(["old-0", "new-0"]);
+    expect(transcript.hasMore).toBe(false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("loadOlderTranscript returns without fetching when there is no older transcript", async () => {
+  const originalFetch = globalThis.fetch;
+  const fetchMock = mock(() => Promise.resolve(responseJson({ items: [], hasMore: false })));
+  globalThis.fetch = fetchMock as any;
+  try {
+    const store = createStore();
+    store.apply({ t: "snapshot", state: seed() });
+
+    await store.loadOlderTranscript("demo", "codex-1");
+
+    expect(fetchMock).not.toHaveBeenCalled();
   } finally {
     globalThis.fetch = originalFetch;
   }

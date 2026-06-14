@@ -81,6 +81,7 @@ function store(state: GatewayState): Store {
     newAgentSession: noop,
     newAllSessions: noop,
     respawnAgent: noop,
+    loadOlderTranscript: noop,
     listHarnesses: async () => [],
     installHarness: async () => ({ jobId: "job", status: "done" as const, harnessId: "codex", pkgSpec: "codex" }),
     streamHarnessInstall: noop,
