@@ -1,7 +1,7 @@
 import { test, expect } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { isTranscriptAtBottom, isTranscriptScrollIntentKey, mailFoldButtonLabel, mailFoldInitialLineCount, nextMailExpanded, nextTranscriptStickState, Transcript, VIRTUAL_THRESHOLD } from "./Transcript";
+import { didTranscriptScrollUp, isTranscriptAtBottom, isTranscriptScrollIntentKey, mailFoldButtonLabel, mailFoldInitialLineCount, nextMailExpanded, nextTranscriptStickState, Transcript, VIRTUAL_THRESHOLD } from "./Transcript";
 import type { TranscriptItem } from "../types";
 
 const T = "2026-06-09T00:00:00.000Z";
@@ -62,9 +62,16 @@ test("transcript bottom detection treats nearby scroll positions as bottom", () 
 });
 
 test("transcript keeps stick-to-bottom across layout-only scroll drift", () => {
-  expect(nextTranscriptStickState(true, false, false)).toBe(true);
-  expect(nextTranscriptStickState(true, false, true)).toBe(false);
-  expect(nextTranscriptStickState(false, true, false)).toBe(true);
+  expect(nextTranscriptStickState(true, false, true, false)).toBe(true);
+  expect(nextTranscriptStickState(true, false, true, true)).toBe(false);
+  expect(nextTranscriptStickState(true, false, false, true)).toBe(true);
+  expect(nextTranscriptStickState(false, true, false, false)).toBe(true);
+});
+
+test("transcript only treats meaningful upward scroll as leave-bottom intent", () => {
+  expect(didTranscriptScrollUp(120, 100)).toBe(false);
+  expect(didTranscriptScrollUp(97, 100)).toBe(false);
+  expect(didTranscriptScrollUp(95, 100)).toBe(true);
 });
 
 test("transcript recognizes keyboard scroll intent keys", () => {
