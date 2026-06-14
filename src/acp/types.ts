@@ -70,7 +70,7 @@ export interface MeshConfig {
    *  agent's mesh briefing. Free text. */
   charter?: string;
   /** Optional per-mesh automatic context compaction settings. Missing means
-   *  DEFAULT_AUTO_COMPACT_SETTINGS ({ enabled: true, threshold: "90%" }). */
+   *  DEFAULT_AUTO_COMPACT_SETTINGS ({ enabled: true, threshold: "85%" }). */
   autoCompact?: AutoCompactSettings;
 }
 

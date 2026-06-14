@@ -523,7 +523,7 @@ export function MeshBuilder({
                     id="mesh-auto-compact-threshold"
                     className="inp"
                     value={autoCompactThreshold}
-                    placeholder="90%"
+                    placeholder="85%"
                     disabled={!autoCompactEnabled}
                     aria-describedby="mesh-auto-compact-help"
                     aria-invalid={autoCompactErr ? "true" : undefined}

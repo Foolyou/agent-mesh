@@ -26,8 +26,8 @@ test("MeshBuilder renders default auto-compact settings", () => {
   expect(html).toContain("build.autoCompact.enable");
   expect(html).toContain('type="checkbox" checked=""');
   expect(html).toContain('id="mesh-auto-compact-threshold"');
-  expect(html).toContain('value="90%"');
-  expect(html).toContain('placeholder="90%"');
+  expect(html).toContain('value="85%"');
+  expect(html).toContain('placeholder="85%"');
 });
 
 test("MeshBuilder pre-fills existing auto-compact settings", () => {
