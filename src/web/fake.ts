@@ -96,6 +96,7 @@ export class FakeManager {
     const e = this.meshes.get(name);
     if (e && (e.status === "running" || e.status === "starting")) throw new Error(`mesh "${name}" is running`);
     this.meshes.delete(name);
+    this.boards.delete(name); // mirror prod lifecycle: delete/recreate must not expose stale board state
     await deleteArtifactMesh(this.root, name);
   }
   async loadDefinitions(): Promise<void> {}
