@@ -1,6 +1,7 @@
 // Core domain types for the Agent Mesh control plane.
 // Re-export the ACP schema/classes under `schema` for convenient access.
 export * as schema from "@zed-industries/agent-client-protocol";
+import type { BoardDocument } from "../board";
 
 export type HarnessId = "codex" | "opencode" | "claude" | "kimi";
 export type AgentRole = "router" | "member";
@@ -155,6 +156,9 @@ export type MeshEvent =
   // The control-plane is the single normalization point — the web consumes this instead of
   // recomputing from raw usage_update frames. Replayed by snapshotEvents() on reattach.
   | { kind: "agent_usage"; agent: AgentId; used: number; size: number; percent: number; cost?: number; ts: string }
+  // Full per-mesh collaboration board. Phase 1 emits the WHOLE board on every change (no
+  // deltas) and snapshotEvents() replays the same, so a reattaching client always converges.
+  | { kind: "board_snapshot"; board: BoardDocument; ts: string }
   // Brackets a loadSession() history replay: the harness re-emits the whole session as a
   // flood of session/update events. The gateway folds them into state but suppresses the
   // per-item broadcast so reattached WS clients learn the result from the snapshot instead

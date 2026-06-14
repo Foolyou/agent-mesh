@@ -6,6 +6,7 @@ import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import type { AgentId, AgentRole } from "../acp/types";
+import type { BoardCommand, BoardStatus, BoardPriority } from "../board";
 
 export interface MeshToolContext {
   agentId: AgentId;
@@ -31,6 +32,11 @@ export interface MeshServicesHandlers {
   checkMail(ctx: MeshToolContext): Promise<string> | string;
   interrupt(ctx: MeshToolContext, target: string, reason?: string): Promise<string> | string;
   publishAttachment(ctx: MeshToolContext, path: string, opts?: PublishAttachmentOptions): Promise<string> | string;
+  /** Render the full board for the caller (read-only). */
+  boardList(ctx: MeshToolContext): Promise<string> | string;
+  /** Apply a board mutation. The control-plane derives the actor from ctx.role (auth recheck)
+   *  and runs it through the board reducer; `expectedBoardRevision` is the board-level CAS. */
+  applyBoard(ctx: MeshToolContext, command: BoardCommand, expectedBoardRevision: number): Promise<string> | string;
 }
 
 export interface MeshServicesServer {
@@ -49,6 +55,205 @@ export interface MeshToolLogEntry {
   durationMs?: number;
   ok?: boolean;
   error?: string;
+}
+
+type GuardedRun = (agentId: string, tool: string, run: () => Promise<string> | string) => Promise<{ content: { type: "text"; text: string }[] }>;
+
+const BOARD_STATUS = z.enum(["todo", "in_progress", "in_review", "done", "cancelled"]);
+const BOARD_PRIORITY = z.enum(["low", "normal", "high", "urgent"]);
+const EBR = "the board revision you last saw (from board_list); the write is rejected if the board changed since";
+const ER = "the entity's revision you last saw (from board_list); the write is rejected if it changed since";
+
+/** Register the collaboration-board MCP tools. Read + task/subtask/comment tools are open to
+ *  every member; epic CRUD and assign/priority/deps are router-only (NOT registered for
+ *  members, AND re-checked server-side by the reducer via the actor derived from ctx.role).
+ *  Each mutating tool carries CAS tokens: expectedBoardRevision (board-level) and, for
+ *  existing entities, expectedRevision (entity-level). */
+function registerBoardTools(
+  server: McpServer,
+  agentId: AgentId,
+  role: AgentRole,
+  ctx: MeshToolContext,
+  guarded: GuardedRun,
+  handlers: MeshServicesHandlers,
+): void {
+  const status = (s: BoardStatus) => s; // identity, keeps the enum value typed as BoardStatus
+  const priority = (p: BoardPriority) => p;
+
+  server.registerTool(
+    "board_list",
+    { description: "Show the mesh's collaboration board (epics, tasks #N, subtasks, statuses, assignees, deps, comments) plus the board revision you must echo on writes and your own open tasks." },
+    () => guarded(agentId, "board_list", () => handlers.boardList(ctx)),
+  );
+
+  server.registerTool(
+    "board_create_task",
+    {
+      description: "Create a board task (#N). Members may create plain tasks; filing under an epic, assigning, setting deps, or a non-normal priority is router-only and will be rejected for members.",
+      inputSchema: {
+        title: z.string().describe("short task title"),
+        description: z.string().optional(),
+        epicId: z.string().optional().describe('parent epic id like "epic-2" (router only)'),
+        priority: BOARD_PRIORITY.optional().describe("router only unless 'normal'"),
+        deps: z.array(z.number().int().positive()).optional().describe("task ids this depends on (router only)"),
+        assignee: z.string().optional().describe("agent id (router only)"),
+        expectedBoardRevision: z.number().int().describe(EBR),
+      },
+    },
+    ({ title, description, epicId, priority: pr, deps, assignee, expectedBoardRevision }) =>
+      guarded(agentId, "board_create_task", () =>
+        handlers.applyBoard(ctx, { type: "create_task", title, description, epicId, priority: pr ? priority(pr) : undefined, deps, assignee }, expectedBoardRevision),
+      ),
+  );
+
+  server.registerTool(
+    "board_create_subtask",
+    {
+      description: "Add a subtask to task #N.",
+      inputSchema: {
+        taskId: z.number().int().positive(),
+        title: z.string(),
+        assignee: z.string().optional().describe("agent id (router only)"),
+        expectedRevision: z.number().int().describe(`${ER} (the parent task's)`),
+        expectedBoardRevision: z.number().int().describe(EBR),
+      },
+    },
+    ({ taskId, title, assignee, expectedRevision, expectedBoardRevision }) =>
+      guarded(agentId, "board_create_subtask", () =>
+        handlers.applyBoard(ctx, { type: "create_subtask", taskId, title, assignee, expectedRevision }, expectedBoardRevision),
+      ),
+  );
+
+  server.registerTool(
+    "board_set_status",
+    {
+      description: "Set the status of a task (or a subtask, if subtaskId is given). You may only change items assigned to you (or that you created and nobody else owns), and only up to 'in_review' — 'done'/'cancelled' are router-only.",
+      inputSchema: {
+        taskId: z.number().int().positive(),
+        subtaskId: z.string().optional().describe('e.g. "5.1" to target a subtask instead of the task'),
+        status: BOARD_STATUS,
+        expectedRevision: z.number().int().describe(ER),
+        expectedBoardRevision: z.number().int().describe(EBR),
+      },
+    },
+    ({ taskId, subtaskId, status: st, expectedRevision, expectedBoardRevision }) => {
+      const command: BoardCommand = subtaskId
+        ? { type: "set_subtask_status", taskId, subtaskId, expectedRevision, status: status(st) }
+        : { type: "set_task_status", id: taskId, expectedRevision, status: status(st) };
+      return guarded(agentId, "board_set_status", () => handlers.applyBoard(ctx, command, expectedBoardRevision));
+    },
+  );
+
+  server.registerTool(
+    "board_comment",
+    {
+      description: "Append a comment to an epic, task, or subtask. Provide epicId, OR taskId (optionally with subtaskId).",
+      inputSchema: {
+        epicId: z.string().optional(),
+        taskId: z.number().int().positive().optional(),
+        subtaskId: z.string().optional(),
+        text: z.string(),
+        expectedRevision: z.number().int().describe(`${ER} (of the commented entity)`),
+        expectedBoardRevision: z.number().int().describe(EBR),
+      },
+    },
+    ({ epicId, taskId, subtaskId, text, expectedRevision, expectedBoardRevision }) => {
+      const target = epicId
+        ? ({ kind: "epic", id: epicId } as const)
+        : subtaskId && taskId !== undefined
+          ? ({ kind: "subtask", taskId, subtaskId } as const)
+          : ({ kind: "task", id: taskId ?? -1 } as const);
+      return guarded(agentId, "board_comment", () =>
+        handlers.applyBoard(ctx, { type: "add_comment", target, expectedRevision, text }, expectedBoardRevision),
+      );
+    },
+  );
+
+  if (role !== "router") return;
+
+  server.registerTool(
+    "board_create_epic",
+    {
+      description: "Create an epic (router only). Displayed as E{N}.",
+      inputSchema: { title: z.string(), description: z.string().optional(), expectedBoardRevision: z.number().int().describe(EBR) },
+    },
+    ({ title, description, expectedBoardRevision }) =>
+      guarded(agentId, "board_create_epic", () => handlers.applyBoard(ctx, { type: "create_epic", title, description }, expectedBoardRevision)),
+  );
+
+  server.registerTool(
+    "board_update_epic",
+    {
+      description: "Update an epic's title/description/status (router only).",
+      inputSchema: {
+        id: z.string().describe('epic id like "epic-2"'),
+        title: z.string().optional(),
+        description: z.string().optional(),
+        status: BOARD_STATUS.optional(),
+        expectedRevision: z.number().int().describe(ER),
+        expectedBoardRevision: z.number().int().describe(EBR),
+      },
+    },
+    ({ id, title, description, status: st, expectedRevision, expectedBoardRevision }) =>
+      guarded(agentId, "board_update_epic", () =>
+        handlers.applyBoard(ctx, { type: "update_epic", id, title, description, status: st ? status(st) : undefined, expectedRevision }, expectedBoardRevision),
+      ),
+  );
+
+  server.registerTool(
+    "board_delete_epic",
+    {
+      description: "Delete an epic (router only). Its tasks are orphaned (epic cleared), not deleted.",
+      inputSchema: { id: z.string(), expectedRevision: z.number().int().describe(ER), expectedBoardRevision: z.number().int().describe(EBR) },
+    },
+    ({ id, expectedRevision, expectedBoardRevision }) =>
+      guarded(agentId, "board_delete_epic", () => handlers.applyBoard(ctx, { type: "delete_epic", id, expectedRevision }, expectedBoardRevision)),
+  );
+
+  server.registerTool(
+    "board_assign",
+    {
+      description: "Assign (or unassign) a task to an agent (router only).",
+      inputSchema: {
+        taskId: z.number().int().positive(),
+        assignee: z.string().optional().describe("agent id; omit to unassign"),
+        expectedRevision: z.number().int().describe(ER),
+        expectedBoardRevision: z.number().int().describe(EBR),
+      },
+    },
+    ({ taskId, assignee, expectedRevision, expectedBoardRevision }) =>
+      guarded(agentId, "board_assign", () => handlers.applyBoard(ctx, { type: "assign_task", id: taskId, assignee, expectedRevision }, expectedBoardRevision)),
+  );
+
+  server.registerTool(
+    "board_set_priority",
+    {
+      description: "Set a task's priority (router only).",
+      inputSchema: {
+        taskId: z.number().int().positive(),
+        priority: BOARD_PRIORITY,
+        expectedRevision: z.number().int().describe(ER),
+        expectedBoardRevision: z.number().int().describe(EBR),
+      },
+    },
+    ({ taskId, priority: pr, expectedRevision, expectedBoardRevision }) =>
+      guarded(agentId, "board_set_priority", () => handlers.applyBoard(ctx, { type: "set_task_priority", id: taskId, priority: priority(pr), expectedRevision }, expectedBoardRevision)),
+  );
+
+  server.registerTool(
+    "board_set_deps",
+    {
+      description: "Set a task's dependency task ids (router only). Cycles/dangling refs surface as advisory warnings, never hard blocks.",
+      inputSchema: {
+        taskId: z.number().int().positive(),
+        deps: z.array(z.number().int().positive()),
+        expectedRevision: z.number().int().describe(ER),
+        expectedBoardRevision: z.number().int().describe(EBR),
+      },
+    },
+    ({ taskId, deps, expectedRevision, expectedBoardRevision }) =>
+      guarded(agentId, "board_set_deps", () => handlers.applyBoard(ctx, { type: "set_task_deps", id: taskId, deps, expectedRevision }, expectedBoardRevision)),
+  );
 }
 
 export function createMeshServicesServer(opts: {
@@ -243,6 +448,8 @@ export function createMeshServicesServer(opts: {
         ({ target, reason }) => guarded(agentId, "interrupt", () => opts.handlers.interrupt(ctx, target, reason)),
       );
     }
+
+    registerBoardTools(server, agentId, role, ctx, guarded, opts.handlers);
 
     return server;
   }

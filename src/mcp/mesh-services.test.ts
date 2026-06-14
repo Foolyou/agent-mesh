@@ -11,6 +11,8 @@ const handlers = {
   checkMail: noop,
   interrupt: noop,
   publishAttachment: noop,
+  boardList: noop,
+  applyBoard: noop,
 };
 
 let server: MeshServicesServer | undefined;
@@ -111,6 +113,43 @@ test("mesh-services exposes collaboration tools but not mesh-control lifecycle t
   expect(tools).toContain("check_mail");
   expect(tools).toContain("mesh_status");
   expect(tools).not.toContain("update_mesh");
+});
+
+test("board tools: members get read + task/subtask/comment; epic/assign/priority/deps are router-only", async () => {
+  server = createMeshServicesServer({ handlers, log: () => {} });
+  await server.register("member-1", "member");
+  await server.register("router-1", "router");
+
+  const memberTools = await listTools(server.urlFor("member-1"), await handshake(server.urlFor("member-1")));
+  for (const t of ["board_list", "board_create_task", "board_create_subtask", "board_set_status", "board_comment"]) {
+    expect(memberTools).toContain(t);
+  }
+  for (const t of ["board_create_epic", "board_update_epic", "board_delete_epic", "board_assign", "board_set_priority", "board_set_deps"]) {
+    expect(memberTools).not.toContain(t);
+  }
+
+  const routerTools = await listTools(server.urlFor("router-1"), await handshake(server.urlFor("router-1")));
+  for (const t of ["board_create_epic", "board_assign", "board_set_priority", "board_set_deps"]) {
+    expect(routerTools).toContain(t);
+  }
+});
+
+test("board_set_status forwards a typed command + CAS tokens to applyBoard", async () => {
+  const calls: Array<{ command: any; ebr: number }> = [];
+  server = createMeshServicesServer({
+    handlers: { ...handlers, applyBoard: (_ctx, command, ebr) => { calls.push({ command, ebr }); return "ok"; } },
+    log: () => {},
+  });
+  await server.register("A", "member");
+  const url = server.urlFor("A");
+  const session = await handshake(url);
+
+  // target a subtask → set_subtask_status command shape
+  const res = await callTool(url, session, "board_set_status", { taskId: 5, subtaskId: "5.1", status: "in_review", expectedRevision: 2, expectedBoardRevision: 7 });
+  expect(res.result.content[0].text).toBe("ok");
+  expect(calls).toHaveLength(1);
+  expect(calls[0].ebr).toBe(7);
+  expect(calls[0].command).toEqual({ type: "set_subtask_status", taskId: 5, subtaskId: "5.1", expectedRevision: 2, status: "in_review" });
 });
 
 test("tool calls produce structured start/end logs with agent, tool, request id, and duration", async () => {

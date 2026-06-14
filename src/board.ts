@@ -82,6 +82,10 @@ export interface BoardState {
   tasks: Task[];
 }
 
+/** The full board payload carried by the `board_snapshot` event and `t:"board"` WS message.
+ *  Phase 1 ships the whole board on every change (no deltas), so the document IS the state. */
+export type BoardDocument = BoardState;
+
 export type BoardActor =
   | { kind: "human" } // web operator: full rights
   | { kind: "system" } // internal (mail linking, migrations): full rights

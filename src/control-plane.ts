@@ -1,7 +1,7 @@
 // ControlPlane: the single global control plane. Sole ACP client (holds one
 // AcpAgentConnection per agent), runs the Mesh Services MCP server, owns the
 // mailbox + event bus, and arbitrates permission escalations.
-import { join, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { mkdir, stat } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { AcpAgentConnection, type AcpConnectionOptions, type PermissionDecision } from "./acp/client";
@@ -18,6 +18,8 @@ import { readSessionState, setMeshExpectedAlive, updateAgentMailCursor, updateAg
 import { now, type AgentActivity, type AgentConfig, type AgentHealthSignalKind, type AgentId, type AgentTurn, type MeshConfig, type MeshEdge, type MeshEvent, type PromptImageRef, type SessionMode, type SessionModel, type ThinkingEffort, type TurnHealthReason } from "./acp/types";
 import { DEFAULT_AUTO_COMPACT_SETTINGS, MIN_AUTO_COMPACT_CONTEXT_WINDOW, evaluateCompactThreshold, parseCompactThreshold } from "./auto-compact";
 import { resolveContextWindow, lookupModelContextWindow, type ContextWindowState } from "./acp/usage-compat";
+import { applyBoardCommand, computeBoardWarnings, createEmptyBoard, type BoardActor, type BoardCommand, type BoardCommandResult, type BoardState } from "./board";
+import { boardsDirFor, readBoard, writeBoard } from "./board-store";
 
 const COMPACT_COOLDOWN_MS = 180_000;
 const NEAR_LIMIT_WARNING_COOLDOWN_MS = 10 * 60_000;
@@ -35,6 +37,8 @@ interface MailDeliveryMeta {
   seq?: number;
   replyTo?: number;
   task?: string;
+  /** Board task this mail is linked to, when `task` parsed to an existing task ("#N"/"N"). */
+  boardTaskId?: number;
 }
 
 interface ActiveTurnHealth {
@@ -171,6 +175,10 @@ export interface ControlPlaneOptions {
   artifactsRoot?: string;
   /** ${root}/run directory for durable per-mesh ACP session identity. */
   sessionRunDir?: string;
+  /** ${root}/boards directory for the durable per-mesh collaboration board. Defaults to a
+   *  sibling of sessionRunDir (`<root>/boards`); when neither is set the board is in-memory
+   *  only (no persistence), which is fine for tests. */
+  boardsDir?: string;
   connectionFactory?: (opts: AcpConnectionOptions) => AcpAgentConnection;
   /** test seam: override how the injected mesh-services MCP server is built */
   meshServicesFactory?: (handlers: MeshServicesHandlers) => MeshServicesServer;
@@ -205,6 +213,9 @@ export class ControlPlane {
   private uploadRoot?: string;
   private artifactsRoot?: string;
   private sessionRunDir?: string;
+  private boardsDir?: string;
+  /** In-memory source of truth for this mesh's board while it runs; mirrored to disk. */
+  private board: BoardState;
   private connectionFactory: (opts: AcpConnectionOptions) => AcpAgentConnection;
   private meshServicesFactory: (handlers: MeshServicesHandlers) => MeshServicesServer;
   private spawnTimeoutMs: number;
@@ -286,6 +297,8 @@ export class ControlPlane {
     this.uploadRoot = opts.uploadRoot;
     this.artifactsRoot = opts.artifactsRoot;
     this.sessionRunDir = opts.sessionRunDir;
+    this.boardsDir = opts.boardsDir ?? (opts.sessionRunDir ? boardsDirFor(dirname(opts.sessionRunDir)) : undefined);
+    this.board = createEmptyBoard(config.name);
     this.connectionFactory = opts.connectionFactory ?? ((connOpts) => new AcpAgentConnection(connOpts));
     this.meshServicesFactory = opts.meshServicesFactory ?? ((handlers) => createMeshServicesServer({ handlers }));
     this.spawnTimeoutMs = opts.spawnTimeoutMs ?? 60_000;
@@ -575,6 +588,8 @@ export class ControlPlane {
     for (const att of this.publishedAttachments) {
       events.push({ kind: "attachment_published", agent: att.agent, path: att.path, caption: att.caption, name: att.name, contentType: att.contentType, ts: att.ts });
     }
+    // Full board (Phase 1 has no deltas): a reattaching client converges from this alone.
+    events.push({ kind: "board_snapshot", board: this.board, ts });
     return events;
   }
 
@@ -1004,6 +1019,8 @@ export class ControlPlane {
       this.rememberMailSeq(meta.seq, { from: event.from, to: meta.to, body: event.body });
     }
 
+    this.board = this.boardsDir ? await readBoard(this.boardsDir, this.mesh.name) : createEmptyBoard(this.mesh.name);
+
     this.mcp = this.meshServicesFactory({
       meshStatus: (ctx) => this.meshStatusText(ctx.agentId),
       meshBriefing: (ctx) => this.meshBriefingText(ctx.agentId),
@@ -1013,6 +1030,8 @@ export class ControlPlane {
       checkMail: (ctx) => this.handleCheckMail(ctx),
       interrupt: (ctx, target, reason) => this.handleInterrupt(ctx, target, reason),
       publishAttachment: (ctx, path, opts) => this.handlePublishAttachment(ctx, path, opts),
+      boardList: (ctx) => this.handleBoardList(ctx),
+      applyBoard: (ctx, command, expectedBoardRevision) => this.handleApplyBoard(ctx, command, expectedBoardRevision),
     });
 
     if (!this.sessionState.meshExpectedAlive) {
@@ -1584,7 +1603,9 @@ export class ControlPlane {
     }
     this.noteOutboundMailForActiveTurn(ctx.agentId);
     const seq = ++this.mailSeq;
-    const meta: MailDeliveryMeta = { seq, replyTo: opts.replyTo, task: opts.task };
+    // Link the mail to a board task when `task` is a "#N"/"N" reference to an existing task.
+    const boardTaskId = parseBoardTaskRef(opts.task, this.board);
+    const meta: MailDeliveryMeta = { seq, replyTo: opts.replyTo, task: opts.task, boardTaskId };
     const event = await sendMail({
       mailboxPath: this.mailboxPath,
       mesh: this.mesh.name,
@@ -1594,10 +1615,22 @@ export class ControlPlane {
       seq,
       replyTo: opts.replyTo,
       task: opts.task,
+      boardTaskId,
     });
     this.agentLastOutboundMail.set(ctx.agentId, Date.now());
     this.pushRecentMail({ id: event.id, from: ctx.agentId, to, body, ts: event.ts });
     this.emit({ kind: "mail", id: event.id, from: ctx.agentId, to, body, ts: event.ts });
+    // Record the task→mail half of the link (mail→task half is on MailMeta.boardTaskId).
+    if (boardTaskId !== undefined) {
+      const task = this.board.tasks.find((t) => t.id === boardTaskId);
+      if (task) {
+        await this.runBoardCommand(
+          { type: "link_mail", taskId: boardTaskId, expectedRevision: task.revision, mailEventId: event.id },
+          { kind: "system" },
+          this.board.revision,
+        );
+      }
+    }
     // Wake the recipient asynchronously (fire-and-forget; sender's tool returns now).
     const target = this.mesh.agent(to);
     if (this.mesh.status(to) === "stopped") {
@@ -1820,8 +1853,104 @@ export class ControlPlane {
     return `published ${relPath}`;
   }
 
+  // ---- collaboration board ----
+
+  /** Current in-memory board (source of truth while the mesh runs). For tests / the web read
+   *  path. Returns the live reference; callers must not mutate it. */
+  getBoard(): BoardState {
+    return this.board;
+  }
+
+  /** Map an MCP caller's mesh role to a board actor. Routers get full rights; every other
+   *  member is a restricted agent. The human/operator path (full rights) is REST-only. */
+  private boardActor(ctx: MeshToolContext): BoardActor {
+    return ctx.role === "router" ? { kind: "router", agentId: ctx.agentId } : { kind: "agent", agentId: ctx.agentId };
+  }
+
+  /** Apply a board command against the in-memory board: persist the mirror (best-effort) and
+   *  emit the full snapshot on success. The single mutation funnel for MCP, REST, and the
+   *  internal mail-link path. */
+  private async runBoardCommand(command: BoardCommand, actor: BoardActor, expectedBoardRevision: number): Promise<BoardCommandResult> {
+    const res = applyBoardCommand(this.board, command, { actor, now: now(), expectedBoardRevision });
+    if (res.ok) {
+      this.board = res.state;
+      if (this.boardsDir) {
+        try {
+          await writeBoard(this.boardsDir, this.mesh.name, this.board);
+        } catch (err) {
+          // In-memory stays authoritative; a failed mirror write only risks a stale reload.
+          this.log(`board persist failed for ${this.mesh.name}: ${String(err)}`);
+        }
+      }
+      this.emit({ kind: "board_snapshot", board: this.board, ts: now() });
+    }
+    return res;
+  }
+
+  private async handleApplyBoard(ctx: MeshToolContext, command: BoardCommand, expectedBoardRevision: number): Promise<string> {
+    const res = await this.runBoardCommand(command, this.boardActor(ctx), expectedBoardRevision);
+    if (!res.ok) return `error: ${res.error}`;
+    return this.renderBoardChange(res);
+  }
+
+  /** A concise success line that echoes the new board revision and the touched entity's
+   *  revision, so the agent can supply both on its next CAS-guarded call. */
+  private renderBoardChange(res: Extract<BoardCommandResult, { ok: true }>): string {
+    const { change, state } = res;
+    if (change.entity === "epic" && change.epicId) {
+      const epic = state.epics.find((e) => e.id === change.epicId);
+      if (change.deleted || !epic) return `ok: deleted ${change.epicId} (board rev ${state.revision})`;
+      return `ok: ${change.epicId} now rev ${epic.revision} (board rev ${state.revision})`;
+    }
+    if (change.entity === "subtask" && change.taskId !== undefined) {
+      const task = state.tasks.find((t) => t.id === change.taskId);
+      const sub = task?.subtasks.find((s) => s.id === change.subtaskId);
+      return `ok: subtask ${change.subtaskId} now rev ${sub?.revision ?? "?"} (task #${change.taskId} rev ${task?.revision ?? "?"}, board rev ${state.revision})`;
+    }
+    const task = change.taskId !== undefined ? state.tasks.find((t) => t.id === change.taskId) : undefined;
+    return `ok: task #${change.taskId} now rev ${task?.revision ?? "?"} (board rev ${state.revision})`;
+  }
+
+  /** Render the full board for an agent: a header with the board revision the caller must
+   *  echo for CAS, the complete board JSON (every entity carries its revision), advisory DAG
+   *  warnings, and a pointer to the caller's own open tasks. */
+  private handleBoardList(ctx: MeshToolContext): string {
+    const b = this.board;
+    const mine = b.tasks
+      .filter((t) => t.assignee === ctx.agentId && t.status !== "done" && t.status !== "cancelled")
+      .map((t) => `#${t.id} (${t.status}, rev ${t.revision})`);
+    const warnings = computeBoardWarnings(b).map((w) => w.message);
+    const lines = [
+      `Board "${b.mesh}" — board revision ${b.revision} (pass this as expectedBoardRevision on writes).`,
+      `Your open tasks: ${mine.length ? mine.join(", ") : "(none)"}`,
+    ];
+    if (warnings.length) lines.push(`warnings:\n- ${warnings.join("\n- ")}`);
+    return `${lines.join("\n")}\n${JSON.stringify({ revision: b.revision, epics: b.epics, tasks: b.tasks }, null, 2)}`;
+  }
+
   // ---- permission escalation ----
-  private static readonly MESH_TOOLS = new Set(["send_mail", "steer_mail", "check_mail", "interrupt", "mesh_status", "mesh_publish_attachment"]);
+  private static readonly BOARD_TOOLS = [
+    "board_list",
+    "board_create_task",
+    "board_create_subtask",
+    "board_set_status",
+    "board_comment",
+    "board_create_epic",
+    "board_update_epic",
+    "board_delete_epic",
+    "board_assign",
+    "board_set_priority",
+    "board_set_deps",
+  ] as const;
+  private static readonly MESH_TOOLS = new Set([
+    "send_mail",
+    "steer_mail",
+    "check_mail",
+    "interrupt",
+    "mesh_status",
+    "mesh_publish_attachment",
+    ...ControlPlane.BOARD_TOOLS,
+  ]);
 
   /**
    * Is this permission request for one of OUR injected mesh tools? Match the
@@ -1890,6 +2019,18 @@ export class ControlPlane {
   pendingDecisions(): { requestId: string }[] {
     return [...this.pending.keys()].map((requestId) => ({ requestId }));
   }
+}
+
+/** Parse a send_mail `task` field into a board task id, but only when it is a "#N"/"N"
+ *  reference to a task that exists on the board. Arbitrary task slugs (e.g. feature names)
+ *  return undefined so mail threading stays backward-compatible. */
+function parseBoardTaskRef(task: string | undefined, board: BoardState): number | undefined {
+  if (typeof task !== "string") return undefined;
+  const m = /^#?(\d+)$/.exec(task.trim());
+  if (!m) return undefined;
+  const n = Number(m[1]);
+  if (!Number.isInteger(n) || n <= 0) return undefined;
+  return board.tasks.some((t) => t.id === n) ? n : undefined;
 }
 
 function deriveConfigOption(session: unknown, category: "mode" | "model" | "effort"): { configId: string; current: string; available: Array<{ id: string; name: string; description?: string }> } | undefined {

@@ -28,6 +28,8 @@ const mcp = createMeshServicesServer({
     checkMail: () => "no mail",
     interrupt: () => "not implemented in spike",
     publishAttachment: () => "not implemented in spike",
+    boardList: () => "not implemented in spike",
+    applyBoard: () => "not implemented in spike",
   },
 });
 
