@@ -542,7 +542,7 @@ try {
     await page.locator('.topo .node:has-text("codex-1")').click();
     const panel = page.locator(".dchat .panel:has(.tabs)").first();
     await panel.locator(".conv-control .btn", { hasText: "interrupt" }).waitFor({ state: "detached", timeout: 1000 }).catch(() => {});
-    await panel.locator(".composer .compose-interrupt", { hasText: "interrupt" }).click();
+    await panel.locator(".composer .compose-interrupt").click(); // icon-only button; aria-label="interrupt current agent"
     await page.locator('.drail .seg-tab:has-text("activity")').click();
     await page.waitForSelector('.drail .panel .tx:has-text("operator")', { timeout: 6000 });
   });
@@ -964,19 +964,17 @@ try {
     const interruptTitle = await interrupt.getAttribute("title");
     if (!interruptLabel || !interruptTitle) throw new Error("mobile interrupt button is missing aria-label/title");
     const interruptVisual = await interrupt.evaluate((el) => {
-      const text = el.querySelector(".compose-interrupt-text") as HTMLElement | null;
-      const icon = el.querySelector(".compose-interrupt-icon") as HTMLElement | null;
-      const textBox = text?.getBoundingClientRect();
+      const icon = el.querySelector("svg.compose-btn-icon") as SVGElement | null;
       const iconStyle = icon ? getComputedStyle(icon) : null;
       return {
-        textWidth: textBox?.width ?? 0,
-        textHeight: textBox?.height ?? 0,
+        // a flat icon button: no visible text, just the inline svg icon
+        ownText: (el.textContent ?? "").trim(),
+        hasIcon: !!icon,
         iconDisplay: iconStyle?.display ?? "",
-        iconText: icon?.textContent?.trim() ?? "",
       };
     });
-    if (interruptVisual.textWidth > 2 || interruptVisual.textHeight > 2 || interruptVisual.iconDisplay === "none" || interruptVisual.iconText !== "⏹") {
-      throw new Error(`mobile interrupt should be visually icon-only: ${JSON.stringify(interruptVisual)}`);
+    if (interruptVisual.ownText !== "" || !interruptVisual.hasIcon || interruptVisual.iconDisplay === "none") {
+      throw new Error(`mobile interrupt should be a flat icon-only button: ${JSON.stringify(interruptVisual)}`);
     }
     const interruptBox = await interrupt.boundingBox();
     if (!interruptBox || interruptBox.width < 44 || interruptBox.height < 44) {

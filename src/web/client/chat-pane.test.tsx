@@ -133,6 +133,38 @@ test("ChatPane renders a remove button only for user queued messages", () => {
   expect(mailHtml).not.toContain("aria-label=\"remove queued message\"");
 });
 
+function composerHtml(props: { working?: boolean; onInterrupt?: () => void }): string {
+  return renderToStaticMarkup(
+    createElement(
+      I18nContext.Provider,
+      { value: { lang: "en", t: (key, vars) => translate(key, "en", vars) } },
+      createElement(ChatPane, { items: [], onSend: () => {}, ...props }),
+    ),
+  );
+}
+
+test("composer hides the interrupt button when the agent is idle and shows send instead", () => {
+  const html = composerHtml({ working: false, onInterrupt: () => {} });
+  expect(html).not.toContain("compose-interrupt");
+  expect(html).toContain("compose-send");
+  expect(html).toContain('aria-label="send message"');
+});
+
+test("composer shows the interrupt button (not send) while the agent is working", () => {
+  const html = composerHtml({ working: true, onInterrupt: () => {} });
+  expect(html).toContain("compose-interrupt");
+  expect(html).not.toContain("compose-send");
+  expect(html).toContain('aria-label="interrupt current agent"');
+});
+
+test("composer action buttons share the unified compose-btn size/hit-area class", () => {
+  const idle = composerHtml({ working: false, onInterrupt: () => {} });
+  // both the attach button and the primary (send) button carry the shared sizing class
+  expect(idle).toContain('class="compose-btn attach-btn"');
+  expect(idle).toContain('class="compose-btn compose-send"');
+  expect(idle).toContain('aria-label="attach image"');
+});
+
 test("queue removal eligibility treats operator steer as user and mail-like items as protected", () => {
   expect(isRemovableQueueItem({ id: "q1", source: "operator", from: "operator", to: "a", preview: "p", ts: "T" })).toBe(true);
   expect(isRemovableQueueItem({ id: "q2", source: "steer", from: "operator", to: "a", preview: "p", ts: "T" })).toBe(true);

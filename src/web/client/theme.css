@@ -1016,47 +1016,53 @@ body::after {
   padding: 0;
   display: block;
 }
-.attach-btn {
-  width: 24px;
-  height: 24px;
-  border: 1px solid var(--line);
-  border-radius: 3px;
-  background: var(--bg-inset);
-  color: var(--fg-dim);
-  cursor: pointer;
-}
 .compose-actions {
   display: flex;
   align-items: center;
   gap: 6px;
   flex: none;
 }
+/* Unified composer action button: attach + send/interrupt share one square size and hit area
+   so they align and read as a set. Icon-only (flat line icons), with an aria-label for a11y. */
+.compose-btn {
+  width: 28px;
+  height: 28px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--bg-inset);
+  color: var(--fg-dim);
+  cursor: pointer;
+  padding: 0;
+}
+.compose-btn .compose-btn-icon {
+  display: block;
+}
+.compose-btn:hover:not(:disabled) {
+  color: var(--fg);
+  border-color: var(--fg-faint);
+}
+.compose-send:hover:not(:disabled) {
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 55%, var(--line));
+}
 .compose-interrupt {
-  height: 24px;
-  border: 1px solid color-mix(in srgb, var(--bad) 58%, var(--line));
-  border-radius: 3px;
+  border-color: color-mix(in srgb, var(--bad) 58%, var(--line));
   background: color-mix(in srgb, var(--bad) 12%, var(--bg-inset));
   color: var(--bad);
-  font: inherit;
-  font-size: 11px;
-  line-height: 1;
-  padding: 0 7px;
-  cursor: pointer;
-  text-transform: uppercase;
 }
-.compose-interrupt-icon {
-  display: none;
+.compose-interrupt:hover:not(:disabled) {
+  color: var(--bad);
+  border-color: var(--bad);
 }
-.compose-interrupt:disabled {
-  /* neutralize the bad-tinted bg too so muted grey text reads cleanly as disabled */
+.compose-btn:disabled {
+  /* neutralize any tinted bg too so muted grey reads cleanly as disabled */
   color: var(--fg-faint);
   border-color: var(--line);
   background: var(--bg-inset);
-  cursor: not-allowed;
-}
-.attach-btn:disabled {
-  color: var(--fg-faint);
-  border-color: var(--line);
   cursor: not-allowed;
 }
 .attach-strip,
@@ -2855,29 +2861,14 @@ legend.builder-section-head {
   .empty {
     padding: 8px;
   }
-  .compose-interrupt {
+  /* Larger square so every composer button meets the 44px touch-target minimum on mobile. */
+  .compose-btn {
     width: 44px;
-    min-width: 44px;
     height: 44px;
-    padding: 0;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 15px;
   }
-  .compose-interrupt-text {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    padding: 0;
-    margin: -1px;
-    overflow: hidden;
-    clip: rect(0, 0, 0, 0);
-    white-space: nowrap;
-    border: 0;
-  }
-  .compose-interrupt-icon {
-    display: inline;
+  .compose-btn .compose-btn-icon {
+    width: 20px;
+    height: 20px;
   }
   .mrow {
     padding: 11px 12px;
