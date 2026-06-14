@@ -20,6 +20,9 @@ import { DEFAULT_AUTO_COMPACT_SETTINGS, MIN_AUTO_COMPACT_CONTEXT_WINDOW, evaluat
 
 const COMPACT_COOLDOWN_MS = 180_000;
 const NEAR_LIMIT_WARNING_COOLDOWN_MS = 10 * 60_000;
+/** Upper bound on a published attachment's caption/name, so a card can't bloat the
+ *  snapshot / ws transcript payload (these are replayed on every reattach). */
+export const MAX_ATTACHMENT_LABEL_CHARS = 2048;
 
 interface PendingDecision {
   resolve: (decision: PermissionDecision) => void;
@@ -1677,8 +1680,10 @@ export class ControlPlane {
     }
     // Canonical mesh-relative path so the web layer can rebuild the artifact URL exactly.
     const relPath = relative(artifactAgentDir(this.artifactsRoot, this.mesh.name, owner), file.path);
-    const caption = typeof opts?.caption === "string" && opts.caption.trim() ? opts.caption.trim() : undefined;
-    const name = typeof opts?.name === "string" && opts.name.trim() ? opts.name.trim() : undefined;
+    // Bound caption/name so a published card can't bloat the snapshot/ws transcript payload.
+    const cap = (s?: string) => (typeof s === "string" && s.trim() ? s.trim().slice(0, MAX_ATTACHMENT_LABEL_CHARS) : undefined);
+    const caption = cap(opts?.caption);
+    const name = cap(opts?.name);
     const record = { agent: owner, path: relPath, caption, name, contentType: file.contentType, ts: now() };
     this.publishedAttachments.push(record);
     if (this.publishedAttachments.length > 200) this.publishedAttachments.splice(0, this.publishedAttachments.length - 200);
@@ -1687,7 +1692,7 @@ export class ControlPlane {
   }
 
   // ---- permission escalation ----
-  private static readonly MESH_TOOLS = new Set(["send_mail", "steer_mail", "check_mail", "interrupt", "mesh_status"]);
+  private static readonly MESH_TOOLS = new Set(["send_mail", "steer_mail", "check_mail", "interrupt", "mesh_status", "mesh_publish_attachment"]);
 
   /**
    * Is this permission request for one of OUR injected mesh tools? Match the
