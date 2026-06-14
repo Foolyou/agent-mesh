@@ -204,6 +204,9 @@ export interface Store {
   /** Apply a board mutation as the operator. Resolves with the new board on success; rejects
    *  (and toasts) on CAS conflict (409) / auth (403) / invalid (400) / not-running (409). */
   boardCommand(name: string, command: BoardCommand, expectedBoardRevision: number): Promise<{ board: BoardDocument; change: unknown }>;
+  /** Lazily fetch + fold the durable board for a mesh whose folded copy is null. One-shot
+   *  per mesh, coalesced; safe to call from a render effect. */
+  ensureBoardLoaded(name: string): Promise<void>;
   isTranscriptInitialLoaded(mesh: string, agentId: string): boolean;
   loadInitialTranscript(mesh: string, agentId: string): Promise<void>;
   loadOlderTranscript(mesh: string, agentId: string): Promise<void>;
@@ -227,6 +230,10 @@ export function createStore(): Store {
   const initialLoadedTranscripts = new Set<string>();
   const loadingInitialTranscript = new Map<string, Promise<void>>();
   const loadingOlderTranscript = new Map<string, Promise<void>>();
+  // One board fetch per mesh per session (live board_snapshot keeps it fresh afterwards);
+  // `boardFetched` stops a render loop even if the fetch fails, `boardFetching` coalesces.
+  const boardFetched = new Set<string>();
+  const boardFetching = new Map<string, Promise<void>>();
   const subs = new Set<() => void>();
   const emit = () => {
     for (const s of subs) s();
@@ -489,6 +496,27 @@ export function createStore(): Store {
   }
   if (typeof window !== "undefined") connect();
 
+  /** Fetch the durable board once for a mesh whose folded copy is still null (a freshly
+   *  loaded page, or a stopped mesh with no live daemon to push board_snapshot). Coalesced
+   *  and one-shot per mesh; the result is folded via the normal board reducer path. */
+  function ensureBoardLoaded(name: string): Promise<void> {
+    if (boardFetched.has(name) || state.perMesh[name]?.board) return Promise.resolve();
+    const inflight = boardFetching.get(name);
+    if (inflight) return inflight;
+    const p = (async () => {
+      try {
+        const board = await guard(send("GET", `/api/meshes/${enc(name)}/board`), `load board ${name}`);
+        applyIncoming({ t: "board", name, board });
+      } catch {
+        /* guard already toasted; boardFetched still set in finally to avoid a render loop */
+      } finally {
+        boardFetched.add(name);
+        boardFetching.delete(name);
+      }
+    })();
+    boardFetching.set(name, p);
+    return p;
+  }
   async function send(method: string, path: string, body?: unknown): Promise<any> {
     const res = await fetch(path, {
       method,
@@ -580,6 +608,7 @@ export function createStore(): Store {
     respawnAgent: (n, a, mode) => guard(post(`/api/meshes/${enc(n)}/agents/${enc(a)}/respawn`, { mode }), `respawn ${a}`),
     getBoard: (n) => guard(send("GET", `/api/meshes/${enc(n)}/board`), `load board ${n}`),
     boardCommand: (n, command, expectedBoardRevision) => guard(post(`/api/meshes/${enc(n)}/board`, { command, expectedBoardRevision }), `board ${command.type}`),
+    ensureBoardLoaded,
     isTranscriptInitialLoaded,
     loadInitialTranscript,
     loadOlderTranscript,

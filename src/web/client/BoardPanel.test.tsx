@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { BoardPanel } from "./BoardPanel";
+import { BoardPanel, depsCommit, parseDepsInput } from "./BoardPanel";
 import { I18nContext, translate } from "./i18n";
 import { applyBoardCommand, createEmptyBoard, type BoardDocument, type BoardState } from "../../board";
 import type { Store } from "./store";
@@ -81,4 +81,26 @@ test("empty board on a stopped mesh shows the empty state", () => {
 test("a null board does not crash and shows the empty state when stopped", () => {
   const html = render(null, false);
   expect(html).toContain("board is empty");
+});
+
+test("parseDepsInput dedupes and keeps only positive integers", () => {
+  expect(parseDepsInput("1, 2  3")).toEqual([1, 2, 3]);
+  expect(parseDepsInput("2,2,2")).toEqual([2]);
+  expect(parseDepsInput("x, -1, 0, 4")).toEqual([4]);
+  expect(parseDepsInput("")).toEqual([]);
+});
+
+test("depsCommit returns null when the value matches current deps (no stale overwrite)", () => {
+  // After a snapshot re-keys the input to current deps, the value equals current → skip.
+  expect(depsCommit("2", [2])).toBeNull();
+  expect(depsCommit("2,3", [3, 2])).toBeNull(); // order-insensitive
+  // A genuine edit commits the new set.
+  expect(depsCommit("2,3", [2])).toEqual([2, 3]);
+  expect(depsCommit("", [2])).toEqual([]); // cleared
+});
+
+test("depsCommit: a stale value equal to current never produces a write", () => {
+  // Models the bug scenario after the fix: input was re-keyed to the newer deps [2,3];
+  // committing that value must NOT call through (returns null), so newer deps survive.
+  expect(depsCommit("2,3", [2, 3])).toBeNull();
 });

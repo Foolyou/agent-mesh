@@ -2,7 +2,7 @@
 // Epic → Task → Subtask hierarchy folded from board_snapshot. Running meshes are editable
 // through the REST/daemon path; a stopped mesh renders read-only. No deltas — the whole
 // board arrives on every change, so this component is a pure function of `board`.
-import { useState, type CSSProperties } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import type { Store } from "./store";
 import type { BoardDocument, BoardCommand, BoardStatus, Task } from "../../board";
 import { BOARD_STATUSES, BOARD_PRIORITIES, computeBoardWarnings, epicDisplayId, epicProgress, taskDisplayId, taskProgress } from "../../board";
@@ -27,6 +27,12 @@ export function BoardPanel({
   style?: CSSProperties;
 }) {
   const { t } = useI18n();
+  // Fetch the durable board once when the folded copy is null (fresh page load or a stopped
+  // mesh with no daemon pushing board_snapshot). Coalesced + one-shot in the store.
+  useEffect(() => {
+    if (!board) void store.ensureBoardLoaded(mesh);
+  }, [mesh, board, store]);
+
   const apply = (command: BoardCommand) => {
     if (!running) return;
     void store.boardCommand(mesh, command, board?.revision ?? 0).catch(() => {});
@@ -145,12 +151,15 @@ function TaskRow({
   const [open, setOpen] = useState(false);
   const [subtitle, setSubtitle] = useState("");
   const [comment, setComment] = useState("");
-  const [deps, setDeps] = useState(task.deps.join(","));
   const prog = taskProgress(task);
+  const depsKey = task.deps.join(",");
 
-  const commitDeps = () => {
-    const parsed = [...new Set(deps.split(/[\s,]+/).map((d) => Number(d.trim())).filter((n) => Number.isInteger(n) && n > 0))];
-    apply({ type: "set_task_deps", id: task.id, expectedRevision: task.revision, deps: parsed });
+  // The deps input is UNCONTROLLED and re-keyed on task.deps, so a full-board snapshot that
+  // changes task.deps remounts it with the fresh value — no persistent local state can go
+  // stale and overwrite newer deps. commit only fires when the value actually differs.
+  const commitDeps = (value: string) => {
+    const next = depsCommit(value, task.deps);
+    if (next) apply({ type: "set_task_deps", id: task.id, expectedRevision: task.revision, deps: next });
   };
 
   return (
@@ -228,12 +237,12 @@ function TaskRow({
                 }}
               />
               <input
+                key={`deps-${task.id}-${depsKey}`}
                 className="board-input"
                 placeholder={t("board.depsPlaceholder")}
-                value={deps}
-                onChange={(e) => setDeps(e.target.value)}
-                onBlur={commitDeps}
-                onKeyDown={(e) => { if (e.key === "Enter") commitDeps(); }}
+                defaultValue={depsKey}
+                onBlur={(e) => commitDeps(e.currentTarget.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") commitDeps((e.target as HTMLInputElement).value); }}
               />
             </div>
           )}
@@ -261,4 +270,20 @@ function TaskRow({
       )}
     </div>
   );
+}
+
+/** Parse a free-text deps field ("1, 2  3") into a deduped, positive-int task-id list. */
+export function parseDepsInput(value: string): number[] {
+  return [...new Set(value.split(/[\s,]+/).map((d) => Number(d.trim())).filter((n) => Number.isInteger(n) && n > 0))];
+}
+
+/** Decide the deps to commit, or null when the input matches the current deps (skip the
+ *  write). Because the input is re-keyed on task.deps, `value` reflects the latest snapshot
+ *  unless the user actually edited it — so a stale value never overwrites newer deps. */
+export function depsCommit(value: string, current: number[]): number[] | null {
+  const next = parseDepsInput(value);
+  const cur = [...new Set(current)].sort((a, b) => a - b);
+  const nxt = [...next].sort((a, b) => a - b);
+  if (cur.length === nxt.length && cur.every((v, i) => v === nxt[i])) return null;
+  return next;
 }

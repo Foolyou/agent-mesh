@@ -861,7 +861,7 @@ export function MeshDetail({
         <span className="ttl">{t("tab.board")}</span>
         <span className="sub">{pm.board ? pm.board.tasks.length : 0}</span>
       </div>
-      <BoardPanel mesh={meshName} board={pm.board} running={live} agents={m.agents.map((a) => a.id)} store={store} className="body-scroll" />
+      <BoardPanel mesh={meshName} board={pm.board} running={m.status === "running"} agents={m.agents.map((a) => a.id)} store={store} className="body-scroll" />
     </div>
   );
   const permissionEl = <PermissionCards pending={pm.pending} mesh={m.name} store={store} />;
@@ -938,7 +938,7 @@ export function MeshDetail({
           <div className="dchat">{conversationPanel}</div>
           <div className="drail">
             {railTopology}
-            <RailLogs pm={pm} mesh={meshName} running={live} agents={m.agents.map((a) => a.id)} store={store} />
+            <RailLogs pm={pm} mesh={meshName} running={m.status === "running"} agents={m.agents.map((a) => a.id)} store={store} />
           </div>
         </div>
       )}
