@@ -210,9 +210,18 @@ export class WebGateway {
     for (const m of this.state.meshes) this.ensureMesh(m.name);
     this.state.appVersion = this.opts.appVersion ?? this.state.appVersion ?? defaultAppVersion();
     const snapshot = structuredClone(this.state);
-    for (const pm of Object.values(snapshot.perMesh)) {
-      for (const [agent, transcript] of Object.entries(pm.transcripts)) {
-        pm.transcripts[agent] = transcriptSnapshot([], transcript.items.length > 0 || transcript.hasMore);
+    for (const m of snapshot.meshes) {
+      const pm = snapshot.perMesh[m.name];
+      if (!pm) continue;
+      let config: MeshConfig;
+      try {
+        config = this.manager.configOf(m.name);
+      } catch {
+        continue;
+      }
+      for (const agent of config.agents) {
+        const existing = pm.transcripts[agent.id];
+        pm.transcripts[agent.id] = transcriptSnapshot([], existing ? existing.items.length > 0 || existing.hasMore : true);
       }
     }
     return snapshot;

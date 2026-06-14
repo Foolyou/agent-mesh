@@ -72,6 +72,7 @@ function fakeManager() {
     },
     async defineMesh(c: MeshConfig) {
       calls.push(["define", c.name]);
+      config = structuredClone(c);
     },
     async deleteMesh(n: string) {
       calls.push(["delete", n]);
@@ -240,6 +241,35 @@ test("snapshot omits agent transcript items and advertises lazy backfill", () =>
   expect(transcript.items).toHaveLength(0);
   expect(transcript.hasMore).toBe(true);
   expect(transcript.oldestSeq).toBeUndefined();
+});
+
+test("snapshot includes placeholder transcript wrappers for every configured agent", () => {
+  const m = fakeManager();
+  const cfg: MeshConfig = {
+    ...CFG,
+    agents: [
+      { id: "router", harness: "claude", project: "p", role: "router" },
+      { id: "builder", harness: "codex", project: "p", role: "member" },
+      { id: "reviewer", harness: "claude", project: "p", role: "member" },
+      { id: "fixer", harness: "codex", project: "p", role: "member" },
+      { id: "reserve", harness: "opencode", project: "p", role: "member" },
+    ],
+    edges: [],
+  };
+  m.defineMesh(cfg);
+  const gw = new WebGateway(m as any);
+
+  m.emit("demo", { kind: "compact_started", agent: "router", reason: "has-history", ts: 1000 } as any);
+
+  const transcripts = gw.snapshot().perMesh.demo.transcripts;
+  expect(Object.keys(transcripts).sort()).toEqual(["builder", "fixer", "reserve", "reviewer", "router"]);
+  expect(transcripts.router.items).toHaveLength(0);
+  expect(transcripts.router.hasMore).toBe(true);
+  for (const agent of ["builder", "reviewer", "fixer", "reserve"]) {
+    expect(transcripts[agent].items).toHaveLength(0);
+    expect(transcripts[agent].hasMore).toBe(true);
+    expect(transcripts[agent].oldestSeq).toBeUndefined();
+  }
 });
 
 test("near-limit and silent-stop events update self-awareness state", () => {
@@ -752,7 +782,7 @@ test("promptRouter delegates without immediate user message echo", async () => {
   const gw = new WebGateway(m as any);
   await gw.promptRouter("demo", "hello");
   const tr = gw.snapshot().perMesh.demo.transcripts.router;
-  expect(tr ?? []).toHaveLength(0);
+  expect(tr.items).toHaveLength(0);
 });
 
 test("promptRouter threads images to manager without exposing private image fields", async () => {
