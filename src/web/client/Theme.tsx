@@ -12,7 +12,7 @@ import {
   saveActive,
   saveCustomPalette,
   themeByName,
-  isPalette,
+  migratePalette,
   type Palette,
 } from "./themes";
 
@@ -30,6 +30,9 @@ const KEY_LABEL: Record<string, string> = {
   bad: "status bad",
   off: "status off",
   info: "accent",
+  good: "syntax good",
+  accent: "thinking accent",
+  focus: "focus ring",
   "sel-bg": "select bg",
   "sel-fg": "select fg",
 };
@@ -85,8 +88,8 @@ function ThemeEditor({ onClose }: { onClose: (savedAsCustom: boolean) => void })
 
   function applyJson() {
     try {
-      const p = JSON.parse(json);
-      if (!isPalette(p)) throw new Error("missing keys — need all 15 theme vars as hex strings");
+      const p = migratePalette(JSON.parse(json));
+      if (!p) throw new Error("not a palette — need the theme vars as hex strings");
       setPal(p);
       setErr(null);
     } catch (e: any) {

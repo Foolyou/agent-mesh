@@ -18,6 +18,9 @@
   --bad: #f0584b; /* dead */
   --off: #5a6068; /* stopped */
   --info: #5ac8e0; /* mail / interactive hint */
+  --good: #6cd39a; /* syntax: strings */
+  --accent: #b9a3f0; /* thinking / compacting accent */
+  --focus: #5ac8e0; /* focus ring */
   --sel-bg: #e4e6e1;
   --sel-fg: #0a0b0d;
   /* Latin first (the terminal look), then quality CJK faces — per-glyph fallback gives

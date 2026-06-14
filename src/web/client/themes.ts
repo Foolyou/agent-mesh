@@ -17,6 +17,9 @@ export const THEME_KEYS = [
   "bad",
   "off",
   "info",
+  "good",
+  "accent",
+  "focus",
   "sel-bg",
   "sel-fg",
 ] as const;
@@ -51,6 +54,9 @@ export const BUILTIN_THEMES: Theme[] = [
       bad: "#f0584b",
       off: "#5a6068",
       info: "#5ac8e0",
+      good: "#6cd39a",
+      accent: "#b9a3f0",
+      focus: "#5ac8e0",
       "sel-bg": "#e4e6e1",
       "sel-fg": "#0a0b0d",
     },
@@ -72,6 +78,9 @@ export const BUILTIN_THEMES: Theme[] = [
       bad: "#ff5e46",
       off: "#7a6238",
       info: "#e8a13a",
+      good: "#bcd16a",
+      accent: "#e0b0ff",
+      focus: "#ffb02e",
       "sel-bg": "#ffb02e",
       "sel-fg": "#100a04",
     },
@@ -93,6 +102,9 @@ export const BUILTIN_THEMES: Theme[] = [
       bad: "#f0586b",
       off: "#5a6878",
       info: "#5aa8e0",
+      good: "#5fd0b0",
+      accent: "#b6a8f2",
+      focus: "#5aa8e0",
       "sel-bg": "#cfe3f5",
       "sel-fg": "#080b10",
     },
@@ -109,11 +121,14 @@ export const BUILTIN_THEMES: Theme[] = [
       fg: "#16150f",
       "fg-dim": "#403e38",
       "fg-faint": "#5e5c55",
-      ok: "#1f9d57",
-      warn: "#b07d18",
-      bad: "#c0392b",
+      ok: "#0c7034",
+      warn: "#7e5600",
+      bad: "#ad281c",
       off: "#84817a",
-      info: "#006a99",
+      info: "#005c84",
+      good: "#137040",
+      accent: "#6a34a0",
+      focus: "#005c84",
       "sel-bg": "#1c1b18",
       "sel-fg": "#f4f2ec",
     },
@@ -135,6 +150,9 @@ export const BUILTIN_THEMES: Theme[] = [
       bad: "#e26d6d",
       off: "#6a6a6a",
       info: "#c4c4c4",
+      good: "#c8c8c8",
+      accent: "#d6d6d6",
+      focus: "#c4c4c4",
       "sel-bg": "#e9e9e9",
       "sel-fg": "#0b0b0b",
     },
@@ -152,11 +170,14 @@ export const BUILTIN_THEMES: Theme[] = [
       fg: "#0e1a26",
       "fg-dim": "#36495c",
       "fg-faint": "#566a7e",
-      ok: "#1d7d6b",
-      warn: "#9a6a12",
-      bad: "#bb392f",
+      ok: "#15705f",
+      warn: "#7e5600",
+      bad: "#a52521",
       off: "#728294",
-      info: "#2563b8",
+      info: "#1f57a4",
+      good: "#15705f",
+      accent: "#5a32b0",
+      focus: "#1f57a4",
       "sel-bg": "#15263a",
       "sel-fg": "#eef3f8",
     },
@@ -174,11 +195,14 @@ export const BUILTIN_THEMES: Theme[] = [
       fg: "#1b2014",
       "fg-dim": "#3d4630",
       "fg-faint": "#5c6647",
-      ok: "#3d8b3d",
-      warn: "#9a7414",
-      bad: "#b23a2e",
+      ok: "#2a722a",
+      warn: "#785800",
+      bad: "#a32b22",
       off: "#7d846f",
-      info: "#1d6670",
+      info: "#155a64",
+      good: "#246424",
+      accent: "#5a3fa8",
+      focus: "#155a64",
       "sel-bg": "#283021",
       "sel-fg": "#eef1e9",
     },
@@ -196,11 +220,14 @@ export const BUILTIN_THEMES: Theme[] = [
       fg: "#1b1417",
       "fg-dim": "#463a3d",
       "fg-faint": "#665559",
-      ok: "#1f8a5b",
-      warn: "#a76a1f",
-      bad: "#bd3a47",
+      ok: "#13714a",
+      warn: "#7c520e",
+      bad: "#9f2632",
       off: "#857579",
       info: "#7a3f73",
+      good: "#13714a",
+      accent: "#8a3fb0",
+      focus: "#7a3f73",
       "sel-bg": "#241a1d",
       "sel-fg": "#f3edee",
     },
@@ -212,6 +239,32 @@ const CUSTOM_KEY = "mesh.theme.custom";
 
 export function isPalette(v: unknown): v is Palette {
   return !!v && typeof v === "object" && THEME_KEYS.every((k) => typeof (v as any)[k] === "string");
+}
+
+/** Forward-migrate a possibly-stale stored palette: a custom palette saved before a
+ *  token was introduced (e.g. good/accent/focus) is missing keys. Rather than reject
+ *  it (which would snap the user back to the default theme and lose their colors), we
+ *  fill every missing token from the default preset so the palette stays complete and
+ *  the app never crashes on an out-of-date localStorage value. Returns null only when
+ *  the input is not a usable object at all. */
+export function migratePalette(v: unknown): Palette | null {
+  if (!v || typeof v !== "object") return null;
+  const src = v as Record<string, unknown>;
+  const base = BUILTIN_THEMES[0].palette;
+  let filledAny = false;
+  const out = {} as Palette;
+  for (const k of THEME_KEYS) {
+    const val = src[k];
+    if (typeof val === "string") out[k] = val;
+    else {
+      out[k] = base[k];
+      filledAny = true;
+    }
+  }
+  // require at least the legacy core to have been present — a totally unrelated object
+  // (no surfaces/text at all) is not a palette we should silently adopt.
+  if (filledAny && typeof src["bg"] !== "string" && typeof src["fg"] !== "string") return null;
+  return out;
 }
 
 export function applyPalette(p: Palette): void {
@@ -227,8 +280,8 @@ export function loadCustomPalette(): Palette {
   try {
     const raw = localStorage.getItem(CUSTOM_KEY);
     if (raw) {
-      const p = JSON.parse(raw);
-      if (isPalette(p)) return p;
+      const migrated = migratePalette(JSON.parse(raw));
+      if (migrated) return migrated;
     }
   } catch {
     /* unavailable / corrupt */
