@@ -1955,10 +1955,17 @@ body::after {
 select.inp {
   cursor: pointer;
 }
+.builder-tabs-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
 .builder-tabs {
   display: flex;
   align-items: center;
   gap: 4px;
+  flex: 1 1 auto;
+  min-width: 0;
   padding: 5px;
   border: 1px solid var(--line);
   border-radius: var(--r);
@@ -1966,12 +1973,30 @@ select.inp {
   overflow-x: auto;
   overflow-y: hidden;
 }
+/* Edge-fade hints: only on the side(s) with hidden tabs. The mask is fixed to the
+   scroll container's box, so the fade stays at the edges as tabs scroll past. */
+.builder-tabs[data-overflow-left][data-overflow-right] {
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 18px, #000 calc(100% - 18px), transparent);
+  mask-image: linear-gradient(to right, transparent, #000 18px, #000 calc(100% - 18px), transparent);
+}
+.builder-tabs[data-overflow-left]:not([data-overflow-right]) {
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 18px);
+  mask-image: linear-gradient(to right, transparent, #000 18px);
+}
+.builder-tabs[data-overflow-right]:not([data-overflow-left]) {
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 18px), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 18px), transparent);
+}
+.builder-add-agent {
+  flex: 0 0 auto;
+}
 .builder-tab {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  min-width: 0;
-  max-width: 170px;
+  flex: 0 0 auto;
+  min-width: 104px;
+  max-width: 184px;
   height: 30px;
   padding: 0 7px;
   border: 1px solid transparent;
@@ -2007,6 +2032,7 @@ select.inp {
   border-color: var(--fg-dim);
 }
 .builder-tab-label {
+  flex: 1 1 auto;
   min-width: 0;
   max-width: 100%;
   overflow: hidden;
@@ -2017,15 +2043,31 @@ select.inp {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 18px;
+  /* Hidden at rest so the label gets the room; revealed on hover/selection/focus.
+     Kept focusable (opacity, not display:none) so keyboard users can reach it,
+     and :focus-within on the tab brings it into view when tabbed to. */
+  width: 0;
   height: 18px;
+  margin-left: -6px;
   padding: 0;
   border: 0;
   color: var(--fg-faint);
   background: transparent;
   font: inherit;
   border-radius: var(--r);
+  opacity: 0;
+  pointer-events: none;
+  overflow: hidden;
   cursor: pointer;
+  transition: opacity 0.1s ease;
+}
+.builder-tab:hover .builder-tab-remove,
+.builder-tab[aria-selected="true"] .builder-tab-remove,
+.builder-tab:focus-within .builder-tab-remove {
+  width: 18px;
+  margin-left: 0;
+  opacity: 1;
+  pointer-events: auto;
 }
 .builder-tab-remove:hover {
   color: var(--bad);
@@ -2943,15 +2985,15 @@ legend.builder-section-head {
   .builder-tabs {
     scrollbar-width: thin;
   }
-  .builder-tabs > .btn {
-    flex: none;
-  }
   .builder-tab {
     flex: none;
     min-width: 96px;
     max-width: 200px;
   }
-  .builder-tab-remove {
+  /* Larger touch target for the reveal-on-select remove button on phones. */
+  .builder-tab:hover .builder-tab-remove,
+  .builder-tab[aria-selected="true"] .builder-tab-remove,
+  .builder-tab:focus-within .builder-tab-remove {
     width: 28px;
     height: 28px;
   }

@@ -38,6 +38,25 @@ test("MeshBuilder pre-fills existing auto-compact settings", () => {
   expect(html).not.toContain('type="checkbox" checked=""');
 });
 
+test("MeshBuilder gives every agent tab a title and keeps + agent outside the tablist", () => {
+  const html = render({
+    ...baseConfig,
+    agents: [
+      { id: "router", harness: "claude", role: "router", project: "test_mesh_0" },
+      { id: "worker", harness: "codex", role: "member", project: "test_mesh_0" },
+    ],
+    edges: [],
+  });
+
+  // router keeps its "(router)" title, and non-router tabs now carry a title too.
+  expect(html).toContain('title="router (router)"');
+  expect(html).toContain('title="worker"');
+  // the add-agent button lives in its own wrapper, not inside role="tablist".
+  const tablist = html.slice(html.indexOf('role="tablist"'), html.indexOf("builder-add-agent"));
+  expect(tablist).not.toContain("+ agent");
+  expect(html).toContain("builder-add-agent");
+});
+
 test("validateAutoCompactThresholdInput accepts valid formats and rejects invalid input", () => {
   expect(validateAutoCompactThresholdInput("70%")).toBeNull();
   expect(validateAutoCompactThresholdInput("200000 tokens")).toBeNull();

@@ -218,10 +218,21 @@ export function MeshBuilder({
   const [modelProbes, setModelProbes] = useState<Partial<Record<HarnessId, ModelProbeState>>>({});
   const restoreFocusRef = useRef<HTMLElement | null>(null);
   const modalRef = useRef<HTMLDivElement>(null);
+  const tabsScrollRef = useRef<HTMLDivElement>(null);
   const tabRefs = useRef<Array<HTMLElement | null>>([]);
   const activeIdInputRef = useRef<HTMLInputElement>(null);
   const pendingAgentFocusRef = useRef<string | null>(null);
   const pendingTabFocusRef = useRef<number | null>(null);
+  const [tabOverflow, setTabOverflow] = useState<{ left: boolean; right: boolean }>({ left: false, right: false });
+
+  // Toggle edge-fade hints only on the side(s) that actually have hidden tabs.
+  const updateTabOverflow = useCallback(() => {
+    const el = tabsScrollRef.current;
+    if (!el) return;
+    const left = el.scrollLeft > 1;
+    const right = el.scrollLeft + el.clientWidth < el.scrollWidth - 1;
+    setTabOverflow((cur) => (cur.left === left && cur.right === right ? cur : { left, right }));
+  }, []);
 
   const setAgent = (i: number, patch: Partial<AgentDraft>) =>
     setAgents((as) => as.map((a, j) => (j === i ? { ...a, ...patch } : a)));
@@ -368,6 +379,19 @@ export function MeshBuilder({
     tabRefs.current[index]?.focus({ preventScroll: true });
   }, [page, agents.length]);
 
+  // Keep the active/new tab in view (selectTab and addAgent both move activeTabIndex),
+  // and recompute the edge-fade hints whenever the tab set or active tab changes.
+  useLayoutEffect(() => {
+    tabRefs.current[activeTabIndex]?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    updateTabOverflow();
+  }, [activeTabIndex, agents.length, updateTabOverflow]);
+
+  useEffect(() => {
+    const onResize = () => updateTabOverflow();
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [updateTabOverflow]);
+
   function selectTab(index: number) {
     pendingTabFocusRef.current = index;
     if (index === 0) setPage({ kind: "overview" });
@@ -436,7 +460,16 @@ export function MeshBuilder({
           </Btn>
         </div>
         <div className="mbody">
-          <div className="builder-tabs" role="tablist" aria-label="mesh editor pages">
+          <div className="builder-tabs-bar">
+          <div
+            className="builder-tabs"
+            role="tablist"
+            aria-label="mesh editor pages"
+            ref={tabsScrollRef}
+            data-overflow-left={tabOverflow.left ? "true" : undefined}
+            data-overflow-right={tabOverflow.right ? "true" : undefined}
+            onScroll={updateTabOverflow}
+          >
             <button
               type="button"
               className="builder-tab"
@@ -464,7 +497,7 @@ export function MeshBuilder({
                 aria-selected={page.kind === "agent" && page.key === a.key}
                 aria-controls={`mesh-builder-panel-${a.key}`}
                 aria-label={a.role === "router" ? `${a.id || `agent-${i}`} (router)` : a.id || `agent-${i}`}
-                title={a.role === "router" ? `${a.id || `agent-${i}`} (router)` : undefined}
+                title={a.role === "router" ? `${a.id || `agent-${i}`} (router)` : a.id || `agent-${i}`}
                 tabIndex={page.kind === "agent" && page.key === a.key ? 0 : -1}
                 onClick={() => setPage({ kind: "agent", key: a.key })}
                 onKeyDown={(e) => onTabKeyDown(i + 1, e)}
@@ -485,9 +518,12 @@ export function MeshBuilder({
                 </button>
               </div>
             ))}
+          </div>
+          <div className="builder-add-agent">
             <Btn small onClick={addAgent}>
               {t("build.addAgent")}
             </Btn>
+          </div>
           </div>
 
           {page.kind === "overview" ? (
