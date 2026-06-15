@@ -138,6 +138,19 @@ function TextEditorDialog({
   );
 }
 
+// Pure roving-tablist key map: returns the tab index a key should move focus to,
+// or null for keys the tablist ignores. Extracted so the navigation contract can be
+// unit-tested without a DOM.
+export function nextTabIndexForKey(key: string, index: number, count: number): number | null {
+  if (count <= 0) return null;
+  if (key === "ArrowRight") return (index + 1) % count;
+  if (key === "ArrowLeft") return (index - 1 + count) % count;
+  if (key === "Home") return 0;
+  if (key === "End") return count - 1;
+  if (key === "Enter" || key === " ") return index;
+  return null;
+}
+
 function validate(name: string, agents: AgentDraft[], edges: EdgeDraft[]): string | null {
   if (!/^[A-Za-z0-9._-]+$/.test(name)) return "mesh name must match [A-Za-z0-9._-] and be non-empty";
   if (agents.length === 0) return "at least one agent is required";
@@ -392,6 +405,14 @@ export function MeshBuilder({
     return () => window.removeEventListener("resize", onResize);
   }, [updateTabOverflow]);
 
+  // Recompute the edge-fade hints when a tab label's width changes even though the
+  // agent count is unchanged — e.g. editing an agent id. The label text derives from
+  // the id, so the joined id signature is the only content-driven width input.
+  const tabIdSignature = agents.map((a) => a.id).join(" ");
+  useLayoutEffect(() => {
+    updateTabOverflow();
+  }, [tabIdSignature, updateTabOverflow]);
+
   function selectTab(index: number) {
     pendingTabFocusRef.current = index;
     if (index === 0) setPage({ kind: "overview" });
@@ -402,13 +423,12 @@ export function MeshBuilder({
   }
 
   function onTabKeyDown(index: number, e: KeyboardEvent<HTMLElement>) {
-    const count = agents.length + 1;
-    let next: number | null = null;
-    if (e.key === "ArrowRight") next = (index + 1) % count;
-    else if (e.key === "ArrowLeft") next = (index - 1 + count) % count;
-    else if (e.key === "Home") next = 0;
-    else if (e.key === "End") next = count - 1;
-    else if (e.key === "Enter" || e.key === " ") next = index;
+    // Only act when the tab itself has focus. When a nested control (the remove
+    // button) is focused, let its native Enter/Space activation proceed instead of
+    // swallowing the key with preventDefault — arrow-key nav still works because the
+    // roving-tabindex element is the tab, so it is the focus target during nav.
+    if (e.target !== e.currentTarget) return;
+    const next = nextTabIndexForKey(e.key, index, agents.length + 1);
     if (next === null) return;
     e.preventDefault();
     selectTab(next);
