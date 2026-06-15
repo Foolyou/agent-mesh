@@ -162,6 +162,7 @@ export class AcpAgentConnection {
   private conn?: ClientSideConnection;
   private rawRequestSeq = 0;
   private activeJob?: QueuedPrompt;
+  private killed = false;
 
   constructor(private opts: AcpConnectionOptions) {
     this.id = opts.id;
@@ -340,6 +341,11 @@ export class AcpAgentConnection {
   }
 
   private enqueuePrompt(text: string, images: PromptImageRef[], placement: PromptPlacement, turn?: AgentTurn): Promise<any> {
+    // Backstop for the respawn leak: a killed connection's child is gone, so a prompt enqueued
+    // now would await an ACP request that never resolves. Reject synchronously instead — the
+    // control plane should never route here (it re-checks conn currency), but if one slips
+    // through, trackTurn()'s try/catch still runs finishTurn so the count is released.
+    if (this.killed) throw new Error(`${this.id}: connection killed`);
     if (!this.sessionId) throw new Error(`${this.id}: no session`);
     return new Promise((resolve, reject) => {
       const job: QueuedPrompt = { text, images, priority: placement === "front" ? "steer" : "normal", turn, resolve, reject };
@@ -466,6 +472,7 @@ export class AcpAgentConnection {
 
   kill() {
     LIVE.delete(this);
+    this.killed = true;
     const pid = this.child?.pid;
     if (pid) killTree(pid);
     this.alive = false;

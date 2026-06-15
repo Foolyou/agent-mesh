@@ -1361,16 +1361,20 @@ export class ControlPlane {
   }
 
   private drainPendingMail(id: AgentId): void {
-    const conn = this.conns.get(id);
-    if (!conn) return;
+    if (!this.conns.get(id)) return;
     const prompt = this.compose(
       id,
       "You may have pending mail that arrived while you were cold or spawning. Please call check_mail now and handle all pending messages.",
     );
     // This path sends conn.prompt directly (bypassing sendPromptWithResumeFallback), so apply
-    // the same pre-send compaction guard before delivering the drain prompt.
-    const send = () =>
+    // the same pre-send compaction guard before delivering the drain prompt. Re-read the current
+    // connection at send time: a /compact await can be superseded by a newSession/forceFresh, and
+    // sending to the killed old conn would leak a turnCount (its prompt never settles).
+    const send = () => {
+      const conn = this.conns.get(id);
+      if (!conn) return;
       this.trackTurn(id, () => conn.prompt(prompt)).catch((err) => this.log(`drainPendingMail(${id}) failed: ${String(err)}`));
+    };
     const pending = this.compactBeforePrompt(id);
     if (pending) void pending.then(send);
     else send();
@@ -1433,7 +1437,21 @@ export class ControlPlane {
     // so the no-compact path still enqueues the prompt synchronously.
     if (!steer) {
       const pending = this.compactBeforePrompt(id);
-      if (pending) await pending;
+      if (pending) {
+        await pending;
+        // The pre-send /compact may have awaited long enough for a newSession/forceFresh to
+        // supersede (and kill) the connection we were handed. Enqueuing the real prompt on the
+        // killed conn would await an ACP request that never resolves → trackTurn().finally never
+        // runs → turnCounts leaks → activity sticks on "working". Re-confirm the connection is
+        // still current; if it was superseded, reject so the count is never taken (we throw
+        // before trackTurn). Reject (rather than re-route) is intentional: the supersede is an
+        // explicit reset, the prompt's caller already handles rejection (wake()/operator/runCompact
+        // catch), and durable mail remains in the mailbox for the fresh session to pick up — this
+        // avoids racing a half-spawned replacement session.
+        if (this.conns.get(id) !== conn) {
+          throw new Error(`connection for ${id} was superseded during pre-send compaction; dropped prompt`);
+        }
+      }
     }
     const prompt = this.compose(id, text);
     try {

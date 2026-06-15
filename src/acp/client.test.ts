@@ -405,6 +405,25 @@ test("kill() settles the in-flight and queued prompt promises so callers never h
   expect(settled.queued).toBe("rejected");
 });
 
+test("prompt() on a killed connection rejects instead of enqueuing a turn that can never settle", () => {
+  // Defense-in-depth backstop for the respawn leak: once a connection is killed its child is
+  // gone, so any further prompt would enqueue a turn whose ACP request never resolves. The
+  // control plane should not route prompts to a superseded conn, but if one slips through the
+  // killed conn must reject synchronously so trackTurn().finally still releases the count.
+  const c = Object.create(AcpAgentConnection.prototype) as AcpAgentConnection;
+  (c as any).id = "a";
+  (c as any).sessionId = "s";
+  (c as any).busy = false;
+  (c as any).queue = [];
+  (c as any).alive = true;
+  (c as any).opts = {};
+  (c as any).conn = { prompt: () => new Promise(() => {}) }; // would hang forever
+
+  c.kill();
+
+  expect(() => c.prompt("late", [], { id: "late-turn" } as any)).toThrow(/killed/);
+});
+
 test("prompt queue emits queued immediately and started when a job reaches pump", async () => {
   const events: string[] = [];
   const turns = [deferred<any>(), deferred<any>()];
