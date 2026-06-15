@@ -138,6 +138,19 @@ function TextEditorDialog({
   );
 }
 
+// Pure roving-tablist key map: returns the tab index a key should move focus to,
+// or null for keys the tablist ignores. Extracted so the navigation contract can be
+// unit-tested without a DOM.
+export function nextTabIndexForKey(key: string, index: number, count: number): number | null {
+  if (count <= 0) return null;
+  if (key === "ArrowRight") return (index + 1) % count;
+  if (key === "ArrowLeft") return (index - 1 + count) % count;
+  if (key === "Home") return 0;
+  if (key === "End") return count - 1;
+  if (key === "Enter" || key === " ") return index;
+  return null;
+}
+
 function validate(name: string, agents: AgentDraft[], edges: EdgeDraft[]): string | null {
   if (!/^[A-Za-z0-9._-]+$/.test(name)) return "mesh name must match [A-Za-z0-9._-] and be non-empty";
   if (agents.length === 0) return "at least one agent is required";
@@ -218,10 +231,21 @@ export function MeshBuilder({
   const [modelProbes, setModelProbes] = useState<Partial<Record<HarnessId, ModelProbeState>>>({});
   const restoreFocusRef = useRef<HTMLElement | null>(null);
   const modalRef = useRef<HTMLDivElement>(null);
+  const tabsScrollRef = useRef<HTMLDivElement>(null);
   const tabRefs = useRef<Array<HTMLElement | null>>([]);
   const activeIdInputRef = useRef<HTMLInputElement>(null);
   const pendingAgentFocusRef = useRef<string | null>(null);
   const pendingTabFocusRef = useRef<number | null>(null);
+  const [tabOverflow, setTabOverflow] = useState<{ left: boolean; right: boolean }>({ left: false, right: false });
+
+  // Toggle edge-fade hints only on the side(s) that actually have hidden tabs.
+  const updateTabOverflow = useCallback(() => {
+    const el = tabsScrollRef.current;
+    if (!el) return;
+    const left = el.scrollLeft > 1;
+    const right = el.scrollLeft + el.clientWidth < el.scrollWidth - 1;
+    setTabOverflow((cur) => (cur.left === left && cur.right === right ? cur : { left, right }));
+  }, []);
 
   const setAgent = (i: number, patch: Partial<AgentDraft>) =>
     setAgents((as) => as.map((a, j) => (j === i ? { ...a, ...patch } : a)));
@@ -368,6 +392,27 @@ export function MeshBuilder({
     tabRefs.current[index]?.focus({ preventScroll: true });
   }, [page, agents.length]);
 
+  // Keep the active/new tab in view (selectTab and addAgent both move activeTabIndex),
+  // and recompute the edge-fade hints whenever the tab set or active tab changes.
+  useLayoutEffect(() => {
+    tabRefs.current[activeTabIndex]?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    updateTabOverflow();
+  }, [activeTabIndex, agents.length, updateTabOverflow]);
+
+  useEffect(() => {
+    const onResize = () => updateTabOverflow();
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [updateTabOverflow]);
+
+  // Recompute the edge-fade hints when a tab label's width changes even though the
+  // agent count is unchanged — e.g. editing an agent id. The label text derives from
+  // the id, so the joined id signature is the only content-driven width input.
+  const tabIdSignature = agents.map((a) => JSON.stringify(a.id)).join("|");
+  useLayoutEffect(() => {
+    updateTabOverflow();
+  }, [tabIdSignature, updateTabOverflow]);
+
   function selectTab(index: number) {
     pendingTabFocusRef.current = index;
     if (index === 0) setPage({ kind: "overview" });
@@ -378,13 +423,12 @@ export function MeshBuilder({
   }
 
   function onTabKeyDown(index: number, e: KeyboardEvent<HTMLElement>) {
-    const count = agents.length + 1;
-    let next: number | null = null;
-    if (e.key === "ArrowRight") next = (index + 1) % count;
-    else if (e.key === "ArrowLeft") next = (index - 1 + count) % count;
-    else if (e.key === "Home") next = 0;
-    else if (e.key === "End") next = count - 1;
-    else if (e.key === "Enter" || e.key === " ") next = index;
+    // Only act when the tab itself has focus. When a nested control (the remove
+    // button) is focused, let its native Enter/Space activation proceed instead of
+    // swallowing the key with preventDefault — arrow-key nav still works because the
+    // roving-tabindex element is the tab, so it is the focus target during nav.
+    if (e.target !== e.currentTarget) return;
+    const next = nextTabIndexForKey(e.key, index, agents.length + 1);
     if (next === null) return;
     e.preventDefault();
     selectTab(next);
@@ -436,7 +480,16 @@ export function MeshBuilder({
           </Btn>
         </div>
         <div className="mbody">
-          <div className="builder-tabs" role="tablist" aria-label="mesh editor pages">
+          <div className="builder-tabs-bar">
+          <div
+            className="builder-tabs"
+            role="tablist"
+            aria-label="mesh editor pages"
+            ref={tabsScrollRef}
+            data-overflow-left={tabOverflow.left ? "true" : undefined}
+            data-overflow-right={tabOverflow.right ? "true" : undefined}
+            onScroll={updateTabOverflow}
+          >
             <button
               type="button"
               className="builder-tab"
@@ -464,7 +517,7 @@ export function MeshBuilder({
                 aria-selected={page.kind === "agent" && page.key === a.key}
                 aria-controls={`mesh-builder-panel-${a.key}`}
                 aria-label={a.role === "router" ? `${a.id || `agent-${i}`} (router)` : a.id || `agent-${i}`}
-                title={a.role === "router" ? `${a.id || `agent-${i}`} (router)` : undefined}
+                title={a.role === "router" ? `${a.id || `agent-${i}`} (router)` : a.id || `agent-${i}`}
                 tabIndex={page.kind === "agent" && page.key === a.key ? 0 : -1}
                 onClick={() => setPage({ kind: "agent", key: a.key })}
                 onKeyDown={(e) => onTabKeyDown(i + 1, e)}
@@ -485,9 +538,12 @@ export function MeshBuilder({
                 </button>
               </div>
             ))}
+          </div>
+          <div className="builder-add-agent">
             <Btn small onClick={addAgent}>
               {t("build.addAgent")}
             </Btn>
+          </div>
           </div>
 
           {page.kind === "overview" ? (
