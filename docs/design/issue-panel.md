@@ -240,10 +240,12 @@ concrete, already-existing actor paths:
 
 1. **Dispatch tool** (`board_dispatch`, router) — emits `dispatched` (and, when the slug is known, treats the
    branch `task/<slug>` as expected). Maps → `in_progress` by default.
-2. **Lifecycle tools / mail-thread markers** — the assignee (or its lead) signals progress without the daemon
-   touching git, via either:
-   - a small role-gated MCP tool `board_lifecycle(taskId, kind, expectedRevision, expectedBoardRevision)` where an
-     assignee may emit `branch_created` / `accepted` (→ in_progress) and `review_requested` (→ in_review); or
+2. **Lifecycle tools / mail-thread markers** — the **assignee** signals progress without the daemon touching git;
+   a lead/router may relay only through the privileged/router path (§5.2) or when it is itself the assignee — it
+   gains no extra rights here. Via either:
+   - a small role-gated MCP tool `board_lifecycle(taskId, kind, expectedRevision, expectedBoardRevision)` where the
+     task's **assignee** (or a privileged actor) may emit `branch_created` / `accepted` (→ in_progress) and
+     `review_requested` (→ in_review); a non-assignee member is rejected (`forbidden`); or
    - a **mail-thread marker**: `handleSendMail` already links a reply to the task by `task` ref (§5.4); a
      recognized structured marker on that thread (e.g. `send_mail(..., task:"<slug>", lifecycle:"review_requested")`,
      or a leading `[REVIEW]`/`[DONE]` intent token the plane parses) emits the same `record_lifecycle_event`.
