@@ -39,6 +39,10 @@ function claudeRawSdkMeta(): { claudeCode: { emitRawSDKMessages: Array<Record<st
         { type: "system", subtype: "api_retry" },
         { type: "system", subtype: "status" },
         { type: "system", subtype: "compact_boundary" },
+        // The init system message carries the resolved model id (e.g. "claude-opus-4-8"), letting
+        // the control plane look up the real context window instead of trusting the bogus 200K
+        // DEFAULT_CONTEXT_WINDOW the harness reports before the model is known.
+        { type: "system", subtype: "init" },
       ],
     },
   };

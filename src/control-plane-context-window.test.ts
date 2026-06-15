@@ -238,6 +238,83 @@ async function withAgentModel(
   }
 }
 
+// ── auto-resolve claude window (auto-context-window) ──────────────────────────
+/** Run a plane with one agent of the given harness/model whose session returns `session`. */
+async function withHarnessAgent(
+  harness: "codex" | "claude" | "opencode" | "kimi",
+  agentModel: string | undefined,
+  session: unknown,
+  fn: (cp: ControlPlane, conn: WindowConnection, events: any[]) => Promise<void>,
+): Promise<void> {
+  const root = await mkdtemp(join(tmpdir(), "cp-ctx-harness-"));
+  let conn: WindowConnection | undefined;
+  const cfg: MeshConfig = {
+    name: "ctx-window",
+    agents: [{ id: "router", harness, project: root, role: "router", ...(agentModel ? { model: agentModel } : {}) }],
+    edges: [],
+  };
+  const cp = new ControlPlane(cfg, {
+    mailboxPath: join(root, "mailbox.ndjson"),
+    turnFirstSignalTimeoutMs: 0,
+    connectionFactory: (opts) => {
+      conn = new (class extends WindowConnection {
+        async newSession(): Promise<unknown> { return session; }
+      })(opts);
+      return conn as unknown as AcpAgentConnection;
+    },
+  });
+  const events: any[] = [];
+  cp.on((e) => events.push(e));
+  try {
+    await cp.start();
+    if (!conn) throw new Error("connection missing");
+    await fn(cp, conn, events);
+  } finally {
+    await cp.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+test("claude agent with NO configured/resolved model falls back to the 1M window, not the bogus 200K", async () => {
+  // The reported bug: claude-agent-acp reports DEFAULT_CONTEXT_WINDOW=200000 and the agent has no
+  // configured model and advertises a generic unresolved "default" — so it showed 212k/200k and
+  // false-compacted. The claude harness default window (1M) must take over instead.
+  const session = { sessionId: "s-router", models: { currentModelId: "default", availableModels: [{ modelId: "default", name: "Default" }] } };
+  await withHarnessAgent("claude", undefined, session, async (cp, conn, events) => {
+    conn.opts.onAvailableCommands?.(["compact"]);
+    conn.opts.onContextUsage?.({ used: 230331, size: 200000, percent: 230331 / 200000 });
+    await tick();
+    expect(cp.getAgentContextUsage("router")?.size).toBe(1_000_000);
+    expect(cp.getAgentContextUsage("router")?.percent).toBeCloseTo(0.23, 2);
+    expect(compactStarted(events)).toBe(false); // 23% of the real 1M window — no false compact
+  });
+});
+
+test("claude SDK init model takes precedence over the 1M harness default (Opus 4.1 → real 200K)", async () => {
+  // When the harness reports the real model id via the Claude SDK init message, that model's true
+  // window wins over the generic 1M fallback — so a 200K model still compacts correctly.
+  const session = { sessionId: "s-router", models: { currentModelId: "default", availableModels: [{ modelId: "default", name: "Default" }] } };
+  await withHarnessAgent("claude", undefined, session, async (cp, conn, events) => {
+    conn.opts.onAvailableCommands?.(["compact"]);
+    conn.opts.onExtNotification?.("_claude/sdkMessage", { type: "system", subtype: "init", model: "claude-opus-4-1" }, undefined);
+    conn.opts.onContextUsage?.({ used: 190000, size: 200000, percent: 0.95 });
+    await tick();
+    expect(cp.getAgentContextUsage("router")?.size).toBe(200000); // real Opus 4.1 window, not 1M
+    expect(compactStarted(events)).toBe(true); // 95% of the real 200K window
+  });
+});
+
+test("codex agent is unaffected by the claude default: keeps its reported model_context_window", async () => {
+  // codex feeds the real window via parseTokenCount(model_context_window); an unknown model must
+  // keep that reported size and never inherit the claude 1M fallback.
+  const session = { sessionId: "s-router" };
+  await withHarnessAgent("codex", undefined, session, async (cp, conn) => {
+    conn.opts.onContextUsage?.({ used: 5337, size: 258400, percent: 5337 / 258400 });
+    await tick();
+    expect(cp.getAgentContextUsage("router")?.size).toBe(258400); // reported codex window, not 1M
+  });
+});
+
 test("config model 'sonnet[1m]' with NO advertised models normalizes to the 1M window", async () => {
   // Session advertises no models -> sessionModels stays empty -> the configured alias is used.
   await withAgentModel("sonnet[1m]", { sessionId: "s-router" }, async (cp, conn) => {

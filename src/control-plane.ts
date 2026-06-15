@@ -17,7 +17,7 @@ import { artifactAgentDir, resolveArtifactFile } from "./web/artifacts";
 import { readSessionState, setMeshExpectedAlive, updateAgentMailCursor, updateAgentSession, clearAgentSession, type MeshSessionState } from "./session-storage";
 import { now, type AgentActivity, type AgentConfig, type AgentHealthSignalKind, type AgentId, type AgentTurn, type MeshConfig, type MeshEdge, type MeshEvent, type PromptImageRef, type SessionMode, type SessionModel, type ThinkingEffort, type TurnHealthReason } from "./acp/types";
 import { DEFAULT_AUTO_COMPACT_SETTINGS, MIN_AUTO_COMPACT_CONTEXT_WINDOW, evaluateCompactThreshold, parseCompactThreshold } from "./auto-compact";
-import { resolveContextWindow, lookupModelContextWindow, type ContextWindowState } from "./acp/usage-compat";
+import { resolveContextWindow, lookupModelContextWindow, harnessDefaultContextWindow, parseClaudeModelId, type ContextWindowState } from "./acp/usage-compat";
 import { applyBoardCommand, computeBoardWarnings, createEmptyBoard, type BoardActor, type BoardCommand, type BoardCommandResult, type BoardState } from "./board";
 import { boardsDirFor, readBoard, writeBoard } from "./board-store";
 
@@ -274,6 +274,10 @@ export class ControlPlane {
    *  table. Held so a later usage frame never shrinks the window mid-session; reset on
    *  respawn/new-session and recomputed when the agent's model changes. */
   private agentContextWindow = new Map<AgentId, ContextWindowState>();
+  /** Real model id reported by the harness at runtime (claude SDK init/assistant message), used to
+   *  resolve the true context window when the agent has no configured model and advertises a
+   *  generic unresolved one. Reset on respawn/new-session and on an operator model switch. */
+  private agentResolvedModel = new Map<AgentId, string>();
   private agentAdvertisedCommands = new Map<AgentId, Set<string>>();
   private agentSilentTaskCompletes = new Map<AgentId, SilentTaskCompletes>();
   private agentLastOutboundMail = new Map<AgentId, number>();
@@ -329,14 +333,17 @@ export class ControlPlane {
    *  "default" that shadows a config alias like "sonnet[1m]" which carries the real 1M window. */
   private currentModelId(id: AgentId): string | undefined {
     const advertised = this.sessionModels.get(id)?.current;
+    const resolved = this.agentResolvedModel.get(id);
     const configured = this.mesh.agent(id)?.model;
-    if (advertised) {
-      if (lookupModelContextWindow(advertised) === null && configured && lookupModelContextWindow(configured) !== null) {
-        return configured;
-      }
-      return advertised;
+    // Prefer the first candidate that resolves to a known window: the live advertised model wins
+    // (operator's switch), then the real model id the harness reported (claude SDK init) so an
+    // unconfigured claude agent gets its true window, then the configured alias (e.g. "sonnet[1m]").
+    for (const cand of [advertised, resolved, configured]) {
+      if (cand && lookupModelContextWindow(cand) !== null) return cand;
     }
-    return configured;
+    // None resolve to a known window: keep the live id (or real/configured) for display and
+    // stickiness; the window itself falls back to the per-harness default in updateAgentUsage.
+    return advertised || resolved || configured;
   }
 
   private updateAgentUsage(id: AgentId, usage: { used: number; size: number; percent: number; cost?: number }): void {
@@ -344,7 +351,8 @@ export class ControlPlane {
     // under-reported harness size (claude-agent-acp's DEFAULT_CONTEXT_WINDOW=200000) does
     // not drive the UI waterline or auto-compact. The window is sticky per model and never
     // shrinks within a session; a model switch recomputes it from scratch.
-    const resolved = resolveContextWindow(this.agentContextWindow.get(id), this.currentModelId(id), usage.size);
+    const harnessDefault = harnessDefaultContextWindow(this.mesh.agent(id)?.harness);
+    const resolved = resolveContextWindow(this.agentContextWindow.get(id), this.currentModelId(id), usage.size, harnessDefault);
     this.agentContextWindow.set(id, resolved);
     const window = resolved.window;
     const percent = window > 0 ? usage.used / window : usage.percent;
@@ -362,6 +370,7 @@ export class ControlPlane {
   private clearAgentSelfAwareness(id: AgentId): void {
     this.agentContextUsage.delete(id);
     this.agentContextWindow.delete(id);
+    this.agentResolvedModel.delete(id);
     this.agentAdvertisedCommands.delete(id);
     this.agentLastCompactAt.delete(id);
     this.agentNearLimitWarnedAt.delete(id);
@@ -719,6 +728,8 @@ export class ControlPlane {
 
   private noteExtNotification(agent: AgentId, method: string, params: unknown, turn: AgentTurn | undefined): void {
     if (method !== "_claude/sdkMessage") return;
+    const modelId = parseClaudeModelId(params);
+    if (modelId && this.agentResolvedModel.get(agent) !== modelId) this.agentResolvedModel.set(agent, modelId);
     const health = claudeHealthSignal(params);
     if (!health) return;
     this.noteTurnSignal(agent, turn);
@@ -879,6 +890,9 @@ export class ControlPlane {
   /** Switch an agent's model (delegates to its connection, then echoes state for the UI). */
   async setModel(id: AgentId, modelId: string): Promise<void> {
     await this.agent(id).setModel(modelId);
+    // The operator picked a model explicitly; drop the harness-reported model so a stale SDK id
+    // can't shadow the new advertised one when resolving the context window.
+    this.agentResolvedModel.delete(id);
     const models = this.sessionModels.get(id);
     if (models) {
       const next = { ...models, current: modelId };
