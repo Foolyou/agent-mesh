@@ -368,6 +368,43 @@ test("removeQueued drops matching queued jobs without touching the in-flight tur
   await d;
 });
 
+test("kill() settles the in-flight and queued prompt promises so callers never hang", async () => {
+  // Repro for the respawn/new-session turnCount leak: when a connection is killed while a
+  // turn is in flight, the underlying ACP prompt request never resolves on its own (the child
+  // is gone and the stream just ends). If kill() does not settle the pending prompt promises,
+  // the control plane's trackTurn().finally never runs and turnCounts leaks → activity sticks
+  // on "working" forever. kill() must reject both the in-flight job and every queued job.
+  const started: string[] = [];
+  const turns = [deferred<any>(), deferred<any>()];
+  const c = Object.create(AcpAgentConnection.prototype) as AcpAgentConnection;
+  (c as any).id = "a";
+  (c as any).sessionId = "s";
+  (c as any).busy = false;
+  (c as any).queue = [];
+  (c as any).alive = true;
+  (c as any).opts = {};
+  (c as any).conn = {
+    prompt: ({ prompt }: any) => {
+      started.push(prompt[0].text);
+      return turns[started.length - 1]!.promise; // never settles on its own
+    },
+  };
+
+  const inflight = c.prompt("A", [], { id: "a-turn" } as any); // reaches pump → in-flight
+  const queued = c.prompt("B", [], { id: "b-turn" } as any); // stays queued behind A
+  await waitFor(() => started.length === 1);
+
+  const settled: Record<string, "resolved" | "rejected"> = {};
+  void inflight.then(() => (settled.inflight = "resolved"), () => (settled.inflight = "rejected"));
+  void queued.then(() => (settled.queued = "resolved"), () => (settled.queued = "rejected"));
+
+  c.kill();
+
+  await waitFor(() => settled.inflight !== undefined && settled.queued !== undefined);
+  expect(settled.inflight).toBe("rejected");
+  expect(settled.queued).toBe("rejected");
+});
+
 test("prompt queue emits queued immediately and started when a job reaches pump", async () => {
   const events: string[] = [];
   const turns = [deferred<any>(), deferred<any>()];

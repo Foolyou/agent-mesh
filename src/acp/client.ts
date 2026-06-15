@@ -469,5 +469,25 @@ export class AcpAgentConnection {
     const pid = this.child?.pid;
     if (pid) killTree(pid);
     this.alive = false;
+    // The child is gone, so the in-flight ACP prompt request will never resolve on its own
+    // (its stream just ends — the library does not reject pending requests on stream close).
+    // Settle the in-flight and queued prompt promises so callers stop awaiting forever. In
+    // particular this lets the control plane's trackTurn().finally run, so turnCounts does not
+    // leak and an agent's activity does not stick on "working" after a respawn/new-session
+    // supersede kills its old connection mid-turn.
+    this.failPending(new Error(`${this.id}: connection killed`));
+  }
+
+  /** Reject the in-flight job and every queued job. State is cleared before rejecting so a
+   *  rejection handler that re-enters (e.g. a resume-retry) cannot observe a half-killed conn,
+   *  and pump() is intentionally NOT restarted — this connection is being discarded. */
+  private failPending(err: unknown): void {
+    const active = this.activeJob;
+    const queued = this.queue;
+    this.activeJob = undefined;
+    this.queue = [];
+    this.busy = false;
+    if (active) active.reject(err);
+    for (const job of queued) job.reject(err);
   }
 }
