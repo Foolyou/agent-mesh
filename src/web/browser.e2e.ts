@@ -382,6 +382,16 @@ try {
   await step("agent prose renders markdown live", async () => {
     const panel = page.locator(".conv-panel").first();
     const bubble = panel.locator(".msg.agent .bubble", { hasText: "implements the calculator core" }).first();
+    // The fake streams this message word-by-word (45ms/word). Wait for the WHOLE message to
+    // arrive before asserting — otherwise the negative security checks below (data:svg blocked,
+    // raw `<u>` not live) can false-pass simply because that content has not streamed in yet,
+    // and the code fence may still be unterminated so `pre code` isn't formed. The final line is
+    // `<u>rawhtml</u> must not become a live element` (the `<u>` is stripped via skipHtml, leaving
+    // its text), so once "must not become a live element" lands the stream is complete and sanitized.
+    await panel
+      .locator(".msg.agent .bubble", { hasText: "must not become a live element" })
+      .first()
+      .waitFor({ timeout: 10000 });
     await bubble.locator("strong", { hasText: "codex-1" }).waitFor({ timeout: 4000 });
     await bubble.locator("ul li", { hasText: "implement core" }).waitFor({ timeout: 4000 });
     await bubble.locator("pre code", { hasText: "export const add" }).waitFor({ timeout: 4000 });
