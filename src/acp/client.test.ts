@@ -199,6 +199,7 @@ test("claude newSession requests raw SDK messages for silence visibility", async
     { type: "system", subtype: "api_retry" },
     { type: "system", subtype: "status" },
     { type: "system", subtype: "compact_boundary" },
+    { type: "system", subtype: "init" },
   ]);
 });
 
@@ -221,6 +222,7 @@ test("claude loadSession requests raw SDK messages for silence visibility", asyn
     { type: "system", subtype: "api_retry" },
     { type: "system", subtype: "status" },
     { type: "system", subtype: "compact_boundary" },
+    { type: "system", subtype: "init" },
   ]);
 });
 
