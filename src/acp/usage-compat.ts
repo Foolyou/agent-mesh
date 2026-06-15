@@ -111,6 +111,29 @@ export function lookupModelContextWindow(modelId: string | null | undefined): nu
   return null;
 }
 
+/** Per-harness fallback context window, used ONLY when the model id does not resolve to a known
+ *  window. claude-agent-acp reports DEFAULT_CONTEXT_WINDOW=200000 early even for 1M-window models,
+ *  so a claude agent whose model is unknown should fall back to the 1M tier rather than that bogus
+ *  200K (which caused false auto-compaction). Other harnesses report their real window (codex via
+ *  model_context_window), so they have no fallback. */
+export function harnessDefaultContextWindow(harness: string | null | undefined): number {
+  return harness === "claude" ? ONE_MILLION : 0;
+}
+
+/** Extract the real model id from a forwarded Claude Agent SDK message (`_claude/sdkMessage`).
+ *  The init system message carries the resolved model up front; an assistant message carries it
+ *  per turn as a backstop. Returns null for any other / malformed message. */
+export function parseClaudeModelId(message: unknown): string | null {
+  if (!isObject(message)) return null;
+  if (message.type === "system" && message.subtype === "init" && typeof message.model === "string" && message.model.trim()) {
+    return message.model;
+  }
+  if (message.type === "assistant" && isObject(message.message) && typeof message.message.model === "string" && message.message.model.trim()) {
+    return message.message.model;
+  }
+  return null;
+}
+
 export type ContextWindowState = { modelId: string | null; window: number };
 
 /** Resolve the authoritative context-window denominator for a usage frame.
@@ -124,12 +147,17 @@ export function resolveContextWindow(
   prev: ContextWindowState | undefined,
   modelId: string | null | undefined,
   reportedSize: number,
+  harnessDefaultWindow = 0,
 ): ContextWindowState {
   const id = typeof modelId === "string" && modelId.trim() ? modelId : null;
   const sticky = prev && prev.modelId === id ? prev.window : 0;
   const reported = Number.isFinite(reportedSize) && reportedSize > 0 ? reportedSize : 0;
+  const harnessDefault = Number.isFinite(harnessDefaultWindow) && harnessDefaultWindow > 0 ? harnessDefaultWindow : 0;
   const table = lookupModelContextWindow(id);
-  let window = table !== null ? table : Math.max(sticky, reported);
+  // Known model: the table is authoritative. Unknown model: take the largest of the sticky window,
+  // the harness's reported size, and the per-harness default — so claude's bogus 200K report is
+  // lifted to the 1M fallback while a genuinely larger report (or codex's real window) still wins.
+  let window = table !== null ? table : Math.max(sticky, reported, harnessDefault);
   if (window <= 0) window = reported;
   return { modelId: id, window };
 }

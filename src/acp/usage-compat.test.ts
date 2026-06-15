@@ -1,12 +1,49 @@
 import { expect, test } from "bun:test";
 import {
+  harnessDefaultContextWindow,
   lookupModelContextWindow,
   normalizeCommandName,
   parseAvailableCommands,
+  parseClaudeModelId,
   parseTokenCount,
   parseUsageUpdate,
   resolveContextWindow,
 } from "./usage-compat";
+
+test("parseClaudeModelId reads the model from a Claude SDK init system message", () => {
+  expect(parseClaudeModelId({ type: "system", subtype: "init", model: "claude-opus-4-8" })).toBe("claude-opus-4-8");
+});
+test("parseClaudeModelId reads the model from a Claude SDK assistant message", () => {
+  expect(parseClaudeModelId({ type: "assistant", message: { model: "claude-sonnet-4-5" } })).toBe("claude-sonnet-4-5");
+});
+test("parseClaudeModelId ignores unrelated / malformed messages", () => {
+  expect(parseClaudeModelId({ type: "system", subtype: "status", status: "compacting" })).toBeNull();
+  expect(parseClaudeModelId({ type: "assistant", message: {} })).toBeNull();
+  expect(parseClaudeModelId({ type: "system", subtype: "init", model: "" })).toBeNull();
+  expect(parseClaudeModelId(null)).toBeNull();
+  expect(parseClaudeModelId("nope")).toBeNull();
+});
+
+test("harnessDefaultContextWindow gives claude the 1M fallback and others none", () => {
+  expect(harnessDefaultContextWindow("claude")).toBe(1_000_000);
+  expect(harnessDefaultContextWindow("codex")).toBe(0);
+  expect(harnessDefaultContextWindow("opencode")).toBe(0);
+  expect(harnessDefaultContextWindow(undefined)).toBe(0);
+});
+
+test("resolveContextWindow uses the harness default when the model is unknown (table miss)", () => {
+  // claude's bogus 200K report with no resolvable model → the 1M harness default takes over.
+  expect(resolveContextWindow(undefined, null, 200000, 1_000_000).window).toBe(1_000_000);
+  // a larger genuine report still wins over the default.
+  expect(resolveContextWindow(undefined, null, 1_500_000, 1_000_000).window).toBe(1_500_000);
+});
+test("resolveContextWindow: a known model's table value still beats the harness default", () => {
+  // Opus 4.1 (200K) must NOT be lifted to the 1M claude default.
+  expect(resolveContextWindow(undefined, "claude-opus-4-1", 200000, 1_000_000).window).toBe(200000);
+});
+test("resolveContextWindow without a harness default is unchanged (codex path)", () => {
+  expect(resolveContextWindow(undefined, "mystery", 258400).window).toBe(258400);
+});
 
 test("parseUsageUpdate reads codex usage_update", () => {
   expect(parseUsageUpdate({ sessionUpdate: "usage_update", used: 5337, size: 258400 })).toEqual({
