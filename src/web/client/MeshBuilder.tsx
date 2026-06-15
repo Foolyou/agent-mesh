@@ -408,7 +408,7 @@ export function MeshBuilder({
   // Recompute the edge-fade hints when a tab label's width changes even though the
   // agent count is unchanged — e.g. editing an agent id. The label text derives from
   // the id, so the joined id signature is the only content-driven width input.
-  const tabIdSignature = agents.map((a) => a.id).join(" ");
+  const tabIdSignature = agents.map((a) => JSON.stringify(a.id)).join("|");
   useLayoutEffect(() => {
     updateTabOverflow();
   }, [tabIdSignature, updateTabOverflow]);
