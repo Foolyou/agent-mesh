@@ -125,27 +125,45 @@ All current-state claims below cite files in this repo as read on branch `task/i
 
 Built on the existing model; additive and migration-safe (sanitizer defaults missing fields).
 
-1. **Labels.** `BoardLabel = { id:string; name:string; color:string }` stored at board level
-   (`BoardState.labels: BoardLabel[]`); `Task.labelIds: string[]`. New commands `create_label` / `update_label`
-   / `delete_label` (privileged) and `set_task_labels` (privileged + assignee). Sanitizer drops unknown label
-   refs. *Why board-level:* labels are shared vocabulary; per-task free-text would not support filtering.
-2. **Filter/sort surface (no schema change needed, just indexes the UI reads):** status, assignee, label,
-   priority, epic, has-open-subtasks, blocked (from `computeBoardWarnings`), text (title/description/comment).
-   Derived client-side from the full board document (Phase-1 still ships the whole board).
-3. **Assignment ↔ dispatch link.** New optional `Task.dispatch?: { assignee:string; mailEventId:string; at:string }`
-   recording the dispatch that handed the task to its assignee. Distinct from `mailEventIds` (all linked mail);
-   `dispatch` is *the* hand-off. Lets the detail view show "dispatched to X at T (mail #M)".
-4. **Status auto-flow hooks (opt-in, advisory).** No hard auto-transition (preserves `board.ts:10-12`). Instead a
-   derived, non-persisted **suggestion**: when an assignee replies on the dispatch thread (`link_mail` on a task
-   whose `assignee` sent it), surface a "ready to mark in_review?" hint in the detail/kanban; never auto-move.
-5. **Close acceptance gate (soft).** At `done`, `computeCloseReadiness(task)` (pure, derived) reports unmet
-   conditions (open subtasks, non-done deps). Privileged-only close is unchanged; the gate is a **confirmation
-   surfaced in the panel**, not a reducer hard-block — consistent with the advisory-only principle.
-6. **Member-scoped permission flag.** No new field needed: "assigned member" = `ownsItem` with `assignee===id`.
-   The matrix tightening (members can't create; comment only when owning) is enforced in the reducer (§4),
-   not via a new flag.
+**Scope clarification on "advisory-only".** The existing `board.ts:10-12` rule ("nothing is ever
+auto-transitioned") is specifically about **dependency** warnings (cycles / blocked-by-incomplete) — those stay
+advisory. This upgrade introduces an **intentional, separate** lifecycle mechanism that DOES auto-transition a
+task's status (`todo → in_progress → in_review`) from machine-readable lifecycle events (§5). Dependency warnings
+remain advisory; lifecycle status reflux is automatic. The two do not conflict.
 
-Explicitly **not** adding: cross-mesh refs, milestones/iterations, story points, external GitHub sync.
+1. **Issue ↔ slug / branch / dispatch linkage (stable fields).** Add to `Task`:
+   - `taskSlug?: string` — the canonical mesh task slug (e.g. `builder-tab-names`); the git branch is
+     `task/<slug>` by convention.
+   - `branchName?: string` — the branch name (defaults to `task/${taskSlug}`), recorded/confirmed by a
+     `branch_created` lifecycle event.
+   - `dispatch?: { assignee:string; mailEventId?:string; threadKey:string; at:string; mailFailed?:boolean }` —
+     *the* hand-off record (distinct from `mailEventIds`, which is all linked mail). `threadKey` (the slug, or the
+     first dispatch mail id) keys the dispatch conversation so replies map back. `mailEventId` is back-filled on a
+     retry if the initial `send_mail` failed (`mailFailed`).
+   - `lifecycleEvents: BoardLifecycleEvent[]` — append-only audit driving auto status reflux (see below).
+2. **Lifecycle event type (drives auto-reflux, §5).**
+   `BoardLifecycleEvent = { kind: LifecycleKind; by: string; at: string; data?: {...} }` where
+   `LifecycleKind = "dispatched" | "branch_created" | "accepted" | "review_requested" | "integration_ready" | "reopened"`.
+   A new reducer command `record_lifecycle_event` appends the event AND applies the mapped, **monotonic** status
+   transition (§5). Status rank `todo(0) < in_progress(1) < in_review(2) < done/cancelled(terminal)`; auto-reflux
+   only moves **forward** to the mapped rank and never sets a terminal status (close stays privileged-explicit).
+3. **Labels.** `BoardLabel = { id; name; color }` at board level (`BoardState.labels`), `Task.labelIds:string[]`;
+   commands `create_label`/`update_label`/`delete_label` (privileged) + `set_task_labels` (privileged + assignee).
+   Sanitizer drops unknown label refs. *(Postponed to a later phase — see §6.)*
+4. **Filter/sort surface (no schema change; client-derived from the full board doc):** status, assignee, label,
+   priority, epic, has-open-subtasks, blocked (from `computeBoardWarnings`), text (title/description/comment).
+5. **Close acceptance gate (soft, does NOT replace auto-reflux).** `computeCloseReadiness(task)` (pure, derived)
+   reports unmet conditions (open subtasks, non-done deps, no `integration_ready` event yet). It is a
+   **confirmation surfaced at close**, not a reducer hard-block. The `integration_ready` lifecycle event marks a
+   task **close-ready**; it never auto-moves to `done`. `done`/`cancelled` remain privileged-explicit (router/human).
+6. **Member-scoped permission** stays `ownsItem` (assignee, `board.ts:190-195`) — no new field; matrix tightening
+   enforced in the reducer (§4).
+
+Migration: all new fields are optional / default-empty; `sanitizeBoard` (`board-store.ts:102-277`) defaults
+`taskSlug`/`branchName` to undefined and `lifecycleEvents`/`labelIds` to `[]`, so old `boards/<mesh>.json` loads
+cleanly.
+
+Explicitly **not** adding: cross-mesh refs, milestones/iterations, story points, external GitHub API sync.
 
 ---
 
@@ -166,8 +184,10 @@ while still living inside the mesh detail (per-mesh granularity).
   subtask progress (`taskProgress`), blocked badge (from warnings), updated-at. Filter bar (status/assignee/
   label/epic/text) + sort. Grouping toggle by epic. Click → detail.
 - **Detail view.** Title/description (markdown), status/assignee/priority/labels/deps controls (gated per §4),
-  subtask checklist, **comment thread**, and a **linked-mail timeline** (resolve `mailEventIds`/`dispatch` against
-  recent mail) so the dispatch conversation is visible inline. Close button shows the soft acceptance gate (§2.5).
+  subtask checklist, **comment thread**, a **lifecycle timeline** (`lifecycleEvents` — dispatched → in_progress →
+  review_requested → in_review → integration_ready) showing how/when the status reflowed and by whom, and a
+  **linked-mail timeline** (resolve `mailEventIds`/`dispatch` against recent mail) so the dispatch conversation is
+  visible inline. Shows `taskSlug`/`branchName`. Close button shows the soft acceptance gate (§5.6).
 - **Kanban view.** Columns = the five statuses. Cards are tasks; drag a card to a column = `set_task_status`
   (subject to per-actor permission: a member can only drag own cards up to `in_review`; `done`/`cancelled`
   columns reject member drops with an inline reason). Optional swimlanes by epic or assignee.
@@ -206,129 +226,207 @@ Notes:
 
 ---
 
-## 5. Auto-dispatch mechanism (the keystone)
+## 5. Auto-dispatch + automatic status reflux (the keystone)
 
-**Requirement:** assigning (router) an issue should hand it to the assignee — `send_mail` with the brief, link the
-mail to the task, and let status reflow as work proceeds — without the router hand-writing a mail each time.
+**Requirement (locked):** assigning (router) an issue hands it to the assignee — `send_mail` with the brief, link
+the mail+slug+branch to the task — AND the task status **automatically reflows** `todo → in_progress → in_review`
+as the lifecycle progresses (branch created / accepted → in_progress; handoff / review-request → in_review;
+integration/acceptance → close-ready). Close to `done`/`cancelled` stays router/human-explicit.
 
-### Alternative A — synchronous router action: assign + dispatch in one funnel (RECOMMENDED)
-A new **router-only** MCP tool / board path `board_dispatch(taskId, instructions?, expectedRevision, expectedBoardRevision)`
-(and an internal `dispatchTask`) that, in one control-plane call:
-1. `assign_task(taskId, assignee=instructions.assignee)` (reuses the reducer; CAS-checked).
-2. `handleSendMail(router → assignee, body = dispatch brief incl. `#N` + title + instructions, task:"#N")` —
-   reusing the **existing** `send_mail` path so `link_mail` records the mail (and sets `Task.dispatch`).
-3. Optionally `set_task_status(in_progress)` (or leave `todo` until the member starts — product choice; default:
-   leave status, let the assignee move it).
-- **Ordering / failure:** apply the board mutations first (authoritative + persisted), then send the mail
-  best-effort (mail send is already fire-and-forget). If mail fails, the assignment still stands and the panel
-  shows "dispatch mail failed — retry"; never roll back the assignment on a transport hiccup.
-- **Pros:** one atomic-feeling action; reuses existing reducer + send_mail + link_mail; no new durable state
-  machine; the router is *already* the synchronous dispatcher, and the board is in-process with the control
-  plane so a direct call is trivial. Easiest to test (one funnel).
-- **Cons:** board mutation and mail are coupled in one tool; partial success (assigned but mail failed) must be
-  surfaced, not hidden.
+### 5.1 Machine-readable lifecycle event source (no daemon git-watching)
+The daemon does **not** observe git directly (§1.7). Instead, status reflux is driven by an explicit,
+machine-readable **`record_lifecycle_event`** board command (reducer + control-plane funnel), emitted from three
+concrete, already-existing actor paths:
 
-### Alternative B — assignment event / outbox drives mail asynchronously
-`assign_task` emits an internal "assignment" event (or appends to a durable **outbox**); a listener consumes it
-and performs `send_mail` + `link_mail`, with at-least-once delivery + dedup.
-- **Pros:** decouples board writes from mail; survives restart (replay the outbox); a single `board_assign`
-  uniformly triggers dispatch regardless of caller.
-- **Cons:** real complexity for a single-daemon, in-process board — needs an outbox table, idempotency keys,
-  retry/backoff, and dedup so a replayed event doesn't double-mail. Harder to reason about ordering vs the WS
-  snapshot. Over-engineered for current scale; also it would auto-dispatch on *every* assign, including
-  re-assignment/bookkeeping edits, which may be unwanted.
+1. **Dispatch tool** (`board_dispatch`, router) — emits `dispatched` (and, when the slug is known, treats the
+   branch `task/<slug>` as expected). Maps → `in_progress` by default.
+2. **Lifecycle tools / mail-thread markers** — the assignee (or its lead) signals progress without the daemon
+   touching git, via either:
+   - a small role-gated MCP tool `board_lifecycle(taskId, kind, expectedRevision, expectedBoardRevision)` where an
+     assignee may emit `branch_created` / `accepted` (→ in_progress) and `review_requested` (→ in_review); or
+   - a **mail-thread marker**: `handleSendMail` already links a reply to the task by `task` ref (§5.4); a
+     recognized structured marker on that thread (e.g. `send_mail(..., task:"<slug>", lifecycle:"review_requested")`,
+     or a leading `[REVIEW]`/`[DONE]` intent token the plane parses) emits the same `record_lifecycle_event`.
+     This reuses the existing mail channel as the lifecycle bus — the assignee's normal handoff mail moves the card.
+3. **Integration flow** (router / prdmgr, the charter's integrator) — when integration/promotion happens, the
+   router (or prdmgr via the REST/daemon path, actor `human`/`router`/`system`) emits `integration_ready`, which
+   sets the task **close-ready** but does NOT move it to `done`.
 
-### Recommendation
-**Adopt A.** It matches the "router is the dispatch desk" model, reuses three existing primitives
-(`assign_task`, `handleSendMail`, `link_mail`), keeps dispatch an explicit deliberate action (not a side effect of
-any assign), and is straightforward to test. Keep `board_assign` as the pure "set the field" op for bookkeeping;
-`board_dispatch` is the "assign **and** hand off" op. Revisit B only if we later need cross-process or replayable
-dispatch.
+`record_lifecycle_event` is **idempotent per `(taskId, kind, threadKey)`**: re-emitting an already-recorded event is
+a no-op for status (and deduped in `lifecycleEvents`).
 
-### Status reflux (how status flows back from the lifecycle)
-Keep the project's **advisory-only** principle (`board.ts:10-12`): **no auto-transition.** The reflux is:
-- The assignee works the dispatched task and **explicitly** `board_set_status(in_review)` when handing back
-  (already permitted). The panel surfaces a one-click "mark in_review" on the assignee's own card.
-- When the assignee replies on the dispatch mail thread (`link_mail` ties it), the detail/kanban shows a
-  **suggestion** ("assignee replied — ready for review?") — never moves status itself.
-- **Close gate:** `done`/`cancelled` stay router/human-only; the panel's close action shows `computeCloseReadiness`
-  (open subtasks / non-done deps) as a confirmation, not a block.
-- **`task/<slug>` git events:** out of scope to wire (no machine signal exists, §1.7). The mail `task:"#N"` link is
-  the carrier; if branch/integration events ever become observable, they slot in here as additional *suggestion*
-  inputs, not auto-transitions. Recorded as an open question (§7), not built now.
+### 5.2 Event → status mapping (deterministic, monotonic, in the reducer)
+| Lifecycle event | Source / actor | Status effect |
+|---|---|---|
+| `dispatched` | `board_dispatch` (router) | → `in_progress` (default; configurable to "stay `todo` until `accepted`") |
+| `branch_created` / `accepted` | assignee (tool or mail marker) | → `in_progress` |
+| `review_requested` (handoff) | assignee (tool or mail marker) | → `in_review` |
+| `integration_ready` | router / human / system (integration) | sets `closeReady=true`; **no** status change |
+| `reopened` | router / human | → `in_progress` (the only backward move; privileged-only) |
+
+**Monotonic guard:** auto-reflux only advances to the mapped rank (`todo<in_progress<in_review`) and never
+regresses (a late `dispatched` after `review_requested` is a no-op). Lifecycle events **never** set a terminal
+status — `done`/`cancelled` are reached only via the existing privileged `set_task_status` (close). `reopened` is
+the sole sanctioned backward transition and is privileged-only.
+
+**Permission of lifecycle events** (reducer-enforced, consistent with §4): `dispatched`/`integration_ready`/
+`reopened` are privileged (router/human/system); `branch_created`/`accepted`/`review_requested` are allowed for
+the task's **assignee** (`ownsItem`) or a privileged actor. Thus a member can drive its own card up to `in_review`
+but can neither dispatch, mark integration-ready, reopen, nor close — matching the locked matrix.
+
+### 5.3 `board_dispatch` (recommended Alternative A, extended)
+A **router-only** tool + internal `dispatchTask` funnel that, in one control-plane call, does more than assign+mail:
+1. `assign_task(taskId, assignee)` (reducer, CAS-checked).
+2. Set linkage on the task: `taskSlug = slug` (required/derived), `branchName = task/<slug>`,
+   `dispatch = { assignee, threadKey: slug, at }`.
+3. `handleSendMail(router → assignee, body = brief incl. `#N` + slug + instructions, task: "#N")` → `mailEventId`;
+   the existing `link_mail` records it in `mailEventIds`, and `dispatch.mailEventId` is set.
+4. `record_lifecycle_event("dispatched")` → status auto-moves to `in_progress` (per §5.2 default).
+All board mutations go through the single `runBoardCommand` funnel (persisted + one `board_snapshot`).
+
+**Why A over an outbox (Alternative B):** A reuses three existing primitives (`assign_task`, `handleSendMail`,
+`link_mail`) + the new `record_lifecycle_event`, keeps dispatch an explicit deliberate router action (not a side
+effect of every `board_assign`), needs no durable outbox/dedup machinery, and is in-process with the board so the
+call is trivial and easy to test. Alternative B (assignment event → outbox → async `send_mail`, at-least-once +
+dedup) only earns its complexity with cross-process or replayable dispatch, which we do not have; it would also
+auto-dispatch on *every* assign including bookkeeping re-assigns. Keep `board_assign` as the pure "set the field"
+op; `board_dispatch` is "assign + hand off + start lifecycle".
+
+### 5.4 send_mail `task` field & link semantics
+`handleSendMail`'s `task` field (§1.4) continues to accept **both** forms, resolved by an extended
+`parseBoardTaskRef`: `#N`/`N` → resolve by board id (canonical); any other string → resolve by `Task.taskSlug`
+match. `board_dispatch` writes `taskSlug`, so the mesh's existing `send_mail(task:"<slug>")` habit auto-links
+replies to the right issue. `link_mail` (system, already idempotent on `mailEventId`, `board.ts:472`) maintains the
+**issue↔mail** edge (`mailEventIds`); `taskSlug` maintains the **slug↔issue** edge; `dispatch.threadKey` (the slug)
+maintains the **dispatch-thread↔issue** edge so a tagged reply on that thread routes its lifecycle event to the
+right task.
+
+### 5.5 Failure / retry / idempotency
+- **Ordering:** board mutations (assign + linkage + `dispatched`) commit **first** (authoritative + persisted),
+  then `send_mail` runs (already fire-and-forget). The status reflux therefore does not depend on mail succeeding.
+- **Mail fails after board commit:** `dispatch.mailFailed=true`, `mailEventId` unset; the panel shows
+  "dispatched (mail failed) — retry". A retry only re-sends the mail and back-fills `mailEventId`; it does **not**
+  re-assign or re-emit `dispatched` (status already `in_progress`).
+- **Duplicate dispatch (same assignee):** `record_lifecycle_event("dispatched")` is idempotent per
+  `(taskId, kind, threadKey)`; the second call is a status no-op and just refreshes the thread/mail link.
+- **Re-assign (different assignee):** `assign_task` updates the assignee, a new `dispatch` record + dispatch mail
+  are made, a fresh `dispatched` event is appended (audit), status stays `in_progress` (monotonic — no regress).
+- **Same-slug retry:** `taskSlug` is stable, so re-dispatching the same slug resolves the **same** issue (no
+  duplicate task); `link_mail` idempotency prevents double mail links.
+- **Out-of-order lifecycle events** (e.g. `review_requested` arrives before `dispatched` due to a fast worker):
+  monotonic mapping still lands the correct max rank; both events are retained in `lifecycleEvents` for audit.
+
+### 5.6 Close acceptance gate (kept, does not replace reflux)
+`done`/`cancelled` remain privileged-explicit. The panel's close action surfaces `computeCloseReadiness` (open
+subtasks / non-done deps / missing `integration_ready`) as a confirmation, never a hard block. `integration_ready`
+sets `closeReady`; the router/human still performs the explicit close. This gate **supplements** auto-reflux (which
+only runs up to `in_review`); it does not gate or replace it.
 
 ---
 
 ## 6. Phased plan (each phase independently shippable + testable)
 
-- **Phase 0 — Permission alignment + close gate (model-only).** Tighten `create_task` and `add_comment` to the
-  locked matrix; scope member subtask ops to owned tasks; add `computeCloseReadiness` (pure). Files: `board.ts`,
-  `mesh-services.ts` (member tool set), tests. No UI. *Lowest risk, unblocks everything; ships first.*
-- **Phase 1 — List + detail (read-first) in a semi-independent panel.** New panel layout, view switch, filter bar,
-  list view, detail view (read + existing gated edits). Files: `BoardPanel.tsx` split into panel + views, store
-  selectors, no new server surface (reuses GET/POST board). Component + e2e tests.
-- **Phase 2 — Kanban view.** Columns by status, drag-to-status honoring per-actor permission, keyboard fallback.
-  UI-only + e2e.
-- **Phase 3 — Labels + filter/search.** Label CRUD (privileged), `set_task_labels`, filter/sort by label/status/
-  assignee/text. `board.ts` (labels), `mesh-services.ts` (tools), `board-store.ts` sanitizer, UI, tests.
-- **Phase 4 — Auto-dispatch (Alternative A).** `board_dispatch` tool + `dispatchTask` funnel + `Task.dispatch`
-  field; detail-view linked-mail timeline. `control-plane.ts`, `board.ts`, `mesh-services.ts`, UI, tests.
-- **Phase 5 — Status reflux suggestions + close acceptance UX.** Assignee "mark in_review" affordance, reply→review
-  suggestion, close confirmation surfacing `computeCloseReadiness`. UI + control-plane suggestion derivation, tests.
+The keystone (dispatch + lifecycle reflux) is pulled **early** into a vertical slice; labels/filter/kanban come
+after. Each phase is independently shippable + testable.
 
-Critical risk (auto-dispatch) lands in Phase 4 with read/permission/views already proven — not deferred to the end
-as one big-bang.
+- **Phase 0 — Model foundation (model-only, no UI).** Add the linkage + lifecycle fields (`taskSlug`,
+  `branchName`, `dispatch`, `lifecycleEvents`, `closeReady`) and the `record_lifecycle_event` reducer command with
+  its monotonic event→status mapping (§5.2) and permission gating; tighten `create_task` / `add_comment` to the
+  matrix; scope member subtask ops to owned tasks; add `computeCloseReadiness`. Files: `board.ts`,
+  `board-store.ts` (sanitizer defaults), `mesh-services.ts` (member tool set), tests. *Lowest risk; unblocks all.*
+- **Phase 1 — Dispatch + lifecycle VERTICAL SLICE (keystone spike).** The minimal end-to-end closed loop:
+  `board_dispatch` tool + `dispatchTask` control-plane funnel (`assign_task` + linkage + `send_mail` + `link_mail`
+  + `record_lifecycle_event("dispatched")`→`in_progress`), the `board_lifecycle` tool / mail-thread marker path
+  for `review_requested`→`in_review`, and the failure/retry/idempotency handling (§5.5). Minimal UI: the existing
+  board tab's detail shows the dispatch + lifecycle timeline and reflowed status. Files: `control-plane.ts`,
+  `board.ts`, `mesh-services.ts`, minimal `BoardPanel.tsx`, tests. *Proves the riskiest mechanism first.*
+- **Phase 2 — List + detail views (semi-independent panel).** Panel layout, view switch, filter bar, list view,
+  full detail view (read + gated edits + lifecycle/mail timeline). `BoardPanel.tsx` split into panel + views,
+  store selectors; reuses GET/POST board. Component + e2e tests.
+- **Phase 3 — Kanban view.** Columns by status, drag-to-status honoring per-actor permission + keyboard fallback.
+  Drags emit the same status path (a member drag to `done` is rejected with a reason). UI-only + e2e.
+- **Phase 4 — Labels + filter/search (postponed, as agreed).** Label CRUD (privileged), `set_task_labels`,
+  filter/sort by label/status/assignee/text. `board.ts`, `mesh-services.ts`, `board-store.ts`, UI, tests.
+- **Phase 5 — Integration/close UX polish.** `integration_ready` close-ready surfacing, close confirmation with
+  `computeCloseReadiness`, reopened flow, linked-mail timeline polish. UI + control-plane, tests.
+
+The keystone risk (dispatch + automatic lifecycle reflux) is proven in **Phase 1**, not deferred — views,
+labels, and polish layer on top of an already-validated mechanism.
 
 ---
 
 ## 7. Risks / open questions / rejected alternatives
 
 **Risks**
+- **Lifecycle event delivery is only as reliable as its source.** Reflux depends on the assignee/router actually
+  emitting `board_lifecycle` or a recognized mail marker (the daemon does not watch git). Mitigation: make
+  `board_dispatch` auto-emit `dispatched`; make the assignee's normal handoff mail carry the marker; surface
+  "stuck in in_progress with a replied thread" as a panel hint so a missed `review_requested` is visible.
+- **Mail-marker parsing reliability.** Parsing `[REVIEW]`/`lifecycle:` markers off mail must be precise (avoid
+  false positives from quoted text). Prefer an explicit structured `send_mail` field (`lifecycle:"…"`) over prose
+  token scanning; the token path is a fallback. Pin with tests.
 - **Whole-board CAS contention.** Every mutation carries `expectedBoardRevision` (`board.ts:205-208`); a busy board
-  with router + members + kanban drags will see 409s. Phase-1 mitigations: snappy re-fetch on conflict (small doc),
-  optimistic UI with rollback. Open question: move to entity-only CAS for non-structural edits.
-- **Dispatch partial success** (assigned, mail failed) must be visible, not silently "done" — mirror the
-  `mutation-ack` saved-vs-applied lesson.
-- **Permission tightening is a behavior change**: members losing create/comment-anywhere could break existing
-  member habits; needs a clear error message and a changelog note.
-- **Label migration**: old `boards/<mesh>.json` lacks `labels`/`labelIds`; the sanitizer must default them
-  (additive, low risk) — but assert it in `board-store.test.ts`.
+  (router + members + kanban + lifecycle events) will see 409s. Mitigations: snappy re-fetch on conflict (small
+  doc), optimistic UI with rollback. Open question: entity-only CAS for non-structural edits / lifecycle appends.
+- **Dispatch partial success** (assigned + status moved, mail failed) must be visible, not silently "done" —
+  mirror the `mutation-ack` saved-vs-applied lesson (§5.5).
+- **Monotonic guard correctness.** Out-of-order / duplicate / re-assign lifecycle events must never regress or
+  double-move status, and must never reach a terminal state — the single highest-value reducer test target.
+- **Permission tightening is a behavior change** (members lose create / comment-anywhere); needs a clear
+  `forbidden` message and a changelog note.
+- **Migration**: old `boards/<mesh>.json` lacks the new fields; the sanitizer must default them (additive); assert
+  in `board-store.test.ts`.
 - **Full-screen panel vs mesh console**: don't regress the embedded board tab or the composer/canvas layout.
 
 **Open questions**
-- May members create/update subtasks on their assigned task, or are subtasks also router-only? (Recommend:
-  owned-task only.)
-- Does dispatch auto-set `in_progress`, or leave `todo` until the member starts? (Recommend: leave; member moves it.)
-- Should `board_assign` (pure set) remain, or fold into `board_dispatch`? (Recommend: keep both.)
-- Whole-board vs entity-only CAS for the kanban path.
-- Human-assign-from-panel stays disabled — confirm we don't want an operator override later.
+- Does `dispatched` auto-set `in_progress`, or stay `todo` until an explicit `accepted`/`branch_created`?
+  (Recommend default `dispatched → in_progress`; make it a board/config toggle if a team wants assigned-but-not-started.)
+- `branch_created` signal source: assignee tool call vs mail marker vs derived-from-dispatch. (Recommend: a
+  `board_lifecycle` tool **and** a mail marker, both mapping to the same event; daemon never reads git.)
+- `integration_ready` emitter: the router relays it, or prdmgr emits via REST/daemon directly? (prdmgr is the
+  charter integrator but is outside the mesh — needs a REST/daemon lifecycle entry or a router relay. Decide.)
+- May members create/update subtasks on their assigned task, or router-only? (Recommend: owned-task only.)
+- Keep `board_assign` (pure set) alongside `board_dispatch`? (Recommend: keep both.)
+- Whole-board vs entity-only CAS for the kanban + lifecycle-append paths.
+- Human-assign-from-panel stays disabled — confirm no operator override later.
 
 **Considered & rejected**
-- **Auto status transitions** on mail/branch/integration events — violates the explicit "advisory-only, no
-  auto-flow" product rule (`board.ts:10-12`); kept as *suggestions* only.
-- **Outbox-driven dispatch (Alternative B)** — over-engineered for a single in-process daemon; adds durability/
-  dedup complexity with no current payoff.
-- **Git `task/<slug>` branch coupling** — no machine-readable signal exists (§1.7); wiring an external git observer
-  is out of scope and cross-cuts the daemon's process model.
+- **Auto-transition all the way to `done`** on an `integration_ready`/merge signal — rejected: close stays
+  router/human-explicit (the locked matrix forbids member/auto close); integration only marks `closeReady`.
+- **Daemon directly observing git** (watching `task/<slug>` branches / merges) — rejected for this design: it
+  cross-cuts the daemon's process model (§1.7). Lifecycle events instead come from explicit machine-readable
+  tool/mail sources, which a future git-watcher could *also* emit into without changing the reducer.
+- **Outbox-driven async dispatch (Alternative B)** — over-engineered for a single in-process daemon; adds
+  durability/dedup complexity with no current payoff.
 - **Cross-mesh issues** — explicitly out of scope (per-mesh only).
 
 ---
 
 ## 8. Per-phase acceptance
 
-- **Phase 0:** reducer unit tests assert members get `forbidden` on `create_task` and on `add_comment` for
-  non-owned items; assignee can comment/status own; `computeCloseReadiness` pure tests. `bunx tsc --noEmit`,
-  `bun test src/board.test.ts src/control-plane-board.test.ts`.
-- **Phase 1:** `BoardPanel.test.tsx` covers list + detail render, filter bar, gated edits running vs stopped;
-  `board.e2e.ts` extends to open a detail by `#N` and round-trip an edit. tsc + targeted tests + the board e2e.
-- **Phase 2:** component test for kanban columns + permission-gated drag (member can't drop to done); keyboard
-  fallback asserted; e2e drag a card and verify status persisted via WS snapshot.
-- **Phase 3:** reducer tests for label CRUD + `set_task_labels` permissions; `board-store.test.ts` asserts label
-  round-trip + default-on-missing migration; UI filter test.
-- **Phase 4:** `control-plane-board.test.ts` asserts `board_dispatch` assigns + sends one mail + `link_mail` records
-  it + `Task.dispatch` set + partial-failure (mail fails → assignment stands, surfaced); e2e router dispatches and
-  the assignee receives mail; member cannot call `board_dispatch` (router-only).
-- **Phase 5:** tests for the in_review affordance (assignee only), reply→review suggestion derivation, and close
-  confirmation surfacing unmet readiness; no auto-transition asserted (status unchanged until explicit action).
+- **Phase 0 (model foundation):** reducer unit tests assert — members get `forbidden` on `create_task` and on
+  `add_comment` for non-owned items; assignee can comment/status own; `record_lifecycle_event` maps each kind to
+  the right status with the **monotonic guard** (a late/duplicate/out-of-order event never regresses and never
+  reaches a terminal status); lifecycle permission gating (member may emit `branch_created`/`accepted`/
+  `review_requested` on owned task, but not `dispatched`/`integration_ready`/`reopened`/close); sanitizer defaults
+  the new fields on a legacy board. `bunx tsc --noEmit`, `bun test src/board.test.ts src/board-store.test.ts`.
+- **Phase 1 (dispatch + lifecycle vertical slice):** `control-plane-board.test.ts` asserts the closed loop —
+  **`board_dispatch` → status becomes `in_progress`**, assigns, sends exactly one mail, `link_mail` records it,
+  `taskSlug`/`branchName`/`dispatch` set; **`review_requested` (tool or mail marker) → status becomes `in_review`**;
+  **`integration_ready` → `closeReady=true` but status stays `in_review` (NOT auto-`done`)**; `done`/`cancelled`
+  only via privileged close; member cannot call `board_dispatch`/`integration_ready` (router-only); partial failure
+  (mail fails → assignment + `in_progress` stand, `dispatch.mailFailed` surfaced); idempotent re-dispatch / re-assign
+  do not double-move or regress status. `board.e2e.ts` (or a focused e2e): router dispatches, assignee receives
+  mail, card shows `in_progress`; a review-request marker moves it to `in_review`. tsc + targeted tests + e2e.
+- **Phase 2 (list + detail):** `BoardPanel.test.tsx` covers list + detail render, filter bar, gated edits running
+  vs stopped, lifecycle/mail timeline; `board.e2e.ts` opens a detail by `#N` and round-trips a gated edit.
+- **Phase 3 (kanban):** component test for kanban columns + permission-gated drag (member drag to `done` rejected
+  with reason); keyboard fallback asserted; e2e drags a card and verifies status persisted via WS snapshot.
+- **Phase 4 (labels/filter):** reducer tests for label CRUD + `set_task_labels` permissions; `board-store.test.ts`
+  asserts label round-trip + default-on-missing migration; UI filter test.
+- **Phase 5 (integration/close UX):** close confirmation surfaces `computeCloseReadiness` (open subtasks / non-done
+  deps / missing `integration_ready`); `reopened` returns `in_progress` (privileged); explicit close still required
+  for `done`/`cancelled`. (No "status frozen until manual action" assertion — auto-reflux up to `in_review` is the
+  expected behavior, pinned in Phase 0/1.)
 
 E2E/browser gates are opt-in/slow; each phase states which it runs.
