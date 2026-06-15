@@ -115,21 +115,22 @@ test("mesh-services exposes collaboration tools but not mesh-control lifecycle t
   expect(tools).not.toContain("update_mesh");
 });
 
-test("board tools: members get read + task/subtask/comment; epic/assign/priority/deps are router-only", async () => {
+test("board tools: members get read + subtask/status/comment; create_task/epic/assign/priority/deps are router-only", async () => {
   server = createMeshServicesServer({ handlers, log: () => {} });
   await server.register("member-1", "member");
   await server.register("router-1", "router");
 
   const memberTools = await listTools(server.urlFor("member-1"), await handshake(server.urlFor("member-1")));
-  for (const t of ["board_list", "board_create_task", "board_create_subtask", "board_set_status", "board_comment"]) {
+  for (const t of ["board_list", "board_create_subtask", "board_set_status", "board_comment"]) {
     expect(memberTools).toContain(t);
   }
-  for (const t of ["board_create_epic", "board_update_epic", "board_delete_epic", "board_assign", "board_set_priority", "board_set_deps"]) {
+  // Phase 0: creating a task (#issue) is router/operator-only — members work tasks dispatched to them.
+  for (const t of ["board_create_task", "board_create_epic", "board_update_epic", "board_delete_epic", "board_assign", "board_set_priority", "board_set_deps"]) {
     expect(memberTools).not.toContain(t);
   }
 
   const routerTools = await listTools(server.urlFor("router-1"), await handshake(server.urlFor("router-1")));
-  for (const t of ["board_create_epic", "board_assign", "board_set_priority", "board_set_deps"]) {
+  for (const t of ["board_create_task", "board_create_epic", "board_assign", "board_set_priority", "board_set_deps"]) {
     expect(routerTools).toContain(t);
   }
 });

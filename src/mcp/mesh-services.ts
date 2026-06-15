@@ -87,26 +87,6 @@ function registerBoardTools(
   );
 
   server.registerTool(
-    "board_create_task",
-    {
-      description: "Create a board task (#N). Members may create plain tasks; filing under an epic, assigning, setting deps, or a non-normal priority is router-only and will be rejected for members.",
-      inputSchema: {
-        title: z.string().describe("short task title"),
-        description: z.string().optional(),
-        epicId: z.string().optional().describe('parent epic id like "epic-2" (router only)'),
-        priority: BOARD_PRIORITY.optional().describe("router only unless 'normal'"),
-        deps: z.array(z.number().int().positive()).optional().describe("task ids this depends on (router only)"),
-        assignee: z.string().optional().describe("agent id (router only)"),
-        expectedBoardRevision: z.number().int().describe(EBR),
-      },
-    },
-    ({ title, description, epicId, priority: pr, deps, assignee, expectedBoardRevision }) =>
-      guarded(agentId, "board_create_task", () =>
-        handlers.applyBoard(ctx, { type: "create_task", title, description, epicId, priority: pr ? priority(pr) : undefined, deps, assignee }, expectedBoardRevision),
-      ),
-  );
-
-  server.registerTool(
     "board_create_subtask",
     {
       description: "Add a subtask to task #N.",
@@ -170,6 +150,26 @@ function registerBoardTools(
   );
 
   if (role !== "router") return;
+
+  server.registerTool(
+    "board_create_task",
+    {
+      description: "Create a board task (#N). Router/operator only — members work the tasks dispatched to them. May file under an epic, assign, set deps, and set any priority.",
+      inputSchema: {
+        title: z.string().describe("short task title"),
+        description: z.string().optional(),
+        epicId: z.string().optional().describe('parent epic id like "epic-2"'),
+        priority: BOARD_PRIORITY.optional(),
+        deps: z.array(z.number().int().positive()).optional().describe("task ids this depends on"),
+        assignee: z.string().optional().describe("agent id"),
+        expectedBoardRevision: z.number().int().describe(EBR),
+      },
+    },
+    ({ title, description, epicId, priority: pr, deps, assignee, expectedBoardRevision }) =>
+      guarded(agentId, "board_create_task", () =>
+        handlers.applyBoard(ctx, { type: "create_task", title, description, epicId, priority: pr ? priority(pr) : undefined, deps, assignee }, expectedBoardRevision),
+      ),
+  );
 
   server.registerTool(
     "board_create_epic",

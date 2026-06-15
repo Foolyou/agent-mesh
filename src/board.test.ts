@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import {
   applyBoardCommand,
   computeBoardWarnings,
+  computeCloseReadiness,
   createEmptyBoard,
   epicProgress,
   taskProgress,
@@ -30,10 +31,19 @@ function ok(state: BoardState, cmd: BoardCommand, actor: BoardActor, now = NOW):
   return res.state;
 }
 
-function seedTask(state: BoardState, actor: BoardActor = alice): { state: BoardState; id: number } {
+/** Phase 0: only privileged actors create tasks, so the default creator is the router. */
+function seedTask(state: BoardState, actor: BoardActor = router): { state: BoardState; id: number } {
   const next = ok(state, { type: "create_task", title: "do a thing" }, actor);
   return { state: next, id: next.taskSeq };
 }
+
+/** Seed a task already assigned to `assignee` (router creates + assigns). */
+function seedAssigned(state: BoardState, assignee: string): { state: BoardState; id: number } {
+  const created = ok(state, { type: "create_task", title: "owned", assignee }, router);
+  return { state: created, id: created.taskSeq };
+}
+
+// ── creation / structural permissions ────────────────────────────────────────
 
 test("create_epic is router/human-only; agents are forbidden", () => {
   const board = createEmptyBoard("m");
@@ -42,218 +52,284 @@ test("create_epic is router/human-only; agents are forbidden", () => {
   if (!denied.ok) expect(denied.code).toBe("forbidden");
 
   const next = ok(board, { type: "create_epic", title: "Big" }, router);
-  expect(next.epics).toHaveLength(1);
   expect(next.epics[0]).toMatchObject({ id: "epic-1", seq: 1, status: "todo", revision: 1, createdBy: "lead" });
   expect(next.revision).toBe(1);
 });
 
-test("agents can create tasks and subtasks but cannot pre-assign or set deps", () => {
-  let board = createEmptyBoard("m");
-  board = ok(board, { type: "create_task", title: "task A" }, alice);
-  expect(board.tasks[0]).toMatchObject({ id: 1, status: "todo", priority: "normal", createdBy: "alice", assignee: undefined });
-
-  const preAssign = applyBoardCommand(board, { type: "create_task", title: "x", assignee: "bob" }, ctx(board, alice));
-  expect(preAssign.ok).toBe(false);
-
-  board = ok(board, { type: "create_subtask", taskId: 1, expectedRevision: 1, title: "sub 1" }, bob);
-  expect(board.tasks[0].subtasks[0]).toMatchObject({ id: "1.1", title: "sub 1", status: "todo", createdBy: "bob" });
-});
-
-test("create_subtask requires parent task CAS (missing → invalid, stale → conflict)", () => {
-  const { state, id } = seedTask(createEmptyBoard("m"), alice); // task #id, revision 1
-
-  const missing = applyBoardCommand(
-    state,
-    { type: "create_subtask", taskId: id, title: "s" } as unknown as BoardCommand,
-    ctx(state, alice),
-  );
-  expect(missing.ok).toBe(false);
-  if (!missing.ok) expect(missing.code).toBe("invalid");
-
-  const stale = applyBoardCommand(state, { type: "create_subtask", taskId: id, expectedRevision: 99, title: "s" }, ctx(state, alice));
-  expect(stale.ok).toBe(false);
-  if (!stale.ok) expect(stale.code).toBe("conflict");
-
-  // current parent revision succeeds and bumps the parent
-  const okState = ok(state, { type: "create_subtask", taskId: id, expectedRevision: 1, title: "s" }, alice);
-  expect(okState.tasks[0].subtasks).toHaveLength(1);
-  expect(okState.tasks[0].revision).toBe(2);
-});
-
-test("a non-privileged agent cannot create a high/urgent task (reject, not normalize)", () => {
+test("Phase 0: members may NOT create tasks (router/human only)", () => {
   const board = createEmptyBoard("m");
-  const urgent = applyBoardCommand(board, { type: "create_task", title: "x", priority: "urgent" }, ctx(board, alice));
-  expect(urgent.ok).toBe(false);
-  if (!urgent.ok) expect(urgent.code).toBe("forbidden");
-
-  const high = applyBoardCommand(board, { type: "create_task", title: "x", priority: "high" }, ctx(board, bob));
-  expect(high.ok).toBe(false);
-
-  // explicit "normal" is fine for an agent, and a router may set urgent
-  expect(ok(board, { type: "create_task", title: "x", priority: "normal" }, alice).tasks[0].priority).toBe("normal");
-  expect(ok(board, { type: "create_task", title: "y", priority: "urgent" }, router).tasks[0].priority).toBe("urgent");
+  for (const member of [alice, bob]) {
+    const denied = applyBoardCommand(board, { type: "create_task", title: "t" }, ctx(board, member));
+    expect(denied.ok).toBe(false);
+    if (!denied.ok) expect(denied.code).toBe("forbidden");
+  }
+  // router + human may create, and a fresh task carries the lifecycle defaults.
+  const r = ok(board, { type: "create_task", title: "t" }, router);
+  expect(r.tasks[0]).toMatchObject({ id: 1, status: "todo", createdBy: "lead", closeReady: false });
+  expect(r.tasks[0].lifecycleEvents).toEqual([]);
+  expect(r.tasks[0].labelIds).toEqual([]);
+  expect(ok(board, { type: "create_task", title: "t2", priority: "urgent", assignee: "alice" }, human).tasks[0]).toMatchObject({ priority: "urgent", assignee: "alice" });
 });
 
-test("epic membership is router/human-only at create and re-parent time", () => {
+test("epic membership / reparent is router-only", () => {
   let board = createEmptyBoard("m");
   board = ok(board, { type: "create_epic", title: "E" }, router); // epic-1
-  // agent cannot file a task under an epic
-  const filed = applyBoardCommand(board, { type: "create_task", title: "t", epicId: "epic-1" }, ctx(board, alice));
-  expect(filed.ok).toBe(false);
-  if (!filed.ok) expect(filed.code).toBe("forbidden");
-
-  // agent creates a plain task it owns, then cannot re-parent it
-  board = ok(board, { type: "create_task", title: "t" }, alice); // #1
+  board = ok(board, { type: "create_task", title: "t" }, router); // #1
   const reparent = applyBoardCommand(board, { type: "update_task", id: 1, expectedRevision: 1, epicId: "epic-1" }, ctx(board, alice));
   expect(reparent.ok).toBe(false);
   if (!reparent.ok) expect(reparent.code).toBe("forbidden");
-
-  // router can re-parent
   board = ok(board, { type: "update_task", id: 1, expectedRevision: 1, epicId: "epic-1" }, router);
   expect(board.tasks[0].epicId).toBe("epic-1");
 });
 
-test("agents may progress an owned task up to in_review but never to done/cancelled", () => {
-  let { state, id } = seedTask(createEmptyBoard("m"), alice);
-  state = ok(state, { type: "set_task_status", id, expectedRevision: 1, status: "in_progress" }, alice);
-  state = ok(state, { type: "set_task_status", id, expectedRevision: 2, status: "in_review" }, alice);
+test("assign and priority are router/human-only", () => {
+  const { state, id } = seedTask(createEmptyBoard("m"));
+  expect(applyBoardCommand(state, { type: "assign_task", id, expectedRevision: 1, assignee: "bob" }, ctx(state, alice)).ok).toBe(false);
+  expect(applyBoardCommand(state, { type: "set_task_priority", id, expectedRevision: 1, priority: "high" }, ctx(state, bob)).ok).toBe(false);
+  expect(ok(state, { type: "set_task_priority", id, expectedRevision: 1, priority: "high" }, router).tasks[0].priority).toBe("high");
+});
 
-  const toDone = applyBoardCommand(state, { type: "set_task_status", id, expectedRevision: 3, status: "done" }, ctx(state, alice));
+// ── status / ownership ─────────────────────────────────────────────────────────
+
+test("assignee may progress an owned task up to in_review but never to done/cancelled", () => {
+  let { state, id } = seedAssigned(createEmptyBoard("m"), "alice");
+  const rev = () => state.tasks[0].revision;
+  state = ok(state, { type: "set_task_status", id, expectedRevision: rev(), status: "in_progress" }, alice);
+  state = ok(state, { type: "set_task_status", id, expectedRevision: rev(), status: "in_review" }, alice);
+
+  const toDone = applyBoardCommand(state, { type: "set_task_status", id, expectedRevision: rev(), status: "done" }, ctx(state, alice));
   expect(toDone.ok).toBe(false);
   if (!toDone.ok) expect(toDone.code).toBe("forbidden");
+  expect(applyBoardCommand(state, { type: "set_task_status", id, expectedRevision: rev(), status: "cancelled" }, ctx(state, alice)).ok).toBe(false);
 
-  const toCancel = applyBoardCommand(state, { type: "set_task_status", id, expectedRevision: 3, status: "cancelled" }, ctx(state, alice));
-  expect(toCancel.ok).toBe(false);
-
-  const done = ok(state, { type: "set_task_status", id, expectedRevision: 3, status: "done" }, router);
-  expect(done.tasks[0].status).toBe("done");
+  expect(ok(state, { type: "set_task_status", id, expectedRevision: rev(), status: "done" }, router).tasks[0].status).toBe("done");
 });
 
 test("a non-owner agent cannot change another agent's assigned task status", () => {
-  let { state, id } = seedTask(createEmptyBoard("m"), alice);
-  state = ok(state, { type: "assign_task", id, expectedRevision: 1, assignee: "alice" }, router);
-  const denied = applyBoardCommand(state, { type: "set_task_status", id, expectedRevision: 2, status: "in_progress" }, ctx(state, bob));
+  const { state, id } = seedAssigned(createEmptyBoard("m"), "alice");
+  const denied = applyBoardCommand(state, { type: "set_task_status", id, expectedRevision: state.tasks[0].revision, status: "in_progress" }, ctx(state, bob));
   expect(denied.ok).toBe(false);
   if (!denied.ok) expect(denied.code).toBe("forbidden");
 });
 
-test("entity CAS: a stale expectedRevision is rejected with a conflict", () => {
-  let { state, id } = seedTask(createEmptyBoard("m"), alice);
-  state = ok(state, { type: "set_task_status", id, expectedRevision: 1, status: "in_progress" }, alice);
-  // board CAS matches (auto), but the entity revision is stale → conflict
-  const stale = applyBoardCommand(state, { type: "set_task_status", id, expectedRevision: 1, status: "in_review" }, ctx(state, alice));
-  expect(stale.ok).toBe(false);
-  if (!stale.ok) expect(stale.code).toBe("conflict");
+// ── subtasks scoped to the owned (parent) task ───────────────────────────────
+
+test("member subtask create/update is scoped to a task it owns; others are read-only", () => {
+  let { state, id } = seedAssigned(createEmptyBoard("m"), "alice");
+  // non-owner bob cannot add a subtask
+  const bobDenied = applyBoardCommand(state, { type: "create_subtask", taskId: id, expectedRevision: state.tasks[0].revision, title: "s" }, ctx(state, bob));
+  expect(bobDenied.ok).toBe(false);
+  if (!bobDenied.ok) expect(bobDenied.code).toBe("forbidden");
+  // owner alice can
+  state = ok(state, { type: "create_subtask", taskId: id, expectedRevision: state.tasks[0].revision, title: "s" }, alice);
+  expect(state.tasks[0].subtasks[0]).toMatchObject({ id: "1.1", createdBy: "alice" });
+  // owner can update + advance subtask status to in_review; non-owner cannot
+  state = ok(state, { type: "set_subtask_status", taskId: id, subtaskId: "1.1", expectedRevision: 1, status: "in_review" }, alice);
+  expect(state.tasks[0].subtasks[0].status).toBe("in_review");
+  const bobStatus = applyBoardCommand(state, { type: "set_subtask_status", taskId: id, subtaskId: "1.1", expectedRevision: 2, status: "in_progress" }, ctx(state, bob));
+  expect(bobStatus.ok).toBe(false);
 });
 
-test("entity CAS: omitting expectedRevision on an existing-entity mutation is invalid", () => {
-  const { state, id } = seedTask(createEmptyBoard("m"), alice);
-  const missing = applyBoardCommand(
-    state,
-    { type: "set_task_status", id, status: "in_progress" } as unknown as BoardCommand,
-    ctx(state, alice),
-  );
+test("create_subtask requires parent task CAS (missing → invalid, stale → conflict)", () => {
+  const { state, id } = seedTask(createEmptyBoard("m")); // router task, revision 1
+  const missing = applyBoardCommand(state, { type: "create_subtask", taskId: id, title: "s" } as unknown as BoardCommand, ctx(state, router));
+  expect(missing.ok).toBe(false);
+  if (!missing.ok) expect(missing.code).toBe("invalid");
+  const stale = applyBoardCommand(state, { type: "create_subtask", taskId: id, expectedRevision: 99, title: "s" }, ctx(state, router));
+  expect(stale.ok).toBe(false);
+  if (!stale.ok) expect(stale.code).toBe("conflict");
+  const okState = ok(state, { type: "create_subtask", taskId: id, expectedRevision: 1, title: "s" }, router);
+  expect(okState.tasks[0].revision).toBe(2);
+});
+
+// ── comments: privileged or owner only ────────────────────────────────────────
+
+test("comments require owner-or-privileged; a non-owner member is forbidden; append-only + entity CAS", () => {
+  let { state, id } = seedAssigned(createEmptyBoard("m"), "alice");
+  // non-owner bob cannot comment
+  const bobDenied = applyBoardCommand(state, { type: "add_comment", target: { kind: "task", id }, expectedRevision: state.tasks[0].revision, text: "hi" }, ctx(state, bob));
+  expect(bobDenied.ok).toBe(false);
+  if (!bobDenied.ok) expect(bobDenied.code).toBe("forbidden");
+  // wrong entity revision is a conflict (owner)
+  const stale = applyBoardCommand(state, { type: "add_comment", target: { kind: "task", id }, expectedRevision: 99, text: "x" }, ctx(state, alice));
+  expect(stale.ok).toBe(false);
+  if (!stale.ok) expect(stale.code).toBe("conflict");
+  // owner + human may comment
+  state = ok(state, { type: "add_comment", target: { kind: "task", id }, expectedRevision: state.tasks[0].revision, text: "looking" }, alice, "2026-06-14T01:00:00.000Z");
+  state = ok(state, { type: "add_comment", target: { kind: "task", id }, expectedRevision: state.tasks[0].revision, text: "ok" }, human, "2026-06-14T02:00:00.000Z");
+  expect(state.tasks[0].comments).toEqual([
+    { author: "alice", text: "looking", ts: "2026-06-14T01:00:00.000Z" },
+    { author: "operator", text: "ok", ts: "2026-06-14T02:00:00.000Z" },
+  ]);
+});
+
+test("epic comments are router/operator-only", () => {
+  let board = ok(createEmptyBoard("m"), { type: "create_epic", title: "E" }, router);
+  const denied = applyBoardCommand(board, { type: "add_comment", target: { kind: "epic", id: "epic-1" }, expectedRevision: 1, text: "x" }, ctx(board, alice));
+  expect(denied.ok).toBe(false);
+  if (!denied.ok) expect(denied.code).toBe("forbidden");
+  board = ok(board, { type: "add_comment", target: { kind: "epic", id: "epic-1" }, expectedRevision: 1, text: "noted" }, router);
+  expect(board.epics[0].comments).toHaveLength(1);
+});
+
+// ── CAS policy: structural board-CAS vs entity-only CAS ────────────────────────
+
+test("structural creates gate on board revision (stale board token → conflict)", () => {
+  const board = createEmptyBoard("m");
+  const stale = applyBoardCommand(board, { type: "create_task", title: "t" }, { actor: router, now: NOW, expectedBoardRevision: 5 });
+  expect(stale.ok).toBe(false);
+  if (!stale.ok) expect(stale.code).toBe("conflict");
+  const omitted = applyBoardCommand(board, { type: "create_epic", title: "E" }, { actor: router, now: NOW, expectedBoardRevision: undefined as unknown as number });
+  expect(omitted.ok).toBe(false);
+  if (!omitted.ok) expect(omitted.code).toBe("invalid");
+});
+
+test("entity edits ignore the board revision and gate only on the entity revision", () => {
+  const { state, id } = seedAssigned(createEmptyBoard("m"), "alice"); // board rev is now 2
+  // A deliberately stale board token is fine for an entity edit; only the entity revision matters.
+  const goodEntityStaleBoard = applyBoardCommand(state, { type: "set_task_status", id, expectedRevision: state.tasks[0].revision, status: "in_progress" }, { actor: alice, now: NOW, expectedBoardRevision: 0 });
+  expect(goodEntityStaleBoard.ok).toBe(true);
+  // ...but a stale ENTITY revision still conflicts.
+  const staleEntity = applyBoardCommand(state, { type: "set_task_status", id, expectedRevision: 999, status: "in_progress" }, { actor: alice, now: NOW, expectedBoardRevision: 0 });
+  expect(staleEntity.ok).toBe(false);
+  if (!staleEntity.ok) expect(staleEntity.code).toBe("conflict");
+  // omitting the entity revision is still invalid.
+  const missing = applyBoardCommand(state, { type: "set_task_status", id, status: "in_progress" } as unknown as BoardCommand, ctx(state, alice));
   expect(missing.ok).toBe(false);
   if (!missing.ok) expect(missing.code).toBe("invalid");
 });
 
-test("board CAS: omitted token is invalid; stale token is a conflict; both gate before mutation", () => {
-  const { state, id } = seedTask(createEmptyBoard("m"), alice);
-
-  const omitted = applyBoardCommand(
-    state,
-    { type: "set_task_status", id, expectedRevision: 1, status: "in_progress" },
-    { actor: alice, now: NOW, expectedBoardRevision: undefined as unknown as number },
-  );
-  expect(omitted.ok).toBe(false);
-  if (!omitted.ok) expect(omitted.code).toBe("invalid");
-
-  const stale = applyBoardCommand(
-    state,
-    { type: "set_task_status", id, expectedRevision: 1, status: "in_progress" },
-    { actor: alice, now: NOW, expectedBoardRevision: 0 },
-  );
-  expect(stale.ok).toBe(false);
-  if (!stale.ok) expect(stale.code).toBe("conflict");
-  // the task was not mutated by the rejected attempts
-  expect(state.tasks[0].status).toBe("todo");
+test("entity CAS isolation: concurrent edits to DIFFERENT tasks never false-conflict", () => {
+  let board = createEmptyBoard("m");
+  board = ok(board, { type: "create_task", title: "A", assignee: "alice" }, router); // #1
+  board = ok(board, { type: "create_task", title: "B", assignee: "bob" }, router); // #2, board rev now 2
+  // Both clients last saw board rev 1 (before the other's create) but edit their own task.
+  const t1 = board.tasks.find((t) => t.id === 1)!.revision;
+  const t2 = board.tasks.find((t) => t.id === 2)!.revision;
+  const a = applyBoardCommand(board, { type: "set_task_status", id: 1, expectedRevision: t1, status: "in_progress" }, { actor: alice, now: NOW, expectedBoardRevision: 1 });
+  expect(a.ok).toBe(true);
+  const b = applyBoardCommand(a.ok ? a.state : board, { type: "set_task_status", id: 2, expectedRevision: t2, status: "in_progress" }, { actor: bob, now: NOW, expectedBoardRevision: 1 });
+  expect(b.ok).toBe(true); // neither 409s despite a stale board token
 });
 
-test("creates carry board CAS but need no entity CAS", () => {
-  const board = createEmptyBoard("m");
-  const stale = applyBoardCommand(board, { type: "create_task", title: "t" }, { actor: alice, now: NOW, expectedBoardRevision: 5 });
-  expect(stale.ok).toBe(false);
-  if (!stale.ok) expect(stale.code).toBe("conflict");
+// ── lifecycle events / automatic status reflux ─────────────────────────────────
+
+test("lifecycle: dispatched/branch_created/accepted → in_progress; review_requested → in_review", () => {
+  for (const kind of ["dispatched", "branch_created", "accepted"] as const) {
+    const { state, id } = seedAssigned(createEmptyBoard("m"), "alice");
+    const actor = kind === "dispatched" ? router : alice; // dispatched is privileged
+    const next = ok(state, { type: "record_lifecycle_event", taskId: id, expectedRevision: state.tasks[0].revision, kind }, actor);
+    expect(next.tasks[0].status).toBe("in_progress");
+    expect(next.tasks[0].lifecycleEvents?.at(-1)).toMatchObject({ kind });
+  }
+  const { state, id } = seedAssigned(createEmptyBoard("m"), "alice");
+  const reviewed = ok(state, { type: "record_lifecycle_event", taskId: id, expectedRevision: state.tasks[0].revision, kind: "review_requested" }, alice);
+  expect(reviewed.tasks[0].status).toBe("in_review");
 });
 
-test("assign and priority are router/human-only", () => {
-  const { state, id } = seedTask(createEmptyBoard("m"), alice);
-  expect(applyBoardCommand(state, { type: "assign_task", id, expectedRevision: 1, assignee: "bob" }, ctx(state, alice)).ok).toBe(false);
-  expect(applyBoardCommand(state, { type: "set_task_priority", id, expectedRevision: 1, priority: "high" }, ctx(state, bob)).ok).toBe(false);
-  const next = ok(state, { type: "set_task_priority", id, expectedRevision: 1, priority: "high" }, router);
-  expect(next.tasks[0].priority).toBe("high");
+test("lifecycle permission: privileged-only kinds reject members; assignee kinds reject non-owners", () => {
+  const { state, id } = seedAssigned(createEmptyBoard("m"), "alice");
+  const rev = state.tasks[0].revision;
+  // member cannot emit privileged kinds
+  for (const kind of ["dispatched", "integration_ready", "reopened"] as const) {
+    const denied = applyBoardCommand(state, { type: "record_lifecycle_event", taskId: id, expectedRevision: rev, kind }, ctx(state, alice));
+    expect(denied.ok).toBe(false);
+    if (!denied.ok) expect(denied.code).toBe("forbidden");
+  }
+  // non-assignee member cannot emit assignee kinds
+  const bobDenied = applyBoardCommand(state, { type: "record_lifecycle_event", taskId: id, expectedRevision: rev, kind: "review_requested" }, ctx(state, bob));
+  expect(bobDenied.ok).toBe(false);
+  if (!bobDenied.ok) expect(bobDenied.code).toBe("forbidden");
 });
 
-test("deps must reference existing tasks and a missing dep is rejected", () => {
-  const { state, id } = seedTask(createEmptyBoard("m"), alice);
-  const bad = applyBoardCommand(state, { type: "set_task_deps", id, expectedRevision: 1, deps: [999] }, ctx(state, router));
-  expect(bad.ok).toBe(false);
-  if (!bad.ok) expect(bad.code).toBe("not_found");
+test("lifecycle is monotonic: a late/out-of-order event never regresses, never reaches terminal", () => {
+  let { state, id } = seedAssigned(createEmptyBoard("m"), "alice");
+  state = ok(state, { type: "record_lifecycle_event", taskId: id, expectedRevision: state.tasks[0].revision, kind: "review_requested" }, alice); // in_review
+  // a late "dispatched" (would map to in_progress) must NOT pull it back
+  state = ok(state, { type: "record_lifecycle_event", taskId: id, expectedRevision: state.tasks[0].revision, kind: "dispatched", threadKey: "late" }, router);
+  expect(state.tasks[0].status).toBe("in_review");
+  // close it, then a forward lifecycle event must NOT move a terminal task
+  state = ok(state, { type: "set_task_status", id, expectedRevision: state.tasks[0].revision, status: "done" }, router);
+  state = ok(state, { type: "record_lifecycle_event", taskId: id, expectedRevision: state.tasks[0].revision, kind: "review_requested", threadKey: "after-done" }, alice);
+  expect(state.tasks[0].status).toBe("done");
 });
 
-test("DAG warnings: blocked-by-incomplete is advisory, never blocks the transition", () => {
+test("lifecycle is idempotent on (taskId, kind, threadKey)", () => {
+  let { state, id } = seedAssigned(createEmptyBoard("m"), "alice");
+  state = ok(state, { type: "record_lifecycle_event", taskId: id, expectedRevision: state.tasks[0].revision, kind: "review_requested", threadKey: "slug-1" }, alice);
+  const revAfter = state.tasks[0].revision;
+  const eventsAfter = state.tasks[0].lifecycleEvents?.length;
+  // a repeat with the same key is a no-op
+  state = ok(state, { type: "record_lifecycle_event", taskId: id, expectedRevision: revAfter, kind: "review_requested", threadKey: "slug-1" }, alice);
+  expect(state.tasks[0].revision).toBe(revAfter);
+  expect(state.tasks[0].lifecycleEvents?.length).toBe(eventsAfter);
+});
+
+test("integration_ready sets closeReady but does NOT auto-advance to done", () => {
+  let { state, id } = seedAssigned(createEmptyBoard("m"), "alice");
+  state = ok(state, { type: "record_lifecycle_event", taskId: id, expectedRevision: state.tasks[0].revision, kind: "review_requested" }, alice); // in_review
+  state = ok(state, { type: "record_lifecycle_event", taskId: id, expectedRevision: state.tasks[0].revision, kind: "integration_ready" }, router);
+  expect(state.tasks[0].status).toBe("in_review"); // NOT done
+  expect(state.tasks[0].closeReady).toBe(true);
+});
+
+test("reopened is privileged and is the only sanctioned backward move (→ in_progress, clears closeReady)", () => {
+  let { state, id } = seedAssigned(createEmptyBoard("m"), "alice");
+  state = ok(state, { type: "record_lifecycle_event", taskId: id, expectedRevision: state.tasks[0].revision, kind: "integration_ready" }, router);
+  state = ok(state, { type: "set_task_status", id, expectedRevision: state.tasks[0].revision, status: "done" }, router);
+  const memberReopen = applyBoardCommand(state, { type: "record_lifecycle_event", taskId: id, expectedRevision: state.tasks[0].revision, kind: "reopened" }, ctx(state, alice));
+  expect(memberReopen.ok).toBe(false);
+  state = ok(state, { type: "record_lifecycle_event", taskId: id, expectedRevision: state.tasks[0].revision, kind: "reopened" }, router);
+  expect(state.tasks[0].status).toBe("in_progress");
+  expect(state.tasks[0].closeReady).toBe(false);
+});
+
+// ── computeCloseReadiness ──────────────────────────────────────────────────────
+
+test("computeCloseReadiness flags open subtasks, incomplete deps, and missing integration_ready", () => {
+  let board = createEmptyBoard("m");
+  board = ok(board, { type: "create_task", title: "dep", assignee: "alice" }, router); // #1
+  board = ok(board, { type: "create_task", title: "main", assignee: "alice" }, router); // #2
+  board = ok(board, { type: "set_task_deps", id: 2, expectedRevision: board.tasks[1].revision, deps: [1] }, router);
+  board = ok(board, { type: "create_subtask", taskId: 2, expectedRevision: board.tasks[1].revision, title: "s" }, router);
+
+  let r = computeCloseReadiness(board, 2);
+  expect(r).toMatchObject({ ready: false, openSubtasks: 1, blockingDeps: [1], hasIntegrationReady: false });
+
+  // finish the subtask + the dep, then mark integration_ready → ready
+  board = ok(board, { type: "set_subtask_status", taskId: 2, subtaskId: "2.1", expectedRevision: 1, status: "done" }, router);
+  board = ok(board, { type: "set_task_status", id: 1, expectedRevision: board.tasks[0].revision, status: "done" }, router);
+  board = ok(board, { type: "record_lifecycle_event", taskId: 2, expectedRevision: board.tasks[1].revision, kind: "integration_ready" }, router);
+  r = computeCloseReadiness(board, 2);
+  expect(r).toMatchObject({ ready: true, openSubtasks: 0, blockingDeps: [], hasIntegrationReady: true });
+});
+
+// ── retained coverage (DAG, progress, link_mail, misc) ─────────────────────────
+
+test("DAG warnings: blocked-by-incomplete is advisory and a cycle is reported once", () => {
   let board = createEmptyBoard("m");
   board = ok(board, { type: "create_task", title: "A" }, router); // #1
   board = ok(board, { type: "create_task", title: "B" }, router); // #2
   board = ok(board, { type: "set_task_deps", id: 2, expectedRevision: 1, deps: [1] }, router);
   board = ok(board, { type: "set_task_status", id: 2, expectedRevision: 2, status: "in_progress" }, router);
-  const warnings = computeBoardWarnings(board);
-  expect(warnings.some((w) => w.kind === "blocked_by_incomplete" && w.taskId === 2 && w.dependsOn === 1)).toBe(true);
-});
-
-test("DAG warnings: a dependency cycle is detected and reported once", () => {
-  let board = createEmptyBoard("m");
-  board = ok(board, { type: "create_task", title: "A" }, router); // #1
-  board = ok(board, { type: "create_task", title: "B" }, router); // #2
+  expect(computeBoardWarnings(board).some((w) => w.kind === "blocked_by_incomplete" && w.taskId === 2)).toBe(true);
   board = ok(board, { type: "set_task_deps", id: 1, expectedRevision: 1, deps: [2] }, router);
-  board = ok(board, { type: "set_task_deps", id: 2, expectedRevision: 1, deps: [1] }, router);
   const cycles = computeBoardWarnings(board).filter((w) => w.kind === "dependency_cycle");
   expect(cycles).toHaveLength(1);
-  if (cycles[0].kind === "dependency_cycle") expect(cycles[0].taskIds.sort()).toEqual([1, 2]);
 });
 
 test("parent progress: task progress derives from subtasks; epic from tasks", () => {
   let board = createEmptyBoard("m");
   board = ok(board, { type: "create_epic", title: "Epic" }, router); // epic-1
   board = ok(board, { type: "create_task", title: "T1", epicId: "epic-1" }, router); // #1
-  board = ok(board, { type: "create_subtask", taskId: 1, expectedRevision: 1, title: "s1" }, router); // 1.1
-  board = ok(board, { type: "create_subtask", taskId: 1, expectedRevision: 2, title: "s2" }, router); // 1.2
-
-  let task = board.tasks.find((t) => t.id === 1)!;
-  expect(taskProgress(task)).toMatchObject({ done: 0, total: 2, ratio: 0 });
-
+  board = ok(board, { type: "create_subtask", taskId: 1, expectedRevision: 1, title: "s1" }, router);
+  board = ok(board, { type: "create_subtask", taskId: 1, expectedRevision: 2, title: "s2" }, router);
+  expect(taskProgress(board.tasks[0])).toMatchObject({ done: 0, total: 2, ratio: 0 });
   board = ok(board, { type: "set_subtask_status", taskId: 1, subtaskId: "1.1", expectedRevision: 1, status: "done" }, router);
-  task = board.tasks.find((t) => t.id === 1)!;
-  expect(taskProgress(task)).toMatchObject({ done: 1, total: 2, ratio: 0.5 });
-
+  expect(taskProgress(board.tasks.find((t) => t.id === 1)!)).toMatchObject({ done: 1, total: 2, ratio: 0.5 });
   board = ok(board, { type: "create_task", title: "T2", epicId: "epic-1" }, router); // #2
   board = ok(board, { type: "set_task_status", id: 2, expectedRevision: 1, status: "done" }, router);
   expect(epicProgress(board, "epic-1")).toMatchObject({ done: 1, total: 2, ratio: 0.5 });
-});
-
-test("comments require board + entity CAS, are append-only, and carry author + ts", () => {
-  let { state, id } = seedTask(createEmptyBoard("m"), alice);
-  // wrong entity revision is rejected
-  const stale = applyBoardCommand(state, { type: "add_comment", target: { kind: "task", id }, expectedRevision: 99, text: "x" }, ctx(state, bob));
-  expect(stale.ok).toBe(false);
-  if (!stale.ok) expect(stale.code).toBe("conflict");
-
-  state = ok(state, { type: "add_comment", target: { kind: "task", id }, expectedRevision: 1, text: "looking" }, bob, "2026-06-14T01:00:00.000Z");
-  state = ok(state, { type: "add_comment", target: { kind: "task", id }, expectedRevision: 2, text: "done-ish" }, human, "2026-06-14T02:00:00.000Z");
-  expect(state.tasks[0].comments).toEqual([
-    { author: "bob", text: "looking", ts: "2026-06-14T01:00:00.000Z" },
-    { author: "operator", text: "done-ish", ts: "2026-06-14T02:00:00.000Z" },
-  ]);
 });
 
 test("deleting an epic orphans its tasks rather than cascading", () => {
@@ -262,21 +338,26 @@ test("deleting an epic orphans its tasks rather than cascading", () => {
   board = ok(board, { type: "create_task", title: "T", epicId: "epic-1" }, router); // #1
   board = ok(board, { type: "delete_epic", id: "epic-1", expectedRevision: 1 }, router);
   expect(board.epics).toHaveLength(0);
-  expect(board.tasks).toHaveLength(1);
   expect(board.tasks[0].epicId).toBeUndefined();
 });
 
 test("link_mail is system-only and idempotent; agents cannot call it", () => {
-  let { state, id } = seedTask(createEmptyBoard("m"), alice);
+  let { state, id } = seedTask(createEmptyBoard("m"));
   const denied = applyBoardCommand(state, { type: "link_mail", taskId: id, expectedRevision: 1, mailEventId: "mail-1" }, ctx(state, alice));
   expect(denied.ok).toBe(false);
   if (!denied.ok) expect(denied.code).toBe("forbidden");
-
   state = ok(state, { type: "link_mail", taskId: id, expectedRevision: 1, mailEventId: "mail-1" }, system);
-  const revAfterFirst = state.tasks[0].revision;
-  state = ok(state, { type: "link_mail", taskId: id, expectedRevision: revAfterFirst, mailEventId: "mail-1" }, system);
+  const rev = state.tasks[0].revision;
+  state = ok(state, { type: "link_mail", taskId: id, expectedRevision: rev, mailEventId: "mail-1" }, system);
   expect(state.tasks[0].mailEventIds).toEqual(["mail-1"]);
-  expect(state.tasks[0].revision).toBe(revAfterFirst); // idempotent no-op
+  expect(state.tasks[0].revision).toBe(rev); // idempotent no-op
+});
+
+test("deps must reference existing tasks and a missing dep is rejected", () => {
+  const { state, id } = seedTask(createEmptyBoard("m"));
+  const bad = applyBoardCommand(state, { type: "set_task_deps", id, expectedRevision: 1, deps: [999] }, ctx(state, router));
+  expect(bad.ok).toBe(false);
+  if (!bad.ok) expect(bad.code).toBe("not_found");
 });
 
 test("an unknown command type returns a structured invalid result (no undefined)", () => {

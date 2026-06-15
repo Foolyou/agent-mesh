@@ -12,10 +12,12 @@ import {
   BOARD_STATUSES,
   createEmptyBoard,
   type BoardComment,
+  type BoardLifecycleEvent,
   type BoardPriority,
   type BoardState,
   type BoardStatus,
   type Epic,
+  type LifecycleKind,
   type Subtask,
   type Task,
 } from "./board";
@@ -175,6 +177,31 @@ function sanitizeSubtask(raw: unknown, parentTaskId: number, seen: Set<string>):
   };
 }
 
+const LIFECYCLE_KINDS = new Set(["dispatched", "branch_created", "accepted", "review_requested", "integration_ready", "reopened"]);
+function sanitizeLifecycleEvents(v: unknown): BoardLifecycleEvent[] {
+  if (!Array.isArray(v)) return [];
+  const out: BoardLifecycleEvent[] = [];
+  for (const raw of v) {
+    const o = asObject(raw);
+    if (!o || typeof o.kind !== "string" || !LIFECYCLE_KINDS.has(o.kind)) continue;
+    out.push({
+      kind: o.kind as LifecycleKind,
+      by: cleanStr(o.by, 200) ?? "unknown",
+      at: isoOr(o.at),
+      threadKey: cleanStr(o.threadKey, 200),
+    });
+  }
+  return out;
+}
+function sanitizeDispatch(v: unknown): Task["dispatch"] {
+  const o = asObject(v);
+  if (!o) return undefined;
+  const assignee = cleanStr(o.assignee, 200);
+  const threadKey = cleanStr(o.threadKey, 200);
+  if (!assignee || !threadKey) return undefined;
+  return { assignee, threadKey, at: isoOr(o.at), mailEventId: cleanStr(o.mailEventId, 200), mailFailed: o.mailFailed === true };
+}
+
 function sanitizeTask(raw: unknown, seenIds: Set<number>): Task | null {
   const o = asObject(raw);
   if (!o) return null;
@@ -211,6 +238,13 @@ function sanitizeTask(raw: unknown, seenIds: Set<number>): Task | null {
     updatedAt: isoOr(o.updatedAt),
     comments: sanitizeComments(o.comments),
     mailEventIds: sanitizeStrArray(o.mailEventIds, 200),
+    // issue-panel Phase 0: default the dispatch/lifecycle fields so a legacy board loads cleanly.
+    taskSlug: cleanStr(o.taskSlug, 200),
+    branchName: cleanStr(o.branchName, 200),
+    dispatch: sanitizeDispatch(o.dispatch),
+    lifecycleEvents: sanitizeLifecycleEvents(o.lifecycleEvents),
+    labelIds: sanitizeStrArray(o.labelIds, 200),
+    closeReady: o.closeReady === true,
   };
 }
 

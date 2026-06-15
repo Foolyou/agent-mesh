@@ -380,17 +380,26 @@ labels, and polish layer on top of an already-validated mechanism.
   in `board-store.test.ts`.
 - **Full-screen panel vs mesh console**: don't regress the embedded board tab or the composer/canvas layout.
 
-**Open questions**
-- Does `dispatched` auto-set `in_progress`, or stay `todo` until an explicit `accepted`/`branch_created`?
-  (Recommend default `dispatched → in_progress`; make it a board/config toggle if a team wants assigned-but-not-started.)
-- `branch_created` signal source: assignee tool call vs mail marker vs derived-from-dispatch. (Recommend: a
-  `board_lifecycle` tool **and** a mail marker, both mapping to the same event; daemon never reads git.)
-- `integration_ready` emitter: the router relays it, or prdmgr emits via REST/daemon directly? (prdmgr is the
-  charter integrator but is outside the mesh — needs a REST/daemon lifecycle entry or a router relay. Decide.)
-- May members create/update subtasks on their assigned task, or router-only? (Recommend: owned-task only.)
-- Keep `board_assign` (pure set) alongside `board_dispatch`? (Recommend: keep both.)
-- Whole-board vs entity-only CAS for the kanban + lifecycle-append paths.
-- Human-assign-from-panel stays disabled — confirm no operator override later.
+**DECIDED (locked by the user; Phase 0 implements the model for these)**
+1. `dispatched` auto-sets `in_progress` directly (no separate accept step required). ✅ implemented in
+   `record_lifecycle_event` (`forwardLifecycleStatus`).
+2. `branch_created` / `review_requested` etc. are driven by **mail + tool** signals, never by the daemon reading
+   git. ✅ the reducer command is source-agnostic; the emitting tool/mail path is Phase 1.
+3. `integration_ready` is emitted by the **router** (privileged kind). ✅ `PRIVILEGED_LIFECYCLE`.
+4. A **member may create/modify subtasks on a task it owns** (its assignee); non-owned is read-only. ✅
+   `create_subtask` / `update_subtask` / `set_subtask_status` gate on `ownsItem(parentTask)`.
+5. `board_assign` (pure set-field) and the future `board_dispatch` **coexist**. ✅ `assign_task` unchanged;
+   `board_dispatch` arrives in Phase 1.
+6. **Entity-level CAS** (supersedes the earlier whole-board-CAS suggestion): entity edits
+   (`set_task_status` / `add_comment` / `update_task` / `assign`/`priority`/`deps` / subtask ops / lifecycle /
+   `link_mail`) gate ONLY on the entity revision; **structural** changes (`create_task`, epic CRUD) still gate on
+   the whole-board `expectedBoardRevision`. ✅ `STRUCTURAL_COMMANDS`. So concurrent edits to different tasks never
+   false-conflict.
+
+**Remaining open questions (later phases)**
+- Human-assign-from-panel stays disabled (the reducer still allows the `human` actor for REST/automation) —
+  confirm no operator override is wanted later.
+- Kanban drag conflict UX under entity CAS (re-fetch + retry vs optimistic rollback) — Phase 3.
 
 **Considered & rejected**
 - **Auto-transition all the way to `done`** on an `integration_ready`/merge signal — rejected: close stays

@@ -96,6 +96,56 @@ test("a corrupt board file reads back as an empty board instead of throwing", as
   }
 });
 
+test("read defaults the Phase-0 lifecycle fields on a legacy board (no taskSlug/lifecycleEvents/etc.)", async () => {
+  const dir = await tmp();
+  try {
+    // A pre-Phase-0 board file: a task with none of the new fields.
+    await writeFile(join(dir, "m.json"), JSON.stringify({ revision: 1, taskSeq: 1, tasks: [{ id: 1, title: "old", status: "in_progress", revision: 1 }] }), "utf8");
+    const board = await readBoard(dir, "m");
+    const task = board.tasks[0];
+    expect(task.lifecycleEvents).toEqual([]);
+    expect(task.labelIds).toEqual([]);
+    expect(task.closeReady).toBe(false);
+    expect(task.taskSlug).toBeUndefined();
+    expect(task.branchName).toBeUndefined();
+    expect(task.dispatch).toBeUndefined();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("read preserves and sanitizes Phase-0 lifecycle fields when present", async () => {
+  const dir = await tmp();
+  try {
+    await writeFile(
+      join(dir, "m.json"),
+      JSON.stringify({
+        revision: 2,
+        taskSeq: 1,
+        tasks: [{
+          id: 1, title: "t", status: "in_review", revision: 3,
+          taskSlug: "my-slug", branchName: "task/my-slug", closeReady: true, labelIds: ["bug", "bug", "ui"],
+          dispatch: { assignee: "alice", threadKey: "my-slug", at: "2026-06-14T00:00:00.000Z", mailEventId: "mail-9" },
+          lifecycleEvents: [
+            { kind: "dispatched", by: "lead", at: "2026-06-14T00:00:00.000Z" },
+            { kind: "BOGUS", by: "x", at: "t" },
+          ],
+        }],
+      }),
+      "utf8",
+    );
+    const task = (await readBoard(dir, "m")).tasks[0];
+    expect(task.taskSlug).toBe("my-slug");
+    expect(task.branchName).toBe("task/my-slug");
+    expect(task.closeReady).toBe(true);
+    expect(task.labelIds).toEqual(["bug", "ui"]); // deduped
+    expect(task.dispatch).toMatchObject({ assignee: "alice", threadKey: "my-slug", mailEventId: "mail-9" });
+    expect(task.lifecycleEvents).toEqual([{ kind: "dispatched", by: "lead", at: "2026-06-14T00:00:00.000Z", threadKey: undefined }]); // bogus kind dropped
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("read sanitizes a partial file and recovers epicSeq/taskSeq from contents", async () => {
   const dir = await tmp();
   try {
