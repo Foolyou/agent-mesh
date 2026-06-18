@@ -2152,12 +2152,10 @@ export class ControlPlane {
 /** Parse a send_mail `task` field into a board task id, but only when it is a "#N"/"N"
  *  reference to a task that exists on the board. Arbitrary task slugs (e.g. feature names)
  *  return undefined so mail threading stays backward-compatible. */
-/** Resolve a send_mail `task` ref to a board task id (§5.4). `#N`/`N` resolves by board id
- *  (canonical, preferred when present); any other non-empty string resolves by `Task.taskSlug`.
- *  This lets the mesh's existing `send_mail(task:"<slug>")` habit auto-link replies to a
- *  dispatched issue. `dispatch_task` enforces slug UNIQUENESS at the write, so a slug ref should
- *  resolve to at most one task; defensively, an AMBIGUOUS slug (>1 match) resolves to undefined
- *  (leave the mail unlinked) rather than silently targeting the wrong/older issue. */
+/** Resolve a send_mail `task` ref to a board task id. A canonical `#N`/`N` id is preferred and
+ *  resolves by board id; any other non-empty string resolves by `Task.taskSlug` ONLY on an
+ *  exactly-one match — an ambiguous slug (>1 match) or no match resolves to undefined, leaving the
+ *  mail unlinked rather than targeting the wrong issue. */
 function parseBoardTaskRef(task: string | undefined, board: BoardState): number | undefined {
   if (typeof task !== "string") return undefined;
   const trimmed = task.trim();

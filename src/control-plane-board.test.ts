@@ -541,3 +541,37 @@ test("label CRUD success text names the label (not 'task #undefined'); board_lis
     await rm(h.root, { recursive: true, force: true });
   }
 });
+
+// ── Phase 5: reopened re-review + threadKey default via the real ControlPlane ───
+
+test("Phase 5: reopened lets the same-slug review_requested re-fire; threadKey defaults to slug", async () => {
+  const h = await setup();
+  try {
+    await h.handlers.applyBoard(router, { type: "create_task", title: "t" }, 0);
+    let b = h.cp.getBoard();
+    await h.handlers.dispatchBoard(router, { taskId: 1, assignee: "alice", slug: "s", expectedRevision: b.tasks[0].revision, expectedBoardRevision: b.revision });
+    const t = () => h.cp.getBoard().tasks.find((x) => x.id === 1)!;
+
+    // review_requested with NO threadKey → reducer defaults it to the slug "s"; → in_review
+    await h.handlers.applyBoard(alice, { type: "record_lifecycle_event", taskId: 1, expectedRevision: t().revision, kind: "review_requested" }, h.cp.getBoard().revision);
+    expect(t().status).toBe("in_review");
+    expect(t().lifecycleEvents!.find((e) => e.kind === "review_requested")!.threadKey).toBe("s");
+
+    // privileged close → done, then privileged reopened → in_progress
+    await h.handlers.applyBoard(router, { type: "set_task_status", id: 1, expectedRevision: t().revision, status: "done" }, h.cp.getBoard().revision);
+    await h.handlers.applyBoard(router, { type: "record_lifecycle_event", taskId: 1, expectedRevision: t().revision, kind: "reopened" }, h.cp.getBoard().revision);
+    expect(t().status).toBe("in_progress");
+
+    // same omitted-threadKey review_requested re-fires (new cycle) → in_review again
+    await h.handlers.applyBoard(alice, { type: "record_lifecycle_event", taskId: 1, expectedRevision: t().revision, kind: "review_requested" }, h.cp.getBoard().revision);
+    expect(t().status).toBe("in_review");
+    expect(t().lifecycleEvents!.filter((e) => e.kind === "review_requested").length).toBe(2);
+
+    // a member cannot reopen (privileged-only)
+    const memberReopen = await h.handlers.applyBoard(alice, { type: "record_lifecycle_event", taskId: 1, expectedRevision: t().revision, kind: "reopened" }, h.cp.getBoard().revision);
+    expect(memberReopen).toContain("error:");
+  } finally {
+    await h.cp.stop();
+    await rm(h.root, { recursive: true, force: true });
+  }
+});

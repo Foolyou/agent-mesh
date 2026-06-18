@@ -286,6 +286,66 @@ test("reopened is privileged and is the only sanctioned backward move (→ in_pr
   expect(state.tasks[0].closeReady).toBe(false);
 });
 
+// ── Phase 5: reopened-cycle idempotency + threadKey default ─────────────────────
+
+test("Phase 5: after a privileged reopened, the same slug/thread review_requested re-fires → in_review", () => {
+  let board = ok(createEmptyBoard("m"), { type: "create_task", title: "t" }, router); // #1
+  board = ok(board, { type: "dispatch_task", id: 1, expectedRevision: board.tasks[0].revision, assignee: "alice", taskSlug: "s" }, router); // in_progress + slug "s"
+  const rev = () => board.tasks[0].revision;
+
+  // first review (cycle 1): in_progress → in_review
+  board = ok(board, { type: "record_lifecycle_event", taskId: 1, expectedRevision: rev(), kind: "review_requested", threadKey: "s" }, alice);
+  expect(board.tasks[0].status).toBe("in_review");
+  // a duplicate within the SAME cycle is still a no-op (no second event, no bump)
+  const revAfter = rev();
+  const eventsAfter = board.tasks[0].lifecycleEvents!.length;
+  board = ok(board, { type: "record_lifecycle_event", taskId: 1, expectedRevision: revAfter, kind: "review_requested", threadKey: "s" }, alice);
+  expect(board.tasks[0].revision).toBe(revAfter);
+  expect(board.tasks[0].lifecycleEvents!.length).toBe(eventsAfter);
+
+  // close → done, then privileged reopened → in_progress (cycle 2 begins)
+  board = ok(board, { type: "set_task_status", id: 1, expectedRevision: rev(), status: "done" }, router);
+  board = ok(board, { type: "record_lifecycle_event", taskId: 1, expectedRevision: rev(), kind: "reopened" }, router);
+  expect(board.tasks[0].status).toBe("in_progress");
+
+  // the SAME slug/thread review_requested now re-fires (it was deduped pre-Phase-5) → in_review again
+  board = ok(board, { type: "record_lifecycle_event", taskId: 1, expectedRevision: rev(), kind: "review_requested", threadKey: "s" }, alice);
+  expect(board.tasks[0].status).toBe("in_review");
+  expect(board.tasks[0].lifecycleEvents!.filter((e) => e.kind === "review_requested").length).toBe(2);
+});
+
+test("Phase 5: record_lifecycle_event threadKey defaults to the task slug when omitted", () => {
+  let board = ok(createEmptyBoard("m"), { type: "create_task", title: "t" }, router);
+  board = ok(board, { type: "dispatch_task", id: 1, expectedRevision: board.tasks[0].revision, assignee: "alice", taskSlug: "feat-x" }, router);
+  // omit threadKey → stored as the slug; moves to in_review
+  board = ok(board, { type: "record_lifecycle_event", taskId: 1, expectedRevision: board.tasks[0].revision, kind: "review_requested" }, alice);
+  const ev = board.tasks[0].lifecycleEvents!.find((e) => e.kind === "review_requested")!;
+  expect(ev.threadKey).toBe("feat-x");
+  expect(board.tasks[0].status).toBe("in_review");
+  // a second omitted-threadKey signal dedupes against the slug-defaulted one (no-op)
+  const revAfter = board.tasks[0].revision;
+  board = ok(board, { type: "record_lifecycle_event", taskId: 1, expectedRevision: revAfter, kind: "review_requested" }, alice);
+  expect(board.tasks[0].revision).toBe(revAfter);
+  // an explicit threadKey EQUAL to the slug is the same key → also a no-op
+  board = ok(board, { type: "record_lifecycle_event", taskId: 1, expectedRevision: revAfter, kind: "review_requested", threadKey: "feat-x" }, alice);
+  expect(board.tasks[0].revision).toBe(revAfter);
+});
+
+test("Phase 5: lifecycle auto-movement still never reaches a terminal status (explicit close only)", () => {
+  let board = ok(createEmptyBoard("m"), { type: "create_task", title: "t" }, router);
+  board = ok(board, { type: "dispatch_task", id: 1, expectedRevision: board.tasks[0].revision, assignee: "alice", taskSlug: "s" }, router);
+  board = ok(board, { type: "record_lifecycle_event", taskId: 1, expectedRevision: board.tasks[0].revision, kind: "review_requested" }, alice);
+  // integration_ready marks close-ready but never auto-advances to done
+  board = ok(board, { type: "record_lifecycle_event", taskId: 1, expectedRevision: board.tasks[0].revision, kind: "integration_ready" }, router);
+  expect(board.tasks[0].status).toBe("in_review");
+  expect(board.tasks[0].closeReady).toBe(true);
+  // no lifecycle event reaches done/cancelled — those need the explicit privileged close
+  for (const kind of ["dispatched", "branch_created", "accepted", "review_requested"] as const) {
+    board = ok(board, { type: "record_lifecycle_event", taskId: 1, expectedRevision: board.tasks[0].revision, kind, threadKey: `k-${kind}` }, router);
+    expect(board.tasks[0].status === "done" || board.tasks[0].status === "cancelled").toBe(false);
+  }
+});
+
 // ── computeCloseReadiness ──────────────────────────────────────────────────────
 
 test("computeCloseReadiness flags open subtasks, incomplete deps, and missing integration_ready", () => {

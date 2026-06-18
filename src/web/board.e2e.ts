@@ -229,6 +229,49 @@ try {
     }
   });
 
+  await step("close gate → done; reopen → in_progress; same-slug review re-fires → in_review (explicit close only)", async () => {
+    // a FRESH task #2 (don't disturb #1's kanban state), dispatched so it carries a slug for re-review.
+    await page.locator(".drail .board-views .seg-tab").nth(0).click(); // back to List
+    await page.waitForSelector(".drail .board-list", { timeout: 6000 });
+    await page.getByPlaceholder("+ task").first().fill("Closeable");
+    await page.getByPlaceholder("+ task").first().press("Enter");
+    await page.waitForSelector('.drail .board-issue .board-tid:has-text("#2")', { timeout: 6000 });
+    let b = await getBoard();
+    let r2 = () => b.tasks.find((t: { id: number }) => t.id === 2).revision;
+    await postBoard({ type: "dispatch_task", id: 2, expectedRevision: r2(), assignee: "codex-1", taskSlug: "close-me" }, b.revision);
+    b = await getBoard();
+    await postBoard({ type: "record_lifecycle_event", taskId: 2, expectedRevision: r2(), kind: "review_requested" }, b.revision); // cycle 1 → in_review
+    if ((await taskStatus(2)) !== "in_review") throw new Error("review_requested did not move #2 to in_review");
+
+    // open #2 detail → the soft close gate surfaces readiness reasons (no integration_ready yet).
+    await issueRow(2).click();
+    await page.waitForSelector(".drail .board-detail", { timeout: 6000 });
+    await page.waitForSelector(".drail .board-close-gate .board-close-reasons", { timeout: 6000 });
+    if (!(await page.locator('.drail .board-close-reasons:has-text("integration_ready")').count())) throw new Error("close gate omitted the integration_ready reason");
+
+    // click "close…" → confirm offers BOTH done and cancelled (explicit terminal closes).
+    await page.locator(".drail .board-close-gate > button").first().click();
+    await page.waitForSelector(".drail .board-close-confirm", { timeout: 6000 });
+    if (!(await page.locator('.drail .board-close-confirm button:has-text("done")').count())) throw new Error("done close option missing");
+    if (!(await page.locator('.drail .board-close-confirm button:text-is("cancelled")').count())) throw new Error("cancelled close option missing");
+    await page.locator('.drail .board-close-confirm button:has-text("done")').click();
+    await page.waitForFunction(async () => (await (await fetch("/api/meshes/demo/board")).json()).tasks.find((t: { id: number }) => t.id === 2)?.status === "done", { timeout: 6000 });
+
+    // terminal task → reopen button; click → in_progress.
+    await page.waitForSelector(".drail .board-detail .board-reopen", { timeout: 6000 });
+    await page.locator(".drail .board-detail .board-reopen").click();
+    await page.waitForFunction(async () => (await (await fetch("/api/meshes/demo/board")).json()).tasks.find((t: { id: number }) => t.id === 2)?.status === "in_progress", { timeout: 6000 });
+
+    // after reopened, the SAME slug/thread review_requested re-fires → in_review again (the P5 cycle fix).
+    b = await getBoard();
+    await postBoard({ type: "record_lifecycle_event", taskId: 2, expectedRevision: r2(), kind: "review_requested" }, b.revision);
+    if ((await taskStatus(2)) !== "in_review") throw new Error("post-reopen review_requested did not re-fire to in_review");
+    // explicit close was the ONLY terminal transition; lifecycle never auto-reached done/cancelled.
+    b = await getBoard();
+    const t2 = b.tasks.find((t: { id: number }) => t.id === 2);
+    if (t2.lifecycleEvents.filter((e: { kind: string }) => e.kind === "review_requested").length !== 2) throw new Error("expected two review_requested events across the reopen cycle");
+  });
+
   await step("?issue=N deep link reopens the detail once the board panel is active", async () => {
     // Phase-2 scope: deep link is board-tab-active (does NOT cold-open the board tab itself).
     await page.goto(BASE + "/?issue=1", { waitUntil: "domcontentloaded" });
