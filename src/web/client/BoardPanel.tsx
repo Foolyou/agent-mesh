@@ -7,9 +7,10 @@
 // editable through the REST/daemon path (gated by §4 of docs/design/issue-panel.md); a stopped
 // mesh renders read-only.
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
-import type { Store } from "./store";
+import { useStore, type Store } from "./store";
+import type { MailEntry } from "../types";
 import type { BoardDocument, BoardCommand, BoardStatus, BoardPriority, Task } from "../../board";
-import { BOARD_STATUSES, BOARD_PRIORITIES, computeBoardWarnings, epicDisplayId, taskDisplayId, taskProgress } from "../../board";
+import { BOARD_STATUSES, BOARD_PRIORITIES, computeBoardWarnings, computeCloseReadiness, epicDisplayId, taskDisplayId, taskProgress } from "../../board";
 import { Empty } from "./ui";
 import { Markdown } from "./Markdown";
 import { useI18n } from "./i18n";
@@ -328,10 +329,18 @@ function IssueRow({ task, blocked, onOpen }: { task: Task; blocked: boolean; onO
   );
 }
 
-// ── detail view (Phase 2 C1: read-only; gated editing + subtasks/comments/mail timeline land
-//    in C2) ──────────────────────────────────────────────────────────────────────
+// ── detail view ─────────────────────────────────────────────────────────────
+//  Read for everyone; editable controls (status/priority/deps, subtasks, comments, close) are
+//  gated by `running` + the reducer's §4 permissions. Assignee stays DISPLAY-ONLY (humans ask the
+//  router to assign). The linked-mail timeline resolves mailEventIds/dispatch against the live
+//  recent-mail buffer and degrades to bare ids when a mail isn't in the buffer.
 export function BoardDetailView({
   task,
+  board,
+  running,
+  mesh,
+  store,
+  apply,
   onBack,
 }: {
   task: Task;
@@ -343,31 +352,196 @@ export function BoardDetailView({
   onBack: () => void;
 }) {
   const { t } = useI18n();
+  const [subtitle, setSubtitle] = useState("");
+  const [comment, setComment] = useState("");
+  const [confirmClose, setConfirmClose] = useState(false);
+
+  const recentMail = useStore(store).perMesh[mesh]?.mail ?? [];
+  const mailById = useMemo(() => new Map(recentMail.map((m) => [m.id, m])), [recentMail]);
+  const linkedMailIds = useMemo(() => {
+    const ids = [...task.mailEventIds];
+    if (task.dispatch?.mailEventId && !ids.includes(task.dispatch.mailEventId)) ids.push(task.dispatch.mailEventId);
+    return ids;
+  }, [task.mailEventIds, task.dispatch?.mailEventId]);
+
+  const close = computeCloseReadiness(board, task.id);
+  const terminal = task.status === "done" || task.status === "cancelled";
+  const depsKey = task.deps.join(",");
+  const commitDeps = (value: string) => {
+    const next = depsCommit(value, task.deps);
+    if (next) apply({ type: "set_task_deps", id: task.id, expectedRevision: task.revision, deps: next });
+  };
+
   return (
     <div className="board-detail">
       <div className="board-detail-head">
         <button className="board-back" onClick={onBack} aria-label={t("board.back")}>← {t("board.back")}</button>
         <span className="board-tid">{taskDisplayId(task.id)}</span>
         <span className="board-title">{task.title}</span>
-        <span className={`pill st-${task.status}`}>{task.status}</span>
+        {running ? (
+          <select className="select-control board-sel" title="status" value={task.status} onChange={(e) => apply({ type: "set_task_status", id: task.id, expectedRevision: task.revision, status: e.target.value as BoardStatus })}>
+            {BOARD_STATUSES.map((s) => (
+              <option key={s} value={s}>{s}</option>
+            ))}
+          </select>
+        ) : (
+          <span className={`pill st-${task.status}`}>{task.status}</span>
+        )}
       </div>
+
       <div className="board-detail-meta sub">
-        {/* assignee display-only (§4) */}
+        {/* assignee DISPLAY-ONLY (§4): the panel never exposes an assign control. */}
         {task.assignee ? <span>@{task.assignee}</span> : <span>{t("board.unassigned")}</span>}
-        <span> · {task.priority}</span>
+        {running ? (
+          <select className="select-control board-sel" title="priority" value={task.priority} onChange={(e) => apply({ type: "set_task_priority", id: task.id, expectedRevision: task.revision, priority: e.target.value as BoardPriority })}>
+            {BOARD_PRIORITIES.map((p) => (
+              <option key={p} value={p}>{p}</option>
+            ))}
+          </select>
+        ) : (
+          <span> · {task.priority}</span>
+        )}
         {task.taskSlug && <span> · <code>{task.taskSlug}</code></span>}
         {task.branchName && <span> · <code>{task.branchName}</code></span>}
       </div>
+
       {task.description && (
         <div className="board-detail-desc">
           <Markdown text={task.description} />
         </div>
       )}
+
+      {/* dependencies (gated edit, re-keyed uncontrolled input like the list-less Phase 1 row) */}
+      {running ? (
+        <div className="board-row">
+          <span className="sub">{t("board.deps")}</span>
+          <input
+            key={`deps-${task.id}-${depsKey}`}
+            className="board-input"
+            placeholder={t("board.depsPlaceholder")}
+            defaultValue={depsKey}
+            onBlur={(e) => commitDeps(e.currentTarget.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") commitDeps((e.target as HTMLInputElement).value); }}
+          />
+        </div>
+      ) : (
+        task.deps.length > 0 && <div className="sub">{t("board.deps")} {task.deps.map((d) => `#${d}`).join(", ")}</div>
+      )}
+
+      {/* subtask checklist */}
+      <div className="board-detail-section">
+        <div className="board-section-head sub">{t("board.subtasks")} {task.subtasks.length > 0 && <>· {taskProgress(task).done}/{taskProgress(task).total}</>}</div>
+        {task.subtasks.map((sub) => (
+          <div className="board-subtask" key={sub.id}>
+            <span className="board-tid">{sub.id}</span>
+            <span className="board-title">{sub.title}</span>
+            {running ? (
+              <select className="select-control board-sel" title="subtask status" value={sub.status} onChange={(e) => apply({ type: "set_subtask_status", taskId: task.id, subtaskId: sub.id, expectedRevision: sub.revision, status: e.target.value as BoardStatus })}>
+                {BOARD_STATUSES.map((s) => (
+                  <option key={s} value={s}>{s}</option>
+                ))}
+              </select>
+            ) : (
+              <span className={`pill st-${sub.status}`}>{sub.status}</span>
+            )}
+          </div>
+        ))}
+        {running && (
+          <input
+            className="board-input"
+            placeholder={t("board.addSubtask")}
+            value={subtitle}
+            onChange={(e) => setSubtitle(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && subtitle.trim()) {
+                apply({ type: "create_subtask", taskId: task.id, expectedRevision: task.revision, title: subtitle.trim() });
+                setSubtitle("");
+              }
+            }}
+          />
+        )}
+      </div>
+
+      {/* lifecycle timeline */}
       {(task.lifecycleEvents?.length ?? 0) > 0 && (
-        <div className="board-timeline" aria-label="lifecycle timeline">
-          {task.lifecycleEvents!.map((e, i) => (
-            <span className="pill board-lc-pill" key={i} title={`${e.by} · ${e.at}`}>{e.kind}</span>
-          ))}
+        <div className="board-detail-section">
+          <div className="board-section-head sub">{t("board.lifecycle")}</div>
+          <div className="board-timeline" aria-label="lifecycle timeline">
+            {task.lifecycleEvents!.map((e, i) => (
+              <span className="pill board-lc-pill" key={i} title={`${e.by} · ${e.at}`}>{e.kind}</span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* linked-mail timeline (resolve ids against the recent buffer; degrade to bare id) */}
+      {linkedMailIds.length > 0 && (
+        <div className="board-detail-section">
+          <div className="board-section-head sub">{t("board.linkedMail")}</div>
+          {linkedMailIds.map((id) => {
+            const m = mailById.get(id);
+            return (
+              <div className="board-mail-row" key={id}>
+                {m ? (
+                  <>
+                    <span className="sub">{m.from} → {m.to}</span>
+                    <span className="board-ctext">{m.body.length > 80 ? `${m.body.slice(0, 80)}…` : m.body}</span>
+                  </>
+                ) : (
+                  <span className="sub board-mail-unresolved" title="mail not in the recent buffer">✉ {id}</span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* comment thread */}
+      <div className="board-detail-section">
+        <div className="board-section-head sub">{t("board.comments")} {task.comments.length > 0 && <>· {task.comments.length}</>}</div>
+        {task.comments.map((c, i) => (
+          <div className="board-comment" key={i}>
+            <span className="sub">{c.author}</span>
+            <span className="board-ctext">{c.text}</span>
+          </div>
+        ))}
+        {running && (
+          <input
+            className="board-input"
+            placeholder={t("board.comment")}
+            value={comment}
+            onChange={(e) => setComment(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && comment.trim()) {
+                apply({ type: "add_comment", target: { kind: "task", id: task.id }, expectedRevision: task.revision, text: comment.trim() });
+                setComment("");
+              }
+            }}
+          />
+        )}
+      </div>
+
+      {/* close action with a SOFT acceptance gate (computeCloseReadiness): surfaces reasons,
+          never hard-blocks. Operator/router only; reducer enforces the real permission. */}
+      {running && !terminal && (
+        <div className="board-close-gate">
+          {!close.ready && (
+            <ul className="board-close-reasons sub">
+              {close.openSubtasks > 0 && <li>{t("board.openSubtasks")}: {close.openSubtasks}</li>}
+              {close.blockingDeps.length > 0 && <li>{t("board.blockingDeps")}: {close.blockingDeps.map((d) => `#${d}`).join(", ")}</li>}
+              {!close.hasIntegrationReady && <li>{t("board.needsIntegration")}</li>}
+            </ul>
+          )}
+          {confirmClose ? (
+            <span className="board-close-confirm">
+              <button className="board-back" onClick={() => apply({ type: "set_task_status", id: task.id, expectedRevision: task.revision, status: "done" })}>{t("board.confirmClose")}</button>
+              <button className="board-back" onClick={() => setConfirmClose(false)}>{t("cancel")}</button>
+            </span>
+          ) : (
+            <button className="board-back" onClick={() => setConfirmClose(true)}>
+              {close.ready ? t("board.close") : t("board.closeAnyway")}
+            </button>
+          )}
         </div>
       )}
     </div>

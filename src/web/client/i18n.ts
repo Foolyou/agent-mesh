@@ -156,6 +156,17 @@ const DICT: Record<string, Entry> = {
   "board.sortId": ["number", "编号"],
   "board.groupByEpic": ["group by epic", "按史诗分组"],
   "board.noMatches": ["no issues match the filter", "没有符合筛选的任务"],
+  // ── detail view ──
+  "board.subtasks": ["subtasks", "子任务"],
+  "board.lifecycle": ["lifecycle", "生命周期"],
+  "board.linkedMail": ["linked mail", "关联邮件"],
+  "board.comments": ["comments", "评论"],
+  "board.close": ["close issue", "关闭任务"],
+  "board.closeAnyway": ["close anyway…", "仍然关闭…"],
+  "board.confirmClose": ["confirm close", "确认关闭"],
+  "board.openSubtasks": ["open subtasks", "未完成子任务"],
+  "board.blockingDeps": ["incomplete dependencies", "未完成依赖"],
+  "board.needsIntegration": ["no integration_ready signal yet", "尚无 integration_ready 信号"],
   "tabs.allMembers": ["all {n} members", "全部 {n} 个成员"],
 
   // ── empties ──

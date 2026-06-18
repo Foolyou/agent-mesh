@@ -19,7 +19,19 @@ import { I18nContext, translate } from "./i18n";
 import { applyBoardCommand, createEmptyBoard, type BoardDocument, type BoardState } from "../../board";
 import type { Store } from "./store";
 
-const noopStore = { boardCommand: async () => ({ board: createEmptyBoard("m"), change: {} }), getBoard: async () => createEmptyBoard("m"), ensureBoardLoaded: async () => {} } as unknown as Store;
+interface MailLite { id: string; ts: string; from: string; to: string; body: string }
+/** A minimal Store stub: the detail view reads recent mail via useStore(store).getState(). */
+function makeStore(mail: MailLite[] = []): Store {
+  const state = { perMesh: { demo: { mail } } } as unknown as ReturnType<Store["getState"]>;
+  return {
+    boardCommand: async () => ({ board: createEmptyBoard("m"), change: {} }),
+    getBoard: async () => createEmptyBoard("m"),
+    ensureBoardLoaded: async () => {},
+    getState: () => state,
+    subscribe: () => () => {},
+  } as unknown as Store;
+}
+const noopStore = makeStore();
 
 const ctx = (s: BoardState) => ({ actor: { kind: "router" as const, agentId: "lead" }, now: "2026-06-15T00:00:00.000Z", expectedBoardRevision: s.revision });
 
@@ -146,6 +158,64 @@ test("a deep-link to a missing issue falls back to the list", () => {
   const html = renderPanel(sampleBoard(), true, { view: "detail", issue: 999 });
   expect(html).toContain("board-issue"); // list rows, not a detail
   expect(html).not.toContain("board-detail");
+});
+
+/** sampleBoard + a linked mail (evt-2 via link_mail) and a dispatch mail id (evt-1). */
+function sampleBoardWithMail(): BoardDocument {
+  let s = sampleBoard();
+  const rev = () => s.tasks.find((t) => t.id === 1)!.revision;
+  let r = applyBoardCommand(s, { type: "set_dispatch_mail", taskId: 1, expectedRevision: rev(), mailEventId: "evt-1" }, ctx(s));
+  if (r.ok) s = r.state;
+  r = applyBoardCommand(s, { type: "link_mail", taskId: 1, expectedRevision: rev(), mailEventId: "evt-2" }, { actor: { kind: "system" }, now: "2026-06-15T00:00:00.000Z", expectedBoardRevision: s.revision });
+  if (r.ok) s = r.state;
+  return s;
+}
+
+function renderDetail(board: BoardDocument, running: boolean, store: Store): string {
+  const task = board.tasks.find((t) => t.id === 1)!;
+  return withI18n(createElement(BoardDetailView, { task, board, running, mesh: "demo", store, apply: () => {}, onBack: () => {} }));
+}
+
+test("detail view running mesh shows gated controls (status/priority/deps/subtask/comment selects+inputs)", () => {
+  const html = renderDetail(sampleBoard(), true, noopStore);
+  expect(html).toContain('title="status"');
+  expect(html).toContain('title="priority"');
+  expect(html).toContain('title="subtask status"');
+  expect(html).toContain("board-input"); // deps + add-subtask + comment inputs
+  // assignee remains display-only — no assignee select even in the detail
+  expect(html).not.toContain('title="assignee"');
+});
+
+test("detail view on a stopped mesh is read-only (no selects/inputs, status as pill)", () => {
+  const html = renderDetail(sampleBoard(), false, noopStore);
+  expect(html).not.toContain("<select");
+  expect(html).not.toContain("board-input");
+  expect(html).toContain("st-in_progress"); // status pill
+});
+
+test("detail renders subtask checklist and comment thread", () => {
+  const html = renderDetail(sampleBoard(), true, noopStore);
+  expect(html).toContain("subtask A");
+  expect(html).toContain("note"); // the comment text
+});
+
+test("linked-mail timeline resolves ids against the buffer and degrades to a bare id otherwise", () => {
+  const board = sampleBoardWithMail();
+  const store = makeStore([{ id: "evt-2", ts: "t", from: "router", to: "alice", body: "dispatch brief body" }]);
+  const html = renderDetail(board, true, store);
+  expect(html).toContain("router → alice"); // resolved evt-2
+  expect(html).toContain("dispatch brief body");
+  expect(html).toContain("evt-1"); // dispatch mail id not in buffer → shown raw
+});
+
+test("close gate surfaces soft-acceptance reasons and never appears terminal-closed", () => {
+  // #1 has an open subtask, a blocking dep (#2 todo), and no integration_ready → all three reasons.
+  const html = renderDetail(sampleBoard(), true, noopStore);
+  expect(html).toContain("board-close-gate");
+  expect(html).toContain("open subtasks");
+  expect(html).toContain("incomplete dependencies");
+  expect(html).toContain("integration_ready");
+  expect(html).toContain("close anyway"); // not ready → "close anyway…" label
 });
 
 // ── empties / null safety ─────────────────────────────────────────────────────

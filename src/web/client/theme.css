@@ -3476,3 +3476,42 @@ legend.builder-section-head {
   border-left: 2px solid var(--line);
   padding-left: 8px;
 }
+.board-detail-section {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.board-section-head {
+  font-weight: 600;
+  padding-top: 2px;
+}
+.board-mail-row {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  min-width: 0;
+}
+.board-mail-row .board-ctext {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.board-mail-unresolved {
+  font-family: var(--mono, monospace);
+  opacity: 0.7;
+}
+.board-close-gate {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border-top: 1px solid var(--line);
+  padding-top: 6px;
+}
+.board-close-reasons {
+  margin: 0;
+  padding-left: 16px;
+}
+.board-close-confirm {
+  display: inline-flex;
+  gap: 4px;
+}

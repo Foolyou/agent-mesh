@@ -517,6 +517,16 @@ export function createStore(): Store {
     boardFetching.set(name, p);
     return p;
   }
+  /** Force a board re-fetch + fold (bypasses the one-shot guard). Used after a CAS conflict so the
+   *  panel re-syncs to authoritative state; silent (the conflicting command already toasted). */
+  async function refetchBoard(name: string): Promise<void> {
+    try {
+      const board = await send("GET", `/api/meshes/${enc(name)}/board`);
+      applyIncoming({ t: "board", name, board });
+    } catch {
+      /* ignore — a toast already fired for the original conflict */
+    }
+  }
   async function send(method: string, path: string, body?: unknown): Promise<any> {
     const res = await fetch(path, {
       method,
@@ -607,7 +617,16 @@ export function createStore(): Store {
     newAllSessions: (n) => guard(post(`/api/meshes/${enc(n)}/session`), `new sessions ${n}`),
     respawnAgent: (n, a, mode) => guard(post(`/api/meshes/${enc(n)}/agents/${enc(a)}/respawn`, { mode }), `respawn ${a}`),
     getBoard: (n) => guard(send("GET", `/api/meshes/${enc(n)}/board`), `load board ${n}`),
-    boardCommand: (n, command, expectedBoardRevision) => guard(post(`/api/meshes/${enc(n)}/board`, { command, expectedBoardRevision }), `board ${command.type}`),
+    boardCommand: async (n, command, expectedBoardRevision) => {
+      try {
+        return await guard(post(`/api/meshes/${enc(n)}/board`, { command, expectedBoardRevision }), `board ${command.type}`);
+      } catch (e: any) {
+        // CAS conflict: re-sync the (small) board so the panel sees authoritative state and can
+        // retry with a fresh revision. Narrow refetch on conflict only — no cache layer.
+        if (/conflict|revision/i.test(String(e?.message ?? e))) void refetchBoard(n);
+        throw e;
+      }
+    },
     ensureBoardLoaded,
     isTranscriptInitialLoaded,
     loadInitialTranscript,
