@@ -588,11 +588,19 @@ export function applyBoardCommand(state: BoardState, cmd: BoardCommand, ctx: Boa
       const conflict = casCheck(task.revision, cmd.expectedRevision);
       if (conflict) return conflict;
       const events = task.lifecycleEvents ?? [];
-      // Idempotent on (taskId, kind, threadKey): a repeated signal is a no-op (no event, no bump).
-      if (events.some((e) => e.kind === cmd.kind && e.threadKey === cmd.threadKey)) {
+      // threadKey defaults to the task's slug (matching the mail-marker path and the board_lifecycle
+      // tool's documented default), so an omitted threadKey dedupes per-slug rather than per-undefined.
+      const threadKey = cmd.threadKey ?? task.taskSlug;
+      // Idempotency is scoped to the CURRENT lifecycle CYCLE: dedupe only against events recorded
+      // AFTER the most recent `reopened` (the cycle boundary). A duplicate signal within a cycle is a
+      // no-op, but after a privileged `reopened` the same slug/thread `review_requested` re-fires and
+      // (monotonically) moves the task in_progress→in_review again. `reopened` is never deduped — it IS
+      // the cycle reset. With no prior `reopened`, cycleStart=0 = the original whole-history rule.
+      const cycleStart = events.map((e) => e.kind).lastIndexOf("reopened") + 1;
+      if (cmd.kind !== "reopened" && events.slice(cycleStart).some((e) => e.kind === cmd.kind && e.threadKey === threadKey)) {
         return ok(state, { entity: "task", taskId: task.id });
       }
-      const event: BoardLifecycleEvent = { kind: cmd.kind, by: author, at: now, threadKey: cmd.threadKey };
+      const event: BoardLifecycleEvent = { kind: cmd.kind, by: author, at: now, threadKey };
       let status = task.status;
       let closeReady = task.closeReady === true;
       if (cmd.kind === "integration_ready") {
