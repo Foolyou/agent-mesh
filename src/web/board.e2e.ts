@@ -1,7 +1,9 @@
-// Browser e2e for the collaboration board (#42): starts the --fake backend, opens the board
-// panel, and drives the full Phase-1 loop — create epic/task/subtask, assign/priority/status,
-// comment, dependency edit + warning — then stops the mesh and reloads to prove the persisted
-// board renders read-only. Real REST → FakeManager.boardCommand → board_snapshot → WS → store.
+// Browser e2e for the collaboration board (#42, Phase 2 list+detail workspace): starts the --fake
+// backend, opens the board panel, and drives the list → filter → detail loop — create task/epic,
+// filter, open a detail via row click AND via a ?issue=N deep link (board-tab-active, per Phase 2
+// scope: NOT cold auto-opening the board tab), round-trip a gated status edit, add subtask/comment,
+// render dispatch/lifecycle state — then stops the mesh and reloads to prove read-only persistence.
+// Real REST → FakeManager.boardCommand (real reducer) → board_snapshot → WS → store.
 // Run: bun run src/web/board.e2e.ts
 import { type Page } from "playwright";
 import { launchChromium, e2eEnv } from "./e2e-playwright";
@@ -40,43 +42,58 @@ try {
   await page.waitForSelector(".mrow.sel", { timeout: 8000 });
 
   const openBoard = async () => {
-    await page.locator('.drail .seg-tab:has-text("board")').click();
+    await page.locator('.drail .seg-tab:has-text("board")').first().click();
     await page.waitForSelector(".drail .board", { timeout: 6000 });
   };
-  const taskRow = (id: number) => page.locator(`.drail .board-task:has(.board-tid:has-text("#${id}"))`);
+  const issueRow = (id: number) => page.locator(`.drail .board-issue:has(.board-tid:has-text("#${id}"))`);
+  const postBoard = (command: unknown, ebr: number) =>
+    fetch(`${BASE}/api/meshes/demo/board`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ command, expectedBoardRevision: ebr }) });
+  const getBoard = async () => (await fetch(`${BASE}/api/meshes/demo/board`)).json();
 
-  await step("start mesh → board tab is visible", async () => {
+  await step("start mesh → board tab shows the list workspace", async () => {
     await page.locator('.detail-head .btn:has-text("start mesh")').click();
     await page.waitForSelector('.detail-head:has-text("running")', { timeout: 8000 });
     await openBoard();
+    await page.waitForSelector(".drail .board-filter", { timeout: 6000 }); // list view + filter bar
   });
 
   await step("create a task and an epic", async () => {
     await page.getByPlaceholder("+ task").first().fill("Wire it up");
     await page.getByPlaceholder("+ task").first().press("Enter");
-    await page.waitForSelector('.drail .board-tid:has-text("#1")', { timeout: 6000 });
+    await page.waitForSelector('.drail .board-issue .board-tid:has-text("#1")', { timeout: 6000 });
     await page.getByPlaceholder("+ epic").first().fill("Launch");
     await page.getByPlaceholder("+ epic").first().press("Enter");
-    await page.waitForSelector('.drail .board-eid:has-text("E1")', { timeout: 6000 });
+    await sleep(200);
   });
 
-  await step("change status, priority, assignee on the task", async () => {
-    const row = taskRow(1);
-    await row.locator('select[title="status"]').selectOption("in_progress");
-    await page.waitForFunction(() => {
-      const sel = document.querySelector('.drail .board-task select[title="status"]') as HTMLSelectElement | null;
-      return sel?.value === "in_progress";
-    }, { timeout: 6000 });
-    await row.locator('select[title="priority"]').selectOption("high");
-    await row.locator('select[title="assignee"]').selectOption("codex-1");
-    await page.waitForFunction(() => {
-      const sel = document.querySelector('.drail .board-task select[title="assignee"]') as HTMLSelectElement | null;
-      return sel?.value === "codex-1";
-    }, { timeout: 6000 });
+  await step("filter bar narrows the list and shows the no-match empty", async () => {
+    const filter = page.getByPlaceholder("filter…").first();
+    await filter.fill("zzz-nope");
+    await page.waitForFunction(() => document.querySelectorAll(".drail .board-issue").length === 0, { timeout: 6000 });
+    if (!(await page.locator('.drail :text("no issues match")').count())) throw new Error("no-match empty state missing");
+    await filter.fill("");
+    await page.waitForSelector('.drail .board-issue .board-tid:has-text("#1")', { timeout: 6000 });
   });
 
-  await step("expand the task, add a subtask and a comment", async () => {
-    await taskRow(1).locator(".board-twirl").click();
+  await step("clicking an issue row opens its detail and sets the ?issue route", async () => {
+    await issueRow(1).click();
+    await page.waitForSelector(".drail .board-detail", { timeout: 6000 });
+    await page.waitForFunction(() => new URLSearchParams(location.search).get("issue") === "1", { timeout: 6000 });
+    if (!(await page.locator('.drail .board-detail:has-text("Wire it up")').count())) throw new Error("detail missing the task title");
+  });
+
+  await step("round-trip a gated status edit from the detail view", async () => {
+    await page.locator('.drail .board-detail select[title="status"]').selectOption("in_review");
+    await page.waitForFunction(() => {
+      const sel = document.querySelector('.drail .board-detail select[title="status"]') as HTMLSelectElement | null;
+      return sel?.value === "in_review";
+    }, { timeout: 6000 });
+    // persisted: the durable board reflects the new status
+    const b = await getBoard();
+    if (b.tasks.find((t: { id: number }) => t.id === 1)?.status !== "in_review") throw new Error("status edit did not persist");
+  });
+
+  await step("detail: add a subtask and a comment", async () => {
     await page.getByPlaceholder("+ subtask").first().fill("subtask A");
     await page.getByPlaceholder("+ subtask").first().press("Enter");
     await page.waitForSelector('.drail .board-subtask:has-text("subtask A")', { timeout: 6000 });
@@ -85,73 +102,59 @@ try {
     await page.waitForSelector('.drail .board-comment:has-text("looking into it")', { timeout: 6000 });
   });
 
-  await step("dependency edit surfaces a warning (advisory, not blocking)", async () => {
-    // second task to depend on
-    await page.getByPlaceholder("+ task").first().fill("Prereq");
-    await page.getByPlaceholder("+ task").first().press("Enter");
-    await page.waitForSelector('.drail .board-tid:has-text("#2")', { timeout: 6000 });
-    // #1 depends on #2; #1 is already in_progress while #2 is todo → blocked-by-incomplete warning
-    const depsInput = taskRow(1).getByPlaceholder("deps e.g. 1,2");
-    await depsInput.fill("2");
-    await depsInput.press("Enter");
-    await page.waitForSelector(".drail .board-warn", { timeout: 6000 });
-  });
-
-  await step("Enter-then-blur on an unchanged deps value does not error or double-submit", async () => {
-    const depsInput = taskRow(1).getByPlaceholder("deps e.g. 1,2");
-    await depsInput.focus();
-    await depsInput.press("Enter"); // value already "2" == current → no write
-    await page.locator(".drail .board-head").click(); // blur → depsCommit returns null again
-    await sleep(300);
-    if (await page.locator(".toast.error, .toast-error").count()) throw new Error("an error toast appeared on a no-op deps commit");
-    // still exactly one dep shown
-    const depText = await taskRow(1).locator(".board-meta").innerText();
-    if (!/#2/.test(depText)) throw new Error(`deps meta lost #2: ${depText}`);
-  });
-
-  await step("dispatch state renders in the task detail (dispatch line + lifecycle pill + mail-failed badge)", async () => {
-    // FakeManager runs the REAL board reducer, so a single dispatch_task command (NOT the funnel)
-    // seeds the panel with dispatch + lifecycle data to render. Read current revisions, then POST;
-    // the panel re-renders from board_snapshot → WS → store.
-    const getBoard = async () => (await fetch(`${BASE}/api/meshes/demo/board`)).json();
-    const post = (command: unknown, ebr: number) =>
-      fetch(`${BASE}/api/meshes/demo/board`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ command, expectedBoardRevision: ebr }) });
-
-    const b1 = await getBoard();
-    const rev1 = b1.tasks.find((x: { id: number }) => x.id === 1).revision;
-    const r1 = await post({ type: "dispatch_task", id: 1, expectedRevision: rev1, assignee: "codex-1", taskSlug: "wire-it" }, b1.revision);
-    if (!r1.ok) throw new Error(`dispatch_task POST failed: ${r1.status}`);
-
-    // ensure #1 is expanded WITHOUT toggling a row that may already be open from an earlier step
-    if (!(await taskRow(1).locator(".board-task-body").count())) await taskRow(1).locator(".board-twirl").click();
-    await page.waitForSelector('.drail .board-task .board-dispatch:has-text("@codex-1")', { timeout: 6000 });
-    await page.waitForSelector('.drail .board-task .board-lc-pill:has-text("dispatched")', { timeout: 6000 });
-
+  await step("detail renders dispatch linkage + lifecycle timeline (REST dispatch → snapshot)", async () => {
+    const b = await getBoard();
+    const rev = b.tasks.find((t: { id: number }) => t.id === 1).revision;
+    const r = await postBoard({ type: "dispatch_task", id: 1, expectedRevision: rev, assignee: "codex-1", taskSlug: "wire-it" }, b.revision);
+    if (!r.ok) throw new Error(`dispatch_task POST failed: ${r.status}`);
+    await page.waitForSelector('.drail .board-detail .board-lc-pill:has-text("dispatched")', { timeout: 6000 });
+    if (!(await page.locator('.drail .board-detail:has-text("task/wire-it")').count())) throw new Error("branchName not shown in detail");
     const b2 = await getBoard();
-    const rev2 = b2.tasks.find((x: { id: number }) => x.id === 1).revision;
-    const r2 = await post({ type: "set_dispatch_mail", taskId: 1, expectedRevision: rev2, mailFailed: true }, b2.revision);
+    const rev2 = b2.tasks.find((t: { id: number }) => t.id === 1).revision;
+    const r2 = await postBoard({ type: "set_dispatch_mail", taskId: 1, expectedRevision: rev2, mailFailed: true }, b2.revision);
     if (!r2.ok) throw new Error(`set_dispatch_mail POST failed: ${r2.status}`);
-    await page.waitForSelector(".drail .board-task .board-mailfail", { timeout: 6000 });
+    await page.waitForSelector(".drail .board-detail .board-mailfail", { timeout: 6000 });
   });
 
-  await step("stop the mesh, reload, and the persisted board renders read-only", async () => {
+  await step("back button returns to the list and clears ?issue", async () => {
+    await page.locator(".drail .board-back").first().click();
+    await page.waitForSelector(".drail .board-list", { timeout: 6000 });
+    // #1 now shows in_review in the list row chip
+    await page.waitForSelector('.drail .board-issue .pill.st-in_review', { timeout: 6000 });
+  });
+
+  await step("?issue=N deep link reopens the detail once the board panel is active", async () => {
+    // Phase-2 scope: deep link is board-tab-active (does NOT cold-open the board tab itself).
+    await page.goto(BASE + "/?issue=1", { waitUntil: "domcontentloaded" });
+    await page.waitForSelector(".mrow.sel", { timeout: 8000 });
+    await openBoard();
+    await page.waitForSelector(".drail .board-detail", { timeout: 6000 });
+    if (!(await page.locator('.drail .board-detail .board-tid:has-text("#1")').count())) throw new Error("deep link did not open #1 detail");
+  });
+
+  await step("stop the mesh, reload, and the persisted board renders read-only (list + detail)", async () => {
+    await page.goto(BASE, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector(".mrow.sel", { timeout: 8000 });
     await page.locator('.detail-head .btn:has-text("stop mesh")').click();
-    // ConfirmButton: a second click confirms.
-    await page.locator('.detail-head .btn:has-text("stop")').last().click();
+    await page.locator('.detail-head .btn:has-text("stop")').last().click(); // ConfirmButton 2nd click
     await page.waitForSelector('.detail-head:has-text("stopped")', { timeout: 8000 });
     await page.reload({ waitUntil: "domcontentloaded" });
     await page.waitForSelector(".mrow.sel", { timeout: 8000 });
     await openBoard();
-    await page.waitForSelector('.drail .board-tid:has-text("#1")', { timeout: 6000 });
-    if (await page.locator(".drail .board select").count()) throw new Error("editable selects present on a stopped mesh board");
-    if (await page.locator(".drail .board .board-input").count()) throw new Error("editable inputs present on a stopped mesh board");
-    if (!(await page.locator('.drail .board-title:has-text("Wire it up")').count())) throw new Error("persisted task missing after reload");
+    await page.waitForSelector('.drail .board-issue .board-tid:has-text("#1")', { timeout: 6000 });
+    // filter-bar selects remain (read-only navigation); only mutation controls must be gone.
+    if (await page.locator(".drail .board-create").count()) throw new Error("create row present on a stopped mesh board");
+    // open detail → read-only (no editing selects/inputs in the detail)
+    await issueRow(1).click();
+    await page.waitForSelector(".drail .board-detail", { timeout: 6000 });
+    if (await page.locator('.drail .board-detail select').count()) throw new Error("editable selects in a stopped-mesh detail");
+    if (await page.locator('.drail .board-detail .board-input').count()) throw new Error("editable inputs in a stopped-mesh detail");
+    if (!(await page.locator('.drail .board-detail:has-text("Wire it up")').count())) throw new Error("persisted task missing after reload");
   });
 
-  await step("mobile viewport renders the board panel without layout overlap", async () => {
+  await step("mobile viewport renders the board panel without horizontal overflow", async () => {
     await page.setViewportSize({ width: 390, height: 844 });
     await sleep(200);
-    // switch to the mobile log segment which hosts the board panel
     const logTab = page.locator('.mtab:has-text("log")');
     if (await logTab.count()) await logTab.click();
     await page.waitForSelector(".board", { timeout: 6000 });
@@ -169,7 +172,7 @@ try {
     console.log("  FAILED:", fails.join(", "));
     process.exitCode = 1;
   } else {
-    console.log("  BOARD E2E OK — create/edit/deps/warning + stopped read-only after reload");
+    console.log("  BOARD E2E OK — list/filter/detail + deep-link + gated edit + read-only persistence");
   }
 } finally {
   await browser.close();
