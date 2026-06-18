@@ -2060,6 +2060,10 @@ export class ControlPlane {
     "board_set_deps",
     "board_lifecycle",
     "board_dispatch",
+    "board_set_task_labels",
+    "board_create_label",
+    "board_update_label",
+    "board_delete_label",
   ] as const;
   private static readonly MESH_TOOLS = new Set([
     "send_mail",
