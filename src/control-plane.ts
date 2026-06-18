@@ -2024,6 +2024,11 @@ export class ControlPlane {
       const sub = task?.subtasks.find((s) => s.id === change.subtaskId);
       return `ok: subtask ${change.subtaskId} now rev ${sub?.revision ?? "?"} (task #${change.taskId} rev ${task?.revision ?? "?"}, board rev ${state.revision})`;
     }
+    if (change.entity === "label" && change.labelId) {
+      if (change.deleted) return `ok: deleted label ${change.labelId} (board rev ${state.revision})`;
+      const label = (state.labels ?? []).find((l) => l.id === change.labelId);
+      return `ok: label ${change.labelId}${label ? ` "${label.name}" ${label.color}` : ""} (board rev ${state.revision})`;
+    }
     const task = change.taskId !== undefined ? state.tasks.find((t) => t.id === change.taskId) : undefined;
     return `ok: task #${change.taskId} now rev ${task?.revision ?? "?"} (board rev ${state.revision})`;
   }
@@ -2042,7 +2047,7 @@ export class ControlPlane {
       `Your open tasks: ${mine.length ? mine.join(", ") : "(none)"}`,
     ];
     if (warnings.length) lines.push(`warnings:\n- ${warnings.join("\n- ")}`);
-    return `${lines.join("\n")}\n${JSON.stringify({ revision: b.revision, epics: b.epics, tasks: b.tasks }, null, 2)}`;
+    return `${lines.join("\n")}\n${JSON.stringify({ revision: b.revision, epics: b.epics, tasks: b.tasks, labels: b.labels ?? [], labelSeq: b.labelSeq ?? 0 }, null, 2)}`;
   }
 
   // ---- permission escalation ----

@@ -507,3 +507,37 @@ test("label CRUD is router/operator-only; set_task_labels honors privileged|assi
     await rm(h.root, { recursive: true, force: true });
   }
 });
+
+// ── issue-panel Phase 4 review fix: label CRUD reply text + board_list labels ───
+
+test("label CRUD success text names the label (not 'task #undefined'); board_list exposes labels", async () => {
+  const h = await setup();
+  try {
+    // create → response names the label + color + board rev (NOT a generic task line)
+    const created = await h.handlers.applyBoard(router, { type: "create_label", name: "bug", color: "#fde68a" }, h.cp.getBoard().revision);
+    expect(created).toContain("label label-1");
+    expect(created).toContain("bug");
+    expect(created).toContain("#fde68a");
+    expect(created).not.toContain("task #undefined");
+
+    // board_list now serializes labels + labelSeq so agents can discover ids/names/colors
+    const listed = await h.handlers.boardList(alice);
+    expect(listed).toContain('"labels"');
+    expect(listed).toContain('"label-1"');
+    expect(listed).toContain('"labelSeq": 1');
+
+    // update → response names the label and is not a task line
+    const updated = await h.handlers.applyBoard(router, { type: "update_label", id: "label-1", name: "defect" }, h.cp.getBoard().revision);
+    expect(updated).toContain("label label-1");
+    expect(updated).toContain("defect");
+    expect(updated).not.toContain("task #undefined");
+
+    // delete → response identifies the deleted label id, not a task
+    const deleted = await h.handlers.applyBoard(router, { type: "delete_label", id: "label-1" }, h.cp.getBoard().revision);
+    expect(deleted).toContain("deleted label label-1");
+    expect(deleted).not.toContain("task #undefined");
+  } finally {
+    await h.cp.stop();
+    await rm(h.root, { recursive: true, force: true });
+  }
+});
