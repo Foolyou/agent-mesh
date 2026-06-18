@@ -211,6 +211,12 @@ test("kanban on a stopped mesh is read-only: no status selects", () => {
   expect(html).not.toContain("<select");
 });
 
+test("kanban cards are draggable on a running mesh and not draggable when stopped", () => {
+  expect(renderKanban(sampleBoard(), true, HUMAN)).toContain('draggable="true"');
+  const stopped = renderKanban(sampleBoard(), false, HUMAN);
+  expect(stopped).not.toContain('draggable="true"');
+});
+
 // ── detail view (C1: read-only) ───────────────────────────────────────────────
 test("detail view (deep-link route) renders title, slug/branch, lifecycle timeline, and a back button", () => {
   const html = renderPanel(sampleBoard(), true, { view: "detail", issue: 1 });

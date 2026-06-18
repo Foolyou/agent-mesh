@@ -5,7 +5,7 @@
 // reopens the detail once the board panel is active. No deltas — the whole board arrives on every
 // change, so the views are a pure function of `board`. Running meshes are editable through the
 // REST/daemon path (gated by §4 of docs/design/issue-panel.md); a stopped mesh renders read-only.
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent } from "react";
 import { useStore, type Store } from "./store";
 import type { MailEntry } from "../types";
 import type { BoardDocument, BoardCommand, BoardStatus, BoardPriority, BoardActor, Task } from "../../board";
@@ -159,15 +159,25 @@ export function BoardPanel({
     if (!board) void store.ensureBoardLoaded(mesh);
   }, [mesh, board, store]);
 
+  // Was the current detail opened by THIS panel's pushState? Only then is window.history.back()
+  // guaranteed to return to our list/kanban entry; otherwise (deep link / cold load) back() could
+  // leave the app, so we replace to the originating view instead. (P2 Back-button fix.)
+  const pushedDetailRef = useRef(false);
+  const lastViewRef = useRef<"list" | "kanban">("list");
+
   // Keep the in-panel route in sync with browser back/forward (its own listener; coexists with
   // the App-level path route, which this never touches).
   useEffect(() => {
-    const onPop = () => setRoute(parseBoardRoute(window.location.search));
+    const onPop = () => {
+      pushedDetailRef.current = false; // a history move consumed our pushed entry
+      setRoute(parseBoardRoute(window.location.search));
+    };
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
   }, []);
 
   const navigate = (next: BoardRoute, push: boolean) => {
+    if (next.view !== "detail") pushedDetailRef.current = false;
     if (typeof window !== "undefined") {
       const url = window.location.pathname + serializeBoardRoute(next, window.location.search) + window.location.hash;
       if (push) window.history.pushState(null, "", url);
@@ -175,10 +185,18 @@ export function BoardPanel({
     }
     setRoute(next);
   };
-  const openDetail = (id: number) => navigate({ view: "detail", issue: id }, true); // pushState: Back returns to list
-  const backToList = () => {
-    if (typeof window !== "undefined" && window.history.length > 1) window.history.back();
-    else navigate({ view: "list" }, false);
+  const openDetail = (id: number) => {
+    lastViewRef.current = route.view === "kanban" ? "kanban" : "list";
+    navigate({ view: "detail", issue: id }, true); // pushState: Back returns to the originating view
+    pushedDetailRef.current = true;
+  };
+  const back = () => {
+    if (pushedDetailRef.current && typeof window !== "undefined" && window.history.length > 1) {
+      pushedDetailRef.current = false;
+      window.history.back();
+    } else {
+      navigate({ view: lastViewRef.current }, false);
+    }
   };
 
   const apply = (command: BoardCommand) => {
@@ -221,7 +239,7 @@ export function BoardPanel({
         {running && !showDetail && <CreateRow apply={apply} />}
       </div>
       {showDetail ? (
-        <BoardDetailView task={selected} board={board} running={running} mesh={mesh} store={store} apply={apply} onBack={backToList} />
+        <BoardDetailView task={selected} board={board} running={running} mesh={mesh} store={store} apply={apply} onBack={back} />
       ) : route.view === "kanban" ? (
         <>
           <FilterBar board={board} filter={filter} setFilter={setFilter} groupByEpic={groupByEpic} setGroupByEpic={setGroupByEpic} />
@@ -388,8 +406,13 @@ export function BoardKanbanView({
 }) {
   const blocked = useMemo(() => blockedTaskIds(board), [board]);
   const tasks = useMemo(() => filterSortTasks(board.tasks, filter), [board.tasks, filter]);
+  const byId = useMemo(() => new Map(board.tasks.map((task) => [task.id, task])), [board.tasks]);
   const [reason, setReason] = useState<{ taskId: number; msg: string } | null>(null);
+  const [draggingId, setDraggingId] = useState<number | null>(null);
+  const [overCol, setOverCol] = useState<BoardStatus | null>(null);
 
+  // Single gated move path for the keyboard select AND drag/drop: §4 mirror first, inline reason on
+  // rejection (never a silent failure), else commit through the normal CAS-guarded board command.
   const attemptMove = (task: Task, target: BoardStatus) => {
     if (target === task.status) return;
     const rej = cardMoveRejection(task, target, actor, running);
@@ -401,12 +424,28 @@ export function BoardKanbanView({
     apply({ type: "set_task_status", id: task.id, expectedRevision: task.revision, status: target });
   };
 
+  const dropOnColumn = (col: BoardStatus, e: DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setOverCol(null);
+    setDraggingId(null);
+    const id = Number(e.dataTransfer.getData("text/plain"));
+    const task = byId.get(id);
+    if (task) attemptMove(task, col);
+  };
+
   return (
     <div className="board-kanban" role="list" aria-label="kanban columns">
       {BOARD_STATUSES.map((col) => {
         const colTasks = tasks.filter((task) => task.status === col);
         return (
-          <div className="board-col" key={col} role="listitem">
+          <div
+            className={`board-col ${overCol === col ? "board-col-over" : ""}`}
+            key={col}
+            role="listitem"
+            onDragOver={running ? (e) => { e.preventDefault(); setOverCol(col); } : undefined}
+            onDragLeave={running ? () => setOverCol((c) => (c === col ? null : c)) : undefined}
+            onDrop={running ? (e) => dropOnColumn(col, e) : undefined}
+          >
             <div className="board-col-head">
               <span className={`pill st-${col}`}>{col}</span>
               <span className="sub board-col-count">{colTasks.length}</span>
@@ -420,6 +459,9 @@ export function BoardKanbanView({
                   running={running}
                   actor={actor}
                   reason={reason?.taskId === task.id ? reason.msg : null}
+                  dragging={draggingId === task.id}
+                  onDragStart={(e) => { e.dataTransfer.setData("text/plain", String(task.id)); e.dataTransfer.effectAllowed = "move"; setDraggingId(task.id); }}
+                  onDragEnd={() => { setDraggingId(null); setOverCol(null); }}
                   onMove={attemptMove}
                   onOpen={onOpen}
                 />
@@ -438,6 +480,9 @@ function KanbanCard({
   running,
   actor,
   reason,
+  dragging,
+  onDragStart,
+  onDragEnd,
   onMove,
   onOpen,
 }: {
@@ -446,6 +491,9 @@ function KanbanCard({
   running: boolean;
   actor: BoardActor;
   reason: string | null;
+  dragging: boolean;
+  onDragStart: (e: DragEvent<HTMLDivElement>) => void;
+  onDragEnd: () => void;
   onMove: (task: Task, target: BoardStatus) => void;
   onOpen: (id: number) => void;
 }) {
@@ -458,7 +506,14 @@ function KanbanCard({
   const shownReason = reason ?? lockedReason ?? ceilingReason;
 
   return (
-    <div className="board-card">
+    <div
+      className={`board-card ${dragging ? "board-card-dragging" : ""}`}
+      // Cards are draggable on a running mesh; a forbidden drop is rejected with an inline reason
+      // (the keyboard select is the a11y-equivalent path). Stopped → not draggable (read-only).
+      draggable={running}
+      onDragStart={running ? onDragStart : undefined}
+      onDragEnd={running ? onDragEnd : undefined}
+    >
       <button className="board-card-main" onClick={() => onOpen(task.id)}>
         <span className="board-tid">{taskDisplayId(task.id)}</span>
         <span className="board-title">{task.title}</span>
