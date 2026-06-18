@@ -996,6 +996,7 @@ test("start persists fresh session identity into the sessions store", async () =
     await cp.start();
     expect(await readSessionState(join(root, "run"), "session-capture")).toEqual({
       meshExpectedAlive: true,
+      mailCursors: {},
       agents: {
         router: {
           sessionId: "s-router",
@@ -1023,6 +1024,7 @@ test("start loads a saved session when supported and skips mesh briefing", async
   };
   await writeSessionState(runDir, config.name, {
     meshExpectedAlive: true,
+      mailCursors: {},
     agents: {
       router: { sessionId: "saved-session", cwd: root, harness: "codex", mode: "plan", model: "deepseek-v3", effort: "medium" },
     },
@@ -1101,6 +1103,7 @@ test("load error falls back to a fresh session that receives briefing", async ()
   };
   await writeSessionState(runDir, config.name, {
     meshExpectedAlive: true,
+      mailCursors: {},
     agents: { router: { sessionId: "missing-session", cwd: root, harness: "codex" } },
   });
   let conn: ResumeConnection | undefined;
@@ -1136,6 +1139,7 @@ test("first prompt after load failure fresh-starts and retries the same prompt o
   };
   await writeSessionState(runDir, config.name, {
     meshExpectedAlive: true,
+      mailCursors: {},
     agents: { router: { sessionId: "saved-session", cwd: root, harness: "claude" } },
   });
   const created: ResumeConnection[] = [];

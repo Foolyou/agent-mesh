@@ -15,6 +15,11 @@ export interface AgentSessionRecord {
 export interface MeshSessionState {
   meshExpectedAlive: boolean;
   agents: Record<AgentId, AgentSessionRecord>;
+  /** Per-agent mail cursors for agents that may not yet have a full session record
+   *  (e.g. never-spawned agents that have received push/wake delivery). Written by
+   *  `updateAgentMailCursor` alongside the per-agent record field so a cold-start
+   *  can restore read position without every agent having been spawned first. */
+  mailCursors?: Record<AgentId, string>;
 }
 
 export function sessionStatePath(runDir: string, meshName: string): string {
@@ -40,7 +45,7 @@ function sanitizeAgentRecord(input: unknown): AgentSessionRecord | undefined {
 }
 
 function sanitizeState(input: unknown): MeshSessionState {
-  const raw = input as { meshExpectedAlive?: unknown; agents?: unknown } | undefined;
+  const raw = input as { meshExpectedAlive?: unknown; agents?: unknown; mailCursors?: unknown } | undefined;
   const agents: Record<AgentId, AgentSessionRecord> = {};
   if (raw?.agents && typeof raw.agents === "object") {
     for (const [agentId, value] of Object.entries(raw.agents as Record<string, unknown>)) {
@@ -48,9 +53,16 @@ function sanitizeState(input: unknown): MeshSessionState {
       if (record) agents[agentId] = record;
     }
   }
+  const mailCursors: Record<AgentId, string> = {};
+  if (raw?.mailCursors && typeof raw.mailCursors === "object") {
+    for (const [agentId, value] of Object.entries(raw.mailCursors as Record<string, unknown>)) {
+      if (typeof value === "string") mailCursors[agentId] = value;
+    }
+  }
   return {
     meshExpectedAlive: typeof raw?.meshExpectedAlive === "boolean" ? raw.meshExpectedAlive : true,
     agents,
+    mailCursors,
   };
 }
 
@@ -58,7 +70,7 @@ export async function readSessionState(runDir: string, meshName: string): Promis
   try {
     return sanitizeState(JSON.parse(await readFile(sessionStatePath(runDir, meshName), "utf8")));
   } catch {
-    return { meshExpectedAlive: true, agents: {} };
+    return { meshExpectedAlive: true, agents: {}, mailCursors: {} };
   }
 }
 
@@ -100,6 +112,11 @@ export async function updateAgentMailCursor(
   const state = await readSessionState(runDir, meshName);
   const rec = state.agents[agentId];
   if (rec) rec.mailCursor = mailCursor;
+  // Always write the top-level cursor so a cold-start can restore the read position
+  // even for agents that have never been spawned (no session record yet). A later
+  // spawn-merging `updateAgentSession` will synchronise the per-record field as well.
+  state.mailCursors ??= {};
+  state.mailCursors[agentId] = mailCursor;
   await writeSessionState(runDir, meshName, state);
   return state;
 }

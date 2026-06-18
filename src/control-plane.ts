@@ -1013,8 +1013,16 @@ export class ControlPlane {
       ? await readSessionState(this.sessionRunDir, this.mesh.name)
       : { meshExpectedAlive: true, agents: {} };
     this.mailCursors.clear();
+    // Merge cursors from the top-level mailCursors record (always written by
+    // `updateAgentMailCursor`) and the per-agent record (written by older code
+    // before the top-level field existed). The top-level record is the more
+    // recent source; per-agent cursors fill gaps from backwards-compat reads.
+    // Explicitly order: top-level first (wins on conflict), agent-records fill.
+    for (const [agentId, cursor] of Object.entries(this.sessionState.mailCursors ?? {})) {
+      if (cursor) this.mailCursors.set(agentId, cursor);
+    }
     for (const [agentId, record] of Object.entries(this.sessionState.agents)) {
-      if (record.mailCursor) this.mailCursors.set(agentId, record.mailCursor);
+      if (record.mailCursor && !this.mailCursors.has(agentId)) this.mailCursors.set(agentId, record.mailCursor);
     }
     await this.compactMailboxNow();
     this.recentMail = (await readUnreadAddressedMail({ mailboxPath: this.mailboxPath, cursors: this.mailboxCursorsSnapshot() })).map((event) => ({
@@ -1887,7 +1895,7 @@ export class ControlPlane {
   private mailboxCursorsSnapshot(): Record<string, string | undefined> {
     const cursors: Record<string, string | undefined> = {};
     for (const a of this.mesh.agents) {
-      cursors[a.id] = this.mailCursors.get(a.id) ?? this.sessionState.agents[a.id]?.mailCursor;
+      cursors[a.id] = this.mailCursors.get(a.id) ?? this.sessionState.mailCursors?.[a.id] ?? this.sessionState.agents[a.id]?.mailCursor;
     }
     return cursors;
   }
