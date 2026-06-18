@@ -149,10 +149,11 @@ try {
     if ((await taskStatus(1)) !== "done") throw new Error("keyboard status move did not persist");
   });
 
-  await step("drag a card to another column changes status (HTML5 DnD) and persists", async () => {
+  await step("internal card drag to another column changes status (HTML5 DnD) and persists", async () => {
     // Playwright's locator.dragTo does not reliably trigger HTML5 drag-and-drop, so drive the same
-    // dragstart→dragover→drop handlers deterministically with a shared DataTransfer (the production
-    // code path: onDragStart setData → column onDrop getData → attemptMove → set_task_status).
+    // dragstart→dragover→drop handlers deterministically with a shared DataTransfer. The real
+    // onDragStart writes the private application/x-agent-mesh-board-task-id payload + dragging ref,
+    // and onDrop reads/matches them → attemptMove → set_task_status (we do NOT set the payload here).
     const moved = await page.evaluate(() => {
       const cards = [...document.querySelectorAll(".drail .board-card")];
       const src = cards.find((c) => c.querySelector(".board-tid")?.textContent?.includes("#1")) as HTMLElement | undefined;
@@ -172,6 +173,28 @@ try {
       return b.tasks.find((t: { id: number }) => t.id === 1)?.status === "todo";
     }, { timeout: 6000 });
     await page.waitForSelector('.drail .board-col:has(.board-col-head .pill.st-todo) .board-card:has(.board-tid:has-text("#1"))', { timeout: 6000 });
+  });
+
+  await step("an EXTERNAL plain-text drop is ignored (no board mutation)", async () => {
+    // Security regression guard: a foreign drag carrying only text/plain "1" (no internal dragstart,
+    // so no private payload and no active dragging ref) must NOT be mistaken for a task id and move
+    // #1. #1 is currently in todo; dropping onto the done column must leave it untouched.
+    const before = await taskStatus(1);
+    if (before !== "todo") throw new Error(`precondition: expected #1 in todo, was ${before}`);
+    await page.evaluate(() => {
+      const cols = [...document.querySelectorAll(".drail .board-col")];
+      const done = cols.find((c) => c.querySelector(".board-col-head .pill.st-done")) as HTMLElement | undefined;
+      if (!done) return;
+      const dataTransfer = new DataTransfer();
+      dataTransfer.setData("text/plain", "1"); // external payload, NOT the private board MIME type
+      done.dispatchEvent(new DragEvent("dragover", { bubbles: true, cancelable: true, dataTransfer }));
+      done.dispatchEvent(new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer }));
+    });
+    await sleep(400); // allow any (erroneous) mutation to round-trip before asserting it did NOT happen
+    if ((await taskStatus(1)) !== "todo") throw new Error("external plain-text drop mutated the board");
+    if (!(await page.locator('.drail .board-col:has(.board-col-head .pill.st-todo) .board-card:has(.board-tid:has-text("#1"))').count())) {
+      throw new Error("#1 left the todo column after an external drop");
+    }
   });
 
   await step("?issue=N deep link reopens the detail once the board panel is active", async () => {

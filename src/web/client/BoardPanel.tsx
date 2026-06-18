@@ -18,6 +18,12 @@ import { useI18n } from "./i18n";
  *  optional actor only as a test-injection seam to exercise §4 member gating. */
 const HUMAN_ACTOR: BoardActor = { kind: "human" };
 
+/** Private drag payload type for kanban card drags. A drop is honored ONLY when this exact MIME
+ *  type is present (set solely by an internal card dragstart) AND its id matches the card currently
+ *  being dragged — so an arbitrary external/plain-text drag (e.g. the literal "1") can never be
+ *  mistaken for a task id and mutate the board. */
+const BOARD_DND_MIME = "application/x-agent-mesh-board-task-id";
+
 // ── in-panel route (URL query) ───────────────────────────────────────────────
 export interface BoardRoute {
   view: "list" | "kanban" | "detail";
@@ -410,6 +416,9 @@ export function BoardKanbanView({
   const [reason, setReason] = useState<{ taskId: number; msg: string } | null>(null);
   const [draggingId, setDraggingId] = useState<number | null>(null);
   const [overCol, setOverCol] = useState<BoardStatus | null>(null);
+  // Synchronous mirror of the active internal drag (a ref so a drop can match it without waiting for
+  // a React re-render; the state copy only drives the dragging style).
+  const draggingIdRef = useRef<number | null>(null);
 
   // Single gated move path for the keyboard select AND drag/drop: §4 mirror first, inline reason on
   // rejection (never a silent failure), else commit through the normal CAS-guarded board command.
@@ -428,7 +437,13 @@ export function BoardKanbanView({
     e.preventDefault();
     setOverCol(null);
     setDraggingId(null);
-    const id = Number(e.dataTransfer.getData("text/plain"));
+    const active = draggingIdRef.current;
+    draggingIdRef.current = null;
+    // Only honor a drop that carries OUR private payload (never generic text/plain) AND whose id
+    // matches the card we are actually dragging. Any external/foreign drop is ignored — no mutation.
+    const raw = e.dataTransfer.getData(BOARD_DND_MIME);
+    const id = raw ? Number(raw) : NaN;
+    if (!raw || !Number.isInteger(id) || id !== active) return;
     const task = byId.get(id);
     if (task) attemptMove(task, col);
   };
@@ -460,8 +475,8 @@ export function BoardKanbanView({
                   actor={actor}
                   reason={reason?.taskId === task.id ? reason.msg : null}
                   dragging={draggingId === task.id}
-                  onDragStart={(e) => { e.dataTransfer.setData("text/plain", String(task.id)); e.dataTransfer.effectAllowed = "move"; setDraggingId(task.id); }}
-                  onDragEnd={() => { setDraggingId(null); setOverCol(null); }}
+                  onDragStart={(e) => { e.dataTransfer.setData(BOARD_DND_MIME, String(task.id)); e.dataTransfer.effectAllowed = "move"; draggingIdRef.current = task.id; setDraggingId(task.id); }}
+                  onDragEnd={() => { draggingIdRef.current = null; setDraggingId(null); setOverCol(null); }}
                   onMove={attemptMove}
                   onOpen={onOpen}
                 />
