@@ -5,7 +5,9 @@ import {
   computeCloseReadiness,
   createEmptyBoard,
   epicProgress,
+  normalizeLabelColor,
   taskProgress,
+  LABEL_PALETTE,
   type BoardActor,
   type BoardCommand,
   type BoardContext,
@@ -481,4 +483,90 @@ test("dispatch_task rejects a slug already owned by a DIFFERENT task (slugs are 
   board = ok(board, { type: "dispatch_task", id: 1, expectedRevision: board.tasks.find((t) => t.id === 1)!.revision, assignee: "carol", taskSlug: "dup" }, router);
   expect(board.tasks.find((t) => t.id === 1)!.assignee).toBe("carol");
   expect(board.tasks.find((t) => t.id === 2)!.taskSlug).toBe("uniq");
+});
+
+// ── issue-panel Phase 4: labels ───────────────────────────────────────────────
+
+test("normalizeLabelColor accepts only palette colors (case-insensitive), rejects others", () => {
+  expect(normalizeLabelColor(LABEL_PALETTE[0])).toBe(LABEL_PALETTE[0]);
+  expect(normalizeLabelColor(LABEL_PALETTE[0].toUpperCase())).toBe(LABEL_PALETTE[0]);
+  expect(normalizeLabelColor("#123456")).toBeNull(); // valid hex but not in palette
+  expect(normalizeLabelColor("red")).toBeNull();
+  expect(normalizeLabelColor(123)).toBeNull();
+});
+
+test("create_label is router/operator-only; validates name + palette color; allocates label-N", () => {
+  let board = createEmptyBoard("m");
+  const denied = applyBoardCommand(board, { type: "create_label", name: "bug", color: LABEL_PALETTE[0] }, ctx(board, alice));
+  expect(denied.ok).toBe(false);
+  if (!denied.ok) expect(denied.code).toBe("forbidden");
+  const noName = applyBoardCommand(board, { type: "create_label", name: "  ", color: LABEL_PALETTE[0] }, ctx(board, router));
+  expect(noName.ok).toBe(false);
+  if (!noName.ok) expect(noName.code).toBe("invalid");
+  const badColor = applyBoardCommand(board, { type: "create_label", name: "bug", color: "#123456" }, ctx(board, router));
+  expect(badColor.ok).toBe(false);
+  if (!badColor.ok) expect(badColor.code).toBe("invalid");
+
+  board = ok(board, { type: "create_label", name: "bug", color: LABEL_PALETTE[0] }, router); // label-1
+  board = ok(board, { type: "create_label", name: "feat", color: LABEL_PALETTE[8] }, router); // label-2
+  expect(board.labels).toEqual([
+    { id: "label-1", name: "bug", color: LABEL_PALETTE[0] },
+    { id: "label-2", name: "feat", color: LABEL_PALETTE[8] },
+  ]);
+  expect(board.labelSeq).toBe(2);
+});
+
+test("update_label renames/recolors (privileged); rejects bad color; not_found for unknown id", () => {
+  let board = ok(createEmptyBoard("m"), { type: "create_label", name: "bug", color: LABEL_PALETTE[0] }, router);
+  board = ok(board, { type: "update_label", id: "label-1", name: "defect", color: LABEL_PALETTE[8] }, router);
+  expect(board.labels![0]).toEqual({ id: "label-1", name: "defect", color: LABEL_PALETTE[8] });
+  const member = applyBoardCommand(board, { type: "update_label", id: "label-1", name: "x" }, ctx(board, alice));
+  expect(member.ok).toBe(false);
+  if (!member.ok) expect(member.code).toBe("forbidden");
+  const badColor = applyBoardCommand(board, { type: "update_label", id: "label-1", color: "#000000" }, ctx(board, router));
+  expect(badColor.ok).toBe(false);
+  if (!badColor.ok) expect(badColor.code).toBe("invalid");
+  const missing = applyBoardCommand(board, { type: "update_label", id: "label-9", name: "x" }, ctx(board, router));
+  expect(missing.ok).toBe(false);
+  if (!missing.ok) expect(missing.code).toBe("not_found");
+});
+
+test("set_task_labels: assignee or privileged; non-owner forbidden; dedupes/orders/drops-unknown/caps", () => {
+  let board = ok(createEmptyBoard("m"), { type: "create_label", name: "a", color: LABEL_PALETTE[0] }, router); // label-1
+  board = ok(board, { type: "create_label", name: "b", color: LABEL_PALETTE[1] }, router); // label-2
+  board = ok(board, { type: "create_task", title: "t", assignee: "alice" }, router); // #1 → alice
+  const rev = () => board.tasks.find((t) => t.id === 1)!.revision;
+
+  // non-owner member forbidden
+  const denied = applyBoardCommand(board, { type: "set_task_labels", id: 1, expectedRevision: rev(), labelIds: ["label-1"] }, ctx(board, bob));
+  expect(denied.ok).toBe(false);
+  if (!denied.ok) expect(denied.code).toBe("forbidden");
+
+  // assignee may set; submitted order preserved among known, deduped, unknown dropped
+  board = ok(board, { type: "set_task_labels", id: 1, expectedRevision: rev(), labelIds: ["label-2", "label-1", "label-2", "label-9"] }, alice);
+  expect(board.tasks[0].labelIds).toEqual(["label-2", "label-1"]);
+
+  // privileged (router) may also set; clearing works
+  board = ok(board, { type: "set_task_labels", id: 1, expectedRevision: rev(), labelIds: [] }, router);
+  expect(board.tasks[0].labelIds).toEqual([]);
+});
+
+test("delete_label cascades: removed from board AND stripped from every task that carried it", () => {
+  let board = ok(createEmptyBoard("m"), { type: "create_label", name: "a", color: LABEL_PALETTE[0] }, router); // label-1
+  board = ok(board, { type: "create_label", name: "b", color: LABEL_PALETTE[1] }, router); // label-2
+  board = ok(board, { type: "create_task", title: "t1", assignee: "alice" }, router); // #1
+  board = ok(board, { type: "create_task", title: "t2", assignee: "alice" }, router); // #2
+  board = ok(board, { type: "set_task_labels", id: 1, expectedRevision: board.tasks.find((t) => t.id === 1)!.revision, labelIds: ["label-1", "label-2"] }, alice);
+  board = ok(board, { type: "set_task_labels", id: 2, expectedRevision: board.tasks.find((t) => t.id === 2)!.revision, labelIds: ["label-1"] }, alice);
+  const rev1 = board.tasks.find((t) => t.id === 1)!.revision;
+
+  board = ok(board, { type: "delete_label", id: "label-1" }, router);
+  expect(board.labels!.map((l) => l.id)).toEqual(["label-2"]);
+  expect(board.tasks.find((t) => t.id === 1)!.labelIds).toEqual(["label-2"]); // label-1 stripped, order kept
+  expect(board.tasks.find((t) => t.id === 2)!.labelIds).toEqual([]); // label-1 stripped
+  expect(board.tasks.find((t) => t.id === 1)!.revision).toBe(rev1 + 1); // affected task bumped
+
+  const missing = applyBoardCommand(board, { type: "delete_label", id: "label-1" }, ctx(board, router));
+  expect(missing.ok).toBe(false);
+  if (!missing.ok) expect(missing.code).toBe("not_found");
 });

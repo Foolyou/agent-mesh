@@ -471,3 +471,39 @@ test("duplicate slug dispatch is rejected; unique slug refs resolve to the right
     await rm(h.root, { recursive: true, force: true });
   }
 });
+
+// ── issue-panel Phase 4: labels (real ControlPlane path) ───────────────────────
+
+test("label CRUD is router/operator-only; set_task_labels honors privileged|assignee; snapshots emit", async () => {
+  const h = await setup();
+  try {
+    // create label (router) → emits a snapshot carrying the label
+    const created = await h.handlers.applyBoard(router, { type: "create_label", name: "bug", color: "#fde68a" }, h.cp.getBoard().revision);
+    expect(created).not.toContain("error:");
+    expect(h.cp.getBoard().labels?.[0]).toMatchObject({ id: "label-1", name: "bug", color: "#fde68a" });
+    expect(snapshots(h.events).at(-1)?.board.labels?.length).toBe(1);
+
+    // member cannot create / update / delete labels
+    const memberCreate = await h.handlers.applyBoard(alice, { type: "create_label", name: "x", color: "#fde68a" }, h.cp.getBoard().revision);
+    expect(memberCreate).toContain("error:");
+    const badColor = await h.handlers.applyBoard(router, { type: "create_label", name: "y", color: "#101010" }, h.cp.getBoard().revision);
+    expect(badColor).toContain("error:"); // non-palette color rejected
+
+    // a task assigned to alice; alice (assignee) may set its labels, bob may not
+    await h.handlers.applyBoard(router, { type: "create_task", title: "t", assignee: "alice" }, h.cp.getBoard().revision);
+    const t = () => h.cp.getBoard().tasks.find((x) => x.id === 1)!;
+    const bobDenied = await h.handlers.applyBoard(bob, { type: "set_task_labels", id: 1, expectedRevision: t().revision, labelIds: ["label-1"] }, h.cp.getBoard().revision);
+    expect(bobDenied).toContain("error:");
+    const aliceOk = await h.handlers.applyBoard(alice, { type: "set_task_labels", id: 1, expectedRevision: t().revision, labelIds: ["label-1", "ghost"] }, h.cp.getBoard().revision);
+    expect(aliceOk).not.toContain("error:");
+    expect(t().labelIds).toEqual(["label-1"]); // unknown dropped
+
+    // delete_label (router) cascades the id off the task
+    await h.handlers.applyBoard(router, { type: "delete_label", id: "label-1" }, h.cp.getBoard().revision);
+    expect(h.cp.getBoard().labels).toEqual([]);
+    expect(t().labelIds).toEqual([]);
+  } finally {
+    await h.cp.stop();
+    await rm(h.root, { recursive: true, force: true });
+  }
+});

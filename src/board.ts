@@ -20,6 +20,31 @@ export const AGENT_SETTABLE_STATUSES: readonly BoardStatus[] = ["todo", "in_prog
 export const BOARD_STATUSES: readonly BoardStatus[] = ["todo", "in_progress", "in_review", "done", "cancelled"];
 export const BOARD_PRIORITIES: readonly BoardPriority[] = ["low", "normal", "high", "urgent"];
 
+/** Curated, accessibility-safe label colors (issue-panel Phase 4). Each entry, paired with a
+ *  black OR white foreground chosen by luminance (the UI's labelForeground), clears WCAG AA
+ *  (≥4.5:1) — so a label chip's text is legible in every theme. The reducer rejects any color
+ *  outside this set; the UI offers only these swatches. Lowercased #rrggbb. */
+export const LABEL_PALETTE: readonly string[] = [
+  "#fde68a", "#ffd6a5", "#fecaca", "#e9d5ff", "#bae6fd", "#b7e4c7", "#d9f99d", "#a5f3fc",
+  "#1e3a8a", "#6d28d9", "#b91c1c", "#047857", "#92400e", "#374151",
+];
+/** Max labels a single task may carry (set_task_labels caps to this). */
+export const MAX_TASK_LABELS = 20;
+
+/** Validate + canonicalize a label color: returns the lowercased palette hex, or null when the
+ *  input is not one of the accessible palette colors. */
+export function normalizeLabelColor(input: unknown): string | null {
+  if (typeof input !== "string") return null;
+  const hex = input.trim().toLowerCase();
+  return LABEL_PALETTE.includes(hex) ? hex : null;
+}
+
+export interface BoardLabel {
+  id: string; // "label-N"
+  name: string;
+  color: string; // one of LABEL_PALETTE (lowercased #rrggbb); enforced by the reducer
+}
+
 export type EpicId = string; // "epic-N"
 
 export interface BoardComment {
@@ -78,7 +103,7 @@ export interface Task {
   branchName?: string; // defaults to `task/${taskSlug}`, confirmed by a branch_created event
   dispatch?: { assignee: string; mailEventId?: string; threadKey: string; at: string; mailFailed?: boolean };
   lifecycleEvents?: BoardLifecycleEvent[]; // append-only audit driving auto status reflux
-  labelIds?: string[]; // label ids (label CRUD itself is a later phase)
+  labelIds?: string[]; // ids into BoardState.labels (Phase 4); sanitizer drops dangling refs
   closeReady?: boolean; // set by an integration_ready lifecycle event; advisory close hint
 }
 
@@ -103,6 +128,11 @@ export interface BoardState {
   taskSeq: number;
   epics: Epic[];
   tasks: Task[];
+  // Phase 4 labels. Optional on the TYPE so unrelated BoardState literals/fixtures keep compiling
+  // (same convention as the Phase 0 Task fields), but createEmptyBoard + the sanitizer + the reducer
+  // ALWAYS populate them — a live or loaded board is never missing them; reads stay defensive (?? []).
+  labelSeq?: number; // id allocator for labels (label-N)
+  labels?: BoardLabel[];
 }
 
 /** The full board payload carried by the `board_snapshot` event and `t:"board"` WS message.
@@ -149,7 +179,13 @@ export type BoardCommand =
   // in ONE reducer command (the authoritative hand-off is a single board mutation/snapshot, never a
   // chained assign→linkage→lifecycle). The mail outcome is a SEPARATE post-send `set_dispatch_mail`.
   | { type: "dispatch_task"; id: number; expectedRevision: number; assignee: string; taskSlug: string; branchName?: string; threadKey?: string }
-  | { type: "set_dispatch_mail"; taskId: number; expectedRevision: number; mailEventId?: string; mailFailed?: boolean };
+  | { type: "set_dispatch_mail"; taskId: number; expectedRevision: number; mailEventId?: string; mailFailed?: boolean }
+  // issue-panel Phase 4: labels. Label CRUD is STRUCTURAL (whole-board CAS via expectedBoardRevision,
+  // like epic CRUD — labels carry no per-entity revision); set_task_labels is an ENTITY edit (task CAS).
+  | { type: "create_label"; name: string; color: string }
+  | { type: "update_label"; id: string; name?: string; color?: string }
+  | { type: "delete_label"; id: string }
+  | { type: "set_task_labels"; id: number; expectedRevision: number; labelIds: string[] };
 
 export type BoardErrorCode = "not_found" | "conflict" | "forbidden" | "invalid";
 
@@ -162,15 +198,16 @@ export type BoardCommandResult =
  *  this. A command can mutate more than one entity (e.g. delete_epic orphans many tasks),
  *  so do not reconstruct external updates from BoardChange. */
 export interface BoardChange {
-  entity: "epic" | "task" | "subtask";
+  entity: "epic" | "task" | "subtask" | "label";
   epicId?: EpicId;
   taskId?: number;
   subtaskId?: string;
+  labelId?: string;
   deleted?: boolean;
 }
 
 export function createEmptyBoard(mesh: string): BoardState {
-  return { mesh, revision: 0, epicSeq: 0, taskSeq: 0, epics: [], tasks: [] };
+  return { mesh, revision: 0, epicSeq: 0, taskSeq: 0, labelSeq: 0, epics: [], tasks: [], labels: [] };
 }
 
 export function epicDisplayId(epic: Pick<Epic, "seq">): string {
@@ -225,7 +262,7 @@ function ownsItem(actor: BoardActor, item: { assignee?: string; createdBy: strin
 
 /** STRUCTURAL commands gate on the whole-board revision (id allocation / removal / epic CRUD);
  *  every other command is an ENTITY edit gated only on its entity revision. */
-const STRUCTURAL_COMMANDS = new Set<BoardCommand["type"]>(["create_epic", "update_epic", "delete_epic", "create_task"]);
+const STRUCTURAL_COMMANDS = new Set<BoardCommand["type"]>(["create_epic", "update_epic", "delete_epic", "create_task", "create_label", "update_label", "delete_label"]);
 
 /** Lifecycle status rank: auto-reflux only advances FORWARD and never reaches a terminal status. */
 const STATUS_RANK: Record<BoardStatus, number> = { todo: 0, in_progress: 1, in_review: 2, done: 3, cancelled: 3 };
@@ -650,6 +687,71 @@ export function applyBoardCommand(state: BoardState, cmd: BoardCommand, ctx: Boa
       }
       if (cmd.mailFailed === true) dispatch.mailFailed = true;
       const updated: Task = { ...task, dispatch, revision: task.revision + 1, updatedAt: now };
+      return ok(replaceTask(state, updated), { entity: "task", taskId: task.id });
+    }
+
+    // ── issue-panel Phase 4: labels ──────────────────────────────────────────
+    case "create_label": {
+      if (!isPrivileged(actor)) return err("forbidden", "only a router or operator may create labels");
+      const name = cleanText(cmd.name, 60);
+      if (!name) return err("invalid", "label name is required");
+      const color = normalizeLabelColor(cmd.color);
+      if (!color) return err("invalid", "label color must be one of the accessible palette colors");
+      const seq = (state.labelSeq ?? 0) + 1;
+      const label: BoardLabel = { id: `label-${seq}`, name, color };
+      const next = { ...state, revision: state.revision + 1, labelSeq: seq, labels: [...(state.labels ?? []), label] };
+      return ok(next, { entity: "label", labelId: label.id });
+    }
+
+    case "update_label": {
+      if (!isPrivileged(actor)) return err("forbidden", "only a router or operator may edit labels");
+      const label = (state.labels ?? []).find((l) => l.id === cmd.id);
+      if (!label) return err("not_found", `no label "${cmd.id}"`);
+      const name = cmd.name !== undefined ? cleanText(cmd.name, 60) : label.name;
+      if (!name) return err("invalid", "label name is required");
+      let color = label.color;
+      if (cmd.color !== undefined) {
+        const c = normalizeLabelColor(cmd.color);
+        if (!c) return err("invalid", "label color must be one of the accessible palette colors");
+        color = c;
+      }
+      const updated: BoardLabel = { ...label, name, color };
+      const next = { ...state, revision: state.revision + 1, labels: (state.labels ?? []).map((l) => (l.id === label.id ? updated : l)) };
+      return ok(next, { entity: "label", labelId: label.id });
+    }
+
+    case "delete_label": {
+      if (!isPrivileged(actor)) return err("forbidden", "only a router or operator may delete labels");
+      const label = (state.labels ?? []).find((l) => l.id === cmd.id);
+      if (!label) return err("not_found", `no label "${cmd.id}"`);
+      // Cascade: strip the deleted id from every task that carries it (bump those tasks).
+      const tasks = state.tasks.map((t) =>
+        (t.labelIds ?? []).includes(label.id)
+          ? { ...t, labelIds: (t.labelIds ?? []).filter((id) => id !== label.id), revision: t.revision + 1, updatedAt: now }
+          : t,
+      );
+      const next = { ...state, revision: state.revision + 1, labels: (state.labels ?? []).filter((l) => l.id !== label.id), tasks };
+      return ok(next, { entity: "label", labelId: label.id, deleted: true });
+    }
+
+    case "set_task_labels": {
+      const task = state.tasks.find((t) => t.id === cmd.id);
+      if (!task) return err("not_found", `no task #${cmd.id}`);
+      if (!isPrivileged(actor) && !ownsItem(actor, task)) return err("forbidden", "only the assignee of this task (or a router/operator) may set its labels");
+      const conflict = casCheck(task.revision, cmd.expectedRevision);
+      if (conflict) return conflict;
+      // Preserve the submitted order among KNOWN labels; dedupe; drop unknown ids; cap.
+      const known = new Set((state.labels ?? []).map((l) => l.id));
+      const seen = new Set<string>();
+      const labelIds: string[] = [];
+      for (const id of Array.isArray(cmd.labelIds) ? cmd.labelIds : []) {
+        if (typeof id === "string" && known.has(id) && !seen.has(id)) {
+          seen.add(id);
+          labelIds.push(id);
+          if (labelIds.length >= MAX_TASK_LABELS) break;
+        }
+      }
+      const updated: Task = { ...task, labelIds, revision: task.revision + 1, updatedAt: now };
       return ok(replaceTask(state, updated), { entity: "task", taskId: task.id });
     }
 
