@@ -1713,7 +1713,7 @@ export class ControlPlane {
       // Manual stop is sticky for peer mail: the durable mail remains readable, but
       // only an explicit wake or operator prompt restarts the agent.
     } else if (target?.lazy && this.mesh.status(to) !== "ready") this.wakeLazy(to, ctx.agentId, body, event.id, meta);
-    else this.wake(to, ctx.agentId, body, event.id, meta);
+    else this.wake(to, ctx.agentId, body, event.id, meta).catch((err) => this.log(`wake(${to}) failed: ${String(err)}`));
     const notes: string[] = [];
     if (opts.replyTo !== undefined && !this.mailBySeq.has(opts.replyTo)) {
       notes.push(`note: reply_to #${opts.replyTo} does not match any known mail; delivered anyway without a quote.`);
@@ -1779,18 +1779,26 @@ export class ControlPlane {
         this.rememberMailSeq(seq, { from: to, to: from, body });
         this.pushRecentMail({ id: event.id, from: to, to: from, body, ts: event.ts });
         this.emit({ kind: "mail", id: event.id, from: to, to: from, body, ts: event.ts });
-        this.wake(from, to, body, event.id, { seq });
+        this.wake(from, to, body, event.id, { seq }).catch((err) => this.log(`wake(${from}) failed: ${String(err)}`));
       })
       .catch((err) => this.log(`spawn failed receipt ${to}->${from} failed: ${String(err)}`));
   }
 
-  private wake(to: AgentId, from: AgentId, body: string, mailId?: string, meta: MailDeliveryMeta = {}): void {
+  private async wake(to: AgentId, from: AgentId, body: string, mailId?: string, meta: MailDeliveryMeta = {}): Promise<void> {
     if (mailId && this.consumedMailIds.get(to)?.has(mailId)) return;
     const mail =
       `${this.renderMailHeader(from, meta)}: ${body}` +
       this.renderReplyQuote(meta.replyTo) +
       `\n\n${MAIL_WAKE_GUIDANCE}`;
-    this.prompt(to, mail, [], this.mailTurn(to, from, body, mailId, meta.seq)).catch((err) => this.log(`wake(${to}) failed: ${String(err)}`));
+    try {
+      await this.prompt(to, mail, [], this.mailTurn(to, from, body, mailId, meta.seq));
+      if (mailId && this.sessionRunDir) {
+        this.mailCursors.set(to, mailId);
+        await mkdir(this.sessionRunDir, { recursive: true, mode: 0o700 }).catch(() => {}); await updateAgentMailCursor(this.sessionRunDir, this.mesh.name, to, mailId);
+      }
+    } catch (err) {
+      this.log(`wake(${to}) failed: ${String(err)}`);
+    }
   }
 
   private async handleSteerMail(ctx: MeshToolContext, to: AgentId, body: string): Promise<string> {
@@ -1864,7 +1872,7 @@ export class ControlPlane {
     if (this.sessionRunDir) {
       // Crash safety is at-least-once: if the daemon is killed before this
       // atomic cursor write, this same returned batch can be delivered again.
-      this.sessionState = await updateAgentMailCursor(this.sessionRunDir, this.mesh.name, ctx.agentId, nextCursor);
+      this.sessionState = await mkdir(this.sessionRunDir, { recursive: true, mode: 0o700 }).catch(() => {}); await updateAgentMailCursor(this.sessionRunDir, this.mesh.name, ctx.agentId, nextCursor);
     }
     this.mailCursors.set(ctx.agentId, nextCursor);
     const readIds = new Set(mail.map((m) => m.id));
