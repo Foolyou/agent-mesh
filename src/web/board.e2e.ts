@@ -109,6 +109,31 @@ try {
     if (!/#2/.test(depText)) throw new Error(`deps meta lost #2: ${depText}`);
   });
 
+  await step("dispatch state renders in the task detail (dispatch line + lifecycle pill + mail-failed badge)", async () => {
+    // FakeManager runs the REAL board reducer, so a single dispatch_task command (NOT the funnel)
+    // seeds the panel with dispatch + lifecycle data to render. Read current revisions, then POST;
+    // the panel re-renders from board_snapshot → WS → store.
+    const getBoard = async () => (await fetch(`${BASE}/api/meshes/demo/board`)).json();
+    const post = (command: unknown, ebr: number) =>
+      fetch(`${BASE}/api/meshes/demo/board`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ command, expectedBoardRevision: ebr }) });
+
+    const b1 = await getBoard();
+    const rev1 = b1.tasks.find((x: { id: number }) => x.id === 1).revision;
+    const r1 = await post({ type: "dispatch_task", id: 1, expectedRevision: rev1, assignee: "codex-1", taskSlug: "wire-it" }, b1.revision);
+    if (!r1.ok) throw new Error(`dispatch_task POST failed: ${r1.status}`);
+
+    // ensure #1 is expanded WITHOUT toggling a row that may already be open from an earlier step
+    if (!(await taskRow(1).locator(".board-task-body").count())) await taskRow(1).locator(".board-twirl").click();
+    await page.waitForSelector('.drail .board-task .board-dispatch:has-text("@codex-1")', { timeout: 6000 });
+    await page.waitForSelector('.drail .board-task .board-lc-pill:has-text("dispatched")', { timeout: 6000 });
+
+    const b2 = await getBoard();
+    const rev2 = b2.tasks.find((x: { id: number }) => x.id === 1).revision;
+    const r2 = await post({ type: "set_dispatch_mail", taskId: 1, expectedRevision: rev2, mailFailed: true }, b2.revision);
+    if (!r2.ok) throw new Error(`set_dispatch_mail POST failed: ${r2.status}`);
+    await page.waitForSelector(".drail .board-task .board-mailfail", { timeout: 6000 });
+  });
+
   await step("stop the mesh, reload, and the persisted board renders read-only", async () => {
     await page.locator('.detail-head .btn:has-text("stop mesh")').click();
     // ConfirmButton: a second click confirms.
