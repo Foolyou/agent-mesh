@@ -16,7 +16,7 @@ afterEach(async () => {
 test("writes sessions atomically with private run directory and file permissions", async () => {
   await writeSessionState(dir, "dev", {
     meshExpectedAlive: true,
-    agents: {
+    mailCursors: {}, agents: {
       Executor: {
         sessionId: "sess-1",
         cwd: "/tmp/worktree",
@@ -33,7 +33,7 @@ test("writes sessions atomically with private run directory and file permissions
   expect((await stat(sessionStatePath(dir, "dev"))).mode & 0o777).toBe(0o600);
   expect(await readSessionState(dir, "dev")).toEqual({
     meshExpectedAlive: true,
-    agents: {
+    mailCursors: {}, agents: {
       Executor: {
         sessionId: "sess-1",
         cwd: "/tmp/worktree",
@@ -65,7 +65,7 @@ test("sanitizes session state to identity fields only and ignores old malformed 
     sessionStatePath(dir, "dev"),
     JSON.stringify({
       meshExpectedAlive: false,
-      agents: {
+      mailCursors: {}, agents: {
         old: { sessionId: "missing-cwd" },
         Executor: {
           sessionId: "sess-1",
@@ -86,7 +86,7 @@ test("sanitizes session state to identity fields only and ignores old malformed 
 
   expect(await readSessionState(dir, "dev")).toEqual({
     meshExpectedAlive: false,
-    agents: {
+    mailCursors: {}, agents: {
       Executor: {
         sessionId: "sess-1",
         cwd: "/tmp/worktree",
@@ -103,7 +103,7 @@ test("sanitizes session state to identity fields only and ignores old malformed 
 test("clearAgentSession blanks only the target's sessionId, keeps other fields and mail cursor", async () => {
   await writeSessionState(dir, "m", {
     meshExpectedAlive: true,
-    agents: {
+    mailCursors: {}, agents: {
       a: { sessionId: "sid-a", cwd: "/x", harness: "codex", mode: "build", model: "kimi-k2", effort: "high", mailCursor: "mail-a" },
       b: { sessionId: "sid-b", cwd: "/y", harness: "claude", mailCursor: "mail-b" },
     },
@@ -118,7 +118,7 @@ test("clearAgentSession blanks only the target's sessionId, keeps other fields a
 });
 
 test("clearAgentSession is a no-op when the agent has no record", async () => {
-  await writeSessionState(dir, "m", { meshExpectedAlive: true, agents: {} });
+  await writeSessionState(dir, "m", { meshExpectedAlive: true, mailCursors: {}, agents: {} });
   const state = await clearAgentSession(dir, "m", "ghost");
   expect(state.agents.ghost).toBeUndefined();
 });
@@ -126,7 +126,7 @@ test("clearAgentSession is a no-op when the agent has no record", async () => {
 test("clearAllAgentSessions blanks every sessionId, preserves meshExpectedAlive and mail cursors", async () => {
   await writeSessionState(dir, "m", {
     meshExpectedAlive: false,
-    agents: {
+    mailCursors: {}, agents: {
       a: { sessionId: "sid-a", cwd: "/x", harness: "codex", mailCursor: "mail-a" },
       b: { sessionId: "sid-b", cwd: "/y", harness: "claude", mailCursor: "mail-b" },
     },
@@ -142,7 +142,7 @@ test("clearAllAgentSessions blanks every sessionId, preserves meshExpectedAlive 
 test("updates only an agent mail cursor without changing its ACP session metadata", async () => {
   await writeSessionState(dir, "m", {
     meshExpectedAlive: true,
-    agents: {
+    mailCursors: {}, agents: {
       a: { sessionId: "sid-a", cwd: "/x", harness: "codex", model: "kimi-k2", mode: "build", effort: "high" },
       b: { sessionId: "sid-b", cwd: "/y", harness: "claude", mailCursor: "old-b" },
     },
@@ -164,7 +164,7 @@ test("first agent update defaults meshExpectedAlive to true", async () => {
 
   expect(await readSessionState(dir, "dev")).toEqual({
     meshExpectedAlive: true,
-    agents: {
+    mailCursors: {}, agents: {
       Executor: { sessionId: "sess-1", cwd: "/tmp/worktree", harness: "kimi" },
     },
   });
