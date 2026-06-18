@@ -176,16 +176,20 @@ test("fatal exit codes 2 and 3 do NOT reconnect (no tight loop)", async () => {
   }
 });
 
-test("teardown: stop() SIGTERMs, awaits exit, and prevents any reconnect", async () => {
+test("teardown: stop() closes stdin + SIGTERMs, awaits exit, and prevents any reconnect", async () => {
   const { spawn, children } = fakeSpawn();
   const timers = manualTimers();
   const c = new LarkConsumer({ spawn, onMessage: () => {}, ...timers });
   c.start();
   children[0].emitStderr(READY);
 
+  // stdin must NOT be closed while the consumer is running normally.
+  expect(children[0].stdinClosedCount).toBe(0);
+
   const stopped = c.stop();
+  expect(children[0].stdinClosedCount).toBe(1); // graceful EOF on teardown
   expect(children[0].terminateCount).toBe(1); // exactly one SIGTERM so far
-  children[0].exit(null); // child honors SIGTERM
+  children[0].exit(null); // child honors the graceful stop
   await stopped;
 
   // the exit handler must NOT schedule a reconnect after stop()
@@ -207,9 +211,12 @@ test("teardown grace: a stuck child gets a SECOND SIGTERM, never SIGKILL", async
   const stopped = c.stop();
   expect(children[0].terminateCount).toBe(1);
 
-  // child ignores the first SIGTERM; grace window elapses => one more SIGTERM (no SIGKILL path exists)
+  // child ignores the first signals; grace window elapses => one more stdin-close + SIGTERM
+  // (no SIGKILL path exists).
+  expect(children[0].stdinClosedCount).toBe(1);
   timers.advance(5000);
   expect(children[0].terminateCount).toBe(2);
+  expect(children[0].stdinClosedCount).toBe(2);
 
   // FakeChild has no kill(9) capability at all — the absence proves teardown can't SIGKILL.
   expect(typeof (children[0] as any).kill).toBe("undefined");

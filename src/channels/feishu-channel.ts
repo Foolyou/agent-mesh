@@ -101,6 +101,11 @@ export class FeishuChannel implements Channel {
 
   // ── inbound: Feishu -> router ───────────────────────────────────────────────
   private onInbound(m: InboundMsg): void {
+    // Bound-chat gate FIRST: this channel serves exactly ONE conversation. The bot may sit in
+    // other chats, so any event from a different chat is silently dropped — before dedup (so the
+    // bounded dedup capacity is reserved for the bound chat) and before any prompt/hint/send.
+    // Silent on purpose; never log message content.
+    if (m.chatId !== this.cfg.chatId) return;
     if (this.dedup.check(m.eventId)) return; // bounded dedup: drop redeliveries
     if (!senderAllowed(this.cfg, m.senderId)) return; // whitelist gate
     if (!passesAtGate(m, this.cfg.botName)) return; // @-gate (group: scope contract + mention)

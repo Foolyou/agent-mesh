@@ -195,8 +195,9 @@ export class LarkConsumer {
     return Math.round(exp + exp * 0.2 * this.random());
   }
 
-  /** Stop the consumer: cancel any pending reconnect, SIGTERM a live child, and await its exit.
-   *  After the grace window a SECOND SIGTERM is sent — never SIGKILL. Once called, no reconnect. */
+  /** Stop the consumer: cancel any pending reconnect, gracefully close the child's stdin (the
+   *  documented EOF shutdown signal) AND SIGTERM it, then await its exit. After the grace window
+   *  stdin is re-closed and a SECOND SIGTERM is sent — never SIGKILL. Once called, no reconnect. */
   async stop(): Promise<void> {
     this.stopping = true;
     if (this.cancelBackoff) {
@@ -205,6 +206,10 @@ export class LarkConsumer {
     }
     const handle = this.handle;
     if (!handle) return;
+    // Close stdin (graceful EOF shutdown for an unbounded run) AND send SIGTERM. Either alone is
+    // sufficient; together they give the child the cleanest exit. stdin is NEVER closed while the
+    // consumer is running — only here, during teardown.
+    handle.closeStdin();
     handle.terminate(); // SIGTERM
     await this.awaitExitWithGrace(handle);
   }
@@ -214,8 +219,10 @@ export class LarkConsumer {
       let settled = false;
       const cancel = this.setTimer(() => {
         if (settled) return;
-        // Grace elapsed and the child is still alive: re-send SIGTERM ONCE more. Never SIGKILL.
-        this.log(`lark consumer: teardown grace elapsed; re-sending SIGTERM`);
+        // Grace elapsed and the child is still alive: re-close stdin + re-send SIGTERM ONCE more.
+        // Never SIGKILL.
+        this.log(`lark consumer: teardown grace elapsed; re-closing stdin + re-sending SIGTERM`);
+        handle.closeStdin();
         handle.terminate();
       }, this.teardownGraceMs);
       handle.exited.then(() => {

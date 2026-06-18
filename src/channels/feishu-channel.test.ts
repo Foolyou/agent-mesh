@@ -128,6 +128,32 @@ test("inbound: non-whitelisted sender is ignored", async () => {
   expect(s.mesh.prompts).toHaveLength(0);
 });
 
+test("inbound: a p2p message from a different chat is silently ignored", async () => {
+  const s = setup(); // bound chatId = oc_1
+  s.push(inbound({ chatId: "oc_other", text: "hi from elsewhere" }));
+  await Promise.resolve();
+  expect(s.mesh.prompts).toHaveLength(0);
+  expect(s.sent).toHaveLength(0); // no prompt AND no outbound (not even a hint)
+});
+
+test("inbound: a group message from a different chat is silently ignored", async () => {
+  const s = setup();
+  s.push(inbound({ chatId: "oc_other", chatType: "group", text: "@MeshBot do it" }));
+  await Promise.resolve();
+  expect(s.mesh.prompts).toHaveLength(0);
+  expect(s.sent).toHaveLength(0);
+});
+
+test("inbound: a wrong-chat event does not consume dedup capacity for the bound chat", async () => {
+  const s = setup();
+  // The same event_id arrives first from the wrong chat, then for the bound chat: the bound one
+  // must still be processed because the wrong-chat one was dropped BEFORE dedup.
+  s.push(inbound({ eventId: "shared", chatId: "oc_other", text: "noise" }));
+  s.push(inbound({ eventId: "shared", chatId: "oc_1", text: "real" }));
+  await Promise.resolve();
+  expect(s.mesh.prompts).toEqual([{ name: "feishu-poc", text: "[飞书消息] real" }]);
+});
+
 test("inbound: group message without @bot is ignored; with @bot it is stripped and fed", async () => {
   const s = setup();
   s.push(inbound({ eventId: "g1", chatType: "group", text: "just chatting" }));
