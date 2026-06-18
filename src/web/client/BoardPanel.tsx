@@ -405,6 +405,18 @@ export function BoardDetailView({
         {task.branchName && <span> · <code>{task.branchName}</code></span>}
       </div>
 
+      {/* dispatch status (who it was handed to + mail outcome) */}
+      {task.dispatch && (
+        <div className="board-dispatch sub" title="dispatch">
+          ⇒ @{task.dispatch.assignee}
+          {task.dispatch.mailFailed ? (
+            <span className="board-mailfail" title="dispatch mail failed — retry"> · ✉⚠ {t("board.mailFailed")}</span>
+          ) : (
+            task.dispatch.mailEventId && <span title="dispatch mail sent"> · ✉ {t("board.mailSent")}</span>
+          )}
+        </div>
+      )}
+
       {task.description && (
         <div className="board-detail-desc">
           <Markdown text={task.description} />

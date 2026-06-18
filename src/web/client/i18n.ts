@@ -167,6 +167,8 @@ const DICT: Record<string, Entry> = {
   "board.openSubtasks": ["open subtasks", "未完成子任务"],
   "board.blockingDeps": ["incomplete dependencies", "未完成依赖"],
   "board.needsIntegration": ["no integration_ready signal yet", "尚无 integration_ready 信号"],
+  "board.mailFailed": ["mail failed", "邮件失败"],
+  "board.mailSent": ["mail sent", "邮件已发"],
   "tabs.allMembers": ["all {n} members", "全部 {n} 个成员"],
 
   // ── empties ──

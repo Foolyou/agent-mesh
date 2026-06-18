@@ -206,6 +206,18 @@ test("linked-mail timeline resolves ids against the buffer and degrades to a bar
   expect(html).toContain("router → alice"); // resolved evt-2
   expect(html).toContain("dispatch brief body");
   expect(html).toContain("evt-1"); // dispatch mail id not in buffer → shown raw
+  expect(html).toContain("@alice"); // dispatch-status line (handed to)
+  expect(html).toContain("mail sent"); // dispatch.mailEventId set, not failed
+});
+
+test("detail dispatch-status line surfaces a failed dispatch mail", () => {
+  let s = sampleBoard();
+  const rev = () => s.tasks.find((t) => t.id === 1)!.revision;
+  const r = applyBoardCommand(s, { type: "set_dispatch_mail", taskId: 1, expectedRevision: rev(), mailFailed: true }, ctx(s));
+  if (r.ok) s = r.state;
+  const html = renderDetail(s, true, noopStore);
+  expect(html).toContain("board-mailfail");
+  expect(html).toContain("mail failed");
 });
 
 test("close gate surfaces soft-acceptance reasons and never appears terminal-closed", () => {
