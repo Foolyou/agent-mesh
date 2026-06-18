@@ -2,12 +2,15 @@
 //
 // Factory entry point used by the backend main process (src/main.ts). Returns a started-able
 // Channel when `<root>/channels/feishu.json` is present + enabled, or undefined otherwise (the
-// caller then leaves the channel off). NOT YET WIRED into main.ts — the inbound consumer and
-// outbound relay are assembled in the following commits; this commit only validates config +
-// gating so the wiring change stays small later.
+// caller then leaves the channel off). Wires the REAL lark-cli consumer + sender; the relay
+// logic lives in FeishuChannel. NOT yet referenced by main.ts — that wiring is the final commit.
 
 import type { Channel, MeshGateway } from "./types";
 import { loadFeishuConfig } from "./config";
+import { FeishuChannel } from "./feishu-channel";
+import { LarkConsumer } from "./consumer";
+import { LarkSender } from "./sender";
+import { realSpawnConsumer, realSend } from "./process";
 
 export interface BuildFeishuChannelOpts {
   root: string;
@@ -19,15 +22,14 @@ export function buildFeishuChannel(mesh: MeshGateway, opts: BuildFeishuChannelOp
   const log = opts.log ?? ((m) => console.log(m));
   const cfg = loadFeishuConfig(opts.root, log);
   if (!cfg) return undefined;
-  // Inbound consumer + outbound relay land in the next commits. Until then start()/stop() are
-  // inert, so an early wire-in is safe but performs no I/O.
-  void mesh;
-  return {
-    start() {
-      log(`feishu channel: configured for mesh "${cfg.mesh}" → chat ${cfg.chatId} (consumer/relay pending)`);
-    },
-    stop() {},
-  };
+  const sender = new LarkSender({ chatId: cfg.chatId, send: realSend(), minIntervalMs: cfg.outbound.minIntervalMs, log });
+  return new FeishuChannel({
+    mesh,
+    config: cfg,
+    sender,
+    log,
+    makeConsumer: (onMessage) => new LarkConsumer({ onMessage, spawn: realSpawnConsumer(), log }),
+  });
 }
 
 export { loadFeishuConfig, feishuConfigPath, normalizeFeishuConfig } from "./config";
