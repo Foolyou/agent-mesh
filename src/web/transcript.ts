@@ -195,6 +195,7 @@ export function reduceTranscript(
 
   if (k === "agent_message_chunk" || k === "agent_thought_chunk" || k === "user_message_chunk") {
     const text = textOf(update.content);
+    const mid = update.messageId; // ACP messageId (present on 0.44.0+ claude-agent-acp)
     const role: "user" | "agent" = k === "user_message_chunk" ? "user" : "agent";
     const wantThought = k === "agent_thought_chunk";
     const open = last();
@@ -202,16 +203,41 @@ export function reduceTranscript(
       !!open &&
       (open.kind === "message" || open.kind === "thought") &&
       !open.complete &&
-      (wantThought ? open.kind === "thought" : open.kind === "message" && open.role === role);
+      (wantThought ? open.kind === "thought" : open.kind === "message" && open.role === role) &&
+      // When both sides carry a messageId they must match; otherwise
+      // different-messageId chunks would coalesce into the wrong item.
+      (!mid || !(open as any).messageId || (open as any).messageId === mid);
     if (sameOpen && open) {
-      const merged = { ...(open as any), text: (open as any).text + text } as TranscriptItem;
+      // Dedupe against harness full-message resends: the Claude ACP harness (0.44.0+)
+      // streams text/thinking deltas live, then may re-send the consolidated full block
+      // with the same messageId as a fallback when its own dedupe guard misses.
+      // The ACP update carries no flag distinguishing a delta from a fallback full block,
+      // so we infer by shape: same-messageId + incoming equals accumulated → duplicate
+      // resend (drop); same-messageId + incoming is a strict superset of accumulated →
+      // partial-stream-then-full → replace.
+      const openText = (open as any).text as string;
+      if (typeof mid === "string" && mid.length > 0 && (open as any).messageId === mid) {
+        if (text && text === openText) {
+          // Same messageId, exact same accumulated text — duplicate full-message resend.
+          return { items: next, ops: [] };
+        }
+        if (text && text.length > openText.length && text.startsWith(openText)) {
+          // Same messageId, text is a strict superset — partial deltas then full block re-sent.
+          const merged = { ...(open as any), text } as TranscriptItem;
+          next = [...next.slice(0, -1), merged];
+          ops.push({ op: "patch", id: open.id, patch: { text } });
+          return { items: next, ops };
+        }
+      }
+      const merged = { ...(open as any), text: openText + text } as TranscriptItem;
+      if (mid !== undefined) (merged as any).messageId = mid;
       next = [...next.slice(0, -1), merged];
       ops.push({ op: "patch", id: open.id, patch: { text: (merged as any).text } });
     } else {
       const id = nid(now);
       const item: TranscriptItem = wantThought
-        ? { id, kind: "thought", text, ts: now, complete: role === "user" }
-        : { id, kind: "message", role, text, ts: now, complete: role === "user", images: update.images };
+        ? { id, kind: "thought", text, messageId: mid, ts: now, complete: role === "user" }
+        : { id, kind: "message", role, text, messageId: mid, ts: now, complete: role === "user", images: update.images };
       next = [...next, item];
       ops.push({ op: "upsert", item });
     }

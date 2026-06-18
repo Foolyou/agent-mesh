@@ -82,8 +82,8 @@ export interface PlanEntry {
 }
 
 export type TranscriptItem =
-  | { id: string; kind: "message"; role: "user" | "agent"; text: string; ts: string; complete: boolean; images?: PromptImageRef[] }
-  | { id: string; kind: "thought"; text: string; ts: string; complete: boolean }
+  | { id: string; kind: "message"; role: "user" | "agent"; text: string; messageId?: string; ts: string; complete: boolean; images?: PromptImageRef[] }
+  | { id: string; kind: "thought"; text: string; messageId?: string; ts: string; complete: boolean }
   | {
       id: string;
       kind: "tool_call";
