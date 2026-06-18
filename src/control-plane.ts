@@ -18,7 +18,7 @@ import { readSessionState, setMeshExpectedAlive, updateAgentMailCursor, updateAg
 import { now, type AgentActivity, type AgentConfig, type AgentHealthSignalKind, type AgentId, type AgentTurn, type MeshConfig, type MeshEdge, type MeshEvent, type PromptImageRef, type SessionMode, type SessionModel, type ThinkingEffort, type TurnHealthReason } from "./acp/types";
 import { DEFAULT_AUTO_COMPACT_SETTINGS, MIN_AUTO_COMPACT_CONTEXT_WINDOW, evaluateCompactThreshold, parseCompactThreshold } from "./auto-compact";
 import { resolveContextWindow, lookupModelContextWindow, harnessDefaultContextWindow, parseClaudeModelId, type ContextWindowState } from "./acp/usage-compat";
-import { applyBoardCommand, computeBoardWarnings, createEmptyBoard, type BoardActor, type BoardCommand, type BoardCommandResult, type BoardState } from "./board";
+import { applyBoardCommand, computeBoardWarnings, createEmptyBoard, type BoardActor, type BoardCommand, type BoardCommandResult, type BoardState, type LifecycleKind } from "./board";
 import { boardsDirFor, readBoard, writeBoard } from "./board-store";
 
 const COMPACT_COOLDOWN_MS = 180_000;
@@ -1046,6 +1046,7 @@ export class ControlPlane {
       publishAttachment: (ctx, path, opts) => this.handlePublishAttachment(ctx, path, opts),
       boardList: (ctx) => this.handleBoardList(ctx),
       applyBoard: (ctx, command, expectedBoardRevision) => this.handleApplyBoard(ctx, command, expectedBoardRevision),
+      dispatchBoard: (ctx, args) => this.dispatchTask(ctx, args),
     });
 
     if (!this.sessionState.meshExpectedAlive) {
@@ -1629,26 +1630,44 @@ export class ControlPlane {
   }
 
   private async handleSendMail(ctx: MeshToolContext, to: AgentId, body: string, opts: SendMailOptions = {}): Promise<string> {
-    if (!this.mesh.agent(to)) return `error: no such agent "${to}" in this mesh`;
+    return (await this.deliverMail(ctx, to, body, opts)).text;
+  }
+
+  /** The mail-delivery core. Returns the human-facing status text plus the durable event id and a
+   *  `failed` flag, so internal callers (the dispatch funnel) can record the mail outcome on the
+   *  board. A guard failure or a thrown transport error yields `failed:true` and an `error:` text
+   *  WITHOUT throwing — the caller's board state (already committed) is never rolled back. */
+  private async deliverMail(
+    ctx: MeshToolContext,
+    to: AgentId,
+    body: string,
+    opts: SendMailOptions & { skipLifecycleMarker?: boolean } = {},
+  ): Promise<{ text: string; mailEventId?: string; failed: boolean }> {
+    if (!this.mesh.agent(to)) return { text: `error: no such agent "${to}" in this mesh`, failed: true };
     if (!this.mesh.canMail(ctx.agentId, to)) {
-      return `error: you (${ctx.agentId}) are not allowed to mail ${to}`;
+      return { text: `error: you (${ctx.agentId}) are not allowed to mail ${to}`, failed: true };
     }
     this.noteOutboundMailForActiveTurn(ctx.agentId);
     const seq = ++this.mailSeq;
-    // Link the mail to a board task when `task` is a "#N"/"N" reference to an existing task.
+    // Link the mail to a board task: `task` accepts both "#N"/"N" (canonical) and a taskSlug.
     const boardTaskId = parseBoardTaskRef(opts.task, this.board);
     const meta: MailDeliveryMeta = { seq, replyTo: opts.replyTo, task: opts.task, boardTaskId };
-    const event = await sendMail({
-      mailboxPath: this.mailboxPath,
-      mesh: this.mesh.name,
-      from: ctx.agentId,
-      to,
-      body,
-      seq,
-      replyTo: opts.replyTo,
-      task: opts.task,
-      boardTaskId,
-    });
+    let event: Awaited<ReturnType<typeof sendMail>>;
+    try {
+      event = await sendMail({
+        mailboxPath: this.mailboxPath,
+        mesh: this.mesh.name,
+        from: ctx.agentId,
+        to,
+        body,
+        seq,
+        replyTo: opts.replyTo,
+        task: opts.task,
+        boardTaskId,
+      });
+    } catch (err) {
+      return { text: `error: failed to deliver mail to ${to}: ${String(err)}`, failed: true };
+    }
     this.agentLastOutboundMail.set(ctx.agentId, Date.now());
     this.pushRecentMail({ id: event.id, from: ctx.agentId, to, body, ts: event.ts });
     this.emit({ kind: "mail", id: event.id, from: ctx.agentId, to, body, ts: event.ts });
@@ -1661,6 +1680,23 @@ export class ControlPlane {
           { kind: "system" },
           this.board.revision,
         );
+      }
+      // Lifecycle-marker path: the assignee signals progress via the existing mail channel (no daemon
+      // git-watching). A structured `lifecycle` field wins; a leading `[REVIEW]` token is the prose
+      // fallback. Permission is reducer-enforced — a non-assignee marker is a silent no-op (the mail
+      // is still delivered). Skipped for the router's own dispatch brief (not a lifecycle signal).
+      if (!opts.skipLifecycleMarker) {
+        const kind = resolveLifecycleMarker(opts.lifecycle, body);
+        if (kind) {
+          const task = this.board.tasks.find((t) => t.id === boardTaskId);
+          if (task) {
+            await this.runBoardCommand(
+              { type: "record_lifecycle_event", taskId: boardTaskId, expectedRevision: task.revision, kind, threadKey: task.taskSlug ?? opts.task },
+              this.boardActor(ctx),
+              this.board.revision,
+            );
+          }
+        }
       }
     }
     // Wake the recipient asynchronously (fire-and-forget; sender's tool returns now).
@@ -1679,7 +1715,42 @@ export class ControlPlane {
     }
     // Remember AFTER the reply_to check so a mail cannot satisfy its own reference.
     this.rememberMailSeq(seq, { from: ctx.agentId, to, body });
-    return [`queued for ${to} as #${seq}; wake scheduled`, ...notes].join("\n");
+    return { text: [`queued for ${to} as #${seq}; wake scheduled`, ...notes].join("\n"), mailEventId: event.id, failed: false };
+  }
+
+  /** Router-only atomic dispatch funnel (§5.3). Three runBoardCommand writes, each a single
+   *  snapshot: (1) the authoritative `dispatch_task` (assign + linkage + `dispatched` + in_progress)
+   *  commits + persists FIRST; (2) the brief is mailed to the assignee (fire-and-forget, marker scan
+   *  skipped); (3) `set_dispatch_mail` backfills the mail outcome. A mail failure leaves the
+   *  assignment + in_progress intact and surfaces dispatch.mailFailed — never a rollback (§5.5). */
+  async dispatchTask(
+    ctx: MeshToolContext,
+    args: { taskId: number; assignee: string; slug: string; branchName?: string; brief?: string; expectedRevision: number; expectedBoardRevision: number },
+  ): Promise<string> {
+    const { taskId, assignee, slug, branchName, brief, expectedRevision, expectedBoardRevision } = args;
+    const dispatchRes = await this.runBoardCommand(
+      { type: "dispatch_task", id: taskId, expectedRevision, assignee, taskSlug: slug, branchName },
+      this.boardActor(ctx),
+      expectedBoardRevision,
+    );
+    if (!dispatchRes.ok) return `error: ${dispatchRes.error}`;
+    const refN = `#${taskId}`;
+    const briefText = brief?.trim();
+    const mailBody = briefText ? `[DISPATCH ${refN} ${slug}]\n${briefText}` : `[DISPATCH ${refN} ${slug}]`;
+    const delivery = await this.deliverMail(ctx, assignee, mailBody, { task: refN, skipLifecycleMarker: true });
+    const task = this.board.tasks.find((t) => t.id === taskId);
+    if (task) {
+      await this.runBoardCommand(
+        delivery.failed
+          ? { type: "set_dispatch_mail", taskId, expectedRevision: task.revision, mailFailed: true }
+          : { type: "set_dispatch_mail", taskId, expectedRevision: task.revision, mailEventId: delivery.mailEventId },
+        { kind: "system" },
+        this.board.revision,
+      );
+    }
+    return delivery.failed
+      ? `dispatched ${refN} to ${assignee} (in_progress) — MAIL FAILED, dispatch.mailFailed set: ${delivery.text}`
+      : `dispatched ${refN} to ${assignee} (in_progress); ${delivery.text}`;
   }
 
   private wakeLazy(to: AgentId, from: AgentId, body: string, mailId?: string, meta: MailDeliveryMeta = {}): void {
@@ -2070,13 +2141,37 @@ export class ControlPlane {
 /** Parse a send_mail `task` field into a board task id, but only when it is a "#N"/"N"
  *  reference to a task that exists on the board. Arbitrary task slugs (e.g. feature names)
  *  return undefined so mail threading stays backward-compatible. */
+/** Resolve a send_mail `task` ref to a board task id (§5.4). `#N`/`N` resolves by board id
+ *  (canonical, preferred when present); any other non-empty string resolves by `Task.taskSlug`.
+ *  This lets the mesh's existing `send_mail(task:"<slug>")` habit auto-link replies to a
+ *  dispatched issue. On a slug collision the lowest id wins (deterministic). */
 function parseBoardTaskRef(task: string | undefined, board: BoardState): number | undefined {
   if (typeof task !== "string") return undefined;
-  const m = /^#?(\d+)$/.exec(task.trim());
-  if (!m) return undefined;
-  const n = Number(m[1]);
-  if (!Number.isInteger(n) || n <= 0) return undefined;
-  return board.tasks.some((t) => t.id === n) ? n : undefined;
+  const trimmed = task.trim();
+  if (!trimmed) return undefined;
+  const m = /^#?(\d+)$/.exec(trimmed);
+  if (m) {
+    const n = Number(m[1]);
+    if (!Number.isInteger(n) || n <= 0) return undefined;
+    return board.tasks.some((t) => t.id === n) ? n : undefined;
+  }
+  const matches = board.tasks.filter((t) => t.taskSlug === trimmed).map((t) => t.id);
+  return matches.length ? Math.min(...matches) : undefined;
+}
+
+/** Lifecycle kinds an assignee may signal over the mail channel. Privileged kinds
+ *  (dispatched/integration_ready/reopened) are NEVER driven by a mail marker — they go through
+ *  board_dispatch / the integration path. */
+const MAIL_MARKER_KINDS: ReadonlySet<LifecycleKind> = new Set<LifecycleKind>(["branch_created", "accepted", "review_requested"]);
+
+/** Resolve a lifecycle signal off a mail. A structured `lifecycle` field wins (restricted to the
+ *  assignee-signalable kinds); otherwise a LEADING `[REVIEW]` token maps to `review_requested`.
+ *  Leading-token-only to avoid false positives from quoted/embedded text (§7); `[DONE]` is
+ *  intentionally inert (too broad in this mesh — done/cancelled stay privileged-close). */
+function resolveLifecycleMarker(field: LifecycleKind | undefined, body: string): LifecycleKind | undefined {
+  if (field && MAIL_MARKER_KINDS.has(field)) return field;
+  if (/^\s*\[REVIEW\]/i.test(body)) return "review_requested";
+  return undefined;
 }
 
 function deriveConfigOption(session: unknown, category: "mode" | "model" | "effort"): { configId: string; current: string; available: Array<{ id: string; name: string; description?: string }> } | undefined {

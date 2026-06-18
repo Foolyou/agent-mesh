@@ -36,6 +36,7 @@ class FakeServer implements MeshServicesServer {
 const MESH = "board-cp";
 const router: MeshToolContext = { agentId: "router", role: "router" };
 const alice: MeshToolContext = { agentId: "alice", role: "member" };
+const bob: MeshToolContext = { agentId: "bob", role: "member" };
 
 function config(): MeshConfig {
   return {
@@ -43,8 +44,15 @@ function config(): MeshConfig {
     agents: [
       { id: "router", harness: "claude", project: ".", role: "router", lazy: true },
       { id: "alice", harness: "claude", project: ".", role: "member", lazy: true },
+      { id: "bob", harness: "claude", project: ".", role: "member", lazy: true },
     ],
-    edges: [],
+    // Dispatch mails router→member; lifecycle markers ride member→router replies.
+    edges: [
+      { from: "router", to: "alice" },
+      { from: "router", to: "bob" },
+      { from: "alice", to: "router" },
+      { from: "bob", to: "router" },
+    ],
   };
 }
 
@@ -224,5 +232,214 @@ test("an existing board file is loaded into memory on start", async () => {
     await cp.stop();
   } finally {
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+// ── issue-panel Phase 1: dispatch + lifecycle reflux (real ControlPlane path) ──
+
+function mails(events: MeshEvent[]): Extract<MeshEvent, { kind: "mail" }>[] {
+  return events.filter((e): e is Extract<MeshEvent, { kind: "mail" }> => e.kind === "mail");
+}
+const task1 = (h: Harness) => h.cp.getBoard().tasks.find((t) => t.id === 1)!;
+
+test("board_dispatch: atomic hand-off → in_progress + assignee + exactly one mail + linkage", async () => {
+  const h = await setup();
+  try {
+    await h.handlers.applyBoard(router, { type: "create_task", title: "do it" }, 0);
+    const before = h.events.length;
+    const board = h.cp.getBoard();
+    const res = await h.handlers.dispatchBoard(router, {
+      taskId: 1, assignee: "alice", slug: "feat-x", brief: "build the thing",
+      expectedRevision: board.tasks[0].revision, expectedBoardRevision: board.revision,
+    });
+    expect(res).toContain("dispatched #1 to alice");
+
+    const t = task1(h);
+    expect(t.status).toBe("in_progress");
+    expect(t.assignee).toBe("alice");
+    expect(t.taskSlug).toBe("feat-x");
+    expect(t.branchName).toBe("task/feat-x");
+    expect(t.dispatch).toMatchObject({ assignee: "alice", threadKey: "feat-x" });
+    expect(t.dispatch?.mailEventId).toBeTruthy();
+    expect(t.dispatch?.mailFailed).toBe(false);
+
+    // exactly ONE mail, carrying the ref + slug + brief, and the link is recorded both ways.
+    const sent = mails(h.events.slice(before)).filter((m) => m.to === "alice");
+    expect(sent).toHaveLength(1);
+    expect(sent[0].body).toContain("#1");
+    expect(sent[0].body).toContain("feat-x");
+    expect(sent[0].body).toContain("build the thing");
+    expect(sent[0].id).toBeTruthy();
+    expect(t.mailEventIds).toContain(sent[0].id!);
+
+    // AUTHORITATIVE dispatch is a SINGLE atomic snapshot: the first new snapshot already carries
+    // assignee + slug + branch + dispatched/in_progress together — never a chained assign→linkage→
+    // lifecycle sequence of partial-state snapshots.
+    const newSnaps = snapshots(h.events.slice(before));
+    const first = newSnaps[0]?.board.tasks.find((x) => x.id === 1)!;
+    expect(first).toMatchObject({ status: "in_progress", assignee: "alice", taskSlug: "feat-x", branchName: "task/feat-x" });
+    expect(first.lifecycleEvents?.some((e) => e.kind === "dispatched")).toBe(true);
+  } finally {
+    await h.cp.stop();
+    await rm(h.root, { recursive: true, force: true });
+  }
+});
+
+test("review_requested via the board_lifecycle tool moves the assignee's card to in_review", async () => {
+  const h = await setup();
+  try {
+    await h.handlers.applyBoard(router, { type: "create_task", title: "t" }, 0);
+    const b = h.cp.getBoard();
+    await h.handlers.dispatchBoard(router, { taskId: 1, assignee: "alice", slug: "s", expectedRevision: b.tasks[0].revision, expectedBoardRevision: b.revision });
+    expect(task1(h).status).toBe("in_progress");
+    // assignee alice signals review via the tool (applyBoard → record_lifecycle_event)
+    const okRes = await h.handlers.applyBoard(alice, { type: "record_lifecycle_event", taskId: 1, expectedRevision: task1(h).revision, kind: "review_requested", threadKey: "s" }, h.cp.getBoard().revision);
+    expect(okRes).not.toContain("error:");
+    expect(task1(h).status).toBe("in_review");
+  } finally {
+    await h.cp.stop();
+    await rm(h.root, { recursive: true, force: true });
+  }
+});
+
+test("review_requested via a mail marker (structured field AND leading [REVIEW]) → in_review", async () => {
+  const h = await setup();
+  try {
+    await h.handlers.applyBoard(router, { type: "create_task", title: "t" }, 0);
+    let b = h.cp.getBoard();
+    await h.handlers.dispatchBoard(router, { taskId: 1, assignee: "alice", slug: "feat-y", expectedRevision: b.tasks[0].revision, expectedBoardRevision: b.revision });
+
+    // structured field on a slug-referenced mail moves the card (sender = assignee alice).
+    const before = h.events.length;
+    await h.handlers.sendMail(alice, "router", "[DONE] handing off", { task: "feat-y", lifecycle: "review_requested" });
+    expect(task1(h).status).toBe("in_review");
+    expect(mails(h.events.slice(before)).some((m) => m.from === "alice" && m.to === "router")).toBe(true); // mail still delivered
+
+    // the prose fallback path on a FRESH task: a leading [REVIEW] token maps to review_requested.
+    await h.handlers.applyBoard(router, { type: "create_task", title: "t2" }, h.cp.getBoard().revision);
+    b = h.cp.getBoard();
+    const t2 = b.tasks.find((t) => t.id === 2)!;
+    await h.handlers.dispatchBoard(router, { taskId: 2, assignee: "alice", slug: "feat-y2", expectedRevision: t2.revision, expectedBoardRevision: b.revision });
+    expect(h.cp.getBoard().tasks.find((t) => t.id === 2)!.status).toBe("in_progress");
+    await h.handlers.sendMail(alice, "router", "[REVIEW] take a look", { task: "#2" });
+    expect(h.cp.getBoard().tasks.find((t) => t.id === 2)!.status).toBe("in_review");
+  } finally {
+    await h.cp.stop();
+    await rm(h.root, { recursive: true, force: true });
+  }
+});
+
+test("a non-assignee mail marker is a silent no-op, but the mail is still delivered", async () => {
+  const h = await setup();
+  try {
+    await h.handlers.applyBoard(router, { type: "create_task", title: "t" }, 0);
+    let b = h.cp.getBoard();
+    await h.handlers.dispatchBoard(router, { taskId: 1, assignee: "alice", slug: "feat-z", expectedRevision: b.tasks[0].revision, expectedBoardRevision: b.revision });
+    expect(task1(h).status).toBe("in_progress");
+
+    const before = h.events.length;
+    // bob is NOT the assignee → reducer rejects the lifecycle event; status unchanged, mail delivered.
+    await h.handlers.sendMail(bob, "router", "[REVIEW] poking", { task: "feat-z" });
+    expect(task1(h).status).toBe("in_progress");
+    expect(mails(h.events.slice(before)).some((m) => m.from === "bob")).toBe(true);
+  } finally {
+    await h.cp.stop();
+    await rm(h.root, { recursive: true, force: true });
+  }
+});
+
+test("integration_ready sets closeReady but keeps status in_review (no auto-done)", async () => {
+  const h = await setup();
+  try {
+    await h.handlers.applyBoard(router, { type: "create_task", title: "t" }, 0);
+    let b = h.cp.getBoard();
+    await h.handlers.dispatchBoard(router, { taskId: 1, assignee: "alice", slug: "s", expectedRevision: b.tasks[0].revision, expectedBoardRevision: b.revision });
+    await h.handlers.applyBoard(alice, { type: "record_lifecycle_event", taskId: 1, expectedRevision: task1(h).revision, kind: "review_requested", threadKey: "s" }, h.cp.getBoard().revision);
+    expect(task1(h).status).toBe("in_review");
+
+    await h.handlers.applyBoard(router, { type: "record_lifecycle_event", taskId: 1, expectedRevision: task1(h).revision, kind: "integration_ready" }, h.cp.getBoard().revision);
+    expect(task1(h).closeReady).toBe(true);
+    expect(task1(h).status).toBe("in_review"); // NOT auto-advanced to done
+  } finally {
+    await h.cp.stop();
+    await rm(h.root, { recursive: true, force: true });
+  }
+});
+
+test("done/cancelled stay privileged-close: a member is forbidden, the router may close", async () => {
+  const h = await setup();
+  try {
+    await h.handlers.applyBoard(router, { type: "create_task", title: "t" }, 0);
+    let b = h.cp.getBoard();
+    await h.handlers.dispatchBoard(router, { taskId: 1, assignee: "alice", slug: "s", expectedRevision: b.tasks[0].revision, expectedBoardRevision: b.revision });
+    const denied = await h.handlers.applyBoard(alice, { type: "set_task_status", id: 1, expectedRevision: task1(h).revision, status: "done" }, h.cp.getBoard().revision);
+    expect(denied).toContain("error:");
+    expect(task1(h).status).toBe("in_progress");
+    const closed = await h.handlers.applyBoard(router, { type: "set_task_status", id: 1, expectedRevision: task1(h).revision, status: "done" }, h.cp.getBoard().revision);
+    expect(closed).not.toContain("error:");
+    expect(task1(h).status).toBe("done");
+  } finally {
+    await h.cp.stop();
+    await rm(h.root, { recursive: true, force: true });
+  }
+});
+
+test("a member can neither board_dispatch nor mark integration_ready", async () => {
+  const h = await setup();
+  try {
+    await h.handlers.applyBoard(router, { type: "create_task", title: "t", assignee: "alice" }, 0);
+    const dispatchDenied = await h.handlers.dispatchBoard(alice, { taskId: 1, assignee: "alice", slug: "s", expectedRevision: task1(h).revision, expectedBoardRevision: h.cp.getBoard().revision });
+    expect(dispatchDenied).toContain("error:");
+    const intDenied = await h.handlers.applyBoard(alice, { type: "record_lifecycle_event", taskId: 1, expectedRevision: task1(h).revision, kind: "integration_ready" }, h.cp.getBoard().revision);
+    expect(intDenied).toContain("error:");
+    expect(task1(h).closeReady).toBeFalsy();
+  } finally {
+    await h.cp.stop();
+    await rm(h.root, { recursive: true, force: true });
+  }
+});
+
+test("mail failure leaves assignment + in_progress intact and surfaces dispatch.mailFailed", async () => {
+  const h = await setup();
+  try {
+    await h.handlers.applyBoard(router, { type: "create_task", title: "t" }, 0);
+    const b = h.cp.getBoard();
+    // dispatch to an agent the router cannot reach (no such agent) → mail fails AFTER the board commit.
+    const res = await h.handlers.dispatchBoard(router, { taskId: 1, assignee: "ghost", slug: "s", expectedRevision: b.tasks[0].revision, expectedBoardRevision: b.revision });
+    expect(res).toContain("MAIL FAILED");
+    const t = task1(h);
+    expect(t.assignee).toBe("ghost");
+    expect(t.status).toBe("in_progress"); // not rolled back
+    expect(t.dispatch?.mailFailed).toBe(true);
+    expect(t.dispatch?.mailEventId).toBeUndefined();
+  } finally {
+    await h.cp.stop();
+    await rm(h.root, { recursive: true, force: true });
+  }
+});
+
+test("idempotent re-dispatch / re-assign: no double transition, no status rollback", async () => {
+  const h = await setup();
+  try {
+    await h.handlers.applyBoard(router, { type: "create_task", title: "t" }, 0);
+    let b = h.cp.getBoard();
+    await h.handlers.dispatchBoard(router, { taskId: 1, assignee: "alice", slug: "s", expectedRevision: b.tasks[0].revision, expectedBoardRevision: b.revision });
+    await h.handlers.applyBoard(alice, { type: "record_lifecycle_event", taskId: 1, expectedRevision: task1(h).revision, kind: "review_requested", threadKey: "s" }, h.cp.getBoard().revision);
+    expect(task1(h).status).toBe("in_review");
+
+    // re-dispatch to the SAME assignee+slug: no second `dispatched`, status stays in_review.
+    const beforeEvents = task1(h).lifecycleEvents?.filter((e) => e.kind === "dispatched").length;
+    await h.handlers.dispatchBoard(router, { taskId: 1, assignee: "alice", slug: "s", expectedRevision: task1(h).revision, expectedBoardRevision: h.cp.getBoard().revision });
+    expect(task1(h).lifecycleEvents?.filter((e) => e.kind === "dispatched").length).toBe(beforeEvents);
+    expect(task1(h).status).toBe("in_review");
+
+    // re-assign to bob: assignee flips, a fresh dispatched is appended, status does NOT regress.
+    await h.handlers.dispatchBoard(router, { taskId: 1, assignee: "bob", slug: "s", expectedRevision: task1(h).revision, expectedBoardRevision: h.cp.getBoard().revision });
+    expect(task1(h).assignee).toBe("bob");
+    expect(task1(h).status).toBe("in_review");
+    expect(task1(h).lifecycleEvents?.filter((e) => e.kind === "dispatched").length).toBe((beforeEvents ?? 0) + 1);
+  } finally {
+    await h.cp.stop();
+    await rm(h.root, { recursive: true, force: true });
   }
 });

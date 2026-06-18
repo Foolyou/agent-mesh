@@ -6,7 +6,7 @@ import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import type { AgentId, AgentRole } from "../acp/types";
-import type { BoardCommand, BoardStatus, BoardPriority } from "../board";
+import type { BoardCommand, BoardStatus, BoardPriority, LifecycleKind } from "../board";
 
 export interface MeshToolContext {
   agentId: AgentId;
@@ -16,6 +16,10 @@ export interface MeshToolContext {
 export interface SendMailOptions {
   replyTo?: number;
   task?: string;
+  /** Structured lifecycle signal for the mail-marker path (§5.1): when `task` resolves to a board
+   *  issue, an assignee-signalable kind (branch_created/accepted/review_requested) moves the card.
+   *  The control-plane reducer enforces permission; a non-assignee signal is a silent no-op. */
+  lifecycle?: LifecycleKind;
 }
 
 export interface PublishAttachmentOptions {
@@ -37,6 +41,12 @@ export interface MeshServicesHandlers {
   /** Apply a board mutation. The control-plane derives the actor from ctx.role (auth recheck)
    *  and runs it through the board reducer; `expectedBoardRevision` is the board-level CAS. */
   applyBoard(ctx: MeshToolContext, command: BoardCommand, expectedBoardRevision: number): Promise<string> | string;
+  /** Router-only atomic dispatch funnel: assign + linkage + `dispatched`→in_progress, then mail the
+   *  brief to the assignee and backfill the mail outcome. One deliberate call hands a task off. */
+  dispatchBoard(
+    ctx: MeshToolContext,
+    args: { taskId: number; assignee: string; slug: string; branchName?: string; brief?: string; expectedRevision: number; expectedBoardRevision: number },
+  ): Promise<string> | string;
 }
 
 export interface MeshServicesServer {
@@ -61,6 +71,11 @@ type GuardedRun = (agentId: string, tool: string, run: () => Promise<string> | s
 
 const BOARD_STATUS = z.enum(["todo", "in_progress", "in_review", "done", "cancelled"]);
 const BOARD_PRIORITY = z.enum(["low", "normal", "high", "urgent"]);
+// Lifecycle kinds an assignee may signal over send_mail (privileged kinds go through board_dispatch
+// / the integration path, never a mail field).
+const BOARD_MAIL_LIFECYCLE = z.enum(["branch_created", "accepted", "review_requested"]);
+// Full lifecycle vocabulary the board_lifecycle tool accepts; the reducer gates privileged kinds.
+const BOARD_LIFECYCLE_KIND = z.enum(["dispatched", "branch_created", "accepted", "review_requested", "integration_ready", "reopened"]);
 const EBR = "the board revision you last saw (from board_list); the write is rejected if the board changed since";
 const ER = "the entity's revision you last saw (from board_list); the write is rejected if it changed since";
 
@@ -149,7 +164,56 @@ function registerBoardTools(
     },
   );
 
+  // board_lifecycle is available to ALL roles; the reducer enforces permission — an assignee may
+  // signal branch_created/accepted (→ in_progress) and review_requested (→ in_review), while
+  // dispatched/integration_ready/reopened are router/operator-only. A non-assignee member is rejected.
+  server.registerTool(
+    "board_lifecycle",
+    {
+      description:
+        "Signal a task lifecycle event so its status auto-reflows. As the task's assignee you may emit " +
+        "'branch_created'/'accepted' (→ in_progress) or 'review_requested' (→ in_review). " +
+        "'dispatched'/'integration_ready'/'reopened' are router/operator-only. Status only moves forward " +
+        "(never regresses, never to done/cancelled — those need an explicit close).",
+      inputSchema: {
+        taskId: z.number().int().positive(),
+        kind: BOARD_LIFECYCLE_KIND,
+        threadKey: z.string().optional().describe("idempotency/thread key (defaults to the task slug); re-emitting the same (task, kind, threadKey) is a no-op"),
+        expectedRevision: z.number().int().describe(`${ER} (of the task)`),
+        expectedBoardRevision: z.number().int().describe(EBR),
+      },
+    },
+    ({ taskId, kind, threadKey, expectedRevision, expectedBoardRevision }) =>
+      guarded(agentId, "board_lifecycle", () =>
+        handlers.applyBoard(ctx, { type: "record_lifecycle_event", taskId, expectedRevision, kind, threadKey }, expectedBoardRevision),
+      ),
+  );
+
   if (role !== "router") return;
+
+  server.registerTool(
+    "board_dispatch",
+    {
+      description:
+        "Dispatch a task to an assignee in ONE deliberate action (router/operator only): assigns the task, " +
+        "records its slug + branch (task/<slug>) + dispatch, mails the assignee the brief, and moves the card " +
+        "to in_progress. Use board_assign for a bare re-assign without a hand-off. If the mail fails the " +
+        "assignment + in_progress still stand and dispatch.mailFailed is surfaced.",
+      inputSchema: {
+        taskId: z.number().int().positive(),
+        assignee: z.string().describe("agent id to hand the task to"),
+        slug: z.string().describe("task slug; the branch is task/<slug>"),
+        branchName: z.string().optional().describe("override branch name (defaults to task/<slug>)"),
+        brief: z.string().optional().describe("instructions mailed to the assignee with the task ref"),
+        expectedRevision: z.number().int().describe(`${ER} (of the task)`),
+        expectedBoardRevision: z.number().int().describe(EBR),
+      },
+    },
+    ({ taskId, assignee, slug, branchName, brief, expectedRevision, expectedBoardRevision }) =>
+      guarded(agentId, "board_dispatch", () =>
+        handlers.dispatchBoard(ctx, { taskId, assignee, slug, branchName, brief, expectedRevision, expectedBoardRevision }),
+      ),
+  );
 
   server.registerTool(
     "board_create_task",
@@ -374,11 +438,14 @@ export function createMeshServicesServer(opts: {
           to: z.string().describe("recipient agent id"),
           body: z.string().describe("message body; start with [REQ], [FYI] or [DONE]"),
           reply_to: z.number().optional().describe("the #number of the mail you are replying to"),
-          task: z.string().optional().describe("task slug this mail belongs to, when your mesh tracks tasks"),
+          task: z.string().optional().describe("board task ref this mail belongs to: '#N' (id) or a task slug. Links the mail to the issue and routes a lifecycle signal."),
+          lifecycle: BOARD_MAIL_LIFECYCLE.optional().describe(
+            "lifecycle signal for the linked task (requires `task`): 'branch_created'/'accepted' → in_progress, 'review_requested' → in_review. Only the task's assignee may move its card; ignored otherwise.",
+          ),
         },
       },
-      ({ to, body, reply_to, task }) =>
-        guarded(agentId, "send_mail", () => opts.handlers.sendMail(ctx, to, body, { replyTo: reply_to, task })),
+      ({ to, body, reply_to, task, lifecycle }) =>
+        guarded(agentId, "send_mail", () => opts.handlers.sendMail(ctx, to, body, { replyTo: reply_to, task, lifecycle })),
     );
 
     server.registerTool(
