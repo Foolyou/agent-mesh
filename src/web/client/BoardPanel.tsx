@@ -8,11 +8,42 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent } from "react";
 import { useStore, type Store } from "./store";
 import type { MailEntry } from "../types";
-import type { BoardDocument, BoardCommand, BoardStatus, BoardPriority, BoardActor, Task } from "../../board";
-import { AGENT_SETTABLE_STATUSES, BOARD_STATUSES, BOARD_PRIORITIES, computeBoardWarnings, computeCloseReadiness, epicDisplayId, taskDisplayId, taskProgress } from "../../board";
+import type { BoardDocument, BoardCommand, BoardStatus, BoardPriority, BoardActor, BoardLabel, Task } from "../../board";
+import { AGENT_SETTABLE_STATUSES, BOARD_STATUSES, BOARD_PRIORITIES, LABEL_PALETTE, computeBoardWarnings, computeCloseReadiness, epicDisplayId, taskDisplayId, taskProgress } from "../../board";
+import { contrastRatio } from "./contrast";
 import { Empty } from "./ui";
 import { Markdown } from "./Markdown";
 import { useI18n } from "./i18n";
+
+// ── labels ─────────────────────────────────────────────────────────────────
+/** Pick the chip's text color (black/white) with the better contrast against its background.
+ *  Because LABEL_PALETTE colors all clear AA against whichever of black/white wins, chip text is
+ *  always legible — no theme dependency. (Reuses contrast.ts; the palette is enforced server-side.) */
+export function labelForeground(bg: string): "#000000" | "#ffffff" {
+  return contrastRatio(bg, "#000000") >= contrastRatio(bg, "#ffffff") ? "#000000" : "#ffffff";
+}
+
+function LabelChip({ label, onRemove }: { label: BoardLabel; onRemove?: () => void }) {
+  return (
+    <span className="label-chip" style={{ background: label.color, color: labelForeground(label.color) }}>
+      {label.name}
+      {onRemove && <button className="label-chip-x" onClick={(e) => { e.stopPropagation(); onRemove(); }} aria-label={`remove label ${label.name}`}>×</button>}
+    </span>
+  );
+}
+
+/** Render a task's labels as chips, resolved against the board's label set (unknown ids skipped). */
+function TaskLabels({ task, labelsById }: { task: Task; labelsById: Map<string, BoardLabel> }) {
+  const labels = (task.labelIds ?? []).map((id) => labelsById.get(id)).filter((l): l is BoardLabel => !!l);
+  if (labels.length === 0) return null;
+  return (
+    <span className="board-labels">
+      {labels.map((l) => (
+        <LabelChip key={l.id} label={l} />
+      ))}
+    </span>
+  );
+}
 
 /** The web operator acts as the privileged `human` (see gateway.applyBoard); the kanban accepts an
  *  optional actor only as a test-injection seam to exercise §4 member gating. */
@@ -93,21 +124,31 @@ export interface BoardFilter {
   status: BoardStatus | "";
   assignee: string; // "" = all, "@unassigned" = no assignee, else exact id
   epic: string; // "" = all, "@none" = no epic, else epic id
+  label: string; // "" = all, "@none" = no labels, else label id
   text: string;
   sort: BoardSort;
 }
-export const EMPTY_FILTER: BoardFilter = { status: "", assignee: "", epic: "", text: "", sort: "updated" };
+export const EMPTY_FILTER: BoardFilter = { status: "", assignee: "", epic: "", label: "", text: "", sort: "updated" };
 
 const PRIORITY_RANK: Record<BoardPriority, number> = { urgent: 3, high: 2, normal: 1, low: 0 };
 
-/** Pure: apply the filter bar's predicates then sort. Exported for unit tests. */
-export function filterSortTasks(tasks: Task[], f: BoardFilter): Task[] {
+/** Pure: apply the filter bar's predicates then sort. `labelsById` (optional) lets free-text search
+ *  also match a task's label NAMES. Exported for unit tests. */
+export function filterSortTasks(tasks: Task[], f: BoardFilter, labelsById?: Map<string, BoardLabel>): Task[] {
   let out = tasks;
   if (f.status) out = out.filter((t) => t.status === f.status);
   if (f.assignee) out = f.assignee === "@unassigned" ? out.filter((t) => !t.assignee) : out.filter((t) => t.assignee === f.assignee);
   if (f.epic) out = f.epic === "@none" ? out.filter((t) => !t.epicId) : out.filter((t) => t.epicId === f.epic);
+  if (f.label) out = f.label === "@none" ? out.filter((t) => !(t.labelIds?.length)) : out.filter((t) => (t.labelIds ?? []).includes(f.label));
   const q = f.text.trim().toLowerCase();
-  if (q) out = out.filter((t) => t.title.toLowerCase().includes(q) || (t.description ?? "").toLowerCase().includes(q) || `#${t.id}`.includes(q));
+  if (q) {
+    out = out.filter((t) =>
+      t.title.toLowerCase().includes(q) ||
+      (t.description ?? "").toLowerCase().includes(q) ||
+      `#${t.id}`.includes(q) ||
+      (!!labelsById && (t.labelIds ?? []).some((id) => labelsById.get(id)?.name.toLowerCase().includes(q))),
+    );
+  }
   const sorted = [...out];
   if (f.sort === "priority") sorted.sort((a, b) => PRIORITY_RANK[b.priority] - PRIORITY_RANK[a.priority] || a.id - b.id);
   else if (f.sort === "id") sorted.sort((a, b) => a.id - b.id);
@@ -248,12 +289,12 @@ export function BoardPanel({
         <BoardDetailView task={selected} board={board} running={running} mesh={mesh} store={store} apply={apply} onBack={back} />
       ) : route.view === "kanban" ? (
         <>
-          <FilterBar board={board} filter={filter} setFilter={setFilter} groupByEpic={groupByEpic} setGroupByEpic={setGroupByEpic} />
+          <FilterBar board={board} filter={filter} setFilter={setFilter} groupByEpic={groupByEpic} setGroupByEpic={setGroupByEpic} running={running} apply={apply} />
           <BoardKanbanView board={board} filter={filter} running={running} actor={actor} apply={apply} onOpen={openDetail} />
         </>
       ) : (
         <>
-          <FilterBar board={board} filter={filter} setFilter={setFilter} groupByEpic={groupByEpic} setGroupByEpic={setGroupByEpic} />
+          <FilterBar board={board} filter={filter} setFilter={setFilter} groupByEpic={groupByEpic} setGroupByEpic={setGroupByEpic} running={running} apply={apply} />
           <BoardListView board={board} filter={filter} groupByEpic={groupByEpic} onOpen={openDetail} />
         </>
       )}
@@ -268,16 +309,22 @@ function FilterBar({
   setFilter,
   groupByEpic,
   setGroupByEpic,
+  running,
+  apply,
 }: {
   board: BoardDocument;
   filter: BoardFilter;
   setFilter: (f: BoardFilter) => void;
   groupByEpic: boolean;
   setGroupByEpic: (v: boolean) => void;
+  running: boolean;
+  apply: (c: BoardCommand) => void;
 }) {
   const { t } = useI18n();
+  const [manage, setManage] = useState(false);
   const assignees = useMemo(() => [...new Set(board.tasks.map((task) => task.assignee).filter((a): a is string => !!a))].sort(), [board.tasks]);
   return (
+   <>
     <div className="board-filter">
       <input
         className="board-input board-filter-text"
@@ -306,6 +353,15 @@ function FilterBar({
           <option key={epic.id} value={epic.id}>{epicDisplayId(epic)} {epic.title}</option>
         ))}
       </select>
+      {(board.labels ?? []).length > 0 && (
+        <select className="select-control board-sel" aria-label={t("board.filterLabel")} value={filter.label} onChange={(e) => setFilter({ ...filter, label: e.target.value })}>
+          <option value="">{t("board.allLabels")}</option>
+          <option value="@none">{t("board.noLabel")}</option>
+          {(board.labels ?? []).map((l) => (
+            <option key={l.id} value={l.id}>{l.name}</option>
+          ))}
+        </select>
+      )}
       <select className="select-control board-sel" aria-label={t("board.sort")} value={filter.sort} onChange={(e) => setFilter({ ...filter, sort: e.target.value as BoardSort })}>
         <option value="updated">{t("board.sortUpdated")}</option>
         <option value="priority">{t("board.sortPriority")}</option>
@@ -315,7 +371,72 @@ function FilterBar({
         <input type="checkbox" checked={groupByEpic} onChange={(e) => setGroupByEpic(e.target.checked)} />
         {t("board.groupByEpic")}
       </label>
+      {/* label management is operator/privileged-only and needs a running mesh (mutations). */}
+      {running && (
+        <button className="board-fs-btn board-manage-labels" aria-pressed={manage} onClick={() => setManage((v) => !v)}>
+          🏷 {t("board.manageLabels")}
+        </button>
+      )}
     </div>
+    {running && manage && <LabelManager board={board} apply={apply} />}
+   </>
+  );
+}
+
+/** Compact, privileged label management — create / rename / recolor / delete — kept inside the
+ *  board (not a separate settings surface). Colors are restricted to the accessible palette. */
+function LabelManager({ board, apply }: { board: BoardDocument; apply: (c: BoardCommand) => void }) {
+  const { t } = useI18n();
+  const [name, setName] = useState("");
+  const [color, setColor] = useState<string>(LABEL_PALETTE[0]);
+  const create = () => {
+    if (name.trim()) {
+      apply({ type: "create_label", name: name.trim(), color });
+      setName("");
+    }
+  };
+  return (
+    <div className="board-label-manager">
+      <div className="board-label-row">
+        <input className="board-input" placeholder={t("board.labelName")} value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") create(); }} />
+        <PalettePicker value={color} onPick={setColor} />
+        <button className="board-back" disabled={!name.trim()} onClick={create}>{t("board.addLabel")}</button>
+      </div>
+      {(board.labels ?? []).map((l) => (
+        <div className="board-label-row" key={l.id}>
+          <LabelChip label={l} />
+          <input
+            className="board-input"
+            key={`ln-${l.id}-${l.name}`}
+            defaultValue={l.name}
+            aria-label={t("board.labelName")}
+            onBlur={(e) => { const v = e.currentTarget.value.trim(); if (v && v !== l.name) apply({ type: "update_label", id: l.id, name: v }); }}
+            onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+          />
+          <PalettePicker value={l.color} onPick={(c) => { if (c !== l.color) apply({ type: "update_label", id: l.id, color: c }); }} />
+          <button className="board-x" title={t("board.deleteLabel")} aria-label={`${t("board.deleteLabel")} ${l.name}`} onClick={() => apply({ type: "delete_label", id: l.id })}>×</button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** A row of accessible-palette swatches; the current color is marked selected. */
+function PalettePicker({ value, onPick }: { value: string; onPick: (c: string) => void }) {
+  return (
+    <span className="palette-picker" role="group" aria-label="label color">
+      {LABEL_PALETTE.map((c) => (
+        <button
+          key={c}
+          type="button"
+          className={`palette-swatch ${c === value ? "sel" : ""}`}
+          style={{ background: c }}
+          aria-label={`color ${c}`}
+          aria-pressed={c === value}
+          onClick={() => onPick(c)}
+        />
+      ))}
+    </span>
   );
 }
 
@@ -333,7 +454,8 @@ export function BoardListView({
 }) {
   const { t } = useI18n();
   const blocked = useMemo(() => blockedTaskIds(board), [board]);
-  const tasks = useMemo(() => filterSortTasks(board.tasks, filter), [board.tasks, filter]);
+  const labelsById = useMemo(() => new Map((board.labels ?? []).map((l) => [l.id, l])), [board.labels]);
+  const tasks = useMemo(() => filterSortTasks(board.tasks, filter, labelsById), [board.tasks, filter, labelsById]);
 
   if (tasks.length === 0) return <div className="board-list"><Empty>{t("board.noMatches")}</Empty></div>;
 
@@ -341,7 +463,7 @@ export function BoardListView({
     return (
       <div className="board-list">
         {tasks.map((task) => (
-          <IssueRow key={task.id} task={task} blocked={blocked.has(task.id)} onOpen={onOpen} />
+          <IssueRow key={task.id} task={task} blocked={blocked.has(task.id)} labelsById={labelsById} onOpen={onOpen} />
         ))}
       </div>
     );
@@ -362,7 +484,7 @@ export function BoardListView({
         <div className="board-group" key={g.key}>
           <div className="board-group-head sub">{g.label}</div>
           {g.tasks.map((task) => (
-            <IssueRow key={task.id} task={task} blocked={blocked.has(task.id)} onOpen={onOpen} />
+            <IssueRow key={task.id} task={task} blocked={blocked.has(task.id)} labelsById={labelsById} onOpen={onOpen} />
           ))}
         </div>
       ))}
@@ -370,12 +492,13 @@ export function BoardListView({
   );
 }
 
-function IssueRow({ task, blocked, onOpen }: { task: Task; blocked: boolean; onOpen: (id: number) => void }) {
+function IssueRow({ task, blocked, labelsById, onOpen }: { task: Task; blocked: boolean; labelsById: Map<string, BoardLabel>; onOpen: (id: number) => void }) {
   const prog = taskProgress(task);
   return (
     <button className="board-issue" onClick={() => onOpen(task.id)}>
       <span className="board-tid">{taskDisplayId(task.id)}</span>
       <span className="board-title">{task.title}</span>
+      <TaskLabels task={task} labelsById={labelsById} />
       <span className={`pill st-${task.status}`}>{task.status}</span>
       {/* assignee is DISPLAY-ONLY in the panel (§4: humans ask the router to assign). */}
       {task.assignee && <span className="sub board-assignee">@{task.assignee}</span>}
@@ -411,7 +534,8 @@ export function BoardKanbanView({
   onOpen: (id: number) => void;
 }) {
   const blocked = useMemo(() => blockedTaskIds(board), [board]);
-  const tasks = useMemo(() => filterSortTasks(board.tasks, filter), [board.tasks, filter]);
+  const labelsById = useMemo(() => new Map((board.labels ?? []).map((l) => [l.id, l])), [board.labels]);
+  const tasks = useMemo(() => filterSortTasks(board.tasks, filter, labelsById), [board.tasks, filter, labelsById]);
   const byId = useMemo(() => new Map(board.tasks.map((task) => [task.id, task])), [board.tasks]);
   const [reason, setReason] = useState<{ taskId: number; msg: string } | null>(null);
   const [draggingId, setDraggingId] = useState<number | null>(null);
@@ -473,6 +597,7 @@ export function BoardKanbanView({
                   blocked={blocked.has(task.id)}
                   running={running}
                   actor={actor}
+                  labelsById={labelsById}
                   reason={reason?.taskId === task.id ? reason.msg : null}
                   dragging={draggingId === task.id}
                   onDragStart={(e) => { e.dataTransfer.setData(BOARD_DND_MIME, String(task.id)); e.dataTransfer.effectAllowed = "move"; draggingIdRef.current = task.id; setDraggingId(task.id); }}
@@ -494,6 +619,7 @@ function KanbanCard({
   blocked,
   running,
   actor,
+  labelsById,
   reason,
   dragging,
   onDragStart,
@@ -505,6 +631,7 @@ function KanbanCard({
   blocked: boolean;
   running: boolean;
   actor: BoardActor;
+  labelsById: Map<string, BoardLabel>;
   reason: string | null;
   dragging: boolean;
   onDragStart: (e: DragEvent<HTMLDivElement>) => void;
@@ -533,6 +660,7 @@ function KanbanCard({
         <span className="board-tid">{taskDisplayId(task.id)}</span>
         <span className="board-title">{task.title}</span>
       </button>
+      <TaskLabels task={task} labelsById={labelsById} />
       <div className="board-card-meta sub">
         {task.assignee && <span className="board-assignee">@{task.assignee}</span>}
         <span className="board-prio">{task.priority}</span>
@@ -609,6 +737,12 @@ export function BoardDetailView({
     const next = depsCommit(value, task.deps);
     if (next) apply({ type: "set_task_deps", id: task.id, expectedRevision: task.revision, deps: next });
   };
+  const labelsById = useMemo(() => new Map((board.labels ?? []).map((l) => [l.id, l])), [board.labels]);
+  const taskLabelIds = task.labelIds ?? [];
+  const toggleLabel = (id: string) => {
+    const next = taskLabelIds.includes(id) ? taskLabelIds.filter((x) => x !== id) : [...taskLabelIds, id];
+    apply({ type: "set_task_labels", id: task.id, expectedRevision: task.revision, labelIds: next });
+  };
 
   return (
     <div className="board-detail">
@@ -658,6 +792,34 @@ export function BoardDetailView({
       {task.description && (
         <div className="board-detail-desc">
           <Markdown text={task.description} />
+        </div>
+      )}
+
+      {/* labels: a running mesh shows a gated toggle of every board label (reducer enforces §4 —
+          assignee/operator); a stopped mesh shows the current chips read-only. */}
+      {((board.labels ?? []).length > 0 || taskLabelIds.length > 0) && (
+        <div className="board-detail-section">
+          <div className="board-section-head sub">{t("board.labels")}</div>
+          {running ? (
+            <div className="board-label-pick">
+              {(board.labels ?? []).map((l) => {
+                const on = taskLabelIds.includes(l.id);
+                return (
+                  <button
+                    key={l.id}
+                    className={`label-chip label-toggle ${on ? "on" : "off"}`}
+                    style={on ? { background: l.color, color: labelForeground(l.color), borderColor: l.color } : { borderColor: l.color }}
+                    aria-pressed={on}
+                    onClick={() => toggleLabel(l.id)}
+                  >
+                    {on ? "✓ " : ""}{l.name}
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <TaskLabels task={task} labelsById={labelsById} />
+          )}
         </div>
       )}
 

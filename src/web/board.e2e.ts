@@ -127,6 +127,38 @@ try {
     await page.waitForSelector('.drail .board-issue .pill.st-in_review', { timeout: 6000 });
   });
 
+  await step("create a label via the manage UI, attach it via the detail toggle, see the chip", async () => {
+    // operator label management lives in the filter bar (running mesh only).
+    await page.locator(".drail .board-manage-labels").click();
+    await page.getByPlaceholder("label name").fill("bug");
+    await page.locator('.drail .board-label-manager .board-back:has-text("label")').first().click(); // "+ label"
+    await page.waitForFunction(async () => {
+      const b = await (await fetch("/api/meshes/demo/board")).json();
+      return (b.labels ?? []).some((l: { name: string }) => l.name === "bug");
+    }, { timeout: 6000 });
+    // attach via the detail toggle (gated label editor)
+    await issueRow(1).click();
+    await page.waitForSelector(".drail .board-detail", { timeout: 6000 });
+    await page.locator('.drail .board-label-pick .label-toggle:has-text("bug")').click();
+    await page.waitForFunction(async () => {
+      const b = await (await fetch("/api/meshes/demo/board")).json();
+      return (b.tasks.find((t: { id: number }) => t.id === 1)?.labelIds ?? []).length === 1;
+    }, { timeout: 6000 });
+    await page.locator(".drail .board-back").first().click();
+    await page.waitForSelector('.drail .board-issue:has(.board-tid:has-text("#1")) .label-chip:has-text("bug")', { timeout: 6000 });
+  });
+
+  await step("the label filter narrows the list (by label, and by no-label)", async () => {
+    const labelSel = page.locator('.drail select[aria-label="filter by label"]');
+    await labelSel.selectOption({ label: "bug" }); // #1 carries "bug" → stays
+    await page.waitForFunction(() => document.querySelectorAll(".drail .board-issue").length === 1, { timeout: 6000 });
+    if (!(await page.locator('.drail .board-issue:has(.board-tid:has-text("#1"))').count())) throw new Error("label filter hid the labeled task");
+    await labelSel.selectOption("@none"); // "no label" hides the labeled #1
+    await page.waitForFunction(() => document.querySelectorAll(".drail .board-issue").length === 0, { timeout: 6000 });
+    await labelSel.selectOption(""); // clear → back
+    await page.waitForFunction(() => document.querySelectorAll(".drail .board-issue").length === 1, { timeout: 6000 });
+  });
+
   const kanbanCard = (id: number) => page.locator(`.drail .board-card:has(.board-tid:has-text("#${id}"))`);
   const taskStatus = async (id: number) => (await getBoard()).tasks.find((t: { id: number }) => t.id === id)?.status;
 

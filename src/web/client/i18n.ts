@@ -155,6 +155,15 @@ const DICT: Record<string, Entry> = {
   "board.sortId": ["number", "编号"],
   "board.groupByEpic": ["group by epic", "按史诗分组"],
   "board.noMatches": ["no issues match the filter", "没有符合筛选的任务"],
+  // ── labels (Phase 4) ──
+  "board.labels": ["labels", "标签"],
+  "board.filterLabel": ["filter by label", "按标签筛选"],
+  "board.allLabels": ["all labels", "全部标签"],
+  "board.noLabel": ["no label", "无标签"],
+  "board.manageLabels": ["labels", "标签管理"],
+  "board.labelName": ["label name", "标签名"],
+  "board.addLabel": ["+ label", "+ 标签"],
+  "board.deleteLabel": ["delete label", "删除标签"],
   // ── detail view ──
   "board.subtasks": ["subtasks", "子任务"],
   "board.lifecycle": ["lifecycle", "生命周期"],
