@@ -396,3 +396,131 @@ test("__attachment__ seals an open agent message before the card", () => {
   expect(items.map((i) => i.kind)).toEqual(["message", "attachment"]);
   expect((items[0] as any).complete).toBe(true);
 });
+
+// ── messageId deduplication ──────────────────────────────────────────────
+
+const MID = "msg_01AbCdEfGhIjKlMnOpQrStUv";
+
+test("agent_message_chunk with same messageId: incremental deltas append normally", () => {
+  const items = fold([
+    { sessionUpdate: "agent_message_chunk", content: { text: "Hel" }, messageId: MID },
+    { sessionUpdate: "agent_message_chunk", content: { text: "lo" }, messageId: MID },
+  ]);
+  expect(items).toHaveLength(1);
+  expect(items[0]).toMatchObject({ kind: "message", text: "Hello" });
+});
+
+test("agent_message_chunk with same messageId: exact full-resend duplicate is dropped", () => {
+  const items = fold([
+    { sessionUpdate: "agent_message_chunk", content: { text: "Hello" }, messageId: MID },
+    { sessionUpdate: "agent_message_chunk", content: { text: "Hello" }, messageId: MID },
+  ]);
+  expect(items).toHaveLength(1);
+  expect(items[0]).toMatchObject({ kind: "message", text: "Hello" });
+});
+
+test("agent_message_chunk with same messageId: deltas then full resend replaces with full text", () => {
+  const items = fold([
+    { sessionUpdate: "agent_message_chunk", content: { text: "Hel" }, messageId: MID },
+    { sessionUpdate: "agent_message_chunk", content: { text: "lo" }, messageId: MID },
+    { sessionUpdate: "agent_message_chunk", content: { text: "Hello" }, messageId: MID },
+  ]);
+  expect(items).toHaveLength(1);
+  expect(items[0]).toMatchObject({ kind: "message", text: "Hello" });
+});
+
+test("agent_message_chunk with same messageId: partial then full replace", () => {
+  const items = fold([
+    { sessionUpdate: "agent_message_chunk", content: { text: "Hel" }, messageId: MID },
+    { sessionUpdate: "agent_message_chunk", content: { text: "Hello" }, messageId: MID },
+  ]);
+  expect(items).toHaveLength(1);
+  expect(items[0]).toMatchObject({ kind: "message", text: "Hello" });
+});
+
+test("agent_message_chunk with different messageIds: repetition is preserved", () => {
+  const items = fold([
+    { sessionUpdate: "agent_message_chunk", content: { text: "Hi" }, messageId: "mid-A" },
+    { sessionUpdate: "agent_message_chunk", content: { text: "Hi" }, messageId: "mid-B" },
+  ]);
+  expect(items).toHaveLength(2);
+  expect(items[0]).toMatchObject({ kind: "message", text: "Hi" });
+  expect(items[1]).toMatchObject({ kind: "message", text: "Hi" });
+});
+
+test("agent_message_chunk with same messageId: non-full-shaped self-repeat is preserved", () => {
+  const items = fold([
+    { sessionUpdate: "agent_message_chunk", content: { text: "Hello " }, messageId: MID },
+    { sessionUpdate: "agent_message_chunk", content: { text: "Hello" }, messageId: MID },
+  ]);
+  expect(items).toHaveLength(1);
+  // "Hello Hello" — incoming ("Hello") is different from open ("Hello ") and
+  // is neither a superset (not longer) nor an exact match.  Normal append.
+  expect(items[0]).toMatchObject({ kind: "message", text: "Hello Hello" });
+});
+
+test("agent_message_chunk with same messageId: partial superset that does NOT start with accumulated is a normal append", () => {
+  const items = fold([
+    { sessionUpdate: "agent_message_chunk", content: { text: "A" }, messageId: MID },
+    { sessionUpdate: "agent_message_chunk", content: { text: "BA" }, messageId: MID },
+  ]);
+  // "BA" is longer than "A" but does NOT start with "A" — not a superset.
+  expect(items).toHaveLength(1);
+  expect(items[0]).toMatchObject({ kind: "message", text: "ABA" });
+});
+
+test("no-messageId / codex path is unchanged (coalesces as before)", () => {
+  const items = fold([
+    { sessionUpdate: "agent_message_chunk", content: { text: "Hel" } },
+    { sessionUpdate: "agent_message_chunk", content: { text: "lo" } },
+  ]);
+  expect(items).toHaveLength(1);
+  expect(items[0]).toMatchObject({ kind: "message", text: "Hello" });
+});
+
+test("agent_thought_chunk with same messageId: duplicate full resend dropped", () => {
+  const items = fold([
+    { sessionUpdate: "agent_thought_chunk", content: { text: "I will plan" }, messageId: MID },
+    { sessionUpdate: "agent_thought_chunk", content: { text: "I will plan" }, messageId: MID },
+  ]);
+  expect(items).toHaveLength(1);
+  expect(items[0]).toMatchObject({ kind: "thought", text: "I will plan" });
+});
+
+test("agent_thought_chunk with same messageId: deltas then full replace", () => {
+  const items = fold([
+    { sessionUpdate: "agent_thought_chunk", content: { text: "I will " }, messageId: MID },
+    { sessionUpdate: "agent_thought_chunk", content: { text: "plan" }, messageId: MID },
+    { sessionUpdate: "agent_thought_chunk", content: { text: "I will plan" }, messageId: MID },
+  ]);
+  expect(items).toHaveLength(1);
+  expect(items[0]).toMatchObject({ kind: "thought", text: "I will plan" });
+});
+
+test("agent_thought_chunk without messageId coalesces normally (unchanged)", () => {
+  const items = fold([
+    { sessionUpdate: "agent_thought_chunk", content: { text: "I should " } },
+    { sessionUpdate: "agent_thought_chunk", content: { text: "plan" } },
+  ]);
+  expect(items).toHaveLength(1);
+  expect(items[0]).toMatchObject({ kind: "thought", text: "I should plan" });
+});
+
+test("message and thought chunks do not bridge across different messageIds", () => {
+  const items = fold([
+    { sessionUpdate: "agent_message_chunk", content: { text: "Hello" }, messageId: "mid-A" },
+    { sessionUpdate: "agent_message_chunk", content: { text: "Hello" }, messageId: "mid-B" },
+  ]);
+  // Different messageIds, even with same text → distinct messages (not dropped).
+  expect(items).toHaveLength(2);
+});
+
+test("messageId propagated across appended chunks survives dedupe-absent path", () => {
+  // No dedupe, but messageId should stick on the merged item.
+  const items = fold([
+    { sessionUpdate: "agent_message_chunk", content: { text: "Hel" }, messageId: MID },
+    { sessionUpdate: "agent_message_chunk", content: { text: "lo" }, messageId: MID },
+  ]);
+  expect(items).toHaveLength(1);
+  expect((items[0] as any).messageId).toBe(MID);
+});
