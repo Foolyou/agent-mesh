@@ -3515,3 +3515,91 @@ legend.builder-section-head {
   display: inline-flex;
   gap: 4px;
 }
+
+/* ── issue-panel Phase 3: kanban view ── */
+.board-kanban {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  align-items: flex-start;
+}
+.board-col {
+  flex: 1 0 150px;
+  min-width: 150px;
+  max-width: 260px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: var(--bg-inset);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px;
+}
+.board-col.board-col-over {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg-inset));
+}
+.board-col-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.board-col-count {
+  margin-left: auto;
+}
+.board-col-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 12px;
+}
+.board-card {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 5px 6px;
+}
+.board-card.board-card-dragging {
+  opacity: 0.5;
+}
+.board-card-main {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  color: var(--fg);
+  font: inherit;
+  cursor: pointer;
+  min-width: 0;
+  padding: 0;
+}
+.board-card-main .board-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.board-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  align-items: center;
+}
+.board-card-move {
+  width: 100%;
+  font-size: 11px;
+}
+.board-card[draggable="true"] {
+  cursor: grab;
+}
+.board-card-reason {
+  color: var(--warn);
+  font-size: 11px;
+  line-height: 1.3;
+}

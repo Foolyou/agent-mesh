@@ -140,7 +140,6 @@ const DICT: Record<string, Entry> = {
   // ── issue-panel Phase 2: list/detail workspace ──
   "board.viewList": ["list", "列表"],
   "board.viewBoard": ["board", "看板"],
-  "board.viewBoardSoon": ["kanban board — coming soon", "看板视图 — 即将推出"],
   "board.fullscreen": ["toggle fullscreen", "切换全屏"],
   "board.back": ["back", "返回"],
   "board.filterText": ["filter…", "筛选…"],

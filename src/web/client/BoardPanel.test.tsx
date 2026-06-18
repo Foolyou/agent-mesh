@@ -4,11 +4,13 @@ import { renderToStaticMarkup } from "react-dom/server";
 import {
   BoardPanel,
   BoardListView,
+  BoardKanbanView,
   BoardDetailView,
   parseBoardRoute,
   serializeBoardRoute,
   filterSortTasks,
   blockedTaskIds,
+  cardMoveRejection,
   parseDepsInput,
   depsCommit,
   EMPTY_FILTER,
@@ -16,8 +18,11 @@ import {
   type BoardFilter,
 } from "./BoardPanel";
 import { I18nContext, translate } from "./i18n";
-import { applyBoardCommand, createEmptyBoard, type BoardDocument, type BoardState } from "../../board";
+import { applyBoardCommand, createEmptyBoard, type BoardActor, type BoardDocument, type BoardState } from "../../board";
 import type { Store } from "./store";
+
+const MEMBER: BoardActor = { kind: "agent", agentId: "alice" }; // owns #1 (assignee), not #2
+const HUMAN: BoardActor = { kind: "human" };
 
 interface MailLite { id: string; ts: string; from: string; to: string; body: string }
 /** A minimal Store stub: the detail view reads recent mail via useStore(store).getState(). */
@@ -139,6 +144,71 @@ test("filter with no matches shows the no-matches empty state", () => {
   const filter: BoardFilter = { ...EMPTY_FILTER, text: "zzz-nothing" };
   const html = withI18n(createElement(BoardListView, { board: sampleBoard(), filter, groupByEpic: false, onOpen: () => {} }));
   expect(html).toContain("no issues match");
+});
+
+// ── kanban view (Phase 3) ─────────────────────────────────────────────────────
+function renderKanban(board: BoardDocument, running: boolean, actor: BoardActor): string {
+  return withI18n(createElement(BoardKanbanView, { board, filter: EMPTY_FILTER, running, actor, apply: () => {}, onOpen: () => {} }));
+}
+
+test("kanban route: ?board=kanban → kanban view; issue still takes precedence; round-trips", () => {
+  expect(parseBoardRoute("?board=kanban")).toEqual({ view: "kanban" });
+  expect(parseBoardRoute("?board=kanban&issue=3")).toEqual({ view: "detail", issue: 3 });
+  expect(serializeBoardRoute({ view: "kanban" }, "?foo=1")).toBe("?foo=1&board=kanban");
+  expect(parseBoardRoute(serializeBoardRoute({ view: "kanban" }, ""))).toEqual({ view: "kanban" });
+});
+
+test("cardMoveRejection mirrors §4: privileged allowed, member capped at in_review, non-owner blocked, stopped read-only", () => {
+  const s = sampleBoard();
+  const t1 = s.tasks.find((t) => t.id === 1)!; // assignee alice → MEMBER owns
+  const t2 = s.tasks.find((t) => t.id === 2)!; // unassigned, created by router → MEMBER does not own
+  // human (privileged operator): every move allowed
+  expect(cardMoveRejection(t1, "done", HUMAN, true)).toBeNull();
+  expect(cardMoveRejection(t1, "cancelled", HUMAN, true)).toBeNull();
+  // member owner: forward up to in_review ok; done/cancelled rejected with a ceiling reason
+  expect(cardMoveRejection(t1, "in_review", MEMBER, true)).toBeNull();
+  expect(cardMoveRejection(t1, "done", MEMBER, true)).toMatch(/in_review/);
+  expect(cardMoveRejection(t1, "cancelled", MEMBER, true)).toMatch(/in_review/);
+  // member non-owner: any move blocked with an assignee reason
+  expect(cardMoveRejection(t2, "in_progress", MEMBER, true)).toMatch(/assignee/);
+  // stopped → read-only regardless of actor
+  expect(cardMoveRejection(t1, "in_review", MEMBER, false)).toMatch(/read-only/);
+  expect(cardMoveRejection(t1, "in_progress", HUMAN, false)).toMatch(/read-only/);
+});
+
+test("kanban renders five status columns and cards with fields + blocked indicator", () => {
+  const html = renderKanban(sampleBoard(), true, HUMAN);
+  expect(html).toContain("board-kanban");
+  for (const col of ["todo", "in_progress", "in_review", "done", "cancelled"]) expect(html).toContain(`st-${col}`);
+  expect(html).toContain("board-card");
+  expect(html).toContain("#1");
+  expect(html).toContain("Wire it up");
+  expect(html).toContain("@alice");
+  expect(html).toContain("blocked"); // #1 blocked by incomplete dep #2
+});
+
+test("kanban (human, running) shows enabled status selects and no denial reasons", () => {
+  const html = renderKanban(sampleBoard(), true, HUMAN);
+  expect(html).toContain("board-card-move"); // keyboard status select present
+  expect(html).not.toContain("board-card-reason"); // operator is privileged → nothing denied
+  expect(html).not.toContain("unavailable");
+});
+
+test("kanban (member actor) exposes forbidden targets as unavailable WITH a visible reason", () => {
+  const html = renderKanban(sampleBoard(), true, MEMBER);
+  // member-owned #1: select present, done/cancelled disabled+unavailable, ceiling reason shown
+  expect(html).toContain("unavailable");
+  expect(html).toContain("board-card-reason");
+  expect(html).toMatch(/no further than &quot;in_review&quot;|no further than "in_review"/);
+  // member non-owner #2: a disabled control + an assignee reason
+  expect(html).toContain("assignee");
+});
+
+test("kanban on a stopped mesh is read-only: no status selects", () => {
+  const html = renderKanban(sampleBoard(), false, HUMAN);
+  expect(html).toContain("board-card"); // cards still render
+  expect(html).not.toContain("board-card-move"); // but no move controls
+  expect(html).not.toContain("<select");
 });
 
 // ── detail view (C1: read-only) ───────────────────────────────────────────────

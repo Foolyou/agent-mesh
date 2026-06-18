@@ -1,50 +1,80 @@
-// Per-mesh collaboration board (Phase 2): a semi-independent list + detail workspace folded
-// from board_snapshot. A view switch (List · Board[kanban, Phase 3 placeholder]) with a filter
-// bar; clicking an issue opens its detail. In-panel route state {view, issue} is persisted to
-// the URL query (parse/serialize below, mirroring FileViewer's parseFileRoute style) so a deep
-// link to ?issue=N reopens the detail once the board panel is active. No deltas — the whole
-// board arrives on every change, so the views are a pure function of `board`. Running meshes are
-// editable through the REST/daemon path (gated by §4 of docs/design/issue-panel.md); a stopped
-// mesh renders read-only.
+// Per-mesh collaboration board (Phase 3): a semi-independent List · Kanban + detail workspace
+// folded from board_snapshot. A view switch (List · Board[kanban]) with a filter bar; clicking an
+// issue opens its detail. In-panel route state {view, issue} is persisted to the URL query
+// (parse/serialize below, mirroring FileViewer's parseFileRoute style) so a deep link to ?issue=N
+// reopens the detail once the board panel is active. No deltas — the whole board arrives on every
+// change, so the views are a pure function of `board`. Running meshes are editable through the
+// REST/daemon path (gated by §4 of docs/design/issue-panel.md); a stopped mesh renders read-only.
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { useStore, type Store } from "./store";
 import type { MailEntry } from "../types";
-import type { BoardDocument, BoardCommand, BoardStatus, BoardPriority, Task } from "../../board";
-import { BOARD_STATUSES, BOARD_PRIORITIES, computeBoardWarnings, computeCloseReadiness, epicDisplayId, taskDisplayId, taskProgress } from "../../board";
+import type { BoardDocument, BoardCommand, BoardStatus, BoardPriority, BoardActor, Task } from "../../board";
+import { AGENT_SETTABLE_STATUSES, BOARD_STATUSES, BOARD_PRIORITIES, computeBoardWarnings, computeCloseReadiness, epicDisplayId, taskDisplayId, taskProgress } from "../../board";
 import { Empty } from "./ui";
 import { Markdown } from "./Markdown";
 import { useI18n } from "./i18n";
 
+/** The web operator acts as the privileged `human` (see gateway.applyBoard); the kanban accepts an
+ *  optional actor only as a test-injection seam to exercise §4 member gating. */
+const HUMAN_ACTOR: BoardActor = { kind: "human" };
+
 // ── in-panel route (URL query) ───────────────────────────────────────────────
 export interface BoardRoute {
-  view: "list" | "detail";
+  view: "list" | "kanban" | "detail";
   issue?: number;
 }
 
-/** Parse the in-panel route from a URL query string (`?board=list|detail&issue=N`). A valid
- *  `issue` implies detail; anything else is the list. Mirrors FileViewer.parseFileRoute, but
- *  query-based so it stays under the mesh without a new top-level app route. */
+/** Parse the in-panel route from a URL query string (`?board=list|kanban&issue=N`). A valid
+ *  `issue` implies detail; `board=kanban` selects the kanban; anything else is the list. Mirrors
+ *  FileViewer.parseFileRoute, but query-based so it stays under the mesh without a top-level route. */
 export function parseBoardRoute(search: string): BoardRoute {
   const p = new URLSearchParams(search);
   const raw = p.get("issue");
   const issue = raw ? Number(raw) : NaN;
   if (Number.isInteger(issue) && issue > 0) return { view: "detail", issue };
+  if (p.get("board") === "kanban") return { view: "kanban" };
   return { view: "list" };
 }
 
 /** Serialize the route back into a query string, PRESERVING any other params already on the URL
- *  (detail → `board=detail&issue=N`; list → both keys removed for a clean URL). */
+ *  (detail → `board=detail&issue=N`; kanban → `board=kanban`; list → both keys removed). */
 export function serializeBoardRoute(route: BoardRoute, currentSearch: string): string {
   const p = new URLSearchParams(currentSearch);
   if (route.view === "detail" && route.issue && route.issue > 0) {
     p.set("board", "detail");
     p.set("issue", String(route.issue));
+  } else if (route.view === "kanban") {
+    p.set("board", "kanban");
+    p.delete("issue");
   } else {
     p.delete("board");
     p.delete("issue");
   }
   const s = p.toString();
   return s ? `?${s}` : "";
+}
+
+// ── §4 permission gating (UI mirror; board.ts reducer stays authoritative) ─────
+function isPrivilegedActor(actor: BoardActor): boolean {
+  return actor.kind === "human" || actor.kind === "system" || actor.kind === "router";
+}
+/** Mirror of board.ts ownsItem: the assignee owns an assigned task; the creator owns an
+ *  unassigned one. (KEEP IN SYNC WITH board.ts.) */
+function actorOwnsTask(actor: BoardActor, task: Task): boolean {
+  if (actor.kind !== "agent" && actor.kind !== "router") return isPrivilegedActor(actor);
+  const id = actor.agentId;
+  if (task.assignee) return task.assignee === id;
+  return task.createdBy === id;
+}
+/** UI mirror of board.ts canAgentSetStatus + ownsItem + the stopped/read-only gate. Returns the
+ *  reason a status move is rejected (for inline display), or null when allowed. The backend reducer
+ *  remains the authority — this only gives immediate, accessible feedback. (KEEP IN SYNC.) */
+export function cardMoveRejection(task: Task, target: BoardStatus, actor: BoardActor, running: boolean): string | null {
+  if (!running) return "the mesh is stopped — the board is read-only";
+  if (isPrivilegedActor(actor)) return null;
+  if (!actorOwnsTask(actor, task)) return "only the assignee (or a router/operator) may move this card";
+  if (!AGENT_SETTABLE_STATUSES.includes(target)) return `members may move work no further than "in_review"; "${target}" is router/operator-only`;
+  return null;
 }
 
 function safeSearch(): string {
@@ -104,6 +134,7 @@ export function BoardPanel({
   className,
   style,
   initialRoute,
+  actor = HUMAN_ACTOR,
 }: {
   mesh: string;
   board: BoardDocument | null;
@@ -114,6 +145,8 @@ export function BoardPanel({
   style?: CSSProperties;
   /** Test/deep-control seam: when omitted, the route is read from the URL query. */
   initialRoute?: BoardRoute;
+  /** Test seam for §4 gating. Production always uses the privileged `human` operator. */
+  actor?: BoardActor;
 }) {
   const { t } = useI18n();
   const [route, setRoute] = useState<BoardRoute>(() => initialRoute ?? parseBoardRoute(safeSearch()));
@@ -172,7 +205,7 @@ export function BoardPanel({
           <button className={`seg-tab ${route.view === "list" ? "sel" : ""}`} role="tab" aria-selected={route.view === "list"} onClick={() => navigate({ view: "list" }, false)}>
             {t("board.viewList")}
           </button>
-          <button className="seg-tab" role="tab" aria-selected={false} disabled title={t("board.viewBoardSoon")}>
+          <button className={`seg-tab ${route.view === "kanban" ? "sel" : ""}`} role="tab" aria-selected={route.view === "kanban"} onClick={() => navigate({ view: "kanban" }, false)}>
             {t("board.viewBoard")}
           </button>
         </div>
@@ -189,6 +222,11 @@ export function BoardPanel({
       </div>
       {showDetail ? (
         <BoardDetailView task={selected} board={board} running={running} mesh={mesh} store={store} apply={apply} onBack={backToList} />
+      ) : route.view === "kanban" ? (
+        <>
+          <FilterBar board={board} filter={filter} setFilter={setFilter} groupByEpic={groupByEpic} setGroupByEpic={setGroupByEpic} />
+          <BoardKanbanView board={board} filter={filter} running={running} actor={actor} apply={apply} onOpen={openDetail} />
+        </>
       ) : (
         <>
           <FilterBar board={board} filter={filter} setFilter={setFilter} groupByEpic={groupByEpic} setGroupByEpic={setGroupByEpic} />
@@ -326,6 +364,136 @@ function IssueRow({ task, blocked, onOpen }: { task: Task; blocked: boolean; onO
         <span className="sub board-updated" title={task.updatedAt}>{shortTime(task.updatedAt)}</span>
       </span>
     </button>
+  );
+}
+
+// ── kanban view ───────────────────────────────────────────────────────────────
+//  Columns = the five statuses; cards = filtered tasks. A status move (keyboard select now;
+//  drag/drop in C2) routes through `attemptMove`, which gates via the §4 mirror and surfaces an
+//  inline reason on rejection instead of failing silently. The backend reducer stays authoritative.
+export function BoardKanbanView({
+  board,
+  filter,
+  running,
+  actor,
+  apply,
+  onOpen,
+}: {
+  board: BoardDocument;
+  filter: BoardFilter;
+  running: boolean;
+  actor: BoardActor;
+  apply: (c: BoardCommand) => void;
+  onOpen: (id: number) => void;
+}) {
+  const blocked = useMemo(() => blockedTaskIds(board), [board]);
+  const tasks = useMemo(() => filterSortTasks(board.tasks, filter), [board.tasks, filter]);
+  const [reason, setReason] = useState<{ taskId: number; msg: string } | null>(null);
+
+  const attemptMove = (task: Task, target: BoardStatus) => {
+    if (target === task.status) return;
+    const rej = cardMoveRejection(task, target, actor, running);
+    if (rej) {
+      setReason({ taskId: task.id, msg: rej });
+      return;
+    }
+    setReason(null);
+    apply({ type: "set_task_status", id: task.id, expectedRevision: task.revision, status: target });
+  };
+
+  return (
+    <div className="board-kanban" role="list" aria-label="kanban columns">
+      {BOARD_STATUSES.map((col) => {
+        const colTasks = tasks.filter((task) => task.status === col);
+        return (
+          <div className="board-col" key={col} role="listitem">
+            <div className="board-col-head">
+              <span className={`pill st-${col}`}>{col}</span>
+              <span className="sub board-col-count">{colTasks.length}</span>
+            </div>
+            <div className="board-col-body">
+              {colTasks.map((task) => (
+                <KanbanCard
+                  key={task.id}
+                  task={task}
+                  blocked={blocked.has(task.id)}
+                  running={running}
+                  actor={actor}
+                  reason={reason?.taskId === task.id ? reason.msg : null}
+                  onMove={attemptMove}
+                  onOpen={onOpen}
+                />
+              ))}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function KanbanCard({
+  task,
+  blocked,
+  running,
+  actor,
+  reason,
+  onMove,
+  onOpen,
+}: {
+  task: Task;
+  blocked: boolean;
+  running: boolean;
+  actor: BoardActor;
+  reason: string | null;
+  onMove: (task: Task, target: BoardStatus) => void;
+  onOpen: (id: number) => void;
+}) {
+  const prog = taskProgress(task);
+  const nonOwner = !isPrivilegedActor(actor) && !actorOwnsTask(actor, task);
+  // A non-owning member cannot move the card at all (select disabled + reason); an owning member
+  // can move only up to in_review (done/cancelled options are shown but disabled, with a reason).
+  const lockedReason = running && nonOwner ? cardMoveRejection(task, task.status === "todo" ? "in_progress" : task.status, actor, running) : null;
+  const ceilingReason = running && !isPrivilegedActor(actor) && !nonOwner ? cardMoveRejection(task, "done", actor, running) : null;
+  const shownReason = reason ?? lockedReason ?? ceilingReason;
+
+  return (
+    <div className="board-card">
+      <button className="board-card-main" onClick={() => onOpen(task.id)}>
+        <span className="board-tid">{taskDisplayId(task.id)}</span>
+        <span className="board-title">{task.title}</span>
+      </button>
+      <div className="board-card-meta sub">
+        {task.assignee && <span className="board-assignee">@{task.assignee}</span>}
+        <span className="board-prio">{task.priority}</span>
+        {prog.total > 0 && <span title="subtasks done">{prog.done}/{prog.total}</span>}
+        {blocked && <span className="pill board-blocked" title="blocked by an incomplete dependency">blocked</span>}
+      </div>
+      {/* keyboard-accessible status move (the non-mouse equivalent of drag); forbidden targets are
+          shown but disabled with a reason, never silently omitted. */}
+      {running && (
+        <select
+          className="select-control board-sel board-card-move"
+          aria-label={`move ${taskDisplayId(task.id)} to a different status`}
+          title="move to status"
+          value={task.status}
+          disabled={!!lockedReason}
+          onChange={(e) => onMove(task, e.target.value as BoardStatus)}
+        >
+          {BOARD_STATUSES.map((s) => {
+            const rej = s !== task.status ? cardMoveRejection(task, s, actor, running) : null;
+            return (
+              <option key={s} value={s} disabled={!!rej} title={rej ?? undefined}>
+                {s}{rej ? " — unavailable" : ""}
+              </option>
+            );
+          })}
+        </select>
+      )}
+      {shownReason && (
+        <div className="board-card-reason" role="note">⚠ {shownReason}</div>
+      )}
+    </div>
   );
 }
 
