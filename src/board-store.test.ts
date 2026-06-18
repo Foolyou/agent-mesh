@@ -122,9 +122,11 @@ test("read preserves and sanitizes Phase-0 lifecycle fields when present", async
       JSON.stringify({
         revision: 2,
         taskSeq: 1,
+        labelSeq: 1,
+        labels: [{ id: "label-1", name: "bug", color: "#fde68a" }],
         tasks: [{
           id: 1, title: "t", status: "in_review", revision: 3,
-          taskSlug: "my-slug", branchName: "task/my-slug", closeReady: true, labelIds: ["bug", "bug", "ui"],
+          taskSlug: "my-slug", branchName: "task/my-slug", closeReady: true, labelIds: ["label-1", "label-1", "ghost"],
           dispatch: { assignee: "alice", threadKey: "my-slug", at: "2026-06-14T00:00:00.000Z", mailEventId: "mail-9" },
           lifecycleEvents: [
             { kind: "dispatched", by: "lead", at: "2026-06-14T00:00:00.000Z" },
@@ -138,7 +140,7 @@ test("read preserves and sanitizes Phase-0 lifecycle fields when present", async
     expect(task.taskSlug).toBe("my-slug");
     expect(task.branchName).toBe("task/my-slug");
     expect(task.closeReady).toBe(true);
-    expect(task.labelIds).toEqual(["bug", "ui"]); // deduped
+    expect(task.labelIds).toEqual(["label-1"]); // deduped + unknown "ghost" dropped (Phase 4 cross-ref)
     expect(task.dispatch).toMatchObject({ assignee: "alice", threadKey: "my-slug", mailEventId: "mail-9" });
     expect(task.lifecycleEvents).toEqual([{ kind: "dispatched", by: "lead", at: "2026-06-14T00:00:00.000Z", threadKey: undefined }]); // bogus kind dropped
   } finally {
@@ -280,6 +282,68 @@ test("concurrent writeBoard calls do not corrupt the file (last write wins, vali
     const parsed = JSON.parse(raw); // must be valid JSON, not interleaved
     expect(typeof parsed.revision).toBe("number");
     expect(parsed.mesh).toBe("m");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+// ── issue-panel Phase 4: labels migration / round-trip ─────────────────────────
+
+const router = { actor: { kind: "router" as const, agentId: "lead" }, now: "2026-06-14T00:00:00.000Z", expectedBoardRevision: 0 };
+function apply(state: BoardState, cmd: Parameters<typeof applyBoardCommand>[1]): BoardState {
+  const r = applyBoardCommand(state, cmd, { ...router, expectedBoardRevision: state.revision });
+  if (!r.ok) throw new Error(`${r.code}: ${r.error}`);
+  return r.state;
+}
+
+test("labels + task.labelIds round-trip through write/read", async () => {
+  const dir = await tmp();
+  try {
+    let s = createEmptyBoard("m");
+    s = apply(s, { type: "create_label", name: "bug", color: "#fde68a" });
+    s = apply(s, { type: "create_task", title: "t", assignee: "alice" });
+    s = apply(s, { type: "set_task_labels", id: 1, expectedRevision: s.tasks[0].revision, labelIds: ["label-1"] });
+    await writeBoard(dir, "m", s);
+    const back = await readBoard(dir, "m");
+    expect(back.labels).toEqual([{ id: "label-1", name: "bug", color: "#fde68a" }]);
+    expect(back.labelSeq).toBe(1);
+    expect(back.tasks[0].labelIds).toEqual(["label-1"]);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("old board missing labels/labelIds is migrated to defaults", async () => {
+  const dir = await tmp();
+  try {
+    // hand-write a pre-Phase-4 board: no `labels`, a task with no `labelIds`.
+    const legacy = { mesh: "m", revision: 1, epicSeq: 0, taskSeq: 1, epics: [], tasks: [{ id: 1, title: "t", status: "todo", priority: "normal", deps: [], subtasks: [], subtaskSeq: 0, revision: 1, createdBy: "lead", createdAt: "2026-06-14T00:00:00.000Z", updatedAt: "2026-06-14T00:00:00.000Z", comments: [], mailEventIds: [] }] };
+    await writeFile(boardPath(dir, "m"), JSON.stringify(legacy));
+    const back = await readBoard(dir, "m");
+    expect(back.labels).toEqual([]);
+    expect(back.labelSeq).toBe(0);
+    expect(back.tasks[0].labelIds).toEqual([]);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("dangling task label refs and invalid labels are dropped on read", async () => {
+  const dir = await tmp();
+  try {
+    const raw = {
+      mesh: "m", revision: 3, epicSeq: 0, taskSeq: 1, labelSeq: 2, epics: [],
+      labels: [
+        { id: "label-1", name: "ok", color: "#fde68a" },
+        { id: "label-2", name: "bad-color", color: "#abcdef" }, // not in palette → dropped
+        { id: "nope", name: "bad-id", color: "#fde68a" }, // malformed id → dropped
+      ],
+      tasks: [{ id: 1, title: "t", status: "todo", priority: "normal", deps: [], subtasks: [], subtaskSeq: 0, revision: 1, createdBy: "lead", createdAt: "2026-06-14T00:00:00.000Z", updatedAt: "2026-06-14T00:00:00.000Z", comments: [], mailEventIds: [], labelIds: ["label-1", "label-2", "ghost"] }],
+    };
+    await writeFile(boardPath(dir, "m"), JSON.stringify(raw));
+    const back = await readBoard(dir, "m");
+    expect(back.labels!.map((l) => l.id)).toEqual(["label-1"]); // only the valid palette label survives
+    expect(back.tasks[0].labelIds).toEqual(["label-1"]); // label-2 (dropped label) + ghost (never existed) removed
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

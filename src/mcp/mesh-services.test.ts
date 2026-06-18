@@ -126,12 +126,14 @@ test("board tools: members get read + subtask/status/comment; create_task/epic/a
     expect(memberTools).toContain(t);
   }
   // Phase 0: creating a task (#issue) is router/operator-only — members work tasks dispatched to them.
-  for (const t of ["board_create_task", "board_create_epic", "board_update_epic", "board_delete_epic", "board_assign", "board_set_priority", "board_set_deps"]) {
+  // Phase 4: label CRUD is router-only; board_set_task_labels is available to members (reducer-gated).
+  for (const t of ["board_create_task", "board_create_epic", "board_update_epic", "board_delete_epic", "board_assign", "board_set_priority", "board_set_deps", "board_create_label", "board_update_label", "board_delete_label"]) {
     expect(memberTools).not.toContain(t);
   }
+  expect(memberTools).toContain("board_set_task_labels");
 
   const routerTools = await listTools(server.urlFor("router-1"), await handshake(server.urlFor("router-1")));
-  for (const t of ["board_create_task", "board_create_epic", "board_assign", "board_set_priority", "board_set_deps"]) {
+  for (const t of ["board_create_task", "board_create_epic", "board_assign", "board_set_priority", "board_set_deps", "board_create_label", "board_update_label", "board_delete_label", "board_set_task_labels"]) {
     expect(routerTools).toContain(t);
   }
 });

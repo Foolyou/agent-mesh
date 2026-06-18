@@ -11,6 +11,7 @@ import {
   filterSortTasks,
   blockedTaskIds,
   cardMoveRejection,
+  labelForeground,
   parseDepsInput,
   depsCommit,
   EMPTY_FILTER,
@@ -18,7 +19,8 @@ import {
   type BoardFilter,
 } from "./BoardPanel";
 import { I18nContext, translate } from "./i18n";
-import { applyBoardCommand, createEmptyBoard, type BoardActor, type BoardDocument, type BoardState } from "../../board";
+import { applyBoardCommand, createEmptyBoard, LABEL_PALETTE, type BoardActor, type BoardDocument, type BoardLabel, type BoardState } from "../../board";
+import { contrastRatio, AA_TEXT } from "./contrast";
 import type { Store } from "./store";
 
 const MEMBER: BoardActor = { kind: "agent", agentId: "alice" }; // owns #1 (assignee), not #2
@@ -325,4 +327,64 @@ test("depsCommit returns null when the value matches current deps (no stale over
   expect(depsCommit("2,3", [3, 2])).toBeNull();
   expect(depsCommit("2,3", [2])).toEqual([2, 3]);
   expect(depsCommit("", [2])).toEqual([]);
+});
+
+// ── issue-panel Phase 4: labels ────────────────────────────────────────────────
+
+function sampleBoardWithLabels(): BoardDocument {
+  let s: BoardState = sampleBoard(); // #1 alice (in_progress), #2 unassigned
+  const step = (cmd: Parameters<typeof applyBoardCommand>[1]) => {
+    const r = applyBoardCommand(s, cmd, ctx(s));
+    if (!r.ok) throw new Error(`${r.code}: ${r.error}`);
+    s = r.state;
+  };
+  step({ type: "create_label", name: "bug", color: LABEL_PALETTE[0] }); // label-1
+  step({ type: "create_label", name: "ui", color: LABEL_PALETTE[8] }); // label-2
+  step({ type: "set_task_labels", id: 1, expectedRevision: s.tasks.find((t) => t.id === 1)!.revision, labelIds: ["label-1"] });
+  return s;
+}
+
+test("labelForeground returns black/white that clears WCAG AA for EVERY palette color", () => {
+  for (const c of LABEL_PALETTE) {
+    const fg = labelForeground(c);
+    expect(fg === "#000000" || fg === "#ffffff").toBe(true);
+    expect(contrastRatio(c, fg)).toBeGreaterThanOrEqual(AA_TEXT);
+  }
+});
+
+test("list view renders label chips on a task with the computed-foreground style", () => {
+  const board = sampleBoardWithLabels();
+  const html = withI18n(createElement(BoardListView, { board, filter: EMPTY_FILTER, groupByEpic: false, onOpen: () => {} }));
+  expect(html).toContain("label-chip");
+  expect(html).toContain("bug"); // #1's label name
+  // chip text color is the computed black/white fg for that palette bg (not theme-default)
+  const fg = labelForeground(LABEL_PALETTE[0]);
+  expect(html).toContain(`color:${fg}`);
+});
+
+test("filterSortTasks filters by label id / @none and matches label NAMES in free-text search", () => {
+  const board = sampleBoardWithLabels();
+  const labelsById: Map<string, BoardLabel> = new Map((board.labels ?? []).map((l) => [l.id, l]));
+  expect(filterSortTasks(board.tasks, { ...EMPTY_FILTER, label: "label-1" }).map((t) => t.id)).toEqual([1]);
+  expect(filterSortTasks(board.tasks, { ...EMPTY_FILTER, label: "@none" }).map((t) => t.id)).toEqual([2]);
+  // free-text "bug" matches #1 via its label name (only when labelsById is supplied)
+  expect(filterSortTasks(board.tasks, { ...EMPTY_FILTER, text: "bug" }, labelsById).map((t) => t.id)).toEqual([1]);
+  expect(filterSortTasks(board.tasks, { ...EMPTY_FILTER, text: "bug" }).map((t) => t.id)).toEqual([]); // no map → no name match
+});
+
+test("detail label editor: running shows gated toggles; stopped shows read-only chips", () => {
+  const board = sampleBoardWithLabels();
+  const task = board.tasks.find((t) => t.id === 1)!;
+  const running = withI18n(createElement(BoardDetailView, { task, board, running: true, mesh: "demo", store: noopStore, apply: () => {}, onBack: () => {} }));
+  expect(running).toContain("label-toggle"); // toggleable chips for every board label
+  expect(running).toContain("aria-pressed"); // selected/unselected state exposed
+  const stopped = withI18n(createElement(BoardDetailView, { task, board, running: false, mesh: "demo", store: noopStore, apply: () => {}, onBack: () => {} }));
+  expect(stopped).not.toContain("label-toggle"); // no editing controls
+  expect(stopped).toContain("label-chip"); // current labels still shown
+});
+
+test("label management UI appears only on a running mesh (operator-gated, in-board)", () => {
+  const board = sampleBoardWithLabels();
+  expect(renderPanel(board, true)).toContain("board-manage-labels"); // manage toggle present when running
+  expect(renderPanel(board, false)).not.toContain("board-manage-labels"); // hidden on a stopped mesh
 });

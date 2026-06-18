@@ -214,6 +214,42 @@ try {
     });
   }
 
+  // issue-panel Phase 4: label chips paint user-chosen palette backgrounds, so their TEXT must stay
+  // AA. Seed two chips via REST (a LIGHT palette color → black foreground, and a DARK one → white)
+  // then open the board so the crawler measures the chip text against its custom background.
+  await step("label chips meet WCAG AA in the board view (light + dark palette colors)", async () => {
+    const getBoard = async () => (await fetch(`${BASE}/api/meshes/demo/board`)).json();
+    const post = (command: unknown, ebr: number) =>
+      fetch(`${BASE}/api/meshes/demo/board`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ command, expectedBoardRevision: ebr }) });
+    let b = await getBoard();
+    if (!(b.labels ?? []).some((l: { name: string }) => l.name === "bug")) {
+      await post({ type: "create_label", name: "bug", color: "#fde68a" }, b.revision); // light → black fg
+      b = await getBoard();
+      await post({ type: "create_label", name: "blocked", color: "#b91c1c" }, b.revision); // dark → white fg
+      b = await getBoard();
+      await post({ type: "create_task", title: "Audit label chips", assignee: "codex-1" }, b.revision);
+      b = await getBoard();
+      const last = b.tasks[b.tasks.length - 1];
+      await post({ type: "set_task_labels", id: last.id, expectedRevision: last.revision, labelIds: b.labels.map((l: { id: string }) => l.id) }, b.revision);
+    }
+    await page.evaluate(() => localStorage.setItem("mesh.theme", "phosphor"));
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.waitForSelector(".mrow.sel .btn", { timeout: 8000 });
+    await page.locator('.drail .seg-tab:has-text("board")').first().click();
+    await page.waitForSelector(".drail .board .label-chip", { timeout: 8000 });
+    await page.addStyleTag({ content: "*,*::before,*::after{transition:none!important;animation:none!important}" });
+    await installColorMath(page);
+    const chips = await page.locator(".drail .board .label-chip").count();
+    if (chips < 2) throw new Error(`expected ≥2 label chips rendered, got ${chips}`);
+    const { offenders, scanned } = await page.evaluate(CRAWL, exceptSels);
+    if (scanned < 20) throw new Error(`only ${scanned} text nodes scanned — board likely not rendered`);
+    if (offenders.length)
+      throw new Error(
+        `${offenders.length} text node(s) below AA in the board view (scanned ${scanned}): ` +
+          offenders.slice(0, 6).map((o) => `<${o.tag}.${o.cls}> "${o.text}"=${o.ratio} need ${o.need}`).join(" · "),
+      );
+  });
+
   // One mobile-viewport pass on the default theme: mobile uses a master→detail layout
   // (tap a mesh row to open its detail), so it exercises chrome the desktop pass doesn't.
   await step("mobile viewport (default theme): rendered text meets AA", async () => {

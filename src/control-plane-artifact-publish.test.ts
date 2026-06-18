@@ -267,3 +267,40 @@ test("issue-panel Phase 1 board tools (board_dispatch / board_lifecycle) auto-ap
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("issue-panel Phase 4 label tools auto-approve (bare + mcp__mesh__ forms)", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cp-label-perm-"));
+  const config: MeshConfig = {
+    name: "perm",
+    agents: [{ id: "r", harness: "claude", project: ".", role: "router" }],
+    edges: [],
+  };
+  let conn: StubConnection | undefined;
+  const events: MeshEvent[] = [];
+  const cp = new ControlPlane(config, {
+    mailboxPath: join(root, "mailbox.ndjson"),
+    sessionRunDir: join(root, "run"),
+    artifactsRoot: root,
+    connectionFactory: (opts) => (conn = new StubConnection(opts)) as unknown as AcpAgentConnection,
+    meshServicesFactory: (handlers) => new FakeServer(handlers),
+  });
+  cp.on((e) => events.push(e));
+  try {
+    await cp.start();
+    const onPermission = conn!.opts.onPermission!;
+    const opt = [{ optionId: "ok", kind: "allow_once", name: "Allow" }];
+    for (const toolName of [
+      "board_create_label", "mcp__mesh__board_create_label",
+      "board_update_label", "mcp__mesh__board_update_label",
+      "board_delete_label", "mcp__mesh__board_delete_label",
+      "board_set_task_labels", "mcp__mesh__board_set_task_labels",
+    ]) {
+      const decision = await onPermission({ toolCall: { toolName }, options: opt });
+      expect(decision).toEqual({ optionId: "ok" });
+    }
+    expect(events.some((e) => e.kind === "permission")).toBe(false);
+  } finally {
+    await cp.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});

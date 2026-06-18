@@ -11,7 +11,9 @@ import {
   BOARD_PRIORITIES,
   BOARD_STATUSES,
   createEmptyBoard,
+  normalizeLabelColor,
   type BoardComment,
+  type BoardLabel,
   type BoardLifecycleEvent,
   type BoardPriority,
   type BoardState,
@@ -277,6 +279,25 @@ function sanitizeEpic(raw: unknown, seenIds: Set<string>): Epic | null {
 /** Rebuild a well-formed BoardState from arbitrary parsed JSON. Top-level non-object falls
  *  back to an empty board; malformed entity entries are dropped; seq/revision are normalized
  *  so newly-allocated ids never collide with retained items. Never throws. */
+/** Locked id shape "label-N"; name required; color MUST be one of the accessible palette colors
+ *  (a label with a non-palette color is dropped — never persisted). */
+function sanitizeLabel(raw: unknown, seenIds: Set<string>): BoardLabel | null {
+  const o = asObject(raw);
+  if (!o) return null;
+  const id = cleanStr(o.id, 200);
+  if (!id || seenIds.has(id)) return null;
+  const m = /^label-(\d+)$/.exec(id);
+  if (!m) return null;
+  const seq = Number(m[1]);
+  if (!Number.isInteger(seq) || seq <= 0) return null;
+  const name = cleanStr(o.name, 60);
+  if (!name) return null;
+  const color = normalizeLabelColor(o.color);
+  if (!color) return null;
+  seenIds.add(id);
+  return { id, name, color };
+}
+
 function sanitizeBoard(mesh: string, parsed: unknown): BoardState {
   const obj = asObject(parsed);
   if (!obj) return createEmptyBoard(mesh);
@@ -297,15 +318,33 @@ function sanitizeBoard(mesh: string, parsed: unknown): BoardState {
       if (task) tasks.push(task);
     }
   }
+  const labels: BoardLabel[] = [];
+  const seenLabelIds = new Set<string>();
+  if (Array.isArray(obj.labels)) {
+    for (const l of obj.labels) {
+      const label = sanitizeLabel(l, seenLabelIds);
+      if (label) labels.push(label);
+    }
+  }
+  // Drop dangling task→label references (a label deleted out-of-band, or that never existed) so a
+  // loaded board never carries unknown label ids.
+  const knownLabelIds = new Set(labels.map((l) => l.id));
+  const cleanedTasks = tasks.map((t) => {
+    const filtered = (t.labelIds ?? []).filter((id) => knownLabelIds.has(id));
+    return filtered.length === (t.labelIds?.length ?? 0) ? t : { ...t, labelIds: filtered };
+  });
 
   const maxEpicSeq = epics.reduce((m, e) => Math.max(m, e.seq), 0);
   const maxTaskId = tasks.reduce((m, t) => Math.max(m, t.id), 0);
+  const maxLabelSeq = labels.reduce((m, l) => Math.max(m, Number(/^label-(\d+)$/.exec(l.id)?.[1] ?? 0)), 0);
   return {
     mesh,
     revision: intAtLeast(obj.revision, 0),
     epicSeq: Math.max(intAtLeast(obj.epicSeq, 0), maxEpicSeq),
     taskSeq: Math.max(intAtLeast(obj.taskSeq, 0), maxTaskId),
+    labelSeq: Math.max(intAtLeast(obj.labelSeq, 0), maxLabelSeq),
     epics,
-    tasks,
+    tasks: cleanedTasks,
+    labels,
   };
 }

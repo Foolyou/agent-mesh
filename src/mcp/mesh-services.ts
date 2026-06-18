@@ -192,6 +192,26 @@ function registerBoardTools(
       ),
   );
 
+  // Available to all roles; the reducer gates to the task's assignee or a privileged actor.
+  server.registerTool(
+    "board_set_task_labels",
+    {
+      description:
+        "Replace the full set of labels on a task. Allowed for the task's assignee or a router/operator; " +
+        "unknown label ids are dropped and order is preserved. Use board_list to see available label ids.",
+      inputSchema: {
+        taskId: z.number().int().positive(),
+        labelIds: z.array(z.string()).describe("label ids (from board_list) to set; REPLACES the current set"),
+        expectedRevision: z.number().int().describe(`${ER} (of the task)`),
+        expectedBoardRevision: z.number().int().describe(EBR),
+      },
+    },
+    ({ taskId, labelIds, expectedRevision, expectedBoardRevision }) =>
+      guarded(agentId, "board_set_task_labels", () =>
+        handlers.applyBoard(ctx, { type: "set_task_labels", id: taskId, expectedRevision, labelIds }, expectedBoardRevision),
+      ),
+  );
+
   if (role !== "router") return;
 
   server.registerTool(
@@ -216,6 +236,49 @@ function registerBoardTools(
       guarded(agentId, "board_dispatch", () =>
         handlers.dispatchBoard(ctx, { taskId, assignee, slug, branchName, brief, expectedRevision, expectedBoardRevision }),
       ),
+  );
+
+  // ── labels (router/operator only) ──
+  server.registerTool(
+    "board_create_label",
+    {
+      description: "Create a board label (router/operator only). color must be one of the accessible palette colors (see board_list / the panel swatches).",
+      inputSchema: {
+        name: z.string().describe("label name"),
+        color: z.string().describe("accessible palette hex, e.g. #fde68a"),
+        expectedBoardRevision: z.number().int().describe(EBR),
+      },
+    },
+    ({ name, color, expectedBoardRevision }) =>
+      guarded(agentId, "board_create_label", () => handlers.applyBoard(ctx, { type: "create_label", name, color }, expectedBoardRevision)),
+  );
+
+  server.registerTool(
+    "board_update_label",
+    {
+      description: "Rename and/or recolor a label (router/operator only). color must be a palette color.",
+      inputSchema: {
+        id: z.string().describe("label id like label-1"),
+        name: z.string().optional(),
+        color: z.string().optional().describe("accessible palette hex"),
+        expectedBoardRevision: z.number().int().describe(EBR),
+      },
+    },
+    ({ id, name, color, expectedBoardRevision }) =>
+      guarded(agentId, "board_update_label", () => handlers.applyBoard(ctx, { type: "update_label", id, name, color }, expectedBoardRevision)),
+  );
+
+  server.registerTool(
+    "board_delete_label",
+    {
+      description: "Delete a label (router/operator only). Its id is removed from every task that carried it.",
+      inputSchema: {
+        id: z.string().describe("label id like label-1"),
+        expectedBoardRevision: z.number().int().describe(EBR),
+      },
+    },
+    ({ id, expectedBoardRevision }) =>
+      guarded(agentId, "board_delete_label", () => handlers.applyBoard(ctx, { type: "delete_label", id }, expectedBoardRevision)),
   );
 
   server.registerTool(
