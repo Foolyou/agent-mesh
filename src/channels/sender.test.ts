@@ -16,17 +16,22 @@ function argMap(args: string[]): Record<string, string> {
   return m;
 }
 
-test("enqueue sends with chat-id, markdown body and an idempotency key", async () => {
+test("enqueue sends with --as bot, chat-id, markdown body and an idempotency key", async () => {
   const { send, calls } = recordingSend();
   const s = new LarkSender({ chatId: "oc_1", send });
   s.enqueue("hello world");
   await s.whenIdle();
   expect(calls).toHaveLength(1);
+  // Position: "im", "+messages-send", "--as", "bot", "--chat-id", ...
   expect(calls[0].slice(0, 2)).toEqual(["im", "+messages-send"]);
+  expect(calls[0][2]).toBe("--as");
+  expect(calls[0][3]).toBe("bot");
+  expect(calls[0][4]).toBe("--chat-id");
   const m = argMap(calls[0]);
   expect(m["--chat-id"]).toBe("oc_1");
   expect(m["--markdown"]).toBe("hello world");
   expect(m["--idempotency-key"]).toBeTruthy();
+  expect(m["--as"]).toBe("bot");
 });
 
 test("blank / whitespace text is never sent", async () => {
