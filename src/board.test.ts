@@ -460,3 +460,25 @@ test("set_dispatch_mail is privileged-only and requires an existing dispatch", (
   expect(denied.ok).toBe(false);
   if (!denied.ok) expect(denied.code).toBe("forbidden");
 });
+
+test("dispatch_task rejects a slug already owned by a DIFFERENT task (slugs are unique)", () => {
+  let board = createEmptyBoard("m");
+  board = ok(board, { type: "create_task", title: "first" }, router); // #1
+  board = ok(board, { type: "create_task", title: "second" }, router); // #2
+  // dispatch #1 with slug "dup"
+  board = ok(board, { type: "dispatch_task", id: 1, expectedRevision: board.tasks.find((t) => t.id === 1)!.revision, assignee: "alice", taskSlug: "dup" }, router);
+  // dispatching #2 with the SAME slug is rejected at the write
+  const clash = applyBoardCommand(board, { type: "dispatch_task", id: 2, expectedRevision: board.tasks.find((t) => t.id === 2)!.revision, assignee: "bob", taskSlug: "dup" }, ctx(board, router));
+  expect(clash.ok).toBe(false);
+  if (!clash.ok) {
+    expect(clash.code).toBe("invalid");
+    expect(clash.error).toContain("#1");
+  }
+  // #2 keeps no slug; #1 still owns "dup"
+  expect(board.tasks.find((t) => t.id === 2)!.taskSlug).toBeUndefined();
+  // a UNIQUE slug for #2 succeeds, and re-dispatching #1 with ITS OWN slug is fine (self is not a clash)
+  board = ok(board, { type: "dispatch_task", id: 2, expectedRevision: board.tasks.find((t) => t.id === 2)!.revision, assignee: "bob", taskSlug: "uniq" }, router);
+  board = ok(board, { type: "dispatch_task", id: 1, expectedRevision: board.tasks.find((t) => t.id === 1)!.revision, assignee: "carol", taskSlug: "dup" }, router);
+  expect(board.tasks.find((t) => t.id === 1)!.assignee).toBe("carol");
+  expect(board.tasks.find((t) => t.id === 2)!.taskSlug).toBe("uniq");
+});

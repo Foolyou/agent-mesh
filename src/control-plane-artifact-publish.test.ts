@@ -233,3 +233,37 @@ test("mesh_publish_attachment permission requests are auto-approved as an intern
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("issue-panel Phase 1 board tools (board_dispatch / board_lifecycle) auto-approve like other board tools", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cp-board-perm-"));
+  const config: MeshConfig = {
+    name: "perm",
+    agents: [{ id: "r", harness: "claude", project: ".", role: "router" }],
+    edges: [],
+  };
+  let conn: StubConnection | undefined;
+  const events: MeshEvent[] = [];
+  const cp = new ControlPlane(config, {
+    mailboxPath: join(root, "mailbox.ndjson"),
+    sessionRunDir: join(root, "run"),
+    artifactsRoot: root,
+    connectionFactory: (opts) => (conn = new StubConnection(opts)) as unknown as AcpAgentConnection,
+    meshServicesFactory: (handlers) => new FakeServer(handlers),
+  });
+  cp.on((e) => events.push(e));
+  try {
+    await cp.start();
+    const onPermission = conn!.opts.onPermission!;
+    const opt = [{ optionId: "ok", kind: "allow_once", name: "Allow" }];
+
+    // Both the bare and the mcp__mesh__-namespaced forms of the new board tools must auto-approve.
+    for (const toolName of ["board_dispatch", "mcp__mesh__board_dispatch", "board_lifecycle", "mcp__mesh__board_lifecycle"]) {
+      const decision = await onPermission({ toolCall: { toolName }, options: opt });
+      expect(decision).toEqual({ optionId: "ok" });
+    }
+    expect(events.some((e) => e.kind === "permission")).toBe(false);
+  } finally {
+    await cp.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});

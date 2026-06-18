@@ -443,3 +443,31 @@ test("idempotent re-dispatch / re-assign: no double transition, no status rollba
     await rm(h.root, { recursive: true, force: true });
   }
 });
+
+test("duplicate slug dispatch is rejected; unique slug refs resolve to the right task and #N still wins", async () => {
+  const h = await setup();
+  try {
+    await h.handlers.applyBoard(router, { type: "create_task", title: "one" }, 0); // #1
+    await h.handlers.applyBoard(router, { type: "create_task", title: "two" }, h.cp.getBoard().revision); // #2
+    const get = (id: number) => h.cp.getBoard().tasks.find((t) => t.id === id)!;
+
+    await h.handlers.dispatchBoard(router, { taskId: 1, assignee: "alice", slug: "shared", expectedRevision: get(1).revision, expectedBoardRevision: h.cp.getBoard().revision });
+    // dispatching #2 with the SAME slug is rejected — no silent mis-link later.
+    const clash = await h.handlers.dispatchBoard(router, { taskId: 2, assignee: "bob", slug: "shared", expectedRevision: get(2).revision, expectedBoardRevision: h.cp.getBoard().revision });
+    expect(clash).toContain("error:");
+    expect(get(2).taskSlug).toBeUndefined();
+
+    // give #2 a unique slug; a slug-ref mail + lifecycle resolves to #2 only (not the older #1).
+    await h.handlers.dispatchBoard(router, { taskId: 2, assignee: "alice", slug: "uniq2", expectedRevision: get(2).revision, expectedBoardRevision: h.cp.getBoard().revision });
+    await h.handlers.sendMail(alice, "router", "[REVIEW] done", { task: "uniq2" });
+    expect(get(2).status).toBe("in_review");
+    expect(get(1).status).toBe("in_progress"); // unaffected — slug "uniq2" never matched #1
+
+    // canonical #N wins: a "#1" ref links/moves #1 regardless of any slug strings.
+    await h.handlers.sendMail(alice, "router", "[REVIEW] also done", { task: "#1" });
+    expect(get(1).status).toBe("in_review");
+  } finally {
+    await h.cp.stop();
+    await rm(h.root, { recursive: true, force: true });
+  }
+});

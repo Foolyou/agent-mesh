@@ -76,8 +76,11 @@ const BOARD_PRIORITY = z.enum(["low", "normal", "high", "urgent"]);
 const BOARD_MAIL_LIFECYCLE = z.enum(["branch_created", "accepted", "review_requested"]);
 // Full lifecycle vocabulary the board_lifecycle tool accepts; the reducer gates privileged kinds.
 const BOARD_LIFECYCLE_KIND = z.enum(["dispatched", "branch_created", "accepted", "review_requested", "integration_ready", "reopened"]);
-const EBR = "the board revision you last saw (from board_list); the write is rejected if the board changed since";
-const ER = "the entity's revision you last saw (from board_list); the write is rejected if it changed since";
+// CAS tokens. Two distinct levels: STRUCTURAL changes (create/delete an epic or task) gate on the
+// whole-board revision; every other ENTITY edit (status/assign/comment/lifecycle/dispatch/…) gates
+// ONLY on that entity's own revision, so concurrent edits to different tasks never false-conflict.
+const EBR = "the board revision you last saw (from board_list). Only STRUCTURAL changes (create/delete) are rejected if the board changed since; entity edits are gated by the entity revision, not this.";
+const ER = "the target entity's revision you last saw (from board_list); the write is rejected if that entity changed since (entity-level CAS).";
 
 /** Register the collaboration-board MCP tools. Read + task/subtask/comment tools are open to
  *  every member; epic CRUD and assign/priority/deps are router-only (NOT registered for

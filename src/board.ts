@@ -591,6 +591,14 @@ export function applyBoardCommand(state: BoardState, cmd: BoardCommand, ctx: Boa
       if (!assignee) return err("invalid", "dispatch requires an assignee");
       const slug = cleanText(cmd.taskSlug, 200);
       if (!slug) return err("invalid", "dispatch requires a task slug");
+      // Slug == branch/task identity, so it must be UNIQUE across the board. Reject if a DIFFERENT
+      // task already owns this slug — otherwise a later send_mail(task:"<slug>") / lifecycle marker
+      // (resolved via taskSlug, §5.4) could silently link or move the wrong (older) issue. Catching
+      // it here at the write keeps slug resolution unambiguous downstream. A re-dispatch of the SAME
+      // task with its own slug is fine (the match is itself).
+      if (state.tasks.some((t) => t.id !== cmd.id && t.taskSlug === slug)) {
+        return err("invalid", `task slug "${slug}" is already used by task #${state.tasks.find((t) => t.id !== cmd.id && t.taskSlug === slug)!.id}; slugs must be unique`);
+      }
       const branchName = cleanText(cmd.branchName, 200) ?? `task/${slug}`;
       // dispatch.threadKey is the SLUG (the mail-thread↔issue routing key, §5.4). The `dispatched`
       // lifecycle event keys idempotency on the slug+assignee so a duplicate dispatch (same assignee)

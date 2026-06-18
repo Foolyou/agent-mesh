@@ -2058,6 +2058,8 @@ export class ControlPlane {
     "board_assign",
     "board_set_priority",
     "board_set_deps",
+    "board_lifecycle",
+    "board_dispatch",
   ] as const;
   private static readonly MESH_TOOLS = new Set([
     "send_mail",
@@ -2144,7 +2146,9 @@ export class ControlPlane {
 /** Resolve a send_mail `task` ref to a board task id (§5.4). `#N`/`N` resolves by board id
  *  (canonical, preferred when present); any other non-empty string resolves by `Task.taskSlug`.
  *  This lets the mesh's existing `send_mail(task:"<slug>")` habit auto-link replies to a
- *  dispatched issue. On a slug collision the lowest id wins (deterministic). */
+ *  dispatched issue. `dispatch_task` enforces slug UNIQUENESS at the write, so a slug ref should
+ *  resolve to at most one task; defensively, an AMBIGUOUS slug (>1 match) resolves to undefined
+ *  (leave the mail unlinked) rather than silently targeting the wrong/older issue. */
 function parseBoardTaskRef(task: string | undefined, board: BoardState): number | undefined {
   if (typeof task !== "string") return undefined;
   const trimmed = task.trim();
@@ -2156,7 +2160,7 @@ function parseBoardTaskRef(task: string | undefined, board: BoardState): number 
     return board.tasks.some((t) => t.id === n) ? n : undefined;
   }
   const matches = board.tasks.filter((t) => t.taskSlug === trimmed).map((t) => t.id);
-  return matches.length ? Math.min(...matches) : undefined;
+  return matches.length === 1 ? matches[0] : undefined;
 }
 
 /** Lifecycle kinds an assignee may signal over the mail channel. Privileged kinds
