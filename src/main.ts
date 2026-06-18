@@ -17,6 +17,7 @@ import { runMeshHost } from "./mesh-host";
 import { resolveRoot, expandHome } from "./root";
 import { uploadRoot } from "./web/uploads";
 import { assistantCliDeprecationWarnings, assistantHarnessPassthrough, noAssistantSelected, parseAssistantHarness } from "./cli-options";
+import { buildFeishuChannel } from "./channels";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import * as service from "./service";
@@ -78,7 +79,18 @@ async function buildGateway() {
       .then(() => gateway.setAssistantStatus("ready"))
       .catch(() => gateway.setAssistantStatus("absent"));
   }
-  return { manager, assistant, gateway };
+  // External chat bridge (Feishu PoC). Only when not fake and `<root>/channels/feishu.json`
+  // is present + enabled — otherwise buildFeishuChannel returns undefined and this is a no-op.
+  // It hangs off this backend process (not a per-mesh host daemon) and is reaped by reapOnExit.
+  const channel = fake ? undefined : buildFeishuChannel(manager, { root });
+  if (channel) {
+    try {
+      channel.start();
+    } catch (err) {
+      console.warn(`  feishu channel failed to start: ${String(err)}`);
+    }
+  }
+  return { manager, assistant, gateway, channel };
 }
 
 function reapOnExit(stop: () => Promise<void> | void) {
@@ -132,12 +144,13 @@ if (cmd === "up" || cmd === "start") {
   }
 } else if (cmd === "backend") {
   const port = Number(process.env.MESH_API_PORT) || Number(argVal("--port")) || 7300;
-  const { manager, assistant, gateway } = await buildGateway();
+  const { manager, assistant, gateway, channel } = await buildGateway();
   const server = startApiServer(gateway, { port, hostname });
   console.log(`\n  mesh backend (REST + WS) → ${server.url}${fake ? "  (fake)" : `  · root: ${root}`}\n`);
   reapOnExit(async () => {
     server.stop();
     gateway.dispose();
+    await channel?.stop(); // SIGTERM the lark-cli consumer before exit — no orphan
     manager.disconnectAll?.(); // leave mesh daemons running for the next backend to reattach
     await assistant?.stop?.();
   });
@@ -150,12 +163,13 @@ if (cmd === "up" || cmd === "start") {
 } else {
   // default: combined single process
   const port = Number(process.env.MESH_WEB_PORT) || Number(argVal("--port")) || 7317;
-  const { manager, assistant, gateway } = await buildGateway();
+  const { manager, assistant, gateway, channel } = await buildGateway();
   const server = startWebServer({ port, gateway, hostname });
   console.log(`\n  agent-mesh web console → ${server.url}${fake ? "  (fake mode)" : `  · root: ${root}`}\n`);
   reapOnExit(async () => {
     server.stop();
     gateway.dispose();
+    await channel?.stop(); // SIGTERM the lark-cli consumer before exit — no orphan
     manager.disconnectAll?.(); // leave mesh daemons running for the next backend to reattach
     await assistant?.stop?.();
   });
