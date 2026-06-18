@@ -78,7 +78,7 @@ export class LarkSender {
       if (!first && this.minIntervalMs > 0) await this.wait(this.minIntervalMs);
       first = false;
       const item = this.queue.shift()!;
-      const args = ["im", "+messages-send", "--chat-id", this.chatId, "--markdown", item.text, "--idempotency-key", item.key];
+      const args = ["im", "+messages-send", "--as", "bot", "--chat-id", this.chatId, "--markdown", item.text, "--idempotency-key", item.key];
       try {
         const r = await this.send(args);
         if (r.code !== 0) this.log(`feishu sender: send failed (code ${r.code})${r.stderr ? `: ${r.stderr}` : ""}`);
