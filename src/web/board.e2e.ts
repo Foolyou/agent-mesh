@@ -1,9 +1,13 @@
-// Browser e2e for the collaboration board (#42, Phase 2 list+detail workspace): starts the --fake
-// backend, opens the board panel, and drives the list → filter → detail loop — create task/epic,
-// filter, open a detail via row click AND via a ?issue=N deep link (board-tab-active, per Phase 2
-// scope: NOT cold auto-opening the board tab), round-trip a gated status edit, add subtask/comment,
-// render dispatch/lifecycle state — then stops the mesh and reloads to prove read-only persistence.
-// Real REST → FakeManager.boardCommand (real reducer) → board_snapshot → WS → store.
+// Browser e2e for the collaboration board (#42, Phase 2 list+detail + Phase 3 kanban): starts the
+// --fake backend, opens the board panel, and drives list → filter → detail (row click AND ?issue=N
+// deep link, board-tab-active per Phase 2 scope), a gated status edit, subtask/comment, dispatch/
+// lifecycle render, then the KANBAN view — five status columns, a keyboard status-select move and a
+// drag-and-drop move both persisting via WS — then stops the mesh and reloads to prove read-only
+// persistence (list, detail, AND kanban). Real REST → FakeManager.boardCommand (real reducer) →
+// board_snapshot → WS → store. The kanban drag uses synthetic HTML5 DnD events (a shared
+// DataTransfer) because Playwright's locator.dragTo does not reliably trigger native DnD; it drives
+// the exact production dragstart→drop→attemptMove path. The keyboard-select move is the a11y path
+// and is asserted independently.
 // Run: bun run src/web/board.e2e.ts
 import { type Page } from "playwright";
 import { launchChromium, e2eEnv } from "./e2e-playwright";
@@ -123,6 +127,53 @@ try {
     await page.waitForSelector('.drail .board-issue .pill.st-in_review', { timeout: 6000 });
   });
 
+  const kanbanCard = (id: number) => page.locator(`.drail .board-card:has(.board-tid:has-text("#${id}"))`);
+  const taskStatus = async (id: number) => (await getBoard()).tasks.find((t: { id: number }) => t.id === id)?.status;
+
+  await step("switch to the kanban view shows the five status columns", async () => {
+    await page.locator(".drail .board-views .seg-tab").nth(1).click(); // List · Board → Board
+    await page.waitForSelector(".drail .board-kanban", { timeout: 6000 });
+    await page.waitForFunction(() => new URLSearchParams(location.search).get("board") === "kanban", { timeout: 6000 });
+    const cols = await page.locator(".drail .board-kanban .board-col").count();
+    if (cols !== 5) throw new Error(`expected 5 columns, got ${cols}`);
+    // #1 (in_review) card sits under the in_review column
+    await page.waitForSelector('.drail .board-col:has(.board-col-head .pill.st-in_review) .board-card:has(.board-tid:has-text("#1"))', { timeout: 6000 });
+  });
+
+  await step("keyboard status select moves a card across columns and persists via WS", async () => {
+    await kanbanCard(1).locator("select").selectOption("done");
+    await page.waitForFunction(() => {
+      const card = document.querySelector('.drail .board-col:has(.board-col-head .pill.st-done) .board-card .board-tid');
+      return card?.textContent?.includes("#1");
+    }, { timeout: 6000 });
+    if ((await taskStatus(1)) !== "done") throw new Error("keyboard status move did not persist");
+  });
+
+  await step("drag a card to another column changes status (HTML5 DnD) and persists", async () => {
+    // Playwright's locator.dragTo does not reliably trigger HTML5 drag-and-drop, so drive the same
+    // dragstart→dragover→drop handlers deterministically with a shared DataTransfer (the production
+    // code path: onDragStart setData → column onDrop getData → attemptMove → set_task_status).
+    const moved = await page.evaluate(() => {
+      const cards = [...document.querySelectorAll(".drail .board-card")];
+      const src = cards.find((c) => c.querySelector(".board-tid")?.textContent?.includes("#1")) as HTMLElement | undefined;
+      const cols = [...document.querySelectorAll(".drail .board-col")];
+      const tgt = cols.find((c) => c.querySelector(".board-col-head .pill.st-todo")) as HTMLElement | undefined;
+      if (!src || !tgt) return false;
+      const dataTransfer = new DataTransfer();
+      src.dispatchEvent(new DragEvent("dragstart", { bubbles: true, cancelable: true, dataTransfer }));
+      tgt.dispatchEvent(new DragEvent("dragover", { bubbles: true, cancelable: true, dataTransfer }));
+      tgt.dispatchEvent(new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer }));
+      src.dispatchEvent(new DragEvent("dragend", { bubbles: true, cancelable: true, dataTransfer }));
+      return true;
+    });
+    if (!moved) throw new Error("could not locate drag source/target nodes");
+    await page.waitForFunction(async () => {
+      const b = await (await fetch("/api/meshes/demo/board")).json();
+      return b.tasks.find((t: { id: number }) => t.id === 1)?.status === "todo";
+    }, { timeout: 6000 });
+    await page.waitForSelector('.drail .board-col:has(.board-col-head .pill.st-todo) .board-card:has(.board-tid:has-text("#1"))', { timeout: 6000 });
+  });
+
   await step("?issue=N deep link reopens the detail once the board panel is active", async () => {
     // Phase-2 scope: deep link is board-tab-active (does NOT cold-open the board tab itself).
     await page.goto(BASE + "/?issue=1", { waitUntil: "domcontentloaded" });
@@ -150,6 +201,15 @@ try {
     if (await page.locator('.drail .board-detail select').count()) throw new Error("editable selects in a stopped-mesh detail");
     if (await page.locator('.drail .board-detail .board-input').count()) throw new Error("editable inputs in a stopped-mesh detail");
     if (!(await page.locator('.drail .board-detail:has-text("Wire it up")').count())) throw new Error("persisted task missing after reload");
+  });
+
+  await step("stopped-mesh kanban is read-only: cards present, no move controls, not draggable", async () => {
+    await page.goto(BASE + "/?board=kanban", { waitUntil: "domcontentloaded" });
+    await page.waitForSelector(".mrow.sel", { timeout: 8000 });
+    await openBoard();
+    await page.waitForSelector(".drail .board-kanban .board-card", { timeout: 6000 });
+    if (await page.locator(".drail .board-kanban .board-card-move").count()) throw new Error("status selects present on a stopped-mesh kanban");
+    if (await page.locator('.drail .board-kanban .board-card[draggable="true"]').count()) throw new Error("draggable cards on a stopped-mesh kanban");
   });
 
   await step("mobile viewport renders the board panel without horizontal overflow", async () => {
