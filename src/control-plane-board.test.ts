@@ -75,14 +75,14 @@ function snapshots(events: MeshEvent[]): Extract<MeshEvent, { kind: "board_snaps
   return events.filter((e): e is Extract<MeshEvent, { kind: "board_snapshot" }> => e.kind === "board_snapshot");
 }
 
-test("an agent creates a task: it lands in memory, persists to disk, and emits a board_snapshot", async () => {
+test("the router creates a task: it lands in memory, persists to disk, and emits a board_snapshot", async () => {
   const h = await setup();
   try {
-    const res = await h.handlers.applyBoard(alice, { type: "create_task", title: "do it" }, 0);
+    const res = await h.handlers.applyBoard(router, { type: "create_task", title: "do it" }, 0);
     expect(res).toContain("ok: task #1");
 
     expect(h.cp.getBoard().tasks).toHaveLength(1);
-    expect(h.cp.getBoard().tasks[0]).toMatchObject({ id: 1, title: "do it", createdBy: "alice" });
+    expect(h.cp.getBoard().tasks[0]).toMatchObject({ id: 1, title: "do it", createdBy: "router" });
 
     const onDisk = await readBoard(h.boardsDir, MESH);
     expect(onDisk.tasks).toHaveLength(1);
@@ -115,8 +115,8 @@ test("epic create is router-only via ctx.role (handler-side recheck)", async () 
 test("board CAS conflict surfaces as an error string and does not mutate", async () => {
   const h = await setup();
   try {
-    await h.handlers.applyBoard(alice, { type: "create_task", title: "t" }, 0); // board rev → 1
-    const stale = await h.handlers.applyBoard(alice, { type: "create_task", title: "again" }, 0); // stale token
+    await h.handlers.applyBoard(router, { type: "create_task", title: "t" }, 0); // board rev → 1
+    const stale = await h.handlers.applyBoard(router, { type: "create_task", title: "again" }, 0); // stale token
     expect(stale).toContain("error:");
     expect(stale.toLowerCase()).toContain("conflict");
     expect(h.cp.getBoard().tasks).toHaveLength(1);
@@ -126,13 +126,25 @@ test("board CAS conflict surfaces as an error string and does not mutate", async
   }
 });
 
-test("an agent may move its own task to in_review but not to done", async () => {
+test("members cannot create tasks (router/operator only)", async () => {
   const h = await setup();
   try {
-    await h.handlers.applyBoard(alice, { type: "create_task", title: "t" }, 0); // task #1 rev1, board rev1
+    const denied = await h.handlers.applyBoard(alice, { type: "create_task", title: "t" }, 0);
+    expect(denied).toContain("error:");
+    expect(h.cp.getBoard().tasks).toHaveLength(0);
+  } finally {
+    await h.cp.stop();
+    await rm(h.root, { recursive: true, force: true });
+  }
+});
+
+test("an assignee may move its own task to in_review but not to done", async () => {
+  const h = await setup();
+  try {
+    await h.handlers.applyBoard(router, { type: "create_task", title: "t", assignee: "alice" }, 0); // #1 → alice
     const review = await h.handlers.applyBoard(alice, { type: "set_task_status", id: 1, expectedRevision: 1, status: "in_review" }, 1);
     expect(review).toContain("ok:");
-    const done = await h.handlers.applyBoard(alice, { type: "set_task_status", id: 1, expectedRevision: 2, status: "done" }, 2);
+    const done = await h.handlers.applyBoard(alice, { type: "set_task_status", id: 1, expectedRevision: 2, status: "done" }, 1);
     expect(done).toContain("error:");
     expect(h.cp.getBoard().tasks[0].status).toBe("in_review");
   } finally {
@@ -160,7 +172,7 @@ test("snapshotEvents() always replays the current full board", async () => {
   const h = await setup();
   try {
     await h.handlers.applyBoard(router, { type: "create_epic", title: "E" }, 0);
-    await h.handlers.applyBoard(alice, { type: "create_task", title: "t" }, 1);
+    await h.handlers.applyBoard(router, { type: "create_task", title: "t" }, 1);
     const snap = (h.cp as unknown as { snapshotEvents(): MeshEvent[] }).snapshotEvents();
     const board = snap.find((e): e is Extract<MeshEvent, { kind: "board_snapshot" }> => e.kind === "board_snapshot");
     expect(board?.board.epics).toHaveLength(1);

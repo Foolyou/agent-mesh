@@ -28,6 +28,20 @@ export interface BoardComment {
   ts: string;
 }
 
+/** Lifecycle events drive AUTOMATIC status reflux (todo→in_progress→in_review). This is distinct
+ *  from (and does not weaken) the dependency-warning "advisory only" rule above: dependency
+ *  warnings never move status; lifecycle events intentionally do. `done`/`cancelled` are NEVER
+ *  reached via a lifecycle event — only the existing privileged close path sets a terminal status. */
+export type LifecycleKind = "dispatched" | "branch_created" | "accepted" | "review_requested" | "integration_ready" | "reopened";
+
+export interface BoardLifecycleEvent {
+  kind: LifecycleKind;
+  by: string; // actor label (agent id / "operator" / "system")
+  at: string;
+  /** Idempotency key (with taskId + kind): a repeated (taskId, kind, threadKey) is a no-op. */
+  threadKey?: string;
+}
+
 export interface Subtask {
   id: string; // "<taskId>.<n>", e.g. "5.1"
   title: string;
@@ -57,6 +71,15 @@ export interface Task {
   updatedAt: string;
   comments: BoardComment[];
   mailEventIds: string[]; // mail events linked to this task (bidirectional ref)
+  // ── issue-panel Phase 0: dispatch/lifecycle linkage. Optional on the type so unrelated Task
+  //    literals/fixtures keep compiling, but the reducer (create_task) and the on-disk sanitizer
+  //    ALWAYS populate them — a live or loaded task is never missing them. Reads stay defensive. ──
+  taskSlug?: string; // canonical mesh task slug; git branch is `task/<slug>` by convention
+  branchName?: string; // defaults to `task/${taskSlug}`, confirmed by a branch_created event
+  dispatch?: { assignee: string; mailEventId?: string; threadKey: string; at: string; mailFailed?: boolean };
+  lifecycleEvents?: BoardLifecycleEvent[]; // append-only audit driving auto status reflux
+  labelIds?: string[]; // label ids (label CRUD itself is a later phase)
+  closeReady?: boolean; // set by an integration_ready lifecycle event; advisory close hint
 }
 
 export interface Epic {
@@ -120,7 +143,8 @@ export type BoardCommand =
   | { type: "update_subtask"; taskId: number; subtaskId: string; expectedRevision: number; title?: string }
   | { type: "set_subtask_status"; taskId: number; subtaskId: string; expectedRevision: number; status: BoardStatus }
   | { type: "add_comment"; target: BoardTargetRef; expectedRevision: number; text: string }
-  | { type: "link_mail"; taskId: number; expectedRevision: number; mailEventId: string };
+  | { type: "link_mail"; taskId: number; expectedRevision: number; mailEventId: string }
+  | { type: "record_lifecycle_event"; taskId: number; expectedRevision: number; kind: LifecycleKind; threadKey?: string };
 
 export type BoardErrorCode = "not_found" | "conflict" | "forbidden" | "invalid";
 
@@ -194,17 +218,41 @@ function ownsItem(actor: BoardActor, item: { assignee?: string; createdBy: strin
   return item.createdBy === id; // unassigned: the creator owns it
 }
 
+/** STRUCTURAL commands gate on the whole-board revision (id allocation / removal / epic CRUD);
+ *  every other command is an ENTITY edit gated only on its entity revision. */
+const STRUCTURAL_COMMANDS = new Set<BoardCommand["type"]>(["create_epic", "update_epic", "delete_epic", "create_task"]);
+
+/** Lifecycle status rank: auto-reflux only advances FORWARD and never reaches a terminal status. */
+const STATUS_RANK: Record<BoardStatus, number> = { todo: 0, in_progress: 1, in_review: 2, done: 3, cancelled: 3 };
+
+/** Lifecycle events allowed only for privileged actors; the rest may be emitted by the assignee. */
+const PRIVILEGED_LIFECYCLE: ReadonlySet<LifecycleKind> = new Set<LifecycleKind>(["dispatched", "integration_ready", "reopened"]);
+
+/** The non-terminal status a forward lifecycle event maps to, or null for events that don't move
+ *  status (integration_ready). reopened is handled separately (the one sanctioned backward move). */
+function forwardLifecycleStatus(kind: LifecycleKind): BoardStatus | null {
+  if (kind === "dispatched" || kind === "branch_created" || kind === "accepted") return "in_progress";
+  if (kind === "review_requested") return "in_review";
+  return null; // integration_ready (no status change), reopened (handled explicitly)
+}
+
 // ── reducer ─────────────────────────────────────────────────────────────────
 
 export function applyBoardCommand(state: BoardState, cmd: BoardCommand, ctx: BoardContext): BoardCommandResult {
   const { actor, now } = ctx;
   const author = actorLabel(actor);
 
-  // Board-level CAS gates EVERY mutation (creates included): a stale or malformed token is
-  // rejected before anything is touched.
-  if (!Number.isInteger(ctx.expectedBoardRevision)) return err("invalid", "expectedBoardRevision must be an integer");
-  if (ctx.expectedBoardRevision !== state.revision) {
-    return err("conflict", `board revision conflict: expected ${ctx.expectedBoardRevision}, found ${state.revision} (reload and retry)`);
+  // CAS policy (issue-panel Phase 0): STRUCTURAL changes — those that allocate/remove ids or
+  // re-shape the board (create/delete) — gate on the whole-board revision so a stale client can
+  // never apply onto a board it has not seen. ENTITY edits (status / comment / assign / deps /
+  // subtask / lifecycle / link_mail of an existing item) gate ONLY on that entity's own revision
+  // (casCheck below), so concurrent edits to *different* tasks never false-conflict. The board
+  // revision still advances on every successful mutation; it is simply not a gate for entity edits.
+  if (STRUCTURAL_COMMANDS.has(cmd.type)) {
+    if (!Number.isInteger(ctx.expectedBoardRevision)) return err("invalid", "expectedBoardRevision must be an integer");
+    if (ctx.expectedBoardRevision !== state.revision) {
+      return err("conflict", `board revision conflict: expected ${ctx.expectedBoardRevision}, found ${state.revision} (reload and retry)`);
+    }
   }
 
   switch (cmd.type) {
@@ -263,16 +311,12 @@ export function applyBoardCommand(state: BoardState, cmd: BoardCommand, ctx: Boa
     }
 
     case "create_task": {
+      // Issue-panel Phase 0: creating an issue is router/human-only (members can no longer
+      // open tasks; they work the ones dispatched to them).
+      if (!isPrivileged(actor)) return err("forbidden", "only a router or operator may create tasks");
       const title = cleanText(cmd.title, 200);
       if (!title) return err("invalid", "task title is required");
       if (cmd.priority && !BOARD_PRIORITIES.includes(cmd.priority)) return err("invalid", `invalid priority "${cmd.priority}"`);
-      // Epic membership, assignment, priority>normal, and deps are all router/human-only —
-      // reject (do not silently normalize) when a non-privileged agent supplies them.
-      if (!isPrivileged(actor)) {
-        if (cmd.epicId) return err("forbidden", "only a router or operator may file a task under an epic");
-        if (cmd.assignee || (cmd.deps && cmd.deps.length)) return err("forbidden", "only a router or operator may assign or set dependencies");
-        if (cmd.priority && cmd.priority !== "normal") return err("forbidden", `only a router or operator may set "${cmd.priority}" priority`);
-      }
       if (cmd.epicId && !state.epics.some((e) => e.id === cmd.epicId)) return err("not_found", `no epic "${cmd.epicId}"`);
       const deps = normalizeDeps(cmd.deps);
       const missing = deps.find((d) => !state.tasks.some((t) => t.id === d));
@@ -284,7 +328,7 @@ export function applyBoardCommand(state: BoardState, cmd: BoardCommand, ctx: Boa
         title,
         description: cleanText(cmd.description),
         status: "todo",
-        assignee: isPrivileged(actor) ? cmd.assignee : undefined,
+        assignee: cmd.assignee,
         priority: cmd.priority ?? "normal",
         deps: deps.filter((d) => d !== id),
         subtasks: [],
@@ -295,6 +339,9 @@ export function applyBoardCommand(state: BoardState, cmd: BoardCommand, ctx: Boa
         updatedAt: now,
         comments: [],
         mailEventIds: [],
+        lifecycleEvents: [],
+        labelIds: [],
+        closeReady: false,
       };
       const next = { ...state, revision: state.revision + 1, taskSeq: id, tasks: [...state.tasks, task] };
       return ok(next, { entity: "task", taskId: id });
@@ -378,6 +425,8 @@ export function applyBoardCommand(state: BoardState, cmd: BoardCommand, ctx: Boa
     case "create_subtask": {
       const task = state.tasks.find((t) => t.id === cmd.taskId);
       if (!task) return err("not_found", `no task #${cmd.taskId}`);
+      // Phase 0: a member may only add subtasks under a task it owns (its assignee); others read-only.
+      if (!isPrivileged(actor) && !ownsItem(actor, task)) return err("forbidden", "only the assignee of this task (or a router/operator) may add subtasks");
       const title = cleanText(cmd.title, 200);
       if (!title) return err("invalid", "subtask title is required");
       if (!isPrivileged(actor) && cmd.assignee) return err("forbidden", "only a router or operator may assign");
@@ -405,7 +454,8 @@ export function applyBoardCommand(state: BoardState, cmd: BoardCommand, ctx: Boa
       if (!task) return err("not_found", `no task #${cmd.taskId}`);
       const subtask = task.subtasks.find((s) => s.id === cmd.subtaskId);
       if (!subtask) return err("not_found", `no subtask "${cmd.subtaskId}"`);
-      if (!isPrivileged(actor) && !ownsItem(actor, subtask)) return err("forbidden", "only the owner, a router, or operator may edit this subtask");
+      // Phase 0: subtask edits are scoped to the parent task's owner (assignee) or a privileged actor.
+      if (!isPrivileged(actor) && !ownsItem(actor, task)) return err("forbidden", "only the assignee of this task (or a router/operator) may edit its subtasks");
       const conflict = casCheck(subtask.revision, cmd.expectedRevision);
       if (conflict) return conflict;
       const title = cmd.title === undefined ? subtask.title : cleanText(cmd.title, 200);
@@ -420,7 +470,8 @@ export function applyBoardCommand(state: BoardState, cmd: BoardCommand, ctx: Boa
       const subtask = task.subtasks.find((s) => s.id === cmd.subtaskId);
       if (!subtask) return err("not_found", `no subtask "${cmd.subtaskId}"`);
       if (!BOARD_STATUSES.includes(cmd.status)) return err("invalid", `invalid status "${cmd.status}"`);
-      const permErr = canAgentSetStatus(actor, ownsItem(actor, subtask), cmd.status);
+      // Phase 0: a member drives a subtask's status only when it owns the parent task (≤ in_review).
+      const permErr = canAgentSetStatus(actor, ownsItem(actor, task), cmd.status);
       if (permErr) return err("forbidden", permErr);
       const conflict = casCheck(subtask.revision, cmd.expectedRevision);
       if (conflict) return conflict;
@@ -433,10 +484,13 @@ export function applyBoardCommand(state: BoardState, cmd: BoardCommand, ctx: Boa
       if (!text) return err("invalid", "comment text is required");
       const comment: BoardComment = { author, text, ts: now };
       const ref = cmd.target;
+      // Phase 0: only a privileged actor or the item's owner (assignee) may comment. Epics are
+      // a router/human domain, so epic comments are privileged-only.
       // A comment still mutates the target entity, so it needs entity CAS too.
       if (ref.kind === "epic") {
         const epic = state.epics.find((e) => e.id === ref.id);
         if (!epic) return err("not_found", `no epic "${ref.id}"`);
+        if (!isPrivileged(actor)) return err("forbidden", "only a router or operator may comment on epics");
         const conflict = casCheck(epic.revision, cmd.expectedRevision);
         if (conflict) return conflict;
         const updated: Epic = { ...epic, comments: [...epic.comments, comment], revision: epic.revision + 1, updatedAt: now };
@@ -445,6 +499,7 @@ export function applyBoardCommand(state: BoardState, cmd: BoardCommand, ctx: Boa
       if (ref.kind === "task") {
         const task = state.tasks.find((t) => t.id === ref.id);
         if (!task) return err("not_found", `no task #${ref.id}`);
+        if (!isPrivileged(actor) && !ownsItem(actor, task)) return err("forbidden", "only the assignee of this task (or a router/operator) may comment on it");
         const conflict = casCheck(task.revision, cmd.expectedRevision);
         if (conflict) return conflict;
         const updated: Task = { ...task, comments: [...task.comments, comment], revision: task.revision + 1, updatedAt: now };
@@ -454,6 +509,7 @@ export function applyBoardCommand(state: BoardState, cmd: BoardCommand, ctx: Boa
       if (!task) return err("not_found", `no task #${ref.taskId}`);
       const subtask = task.subtasks.find((s) => s.id === ref.subtaskId);
       if (!subtask) return err("not_found", `no subtask "${ref.subtaskId}"`);
+      if (!isPrivileged(actor) && !ownsItem(actor, task)) return err("forbidden", "only the assignee of this task (or a router/operator) may comment on its subtasks");
       const conflict = casCheck(subtask.revision, cmd.expectedRevision);
       if (conflict) return conflict;
       const updatedSub: Subtask = { ...subtask, comments: [...subtask.comments, comment], revision: subtask.revision + 1, updatedAt: now };
@@ -471,6 +527,47 @@ export function applyBoardCommand(state: BoardState, cmd: BoardCommand, ctx: Boa
       if (conflict) return conflict;
       if (task.mailEventIds.includes(cmd.mailEventId)) return ok(state, { entity: "task", taskId: task.id }); // idempotent
       const updated: Task = { ...task, mailEventIds: [...task.mailEventIds, cmd.mailEventId], revision: task.revision + 1, updatedAt: now };
+      return ok(replaceTask(state, updated), { entity: "task", taskId: task.id });
+    }
+
+    case "record_lifecycle_event": {
+      const task = state.tasks.find((t) => t.id === cmd.taskId);
+      if (!task) return err("not_found", `no task #${cmd.taskId}`);
+      if (!PRIVILEGED_LIFECYCLE.has(cmd.kind) && forwardLifecycleStatus(cmd.kind) === null && cmd.kind !== "reopened") {
+        return err("invalid", `unknown lifecycle event "${cmd.kind}"`);
+      }
+      // Permission: dispatched/integration_ready/reopened are privileged; branch_created/accepted/
+      // review_requested may be emitted by the task's assignee (ownsItem) or a privileged actor.
+      if (PRIVILEGED_LIFECYCLE.has(cmd.kind)) {
+        if (!isPrivileged(actor)) return err("forbidden", `lifecycle event "${cmd.kind}" is router/operator-only`);
+      } else if (!isPrivileged(actor) && !ownsItem(actor, task)) {
+        return err("forbidden", `only the assignee of this task (or a router/operator) may signal "${cmd.kind}"`);
+      }
+      const conflict = casCheck(task.revision, cmd.expectedRevision);
+      if (conflict) return conflict;
+      const events = task.lifecycleEvents ?? [];
+      // Idempotent on (taskId, kind, threadKey): a repeated signal is a no-op (no event, no bump).
+      if (events.some((e) => e.kind === cmd.kind && e.threadKey === cmd.threadKey)) {
+        return ok(state, { entity: "task", taskId: task.id });
+      }
+      const event: BoardLifecycleEvent = { kind: cmd.kind, by: author, at: now, threadKey: cmd.threadKey };
+      let status = task.status;
+      let closeReady = task.closeReady === true;
+      if (cmd.kind === "integration_ready") {
+        closeReady = true; // mark close-ready; never auto-advance to a terminal status
+      } else if (cmd.kind === "reopened") {
+        // The one sanctioned backward move (privileged): pull a finished/under-review task back to work.
+        status = "in_progress";
+        closeReady = false;
+      } else {
+        const target = forwardLifecycleStatus(cmd.kind);
+        // Monotonic FORWARD only, and never onto a terminal status (done/cancelled need explicit close
+        // and, to move again, an explicit reopened). A late/out-of-order event is a safe no-op.
+        if (target && STATUS_RANK[task.status] < STATUS_RANK.done && STATUS_RANK[target] > STATUS_RANK[task.status]) {
+          status = target;
+        }
+      }
+      const updated: Task = { ...task, status, closeReady, lifecycleEvents: [...events, event], revision: task.revision + 1, updatedAt: now };
       return ok(replaceTask(state, updated), { entity: "task", taskId: task.id });
     }
 
@@ -538,6 +635,31 @@ export function epicProgress(state: BoardState, epicId: EpicId): Progress {
   if (tasks.length === 0) return { done: 0, total: 0, ratio: 0 };
   const done = tasks.filter((t) => statusIsDone(t.status)).length;
   return { done, total: tasks.length, ratio: done / tasks.length };
+}
+
+export interface CloseReadiness {
+  /** true only when nothing blocks a clean close: no open subtasks, no incomplete deps, and an
+   *  integration_ready lifecycle event has been recorded. Advisory only — close is NEVER hard-gated. */
+  ready: boolean;
+  openSubtasks: number;
+  /** dep task ids that are neither done nor cancelled (or no longer exist). */
+  blockingDeps: number[];
+  hasIntegrationReady: boolean;
+}
+
+/** Pure, derived close-acceptance hint surfaced at close time. Does NOT gate the transition —
+ *  `done`/`cancelled` remain a privileged explicit action regardless of readiness. */
+export function computeCloseReadiness(state: BoardState, taskId: number): CloseReadiness {
+  const task = state.tasks.find((t) => t.id === taskId);
+  if (!task) return { ready: false, openSubtasks: 0, blockingDeps: [], hasIntegrationReady: false };
+  const openSubtasks = task.subtasks.filter((s) => s.status !== "done" && s.status !== "cancelled").length;
+  const byId = new Map(state.tasks.map((t) => [t.id, t]));
+  const blockingDeps = task.deps.filter((d) => {
+    const dep = byId.get(d);
+    return !dep || (dep.status !== "done" && dep.status !== "cancelled");
+  });
+  const hasIntegrationReady = (task.lifecycleEvents ?? []).some((e) => e.kind === "integration_ready");
+  return { ready: openSubtasks === 0 && blockingDeps.length === 0 && hasIntegrationReady, openSubtasks, blockingDeps, hasIntegrationReady };
 }
 
 export type BoardWarning =
