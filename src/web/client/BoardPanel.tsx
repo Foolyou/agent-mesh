@@ -202,11 +202,35 @@ function TaskRow({
           {prog.total > 0 && <span className="sub" title="subtasks done">{prog.done}/{prog.total}</span>}
           {task.comments.length > 0 && <span className="sub" title="comments">💬{task.comments.length}</span>}
           {task.mailEventIds.length > 0 && <span className="sub" title="linked mail">✉{task.mailEventIds.length}</span>}
+          {task.dispatch?.mailFailed && <span className="sub board-mailfail" title="dispatch mail failed — retry">✉⚠</span>}
+          {task.closeReady && <span className="sub board-closeready" title="integration-ready (close-ready)">✔ready</span>}
           {task.deps.length > 0 && <span className="sub" title="dependencies">{t("board.deps")} {task.deps.map((d) => `#${d}`).join(",")}</span>}
         </span>
       </div>
       {open && (
         <div className="board-task-body">
+          {(task.dispatch || (task.lifecycleEvents?.length ?? 0) > 0) && (
+            <div className="board-lifecycle">
+              {task.dispatch && (
+                <div className="board-dispatch sub" title="dispatch">
+                  ⇒ @{task.dispatch.assignee}
+                  {task.branchName && <> · <code>{task.branchName}</code></>}
+                  {task.dispatch.mailFailed ? (
+                    <span className="board-mailfail" title="dispatch mail failed — retry"> · ✉⚠ mail failed</span>
+                  ) : (
+                    task.dispatch.mailEventId && <span title="dispatch mail sent"> · ✉ sent</span>
+                  )}
+                </div>
+              )}
+              {(task.lifecycleEvents?.length ?? 0) > 0 && (
+                <div className="board-timeline">
+                  {task.lifecycleEvents!.map((e, i) => (
+                    <span className="pill board-lc-pill" key={i} title={`${e.by} · ${e.at}`}>{e.kind}</span>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
           {task.subtasks.map((sub) => (
             <div className="board-subtask" key={sub.id}>
               <span className="board-tid">{sub.id}</span>

@@ -144,7 +144,12 @@ export type BoardCommand =
   | { type: "set_subtask_status"; taskId: number; subtaskId: string; expectedRevision: number; status: BoardStatus }
   | { type: "add_comment"; target: BoardTargetRef; expectedRevision: number; text: string }
   | { type: "link_mail"; taskId: number; expectedRevision: number; mailEventId: string }
-  | { type: "record_lifecycle_event"; taskId: number; expectedRevision: number; kind: LifecycleKind; threadKey?: string };
+  | { type: "record_lifecycle_event"; taskId: number; expectedRevision: number; kind: LifecycleKind; threadKey?: string }
+  // issue-panel Phase 1: atomic router dispatch — assign + linkage + `dispatched` + status→in_progress
+  // in ONE reducer command (the authoritative hand-off is a single board mutation/snapshot, never a
+  // chained assign→linkage→lifecycle). The mail outcome is a SEPARATE post-send `set_dispatch_mail`.
+  | { type: "dispatch_task"; id: number; expectedRevision: number; assignee: string; taskSlug: string; branchName?: string; threadKey?: string }
+  | { type: "set_dispatch_mail"; taskId: number; expectedRevision: number; mailEventId?: string; mailFailed?: boolean };
 
 export type BoardErrorCode = "not_found" | "conflict" | "forbidden" | "invalid";
 
@@ -568,6 +573,83 @@ export function applyBoardCommand(state: BoardState, cmd: BoardCommand, ctx: Boa
         }
       }
       const updated: Task = { ...task, status, closeReady, lifecycleEvents: [...events, event], revision: task.revision + 1, updatedAt: now };
+      return ok(replaceTask(state, updated), { entity: "task", taskId: task.id });
+    }
+
+    case "dispatch_task": {
+      // Router-only ATOMIC dispatch: assign + linkage (taskSlug/branchName/dispatch) + a `dispatched`
+      // lifecycle event + status→in_progress, all in this one reducer command so the authoritative
+      // hand-off is a SINGLE board mutation / snapshot (never assign→linkage→lifecycle as three
+      // chained public writes). The mail send and its mailEventId/mailFailed outcome are a separate
+      // post-send `set_dispatch_mail` write, since the mail id is unknown until send_mail returns.
+      if (!isPrivileged(actor)) return err("forbidden", "only a router or operator may dispatch tasks");
+      const task = state.tasks.find((t) => t.id === cmd.id);
+      if (!task) return err("not_found", `no task #${cmd.id}`);
+      const conflict = casCheck(task.revision, cmd.expectedRevision);
+      if (conflict) return conflict;
+      const assignee = cleanText(cmd.assignee, 200);
+      if (!assignee) return err("invalid", "dispatch requires an assignee");
+      const slug = cleanText(cmd.taskSlug, 200);
+      if (!slug) return err("invalid", "dispatch requires a task slug");
+      // Slug == branch/task identity, so it must be UNIQUE across the board. Reject if a DIFFERENT
+      // task already owns this slug — otherwise a later send_mail(task:"<slug>") / lifecycle marker
+      // (resolved via taskSlug, §5.4) could silently link or move the wrong (older) issue. Catching
+      // it here at the write keeps slug resolution unambiguous downstream. A re-dispatch of the SAME
+      // task with its own slug is fine (the match is itself).
+      if (state.tasks.some((t) => t.id !== cmd.id && t.taskSlug === slug)) {
+        return err("invalid", `task slug "${slug}" is already used by task #${state.tasks.find((t) => t.id !== cmd.id && t.taskSlug === slug)!.id}; slugs must be unique`);
+      }
+      const branchName = cleanText(cmd.branchName, 200) ?? `task/${slug}`;
+      // dispatch.threadKey is the SLUG (the mail-thread↔issue routing key, §5.4). The `dispatched`
+      // lifecycle event keys idempotency on the slug+assignee so a duplicate dispatch (same assignee)
+      // is deduped, but a RE-ASSIGN (different assignee) appends a fresh audit event and updates the
+      // assignee — status stays in_progress (monotonic, never regresses).
+      const eventThreadKey = `${slug}#${assignee}`;
+      const events = task.lifecycleEvents ?? [];
+      const alreadyDispatched = events.some((e) => e.kind === "dispatched" && e.threadKey === eventThreadKey);
+      const nextEvents = alreadyDispatched
+        ? events
+        : [...events, { kind: "dispatched" as LifecycleKind, by: author, at: now, threadKey: eventThreadKey }];
+      let status = task.status;
+      if (STATUS_RANK[task.status] < STATUS_RANK.done && STATUS_RANK.in_progress > STATUS_RANK[task.status]) {
+        status = "in_progress";
+      }
+      // A new dispatch record (fresh `at`, mailEventId reset — a new mail is about to be sent). On a
+      // same-assignee re-dispatch this still refreshes the thread/timestamp without a status change.
+      const dispatch = { assignee, threadKey: slug, at: now } as Task["dispatch"];
+      const updated: Task = {
+        ...task,
+        assignee,
+        taskSlug: slug,
+        branchName,
+        dispatch,
+        lifecycleEvents: nextEvents,
+        status,
+        revision: task.revision + 1,
+        updatedAt: now,
+      };
+      return ok(replaceTask(state, updated), { entity: "task", taskId: task.id });
+    }
+
+    case "set_dispatch_mail": {
+      // Post-send outcome backfill for a dispatch: record the dispatch mail's id on success, or set
+      // dispatch.mailFailed on failure. Privileged-only (router/operator/system). Separate write
+      // because the mail id / failure is unknowable until after send_mail (§5.5); the authoritative
+      // dispatch already committed + persisted, so a mail failure never rolls back the assignment.
+      const task = state.tasks.find((t) => t.id === cmd.taskId);
+      if (!task) return err("not_found", `no task #${cmd.taskId}`);
+      if (!isPrivileged(actor)) return err("forbidden", "set_dispatch_mail is router/operator/system-only");
+      if (!task.dispatch) return err("invalid", `task #${cmd.taskId} has no dispatch to update`);
+      const conflict = casCheck(task.revision, cmd.expectedRevision);
+      if (conflict) return conflict;
+      const mailEventId = cleanText(cmd.mailEventId, 200);
+      const dispatch = { ...task.dispatch };
+      if (mailEventId) {
+        dispatch.mailEventId = mailEventId;
+        dispatch.mailFailed = false;
+      }
+      if (cmd.mailFailed === true) dispatch.mailFailed = true;
+      const updated: Task = { ...task, dispatch, revision: task.revision + 1, updatedAt: now };
       return ok(replaceTask(state, updated), { entity: "task", taskId: task.id });
     }
 

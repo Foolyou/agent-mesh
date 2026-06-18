@@ -376,3 +376,109 @@ test("not_found is returned for operations on missing entities", () => {
   expect(res.ok).toBe(false);
   if (!res.ok) expect(res.code).toBe("not_found");
 });
+
+// ── issue-panel Phase 1: dispatch_task / set_dispatch_mail ─────────────────────
+
+test("dispatch_task atomically assigns + sets linkage + emits `dispatched` + moves to in_progress", () => {
+  const { state, id } = seedTask(createEmptyBoard("m"));
+  const next = ok(state, { type: "dispatch_task", id, expectedRevision: state.tasks[0].revision, assignee: "alice", taskSlug: "my-slug" }, router);
+  const task = next.tasks[0];
+  expect(task.status).toBe("in_progress");
+  expect(task.assignee).toBe("alice");
+  expect(task.taskSlug).toBe("my-slug");
+  expect(task.branchName).toBe("task/my-slug");
+  expect(task.dispatch).toMatchObject({ assignee: "alice", threadKey: "my-slug", at: NOW });
+  expect(task.dispatch?.mailEventId).toBeUndefined();
+  const dispatched = (task.lifecycleEvents ?? []).filter((e) => e.kind === "dispatched");
+  expect(dispatched.length).toBe(1);
+});
+
+test("dispatch_task is router/operator-only; a member is forbidden", () => {
+  const { state, id } = seedTask(createEmptyBoard("m"));
+  const denied = applyBoardCommand(state, { type: "dispatch_task", id, expectedRevision: state.tasks[0].revision, assignee: "alice", taskSlug: "s" }, ctx(state, alice));
+  expect(denied.ok).toBe(false);
+  if (!denied.ok) expect(denied.code).toBe("forbidden");
+});
+
+test("dispatch_task honors an explicit branchName and requires assignee + slug", () => {
+  const { state, id } = seedTask(createEmptyBoard("m"));
+  const withBranch = ok(state, { type: "dispatch_task", id, expectedRevision: state.tasks[0].revision, assignee: "alice", taskSlug: "s", branchName: "task/custom" }, router);
+  expect(withBranch.tasks[0].branchName).toBe("task/custom");
+  const noAssignee = applyBoardCommand(state, { type: "dispatch_task", id, expectedRevision: state.tasks[0].revision, assignee: "  ", taskSlug: "s" }, ctx(state, router));
+  expect(noAssignee.ok).toBe(false);
+  if (!noAssignee.ok) expect(noAssignee.code).toBe("invalid");
+  const noSlug = applyBoardCommand(state, { type: "dispatch_task", id, expectedRevision: state.tasks[0].revision, assignee: "alice", taskSlug: "" }, ctx(state, router));
+  expect(noSlug.ok).toBe(false);
+  if (!noSlug.ok) expect(noSlug.code).toBe("invalid");
+});
+
+test("duplicate dispatch (same assignee+slug) is idempotent: no second `dispatched`, no status change", () => {
+  let { state, id } = seedTask(createEmptyBoard("m"));
+  state = ok(state, { type: "dispatch_task", id, expectedRevision: state.tasks[0].revision, assignee: "alice", taskSlug: "s" }, router);
+  const eventsAfter = state.tasks[0].lifecycleEvents?.length;
+  state = ok(state, { type: "dispatch_task", id, expectedRevision: state.tasks[0].revision, assignee: "alice", taskSlug: "s" }, router);
+  expect(state.tasks[0].lifecycleEvents?.length).toBe(eventsAfter); // no second dispatched event
+  expect(state.tasks[0].status).toBe("in_progress");
+});
+
+test("re-assign via dispatch_task: assignee changes, a fresh `dispatched` is appended, status does NOT regress", () => {
+  let { state, id } = seedTask(createEmptyBoard("m"));
+  state = ok(state, { type: "dispatch_task", id, expectedRevision: state.tasks[0].revision, assignee: "alice", taskSlug: "s" }, router);
+  // alice pushes the card to in_review before the re-assign
+  state = ok(state, { type: "record_lifecycle_event", taskId: id, expectedRevision: state.tasks[0].revision, kind: "review_requested", threadKey: "s" }, alice);
+  expect(state.tasks[0].status).toBe("in_review");
+  // re-dispatch to bob: assignee flips, a new dispatched event is appended (audit), status stays in_review (monotonic)
+  state = ok(state, { type: "dispatch_task", id, expectedRevision: state.tasks[0].revision, assignee: "bob", taskSlug: "s" }, router);
+  expect(state.tasks[0].assignee).toBe("bob");
+  expect(state.tasks[0].status).toBe("in_review");
+  expect((state.tasks[0].lifecycleEvents ?? []).filter((e) => e.kind === "dispatched").length).toBe(2);
+});
+
+test("set_dispatch_mail backfills mailEventId on success and mailFailed on failure", () => {
+  let { state, id } = seedTask(createEmptyBoard("m"));
+  state = ok(state, { type: "dispatch_task", id, expectedRevision: state.tasks[0].revision, assignee: "alice", taskSlug: "s" }, router);
+  // success path: id recorded, mailFailed cleared
+  state = ok(state, { type: "set_dispatch_mail", taskId: id, expectedRevision: state.tasks[0].revision, mailEventId: "evt-1" }, system);
+  expect(state.tasks[0].dispatch?.mailEventId).toBe("evt-1");
+  expect(state.tasks[0].dispatch?.mailFailed).toBe(false);
+  // failure path on a fresh dispatch
+  let { state: s2, id: id2 } = seedTask(createEmptyBoard("m"));
+  s2 = ok(s2, { type: "dispatch_task", id: id2, expectedRevision: s2.tasks[0].revision, assignee: "alice", taskSlug: "s2" }, router);
+  s2 = ok(s2, { type: "set_dispatch_mail", taskId: id2, expectedRevision: s2.tasks[0].revision, mailFailed: true }, system);
+  expect(s2.tasks[0].dispatch?.mailFailed).toBe(true);
+  expect(s2.tasks[0].dispatch?.mailEventId).toBeUndefined();
+});
+
+test("set_dispatch_mail is privileged-only and requires an existing dispatch", () => {
+  let { state, id } = seedTask(createEmptyBoard("m"));
+  // no dispatch yet → invalid
+  const noDispatch = applyBoardCommand(state, { type: "set_dispatch_mail", taskId: id, expectedRevision: state.tasks[0].revision, mailEventId: "x" }, ctx(state, router));
+  expect(noDispatch.ok).toBe(false);
+  if (!noDispatch.ok) expect(noDispatch.code).toBe("invalid");
+  state = ok(state, { type: "dispatch_task", id, expectedRevision: state.tasks[0].revision, assignee: "alice", taskSlug: "s" }, router);
+  const denied = applyBoardCommand(state, { type: "set_dispatch_mail", taskId: id, expectedRevision: state.tasks[0].revision, mailEventId: "x" }, ctx(state, alice));
+  expect(denied.ok).toBe(false);
+  if (!denied.ok) expect(denied.code).toBe("forbidden");
+});
+
+test("dispatch_task rejects a slug already owned by a DIFFERENT task (slugs are unique)", () => {
+  let board = createEmptyBoard("m");
+  board = ok(board, { type: "create_task", title: "first" }, router); // #1
+  board = ok(board, { type: "create_task", title: "second" }, router); // #2
+  // dispatch #1 with slug "dup"
+  board = ok(board, { type: "dispatch_task", id: 1, expectedRevision: board.tasks.find((t) => t.id === 1)!.revision, assignee: "alice", taskSlug: "dup" }, router);
+  // dispatching #2 with the SAME slug is rejected at the write
+  const clash = applyBoardCommand(board, { type: "dispatch_task", id: 2, expectedRevision: board.tasks.find((t) => t.id === 2)!.revision, assignee: "bob", taskSlug: "dup" }, ctx(board, router));
+  expect(clash.ok).toBe(false);
+  if (!clash.ok) {
+    expect(clash.code).toBe("invalid");
+    expect(clash.error).toContain("#1");
+  }
+  // #2 keeps no slug; #1 still owns "dup"
+  expect(board.tasks.find((t) => t.id === 2)!.taskSlug).toBeUndefined();
+  // a UNIQUE slug for #2 succeeds, and re-dispatching #1 with ITS OWN slug is fine (self is not a clash)
+  board = ok(board, { type: "dispatch_task", id: 2, expectedRevision: board.tasks.find((t) => t.id === 2)!.revision, assignee: "bob", taskSlug: "uniq" }, router);
+  board = ok(board, { type: "dispatch_task", id: 1, expectedRevision: board.tasks.find((t) => t.id === 1)!.revision, assignee: "carol", taskSlug: "dup" }, router);
+  expect(board.tasks.find((t) => t.id === 1)!.assignee).toBe("carol");
+  expect(board.tasks.find((t) => t.id === 2)!.taskSlug).toBe("uniq");
+});

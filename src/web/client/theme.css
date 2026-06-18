@@ -3325,3 +3325,25 @@ legend.builder-section-head {
 .pill.st-in_review { color: var(--accent); }
 .pill.st-done { color: #7fd6a0; }
 .pill.st-cancelled { color: var(--fg-faint); text-decoration: line-through; }
+
+/* issue-panel Phase 1: dispatch + lifecycle timeline (detail-only, read display) */
+.board-lifecycle {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 2px 0 4px;
+}
+.board-dispatch code {
+  color: var(--fg-dim);
+}
+.board-timeline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.board-mailfail {
+  color: var(--warn);
+}
+.board-closeready {
+  color: var(--good);
+}

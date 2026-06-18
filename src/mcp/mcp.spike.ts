@@ -30,6 +30,7 @@ const mcp = createMeshServicesServer({
     publishAttachment: () => "not implemented in spike",
     boardList: () => "not implemented in spike",
     applyBoard: () => "not implemented in spike",
+    dispatchBoard: () => "not implemented in spike",
   },
 });
 

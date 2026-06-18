@@ -13,6 +13,7 @@ const handlers = {
   publishAttachment: noop,
   boardList: noop,
   applyBoard: noop,
+  dispatchBoard: noop,
 };
 
 let server: MeshServicesServer | undefined;
