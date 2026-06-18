@@ -892,11 +892,13 @@ export function BoardDetailView({
           <div className="board-section-head sub">{t("board.linkedMail")}</div>
           {linkedMailIds.map((id) => {
             const m = mailById.get(id);
+            const isDispatch = task.dispatch?.mailEventId === id;
             return (
-              <div className="board-mail-row" key={id}>
+              <div className={`board-mail-row ${isDispatch ? "board-mail-dispatch" : ""}`} key={id}>
+                {isDispatch && <span className="sub board-mail-tag" title={t("board.dispatchBrief")}>⇒</span>}
                 {m ? (
                   <>
-                    <span className="sub">{m.from} → {m.to}</span>
+                    <span className="sub board-mail-meta">{m.from} → {m.to}{m.ts ? ` · ${shortTime(m.ts)}` : ""}</span>
                     <span className="board-ctext">{m.body.length > 80 ? `${m.body.slice(0, 80)}…` : m.body}</span>
                   </>
                 ) : (
@@ -933,8 +935,9 @@ export function BoardDetailView({
         )}
       </div>
 
-      {/* close action with a SOFT acceptance gate (computeCloseReadiness): surfaces reasons,
-          never hard-blocks. Operator/router only; reducer enforces the real permission. */}
+      {/* close (→ done/cancelled) — an EXPLICIT privileged action with a SOFT readiness gate that
+          surfaces reasons but never hard-blocks. done/cancelled are reached only here, never by a
+          lifecycle auto-transition. Operator/router only; the reducer enforces the real permission. */}
       {running && !terminal && (
         <div className="board-close-gate">
           {!close.ready && (
@@ -946,7 +949,9 @@ export function BoardDetailView({
           )}
           {confirmClose ? (
             <span className="board-close-confirm">
-              <button className="board-back" onClick={() => apply({ type: "set_task_status", id: task.id, expectedRevision: task.revision, status: "done" })}>{t("board.confirmClose")}</button>
+              <span className="sub">{t("board.confirmCloseAs")}</span>
+              <button className="board-back" onClick={() => apply({ type: "set_task_status", id: task.id, expectedRevision: task.revision, status: "done" })}>{t("board.closeDone")}</button>
+              <button className="board-back" onClick={() => apply({ type: "set_task_status", id: task.id, expectedRevision: task.revision, status: "cancelled" })}>{t("board.closeCancelled")}</button>
               <button className="board-back" onClick={() => setConfirmClose(false)}>{t("cancel")}</button>
             </span>
           ) : (
@@ -954,6 +959,17 @@ export function BoardDetailView({
               {close.ready ? t("board.close") : t("board.closeAnyway")}
             </button>
           )}
+        </div>
+      )}
+
+      {/* reopen — the one sanctioned backward move for a closed task (privileged `reopened` lifecycle
+          event → in_progress). Same running/read-only gating as close; reducer enforces privilege. */}
+      {running && terminal && (
+        <div className="board-close-gate">
+          <span className="sub">{t("board.terminalNote")}</span>
+          <button className="board-back board-reopen" onClick={() => apply({ type: "record_lifecycle_event", taskId: task.id, expectedRevision: task.revision, kind: "reopened" })}>
+            {t("board.reopen")}
+          </button>
         </div>
       )}
     </div>

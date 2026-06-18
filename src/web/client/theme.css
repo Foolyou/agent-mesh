@@ -3514,6 +3514,25 @@ legend.builder-section-head {
 .board-close-confirm {
   display: inline-flex;
   gap: 4px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+/* ── Phase 5: reopen + linked-mail timeline polish ── */
+.board-reopen {
+  align-self: flex-start;
+}
+.board-mail-row {
+  align-items: baseline;
+}
+.board-mail-tag {
+  color: var(--accent);
+}
+.board-mail-meta {
+  white-space: nowrap;
+}
+.board-mail-dispatch {
+  border-left: 2px solid color-mix(in srgb, var(--accent) 50%, var(--line));
+  padding-left: 6px;
 }
 
 /* ── issue-panel Phase 3: kanban view ── */

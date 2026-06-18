@@ -388,3 +388,53 @@ test("label management UI appears only on a running mesh (operator-gated, in-boa
   expect(renderPanel(board, true)).toContain("board-manage-labels"); // manage toggle present when running
   expect(renderPanel(board, false)).not.toContain("board-manage-labels"); // hidden on a stopped mesh
 });
+
+// ── Phase 5: close done/cancelled UX, reopen, mail-timeline polish ──────────────
+
+function closeTo(board: BoardDocument, id: number, status: "done" | "cancelled"): BoardDocument {
+  const r = applyBoardCommand(board, { type: "set_task_status", id, expectedRevision: board.tasks.find((t) => t.id === id)!.revision, status }, ctx(board));
+  if (!r.ok) throw new Error(`${r.code}: ${r.error}`);
+  return r.state;
+}
+
+test("Phase 5: an OPEN task shows the close gate (reasons + close action), no reopen button", () => {
+  const board = sampleBoard(); // #1 in_progress, has an open subtask + blocking dep #2, no integration_ready
+  const task = board.tasks.find((t) => t.id === 1)!;
+  const html = renderDetail(board, true, noopStore);
+  expect(html).toContain("board-close-gate");
+  // all three readiness reasons surface
+  expect(html).toContain("open subtasks");
+  expect(html).toContain("incomplete dependencies");
+  expect(html).toContain("integration_ready");
+  expect(html).toContain("close anyway"); // not ready → close-anyway affordance
+  expect(html).not.toContain("board-reopen");
+  void task;
+});
+
+test("Phase 5: a CLOSED (terminal) task shows a reopen button instead of the close gate", () => {
+  for (const status of ["done", "cancelled"] as const) {
+    const board = closeTo(sampleBoard(), 1, status);
+    const html = renderDetail(board, true, noopStore);
+    expect(html).toContain("board-reopen");
+    expect(html).toContain("reopen");
+  }
+});
+
+test("Phase 5: reopen is hidden on a stopped mesh (read-only)", () => {
+  const board = closeTo(sampleBoard(), 1, "done");
+  const html = renderDetail(board, false, noopStore);
+  expect(html).not.toContain("board-reopen");
+});
+
+test("Phase 5: linked-mail timeline marks the dispatch mail and shows a timestamp", () => {
+  const board = sampleBoardWithMail(); // dispatch.mailEventId = evt-1, linked mailEventIds = [evt-2]
+  const store = makeStore([
+    { id: "evt-1", ts: "2026-06-18T09:30:00.000Z", from: "router", to: "alice", body: "the dispatch brief" },
+    { id: "evt-2", ts: "2026-06-18T10:00:00.000Z", from: "alice", to: "router", body: "on it" },
+  ]);
+  const html = renderDetail(board, true, store);
+  expect(html).toContain("board-mail-dispatch"); // the dispatch mail row is tagged
+  expect(html).toContain("⇒"); // dispatch marker
+  expect(html).toContain("06-18 09:30"); // shortTime(evt-1.ts) — timestamp shown
+  expect(html).toContain("router → alice");
+});
