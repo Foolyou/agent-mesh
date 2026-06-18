@@ -7,6 +7,7 @@
 
 import { LineBuffer } from "../protocol";
 import type { ConsumerHandle, SpawnConsumer, SpawnHooks } from "./consumer";
+import type { SendFn, SendResult } from "./sender";
 
 export interface RealConsumerOptions {
   eventKey?: string; // default im.message.receive_v1
@@ -44,6 +45,15 @@ export function realSpawnConsumer(opts: RealConsumerOptions = {}): SpawnConsumer
       },
       exited: child.exited.then((code) => (typeof code === "number" ? code : null)),
     };
+  };
+}
+
+/** Build a SendFn that runs `lark-cli <args...>` once and resolves its exit code + stderr. */
+export function realSend(): SendFn {
+  return async (args: string[]): Promise<SendResult> => {
+    const child = Bun.spawn(["lark-cli", ...args], { stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+    const [code, stderr] = await Promise.all([child.exited, new Response(child.stderr).text()]);
+    return { code: typeof code === "number" ? code : 0, stderr: stderr.trim() || undefined };
   };
 }
 
