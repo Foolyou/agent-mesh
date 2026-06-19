@@ -15,7 +15,6 @@ import {
   loadKeys,
   rotateKeys,
   saveKeys,
-  tryBreakStaleLock,
   verifyTokenHash,
   withFileLock,
   type KeysFile,
@@ -421,85 +420,62 @@ test("withFileLock serializes overlapping holders on the same path", async () =>
   }
 });
 
-test("withFileLock breaks a stale lockfile (orphaned by a crashed holder) instead of hanging", async () => {
+test("withFileLock removes its own lock on a normal release", async () => {
+  const root = await tmp();
+  try {
+    const path = join(root, "auth", "x.json");
+    await withFileLock(path, async () => {});
+    expect(await exists(`${path}.lock`)).toBe(false); // released
+    await withFileLock(path, async () => {}); // and the path is re-lockable afterwards
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+// ── fail closed: a stale lock is NOT auto-deleted; it times out (no auto stale break) ─────────────
+
+test("withFileLock fails closed on a held/stale lock: times out with a manual-cleanup error, never deletes it", async () => {
   const root = await tmp();
   try {
     const path = join(root, "auth", "x.json");
     const lockPath = `${path}.lock`;
+    const leftover = lockBody("dead-owner", 60_000); // leftover from a crashed holder
     await mkdir(dirname(lockPath), { recursive: true });
-    await writeFile(lockPath, "99999:0"); // a leftover lock from a dead pid
+    await writeFile(lockPath, leftover);
     const old = new Date(Date.now() - 60_000);
-    await utimes(lockPath, old, old); // make it look stale
-    let ran = false;
-    await withFileLock(path, async () => { ran = true; }, { staleMs: 1_000, timeoutMs: 3_000 });
-    expect(ran).toBe(true); // broke the stale lock and proceeded
+    await utimes(lockPath, old, old);
+    let err: unknown;
+    try {
+      await withFileLock(path, async () => {}, { staleMs: 1_000, timeoutMs: 250 });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toContain("auth file lock timeout");
+    expect((err as Error).message).toContain(lockPath); // names the path for manual cleanup
+    expect((err as Error).message).toContain("stale lock"); // annotated as stale (age > staleMs)
+    expect(await exists(lockPath)).toBe(true); // NOT auto-deleted — fail closed, no TOCTOU break
+    expect(await Bun.file(lockPath).text()).toBe(leftover); // body untouched
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
 
-// ── stale-lock break is owner-conditional (race guard) ──────────────────────────
+// ── owner-aware release: never delete a lock another owner holds ──────────────────
 
-test("tryBreakStaleLock removes a stale lock whose body still matches what was observed", async () => {
+test("release does NOT delete the lock if its owner token was replaced mid-section", async () => {
+  // If the lock body on disk no longer matches the token we acquired (e.g. external/manual tamper),
+  // release must leave it intact rather than delete a lock it does not own.
   const root = await tmp();
   try {
-    const lockPath = join(root, "auth", "x.json.lock");
-    await mkdir(dirname(lockPath), { recursive: true });
-    const stale = lockBody("owner-X", 60_000); // 60s old
-    await writeFile(lockPath, stale);
-    expect(await tryBreakStaleLock(lockPath, stale, 1_000)).toBe(true);
-    expect(await exists(lockPath)).toBe(false);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
-test("tryBreakStaleLock will NOT remove a lock that a different owner freshly acquired (the race guard)", async () => {
-  // Breaker B observed stale owner X, but between observation and break, process A broke X and
-  // acquired a FRESH lock (owner Y). B must leave Y intact — else both A and B enter the section.
-  const root = await tmp();
-  try {
-    const lockPath = join(root, "auth", "x.json.lock");
-    await mkdir(dirname(lockPath), { recursive: true });
-    const observedStale = lockBody("owner-X", 60_000); // what B saw
-    const freshlyAcquired = lockBody("owner-Y", 0); // what's actually on disk now (A's fresh lock)
-    await writeFile(lockPath, freshlyAcquired);
-    const removed = await tryBreakStaleLock(lockPath, observedStale, 1_000);
-    expect(removed).toBe(false); // owner mismatch → not removed
-    expect(await exists(lockPath)).toBe(true); // A's fresh lock survives
-    expect(await Bun.file(lockPath).text()).toBe(freshlyAcquired);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
-test("tryBreakStaleLock will NOT remove a content-matching but no-longer-stale (refreshed) lock", async () => {
-  const root = await tmp();
-  try {
-    const lockPath = join(root, "auth", "x.json.lock");
-    await mkdir(dirname(lockPath), { recursive: true });
-    const fresh = lockBody("owner-X", 0); // same owner, but only just created
-    await writeFile(lockPath, fresh);
-    expect(await tryBreakStaleLock(lockPath, fresh, 1_000)).toBe(false); // age <= staleMs
-    expect(await exists(lockPath)).toBe(true);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
-test("two stale-breakers racing the SAME observed lock: only the matching break removes it once", async () => {
-  const root = await tmp();
-  try {
-    const lockPath = join(root, "auth", "x.json.lock");
-    await mkdir(dirname(lockPath), { recursive: true });
-    const stale = lockBody("owner-X", 60_000);
-    await writeFile(lockPath, stale);
-    // First breaker (matching) removes it; a second breaker that ALSO observed the same stale body
-    // now finds the file gone and returns false (it does not remove anything it didn't confirm).
-    const first = await tryBreakStaleLock(lockPath, stale, 1_000);
-    const second = await tryBreakStaleLock(lockPath, stale, 1_000);
-    expect(first).toBe(true);
-    expect(second).toBe(false);
+    const path = join(root, "auth", "x.json");
+    const lockPath = `${path}.lock`;
+    const replacement = lockBody("someone-else", 0);
+    await withFileLock(path, async () => {
+      await writeFile(lockPath, replacement); // swap in a different owner during the section
+    });
+    expect(await exists(lockPath)).toBe(true); // left intact (not our token)
+    expect(await Bun.file(lockPath).text()).toBe(replacement);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

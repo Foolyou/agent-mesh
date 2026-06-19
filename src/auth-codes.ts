@@ -311,15 +311,14 @@ export interface FileLockOptions {
   staleMs?: number;
 }
 
-/** The lock-file body: a UNIQUE owner token (random UUID) plus pid + createdAt. The random owner is
- *  what makes stale recovery race-safe — a breaker can tell "the stale lock I observed" apart from "a
- *  fresh lock some other process just acquired", because their owner tokens differ. */
+/** The lock-file body: a UNIQUE owner token (random UUID) plus pid + createdAt. The random owner lets
+ *  release verify it only removes the lock THIS process created — never another owner's. */
 function makeLockOwner(): string {
   return JSON.stringify({ owner: randomUUID(), pid: process.pid, createdAt: Date.now() });
 }
 
 /** Age of a lock body in ms. Prefers the in-payload `createdAt` (filesystem-clock-independent); falls
- *  back to the file mtime for a legacy/foreign/corrupt body. */
+ *  back to the file mtime for a legacy/foreign/corrupt body. Used only for diagnostics. */
 function lockAgeMs(content: string, mtimeMs: number): number {
   try {
     const o = JSON.parse(content) as { createdAt?: unknown };
@@ -330,31 +329,15 @@ function lockAgeMs(content: string, mtimeMs: number): number {
   return Date.now() - mtimeMs;
 }
 
-/** Break a stale lock ONLY if, on a fresh re-read immediately before removal, it still carries the
- *  SAME body we observed as stale (`observedContent`) AND is still stale. This closes the stale-break
- *  race: if another process already broke the stale lock and acquired a fresh one (different owner
- *  token → different body), we leave that fresh lock intact and let the caller retry the exclusive
- *  create. Returns true iff this call removed the lock. Exported for the regression test.
+/** Acquire the cross-process lock by exclusive create, returning the unique owner token we wrote.
  *
- *  Residual (sub-ms) window: between this re-read and the rm, a third party could swap in a fresh
- *  lock with — astronomically unlikely — identical bytes; UUID owner tokens make that practically
- *  impossible, and the worst case is one extra contended retry, never two writers in the section. */
-export async function tryBreakStaleLock(lockPath: string, observedContent: string, staleMs: number): Promise<boolean> {
-  let content: string;
-  let mtimeMs: number;
-  try {
-    content = await readFile(lockPath, "utf8");
-    mtimeMs = (await stat(lockPath)).mtimeMs;
-  } catch {
-    return false; // vanished between observation and break → caller retries the create
-  }
-  if (content !== observedContent) return false; // replaced by a different owner → never remove it
-  if (lockAgeMs(content, mtimeMs) <= staleMs) return false; // refreshed → no longer stale
-  await rm(lockPath, { force: true }).catch(() => {});
-  return true;
-}
-
-async function acquireLockfile(lockPath: string, opts?: FileLockOptions): Promise<void> {
+ *  FAIL CLOSED: we NEVER auto-delete a lock we did not create. A leftover lock from a crashed holder
+ *  is an availability problem (resolved by manual cleanup), but auto-unlinking a stale lock is a
+ *  correctness/security problem — any check-then-unlink has a TOCTOU window that can admit two
+ *  concurrent writers into an auth/key read-modify-write. Auth RMW sections are short, so on a held
+ *  lock we simply wait up to `timeoutMs` and then throw a clear, path-naming error. `staleMs` is used
+ *  only to annotate that error (so an operator knows the lock looks orphaned), not to delete. */
+async function acquireLockfile(lockPath: string, opts?: FileLockOptions): Promise<string> {
   const staleMs = opts?.staleMs ?? LOCK_STALE_MS;
   const deadline = Date.now() + (opts?.timeoutMs ?? LOCK_TIMEOUT_MS);
   const owner = makeLockOwner();
@@ -366,27 +349,34 @@ async function acquireLockfile(lockPath: string, opts?: FileLockOptions): Promis
       } finally {
         await fh.close();
       }
-      return; // we hold it (and only we know `owner`)
+      return owner; // we hold it (and only we know `owner`)
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
-      // Observe the current holder's body + age.
-      let observed: { content: string; ageMs: number } | undefined;
-      try {
-        const content = await readFile(lockPath, "utf8");
-        const st = await stat(lockPath);
-        observed = { content, ageMs: lockAgeMs(content, st.mtimeMs) };
-      } catch {
-        continue; // vanished between EEXIST and read → retry the exclusive create immediately
+      if (Date.now() >= deadline) {
+        // Held past the timeout. Inspect (read-only) purely to make the error actionable.
+        let hint = `: ${lockPath}`;
+        try {
+          const content = await readFile(lockPath, "utf8");
+          const st = await stat(lockPath);
+          if (lockAgeMs(content, st.mtimeMs) > staleMs) hint = `; stale lock may require manual cleanup: ${lockPath}`;
+        } catch {
+          continue; // vanished right at the deadline → loop once more and try the exclusive create
+        }
+        throw new Error(`auth file lock timeout${hint}`);
       }
-      if (observed.ageMs > staleMs) {
-        // Conditionally break it; whether or not we removed it, loop back and RACE for the exclusive
-        // create — never assume ownership just because we removed a stale lock.
-        await tryBreakStaleLock(lockPath, observed.content, staleMs);
-        continue;
-      }
-      if (Date.now() >= deadline) throw new Error("auth file lock timeout");
       await sleep(LOCK_RETRY_MS);
     }
+  }
+}
+
+/** Release a lock we hold. Owner-aware: only remove the file if it still carries OUR owner token, so
+ *  we never delete a lock created by someone else (defends a release-time TOCTOU). Best-effort and
+ *  silent — release must not throw or mask the locked section's result. */
+async function releaseLockfile(lockPath: string, owner: string): Promise<void> {
+  try {
+    if ((await readFile(lockPath, "utf8")) === owner) await rm(lockPath, { force: true }).catch(() => {});
+  } catch {
+    /* already gone / unreadable → nothing of ours to release */
   }
 }
 
@@ -398,11 +388,11 @@ export async function withFileLock<T>(path: string, run: () => Promise<T>, opts?
   return withInProcLock(path, async () => {
     const lockPath = `${path}.lock`;
     await mkdir(dirname(lockPath), { recursive: true, mode: 0o700 }).catch(() => {});
-    await acquireLockfile(lockPath, opts);
+    const owner = await acquireLockfile(lockPath, opts);
     try {
       return await run();
     } finally {
-      await rm(lockPath, { force: true }).catch(() => {});
+      await releaseLockfile(lockPath, owner);
     }
   });
 }
