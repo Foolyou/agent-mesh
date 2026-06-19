@@ -174,6 +174,9 @@ function toolCall(agent: string, toolCallId?: string, title?: string, sessionUpd
 function replayStarted(agent: string): MeshEvent {
   return { kind: "replay_started", agent, ts: "t" } as MeshEvent;
 }
+function agentTurnStarted(agent: string): MeshEvent {
+  return { kind: "agent_turn", phase: "started", turn: { id: "tn", agent, source: "mail", text: "", preview: "", ts: "t" }, ts: "t" } as MeshEvent;
+}
 function replayFinished(agent: string): MeshEvent {
   return { kind: "replay_finished", agent, ts: "t" } as MeshEvent;
 }
@@ -525,12 +528,13 @@ test("stop() unsubscribes, stops the consumer and sender", async () => {
 function streamingSink() {
   const updates: string[] = [];
   let commits = 0;
+  let stopped = false;
   const enqueued: string[] = [];
   const segments: ({ toolName?: string } | undefined)[] = [];
   return {
     sink: {
       enqueue: (text: string) => enqueued.push(text),
-      stop: () => {},
+      stop: () => { stopped = true; },
       streamUpdate: (t: string) => updates.push(t),
       streamCommit: () => { commits++; },
       streamSegmentBreak: (meta?: { toolName?: string }) => segments.push(meta),
@@ -539,6 +543,7 @@ function streamingSink() {
     enqueued,
     segments,
     commits: () => commits,
+    isStopped: () => stopped,
   };
 }
 
@@ -546,15 +551,19 @@ function setupStreaming(over: Partial<FeishuChannelConfig> = {}) {
   const mesh = new FakeMesh();
   const ss = streamingSink();
   const timers = manualTimers();
+  let pushInbound!: (m: InboundMsg) => void;
   const ch = new FeishuChannel({
     mesh,
     config: cfg(over),
     sender: ss.sink,
-    makeConsumer: () => ({ start() {}, stop() {} }),
+    makeConsumer: (onMessage) => {
+      pushInbound = onMessage;
+      return { start() {}, stop() {} };
+    },
     setTimer: timers.setTimer,
   });
   ch.start();
-  return { ch, mesh, ...ss };
+  return { ch, mesh, timers, push: (m: InboundMsg) => pushInbound(m), ...ss };
 }
 
 test("streaming: router chunks drive in-place edits and idle commits the turn", () => {
@@ -639,4 +648,172 @@ test("streaming disabled: a tool_call does not segment", () => {
   s.mesh.emit("feishu-poc", chunk("router", "x"));
   s.mesh.emit("feishu-poc", toolCall("router", "call-1", "bash"));
   expect(s.segments).toEqual([]);
+});
+
+// ── outbound turn-boundary fallback (feishu-outbound-turn-delay) ─────────────────
+
+test("streaming: a turn with no idle commits via the fallback timer; next turn is fresh", () => {
+  const s = setupStreaming();
+  s.mesh.emit("feishu-poc", chunk("router", "one")); // turn 1, no idle ever arrives
+  expect(s.commits()).toBe(0);
+  s.timers.advance(3000); // streamCommitDebounceMs default
+  expect(s.commits()).toBe(1); // fallback timer finalized the turn
+  s.mesh.emit("feishu-poc", chunk("router", "two")); // turn 2
+  expect(s.updates.at(-1)).toBe("two"); // fresh — NOT "onetwo"
+  expect(s.updates.some((u) => u.includes("onetwo"))).toBe(false);
+  s.mesh.emit("feishu-poc", idle("router"));
+  expect(s.commits()).toBe(2);
+});
+
+test("streaming: a late idle after the fallback timer does not commit twice", () => {
+  const s = setupStreaming();
+  s.mesh.emit("feishu-poc", chunk("router", "hello"));
+  s.timers.advance(3000); // fallback fires
+  expect(s.commits()).toBe(1);
+  s.mesh.emit("feishu-poc", idle("router")); // late idle for the same turn
+  expect(s.commits()).toBe(1); // no double commit
+});
+
+test("streaming: idle within the window cancels the fallback timer (single commit)", () => {
+  const s = setupStreaming();
+  s.mesh.emit("feishu-poc", chunk("router", "hi"));
+  s.mesh.emit("feishu-poc", idle("router")); // commit now
+  expect(s.commits()).toBe(1);
+  s.timers.advance(3000); // stale timer must have been cancelled
+  expect(s.commits()).toBe(1);
+});
+
+test("streaming: a tool_call with no following text finalizes via the fallback timer", () => {
+  const s = setupStreaming();
+  s.mesh.emit("feishu-poc", chunk("router", "before"));
+  s.mesh.emit("feishu-poc", toolCall("router", "call-1", "bash"));
+  // no following text, no idle
+  expect(s.commits()).toBe(0);
+  s.timers.advance(3000);
+  expect(s.segments).toEqual([{ toolName: "bash" }]);
+  expect(s.commits()).toBe(1); // sealed, not carried into the next turn
+});
+
+test("streaming: a new router turn-start finalizes a residual previous turn", () => {
+  const s = setupStreaming();
+  s.mesh.emit("feishu-poc", chunk("router", "one")); // turn 1, no idle
+  s.mesh.emit("feishu-poc", agentTurnStarted("router")); // turn 2 begins before the fallback fires
+  expect(s.commits()).toBe(1); // residual turn 1 finalized at the turn-start boundary
+  s.mesh.emit("feishu-poc", chunk("router", "two"));
+  expect(s.updates.at(-1)).toBe("two"); // fresh, not concatenated
+  expect(s.updates.some((u) => u.includes("onetwo"))).toBe(false);
+});
+
+test("streaming: turn-start with no residual buffer is a no-op", () => {
+  const s = setupStreaming();
+  s.mesh.emit("feishu-poc", agentTurnStarted("router"));
+  expect(s.commits()).toBe(0);
+  expect(s.updates).toEqual([]);
+});
+
+test("inbound: a new prompt finalizes residual streaming buffer before routing", async () => {
+  const s = setupStreaming();
+  s.mesh.emit("feishu-poc", chunk("router", "previous")); // residual, no idle
+  s.push(inbound({ text: "next question" }));
+  await flushAsync();
+  expect(s.commits()).toBe(1); // residual finalized before promptRouter
+  expect(s.mesh.prompts).toHaveLength(1);
+});
+
+test("non-streaming: original debounce flush behavior is unchanged", () => {
+  const s = setupStreaming({ outbound: { minIntervalMs: 0, streaming: false } });
+  s.mesh.emit("feishu-poc", chunk("router", "Hi"));
+  expect(s.enqueued).toEqual([]); // debounced, not sent yet
+  s.timers.advance(800); // original debounceMs
+  expect(s.enqueued).toEqual(["Hi"]);
+});
+
+test("stop() cancels a pending streaming fallback timer (no stale commit after teardown)", async () => {
+  const s = setupStreaming();
+  s.mesh.emit("feishu-poc", chunk("router", "pending")); // schedules the fallback timer
+  await s.ch.stop();
+  expect(s.isStopped()).toBe(true);
+  const commitsAfterStop = s.commits();
+  const updatesAfterStop = s.updates.length;
+  s.timers.advance(3000); // the stale timer must NOT fire
+  expect(s.commits()).toBe(commitsAfterStop);
+  expect(s.updates.length).toBe(updatesAfterStop);
+});
+
+test("async sink: a next-turn chunk during an in-flight commit is delivered fresh, not dropped/raced", async () => {
+  // Models CardSender's async finalize: while a commit is in flight, a streamUpdate would be wiped
+  // by the pending reset, so the channel must hold next-turn events until whenIdle() resolves.
+  const mesh = new FakeMesh();
+  const updates: string[] = [];
+  let commits = 0;
+  let inflight = 0;
+  let resolveIdle: (() => void) | null = null;
+  const sink = {
+    enqueue() {},
+    stop() {},
+    streamUpdate: (t: string) => { if (inflight > 0) return; updates.push(t); }, // commit-in-flight drops edits
+    streamCommit: () => { commits++; inflight++; },
+    whenIdle: () => (inflight === 0 ? Promise.resolve() : new Promise<void>((r) => { resolveIdle = r; })),
+  };
+  const releaseCommit = () => { inflight = 0; resolveIdle?.(); resolveIdle = null; };
+  const timers = manualTimers();
+  const ch = new FeishuChannel({ mesh, config: cfg(), sender: sink, makeConsumer: () => ({ start() {}, stop() {} }), setTimer: timers.setTimer });
+  ch.start();
+
+  mesh.emit("feishu-poc", chunk("router", "one"));
+  mesh.emit("feishu-poc", idle("router")); // finish turn 1 -> streamCommit (async, in flight)
+  expect(commits).toBe(1);
+  mesh.emit("feishu-poc", chunk("router", "two")); // turn 2's first chunk before finalize resolves
+  expect(updates.includes("two")).toBe(false); // held by the barrier, not raced onto the old card
+  releaseCommit();
+  await flushAsync();
+  expect(updates.at(-1)).toBe("two"); // delivered fresh once the commit barrier drained
+  expect(updates.some((u) => u.includes("onetwo"))).toBe(false);
+});
+
+test("fallback split: a late same-turn chunk after the fallback fires opens a fresh card (no concat)", () => {
+  const s = setupStreaming();
+  s.mesh.emit("feishu-poc", chunk("router", "part1"));
+  s.timers.advance(3000); // a mid-turn silence beyond the window finalizes early (documented tradeoff)
+  expect(s.commits()).toBe(1);
+  s.mesh.emit("feishu-poc", chunk("router", "part2")); // the same turn continues with more text
+  expect(s.updates.at(-1)).toBe("part2"); // fresh card, only the new content
+  expect(s.updates.some((u) => u.includes("part1part2"))).toBe(false); // never concatenated onto the old card
+  s.mesh.emit("feishu-poc", idle("router"));
+  expect(s.commits()).toBe(2);
+});
+
+test("async sink: replay clear during an in-flight commit keeps the barrier; post-replay chunk not raced", async () => {
+  // Reviewer shape: chunk -> idle starts the commit barrier -> replay_started/finished clear while
+  // the finalize is still in flight -> a fresh chunk must stay held until whenIdle(), not race.
+  const mesh = new FakeMesh();
+  const updates: string[] = [];
+  let commits = 0;
+  let inflight = 0;
+  let resolveIdle: (() => void) | null = null;
+  const sink = {
+    enqueue() {},
+    stop() {},
+    streamUpdate: (t: string) => { updates.push(inflight > 0 ? `RACED:${t}` : t); }, // edits during commit are racy
+    streamCommit: () => { commits++; inflight++; },
+    whenIdle: () => (inflight === 0 ? Promise.resolve() : new Promise<void>((r) => { resolveIdle = r; })),
+  };
+  const releaseCommit = () => { inflight = 0; resolveIdle?.(); resolveIdle = null; };
+  const timers = manualTimers();
+  const ch = new FeishuChannel({ mesh, config: cfg(), sender: sink, makeConsumer: () => ({ start() {}, stop() {} }), setTimer: timers.setTimer });
+  ch.start();
+
+  mesh.emit("feishu-poc", chunk("router", "one"));
+  mesh.emit("feishu-poc", idle("router")); // commit barrier begins (finalize in flight)
+  expect(commits).toBe(1);
+  mesh.emit("feishu-poc", replayStarted("router"));
+  mesh.emit("feishu-poc", replayFinished("router"));
+  mesh.emit("feishu-poc", chunk("router", "fresh")); // arrives before whenIdle() resolves
+  expect(updates.some((u) => u.startsWith("RACED:"))).toBe(false); // not raced onto the in-flight finalize
+  expect(updates.includes("fresh")).toBe(false); // held by the (re-established) barrier
+  releaseCommit();
+  await flushAsync();
+  expect(updates.at(-1)).toBe("fresh"); // delivered only after the sink went idle
+  expect(updates.some((u) => u.startsWith("RACED:"))).toBe(false);
+  expect(commits).toBe(1); // replay clears add no extra commit (nothing live to seal)
 });

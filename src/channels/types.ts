@@ -76,6 +76,12 @@ export interface FeishuChannelConfig {
     cardkit?: boolean;
     /** Minimum gap between in-place edits of the live message (ms). Default 1000. */
     streamMinEditIntervalMs?: number;
+    /** Turn-boundary fallback for streaming: if no router `idle` arrives, finalize the current turn
+     *  this long after the last chunk so the next turn starts fresh (default 3000, per PrdMgr for this
+     *  P0). Tradeoff: a genuine mid-turn pause longer than this splits the one reply across cards
+     *  (no loss/concat — a late same-turn chunk just opens a fresh card). Raise it if such pauses are
+     *  common; lower it to surface replies sooner when idle is unreliable. */
+    streamCommitDebounceMs?: number;
     /** Feishu caps a message at 20 edits; roll over to a fresh message past this. Default 18. */
     maxEditsPerMessage?: number;
   };

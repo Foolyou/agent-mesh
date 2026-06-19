@@ -39,6 +39,10 @@ export interface OutboundSink {
    *  message, but keep the SAME turn going so the next text opens a fresh message/card. Used at
    *  router tool-call boundaries. Optional — sinks without it simply never segment. */
   streamSegmentBreak?(meta?: SegmentBreak): void;
+  /** Resolves when the sink has fully drained (no send/edit/commit in flight). The channel awaits
+   *  this after a hard commit so the next turn doesn't race an async finalize. Absent => synchronous
+   *  sink; the channel needs no commit barrier. */
+  whenIdle?(): Promise<void>;
 }
 
 /** What the channel needs from an inbound source (LarkConsumer satisfies it). */
@@ -72,6 +76,18 @@ interface BindingRuntime {
   flushSeq: number;
   replaying: boolean;
   cancelDebounce?: () => void;
+  /** Streaming turn-boundary fallback timer (cancel fn): finalizes the turn if no router idle comes. */
+  cancelStreamFinish?: () => void;
+  /** A streaming turn has un-finalized content (chunks/tool calls since the last finish). Guards
+   *  against double-commit when both the fallback timer and a late idle fire. */
+  streamTurnActive: boolean;
+  /** A hard commit is finalizing on an async sink; next-turn events are queued until it resolves. */
+  committing: boolean;
+  /** Monotonic barrier token. A clear/replay re-establishes the barrier with a new generation so a
+   *  stale whenIdle() resolution (from a superseded barrier) is ignored and never drains the queue. */
+  commitGen: number;
+  /** Router events that arrived during a commit barrier, replayed in order once the sink is idle. */
+  queuedEvents: MeshEvent[];
   startInFlight?: Promise<void>;
   /** Router tool-call ids already segmented on this turn; de-dups the tool_call + tool_call_update
    *  stream so a card is sealed once per distinct tool call regardless of interleaving. Cleared at
@@ -86,6 +102,7 @@ export class FeishuChannel implements Channel {
   private readonly log: (msg: string) => void;
   private readonly setTimer: (fn: () => void, ms: number) => () => void;
   private readonly debounceMs: number;
+  private readonly streamCommitDebounceMs: number;
   private readonly streaming: boolean;
   private readonly dedup: BoundedDedup;
   private readonly idempotencyKey: (binding: FeishuMeshBinding, seq: number, text: string) => string;
@@ -104,6 +121,7 @@ export class FeishuChannel implements Channel {
     this.log = opts.log ?? (() => {});
     this.setTimer = opts.setTimer ?? ((fn, ms) => { const t = setTimeout(fn, ms); return () => clearTimeout(t); });
     this.debounceMs = opts.debounceMs ?? 800;
+    this.streamCommitDebounceMs = opts.config.outbound?.streamCommitDebounceMs ?? 3000;
     this.streaming = opts.config.outbound?.streaming !== false;
     this.dedup = new BoundedDedup(opts.dedupCapacity ?? 1000);
     this.idempotencyKey = opts.idempotencyKey ?? (() => randomUUID());
@@ -115,7 +133,7 @@ export class FeishuChannel implements Channel {
         continue;
       }
       if (this.byChat.has(binding.chatId) || this.byMesh.has(binding.mesh)) continue;
-      const rt: BindingRuntime = { binding, sender, routerId: "", buffer: "", currentMessageStart: 0, flushSeq: 0, replaying: false, seenToolCalls: new Set() };
+      const rt: BindingRuntime = { binding, sender, routerId: "", buffer: "", currentMessageStart: 0, flushSeq: 0, replaying: false, streamTurnActive: false, committing: false, commitGen: 0, queuedEvents: [], seenToolCalls: new Set() };
       this.runtimes.push(rt);
       this.byChat.set(binding.chatId, rt);
       this.byMesh.set(binding.mesh, rt);
@@ -147,9 +165,15 @@ export class FeishuChannel implements Channel {
     for (const rt of this.runtimes) {
       rt.cancelDebounce?.();
       rt.cancelDebounce = undefined;
+      rt.cancelStreamFinish?.(); // drop the streaming fallback timer so it can't fire after teardown
+      rt.cancelStreamFinish = undefined;
       rt.buffer = ""; // drop any un-flushed tail rather than sending during teardown
       rt.currentMessageId = undefined;
       rt.currentMessageStart = 0;
+      rt.streamTurnActive = false;
+      rt.committing = false;
+      rt.queuedEvents = []; // drop events queued behind a commit barrier; never send during teardown
+      rt.seenToolCalls.clear();
       rt.replaying = false;
     }
     this.unsub?.();
@@ -193,6 +217,15 @@ export class FeishuChannel implements Channel {
     }
 
     if (!(await this.ensureMeshRunning(rt))) return;
+    // Deterministic pre-prompt boundary: finalize any residual streaming buffer from the previous
+    // turn BEFORE feeding a new prompt, so a not-yet-flushed reply can't get concatenated with the
+    // next turn's chunks. Only here (we are about to call promptRouter) — never on command/gated
+    // messages. Complements (does not replace) the fallback timer, since router replies can also be
+    // triggered by mail rather than inbound Feishu messages.
+    if (rt.streamTurnActive || rt.buffer.trim()) {
+      this.tlog(rt, "inbound-residual-finish");
+      this.finalizeTurn(rt);
+    }
     try {
       this.log(`feishu channel: routing inbound event=${m.eventId} to mesh "${rt.binding.mesh}"`);
       await this.mesh.promptRouter(rt.binding.mesh, feishuUserPrompt(text));
@@ -280,6 +313,21 @@ export class FeishuChannel implements Channel {
   private onMeshEvent(name: string, e: MeshEvent): void {
     const rt = this.byMesh.get(name);
     if (!rt) return; // only bound meshes
+
+    // Turn-start boundary (keyed by turn.agent, not a top-level agent field): a new ROUTER turn
+    // beginning while we still hold un-finalized streaming content means the previous turn never
+    // delivered (its idle was lost) — finalize it now, before this turn's chunks arrive, so the two
+    // turns don't get concatenated onto one card. This is a reliable per-turn signal: agent_turn is
+    // emitted for every turn start (not change-deduped like agent_activity).
+    if (e.kind === "agent_turn" && e.phase === "started") {
+      const turnAgent = (e.turn as { agent?: string } | undefined)?.agent;
+      if (rt.routerId && turnAgent === rt.routerId && !rt.replaying && rt.streamTurnActive) {
+        this.tlog(rt, "turnstart-residual-finish");
+        this.finalizeTurn(rt);
+      }
+      return;
+    }
+
     const agent = (e as { agent?: string }).agent;
     if (!rt.routerId || agent !== rt.routerId) return; // only the router agent (skips mail/steer/other agents)
 
@@ -295,26 +343,47 @@ export class FeishuChannel implements Channel {
     }
     if (rt.replaying) return; // never mirror historical session replay/backfill to Feishu
 
+    this.dispatchRouterEvent(rt, e);
+  }
+
+  /** Handle a router chunk/tool-call/idle. While a previous hard commit is still finalizing on an
+   *  async sink (commit barrier), queue these in order and replay them after `whenIdle()` resolves —
+   *  otherwise the next turn's first chunk races the previous card's async finalize and gets dropped
+   *  or applied to the old live card. */
+  private dispatchRouterEvent(rt: BindingRuntime, e: MeshEvent): void {
+    if (rt.committing) {
+      rt.queuedEvents.push(e);
+      this.tlog(rt, "queued-during-commit", ` kind=${e.kind}`);
+      return;
+    }
     if (e.kind === "update") {
       const u = e.update as
         | { sessionUpdate?: string; content?: unknown; messageId?: unknown; toolCallId?: unknown; title?: unknown; kind?: unknown }
         | undefined;
       if (u && u.sessionUpdate === "agent_message_chunk") {
         if (appendRouterChunk(rt, u)) {
-          if (this.useStreaming(rt)) this.streamCurrent(rt);
-          else this.scheduleFlush(rt);
+          this.tlog(rt, "chunk-append");
+          if (this.useStreaming(rt)) {
+            this.streamCurrent(rt);
+            this.scheduleStreamFinish(rt); // turn-boundary fallback if idle never arrives
+          } else {
+            this.scheduleFlush(rt);
+          }
         }
         return;
       }
       if (u && (u.sessionUpdate === "tool_call" || u.sessionUpdate === "tool_call_update")) {
         this.onRouterToolCall(rt, u);
+        // A tool call (with no following text + lost idle) must still finalize: the fallback timer
+        // lets CardSender materialize the hint-only card rather than carrying it into the next turn.
+        if (this.useStreaming(rt)) this.scheduleStreamFinish(rt);
       }
       return;
     }
-    // Router turn went idle => deliver the assembled message now.
+    // Router turn went idle => deliver the assembled message now (primary boundary).
     if (e.kind === "agent_activity" && e.activity === "idle") {
-      if (this.useStreaming(rt)) this.streamFinish(rt);
-      else this.flush(rt);
+      this.tlog(rt, "idle-finish");
+      this.finalizeTurn(rt);
     }
   }
 
@@ -325,17 +394,80 @@ export class FeishuChannel implements Channel {
 
   /** Push the current full turn text so the sink edits the live message in place. */
   private streamCurrent(rt: BindingRuntime): void {
-    if (rt.buffer.trim()) rt.sender.streamUpdate!(rt.buffer);
+    if (rt.buffer.trim()) {
+      rt.sender.streamUpdate!(rt.buffer);
+      this.tlog(rt, "stream-update");
+    }
   }
 
-  /** Turn boundary: flush the final text, seal the live message, reset turn state. */
+  /** Deliver the current turn through whichever path this binding uses. */
+  private finalizeTurn(rt: BindingRuntime): void {
+    if (this.useStreaming(rt)) this.streamFinish(rt);
+    else this.flush(rt);
+  }
+
+  /** Streaming turn-boundary fallback: finalize the turn `streamCommitDebounceMs` after the last
+   *  chunk/tool-call if no router idle arrives, so the next turn never appends onto this one. This is
+   *  a silence timeout, not a true turn boundary: a real mid-turn pause longer than the window will
+   *  finalize early and a later same-turn chunk opens a fresh card (no loss/concat) — accepted
+   *  tradeoff for delivering replies that would otherwise be stuck waiting for a lost idle. */
+  private scheduleStreamFinish(rt: BindingRuntime): void {
+    rt.streamTurnActive = true;
+    rt.cancelStreamFinish?.();
+    rt.cancelStreamFinish = this.setTimer(() => {
+      rt.cancelStreamFinish = undefined;
+      this.tlog(rt, "stream-fallback-fired");
+      this.streamFinish(rt);
+    }, this.streamCommitDebounceMs);
+    this.tlog(rt, "stream-fallback-scheduled", ` ms=${this.streamCommitDebounceMs}`);
+  }
+
+  /** Turn boundary: flush the final text, seal the live message, reset turn state. Idempotent — a
+   *  second call (e.g. a late idle after the fallback timer already fired) is a no-op, so the turn
+   *  is never committed twice. */
   private streamFinish(rt: BindingRuntime): void {
+    if (rt.cancelStreamFinish) {
+      rt.cancelStreamFinish();
+      rt.cancelStreamFinish = undefined;
+      this.tlog(rt, "stream-fallback-cancelled");
+    }
+    if (!rt.streamTurnActive) return; // nothing un-finalized; don't double-commit
+    rt.streamTurnActive = false;
     if (rt.buffer.trim()) rt.sender.streamUpdate!(rt.buffer);
     rt.sender.streamCommit!();
     rt.buffer = "";
     rt.currentMessageId = undefined;
     rt.currentMessageStart = 0;
     rt.seenToolCalls.clear();
+    this.tlog(rt, "stream-finish");
+    this.beginCommitBarrier(rt);
+  }
+
+  /** streamCommit() on an async sink (CardSender/LarkSender) returns before the card finalize and
+   *  state reset complete. Hold next-turn sender ops (queued in dispatchRouterEvent) until the sink
+   *  reports idle, then drain them in order — so the next turn opens a fresh card instead of racing
+   *  the previous commit. Sinks without whenIdle() are synchronous; no barrier needed. */
+  private beginCommitBarrier(rt: BindingRuntime): void {
+    const whenIdle = rt.sender.whenIdle?.bind(rt.sender);
+    if (!whenIdle) return;
+    rt.committing = true;
+    const gen = ++rt.commitGen; // supersede any earlier barrier; its resolution becomes a no-op
+    this.tlog(rt, "commit-barrier-begin", ` gen=${gen}`);
+    whenIdle().then(
+      () => this.endCommitBarrier(rt, gen),
+      () => this.endCommitBarrier(rt, gen),
+    );
+  }
+
+  private endCommitBarrier(rt: BindingRuntime, gen: number): void {
+    if (gen !== rt.commitGen) return; // a newer barrier (e.g. from a replay clear) supersedes this one
+    rt.committing = false;
+    // Stopped or replaying mid-commit, or a re-clear happened: drop the queue, never send these.
+    if (!this.started || rt.replaying) { rt.queuedEvents = []; return; }
+    this.tlog(rt, "commit-barrier-end", ` gen=${gen} queued=${rt.queuedEvents.length}`);
+    const queued = rt.queuedEvents;
+    rt.queuedEvents = [];
+    for (const e of queued) this.dispatchRouterEvent(rt, e);
   }
 
   /** A router tool call is an in-turn boundary: seal the current card so the tool call visually
@@ -357,11 +489,22 @@ export class FeishuChannel implements Channel {
   private clearOutboundBuffer(rt: BindingRuntime): void {
     rt.cancelDebounce?.();
     rt.cancelDebounce = undefined;
-    if (this.useStreaming(rt)) rt.sender.streamCommit!(); // seal any live message before dropping
+    rt.cancelStreamFinish?.();
+    rt.cancelStreamFinish = undefined;
+    rt.queuedEvents = []; // stale pre-clear events: replay drops the turn, never replay them
+    const hadLive = this.useStreaming(rt) && rt.streamTurnActive;
+    if (hadLive) rt.sender.streamCommit!(); // seal a live message before dropping (else nothing to seal)
     rt.buffer = "";
     rt.currentMessageId = undefined;
     rt.currentMessageStart = 0;
+    rt.streamTurnActive = false;
     rt.seenToolCalls.clear();
+    // Do NOT just clear `committing`: a prior streamFinish's commit (or the seal just issued) may
+    // still be finalizing on the async sink. Re-establish the barrier so fresh post-replay events
+    // wait for whenIdle() instead of racing the in-flight finalize; the new generation makes any
+    // earlier barrier's resolution a no-op.
+    if (rt.committing || hadLive) this.beginCommitBarrier(rt);
+    else rt.committing = false;
   }
 
   private scheduleFlush(rt: BindingRuntime): void {
@@ -382,6 +525,12 @@ export class FeishuChannel implements Channel {
     rt.seenToolCalls.clear();
     if (!text) return; // never send an empty flush
     rt.sender.enqueue(text, this.idempotencyKey(rt.binding, rt.flushSeq++, text));
+  }
+
+  /** Low-noise outbound-timing log. Never includes message text/content — only routing identifiers,
+   *  the operation, buffer length, and a monotonic timestamp — for diagnosing turn-boundary timing. */
+  private tlog(rt: BindingRuntime, op: string, extra = ""): void {
+    this.log(`feishu outbound: ${op} mesh=${rt.binding.mesh} chat=${rt.binding.chatId} buflen=${rt.buffer.length}${extra} t=${Math.round(performance.now())}`);
   }
 
   private bindingConfig(binding: FeishuMeshBinding): FeishuChannelConfig {

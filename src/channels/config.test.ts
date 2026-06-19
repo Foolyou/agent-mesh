@@ -41,6 +41,15 @@ test("normalizeFeishuConfig respects outbound.cardkit=false (opt out of CardKit)
   expect(cfg!.outbound.streaming).toBe(true); // independent of cardkit
 });
 
+test("normalizeFeishuConfig defaults streamCommitDebounceMs to 3000 and honors an explicit value", () => {
+  const def = normalizeFeishuConfig({ enabled: true, appId: "cli_1", appSecret: "secret", mesh: "m", chatId: "oc_1" });
+  expect(def!.outbound.streamCommitDebounceMs).toBe(3000);
+  const explicit = normalizeFeishuConfig({ enabled: true, appId: "cli_1", appSecret: "secret", mesh: "m", chatId: "oc_1", outbound: { streamCommitDebounceMs: 5000 } });
+  expect(explicit!.outbound.streamCommitDebounceMs).toBe(5000);
+  const invalid = normalizeFeishuConfig({ enabled: true, appId: "cli_1", appSecret: "secret", mesh: "m", chatId: "oc_1", outbound: { streamCommitDebounceMs: 0 } });
+  expect(invalid!.outbound.streamCommitDebounceMs).toBe(3000); // non-positive falls back to default
+});
+
 test("normalizeFeishuConfig rejects missing required fields", () => {
   expect(normalizeFeishuConfig({ enabled: true, appSecret: "s", mesh: "m", chatId: "oc_1" })).toBeUndefined(); // no appId
   expect(normalizeFeishuConfig({ enabled: true, appId: "cli", mesh: "m", chatId: "oc_1" })).toBeUndefined(); // no appSecret
