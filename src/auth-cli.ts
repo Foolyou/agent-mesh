@@ -264,6 +264,23 @@ const USAGE: Record<string, string[]> = {
   auth: ["usage: mesh auth list", "       mesh auth rotate-key", "       mesh auth bootstrap [--ttl <seconds>]"],
 };
 
+/** main.ts entry seam: run a `mesh <group> …` command, print `out`→stdout and `err`→stderr, and
+ *  return the exit code. Writers are injectable so the print/exit glue is unit-testable without
+ *  spawning the binary. */
+export async function runAuthCommand(
+  root: string,
+  group: string,
+  args: string[],
+  io: { out?: (line: string) => void; err?: (line: string) => void } = {},
+): Promise<number> {
+  const writeOut = io.out ?? ((l: string) => console.log(l));
+  const writeErr = io.err ?? ((l: string) => console.error(l));
+  const res = await runAuthCli(root, group, args);
+  for (const l of res.out) writeOut(l);
+  for (const l of res.err) writeErr(l);
+  return res.exitCode;
+}
+
 /** Parse + run `mesh <group> <action> …`. `args` are the tokens AFTER the group (i.e.
  *  process.argv.slice(3)). Returns a CliResult; the caller prints and sets the exit code. */
 export async function runAuthCli(root: string, group: string, args: string[]): Promise<CliResult> {

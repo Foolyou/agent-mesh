@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { readFile } from "node:fs/promises";
 import { encryptAuthCode, ensureKeys, generateToken, hashToken, loadKeys, verifyTokenHash } from "./auth-codes";
 import { bootstrapTokenValid, devicesPath, isFeishuAllowed, readDevices, readFeishuAuth, updateDevices, updateFeishuAuth } from "./auth-store";
-import { runAuthCli } from "./auth-cli";
+import { runAuthCli, runAuthCommand } from "./auth-cli";
 
 async function tmp(): Promise<string> {
   return mkdtemp(join(tmpdir(), "auth-cli-"));
@@ -339,6 +339,28 @@ test("auth bootstrap re-issue supersedes the previous token (old token no longer
 });
 
 // ── dispatcher / usage ─────────────────────────────────────────────────────────
+
+test("runAuthCommand (main.ts seam) routes out→stdout writer, err→stderr writer, and returns the exit code", async () => {
+  const root = await tmp();
+  try {
+    // success path → out writer, exit 0, no err
+    const out: string[] = [];
+    const err: string[] = [];
+    const code = await runAuthCommand(root, "device", ["list"], { out: (l) => out.push(l), err: (l) => err.push(l) });
+    expect(code).toBe(0);
+    expect(out.join("\n")).toContain("Pending devices");
+    expect(err).toEqual([]);
+    // failure path → err writer, exit 2, no out
+    const out2: string[] = [];
+    const err2: string[] = [];
+    const code2 = await runAuthCommand(root, "device", ["revoke", "ghost"], { out: (l) => out2.push(l), err: (l) => err2.push(l) });
+    expect(code2).toBe(2);
+    expect(err2.join("\n")).toContain("no device matching 'ghost'");
+    expect(out2).toEqual([]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test("runAuthCli surfaces usage for a missing or unknown action, and rejects unknown groups", async () => {
   const root = await tmp();

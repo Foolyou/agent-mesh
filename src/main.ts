@@ -18,6 +18,7 @@ import { resolveRoot, expandHome } from "./root";
 import { uploadRoot } from "./web/uploads";
 import { assistantCliDeprecationWarnings, assistantHarnessPassthrough, noAssistantSelected, parseAssistantHarness } from "./cli-options";
 import { createFeishuChannelController } from "./channels";
+import { runAuthCommand } from "./auth-cli";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import * as service from "./service";
@@ -141,6 +142,10 @@ if (cmd === "up" || cmd === "start") {
     console.error("usage: mesh kill <name> | --all");
     process.exitCode = 2;
   }
+} else if (cmd === "device" || cmd === "feishu" || cmd === "auth") {
+  // device/account authorization CLI (design §3): operates on <root>/auth/*.json directly, no
+  // backend needed. Usage + exit codes come from runAuthCli; this is pure delegation.
+  process.exitCode = await runAuthCommand(root, cmd, process.argv.slice(3));
 } else if (cmd === "backend") {
   const port = Number(process.env.MESH_API_PORT) || Number(argVal("--port")) || 7300;
   const { manager, assistant, gateway, feishu } = await buildGateway();
