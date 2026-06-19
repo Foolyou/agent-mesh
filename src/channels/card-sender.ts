@@ -500,12 +500,31 @@ export class CardSender implements OutboundSink {
     this.pendingContinuation = split.continuation; // arm the tail's reopen prefix (undefined => clean)
   }
 
-  /** Seal the live card AS-IS (no backward edit) and continue the SAME turn on a fresh card, reopening
-   *  whatever structure the sealed text left open. Used when a card must end without a planned split
-   *  point: the monotonic-display shrink guard and the streaming-window timeout rollover. */
+  /** Seal the live card without a backward edit and continue the SAME turn on a fresh card, repairing
+   *  any structure the sealed text left open. Used when a card must end without a planned split point:
+   *  the monotonic-display shrink guard and the streaming-window timeout rollover.
+   *  If the sealed text leaves a code fence open, APPEND the matching close marker (display-only,
+   *  append-only — never a backward shrink; live.sentText stays the confirmed body) so the finalized
+   *  card is balanced, then reopen the fence on the next card. Tables need no close, only the header
+   *  resend on the next card. */
   private async sealLiveAndContinue(reason: FinalizeReason): Promise<void> {
-    if (!this.live) return;
-    const ctx = continuationAfter(this.live.sentText, { openFence: this.pendingContinuation?.openFence, tableHeader: this.pendingContinuation?.tableHeader });
+    const live = this.live;
+    if (!live) return;
+    const ctx = continuationAfter(live.sentText, { openFence: this.pendingContinuation?.openFence, tableHeader: this.pendingContinuation?.tableHeader });
+    if (ctx?.openFence) {
+      // Close the open code block on the current card (append-only; do NOT touch live.sentText).
+      const display = `${this.composeDisplay(live.sentText)}\n${fenceMarkerOf(ctx.openFence)}`;
+      try {
+        const seq = this.nextSeq();
+        const r = await this.content({ cardId: live.cardId, elementId: this.elementId, content: display, sequence: seq, uuid: stableCardKey(live.cardId, seq) });
+        this.lastEditAt = this.now();
+        if (!r.ok) this.log(`feishu card: close-fence edit failed${codeInfo(r)}; sealing card unbalanced`);
+      } catch (e) {
+        this.lastEditAt = this.now();
+        this.log(`feishu card: close-fence edit error: ${String(e)}; sealing card unbalanced`);
+      }
+      // A failed close is cosmetic (body already shown) — do not give up or re-send confirmed body.
+    }
     await this.finalizeCurrentCard(reason); // advances by live.sentText.length; clears hint/continuation
     this.pendingContinuation = ctx; // reopen any fence/table the sealed text left open
   }

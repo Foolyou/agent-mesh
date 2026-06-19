@@ -835,7 +835,15 @@ test("timeout rollover: a long-running turn rolls onto a fresh card after the wi
   expect(r.finalizes).toHaveLength(2);
 });
 
-test("timeout rollover inside a code fence reopens the fence on the next card", async () => {
+/** Final displayed content of a card: its last content edit, else its create text. */
+function finalContent(r: ReturnType<typeof cardRecorder>, cardId: string): string {
+  const edits = r.contents.filter((c) => c.cardId === cardId);
+  if (edits.length) return edits[edits.length - 1].content;
+  const create = r.creates.findIndex((_c, i) => `card${i + 1}` === cardId);
+  return create >= 0 ? r.creates[create].text : "";
+}
+
+test("timeout rollover inside a code fence closes the current card and reopens on the next", async () => {
   const r = cardRecorder();
   const fb = fakeFallback();
   const s = makeSender(r, fb, { enableToolHint: false, minEditIntervalMs: 0, maxCardAgeMs: 1000 });
@@ -846,8 +854,31 @@ test("timeout rollover inside a code fence reopens the fence on the next card", 
   await s.whenIdle();
   s.streamCommit();
   await s.whenIdle();
-  expect(r.creates[0].text).toBe("```js\ncode1"); // sealed as-is (no backward edit)
+  expect(finalContent(r, "card1")).toBe("```js\ncode1\n```"); // sealed card balanced (close appended)
+  expect((finalContent(r, "card1").match(/```/g) ?? []).length % 2).toBe(0);
   expect(r.creates[1].text.startsWith("```js")).toBe(true); // fence reopened on the continued card
+  // (card2 mirrors the input's own unclosed trailing fence; the renderer auto-closes at card end)
+  // strip the display-only repair (appended close + reopened fence) — body reconstructs with no loss
+  const body1 = finalContent(r, "card1").replace(/\n```$/, ""); // "```js\ncode1"
+  const body2 = finalContent(r, "card2").replace(/^```js\n/, ""); // "\ncode2"
+  expect(body1 + body2).toBe("```js\ncode1\ncode2");
+});
+
+test("shrink-guard rollover inside a code fence also closes the current card and reopens", async () => {
+  const r = cardRecorder();
+  const fb = fakeFallback();
+  const s = makeSender(r, fb, { enableToolHint: false, minEditIntervalMs: 0, maxCardBytes: 14 });
+  s.streamUpdate("```js\nAAAA"); // 10B, fits
+  await s.whenIdle();
+  s.streamUpdate("```js\nAAAA\nBB"); // 13B, fits (content edit)
+  await s.whenIdle();
+  s.streamUpdate("```js\nAAAA\nBB\nCC"); // optimal split head shorter than shown -> shrink guard
+  await s.whenIdle();
+  s.streamCommit();
+  await s.whenIdle();
+  expect(finalContent(r, "card1")).toBe("```js\nAAAA\nBB\n```"); // sealed card balanced, not shrunk
+  expect((finalContent(r, "card1").match(/```/g) ?? []).length % 2).toBe(0);
+  expect(r.creates[1].text.startsWith("```js")).toBe(true); // reopened on the continued card
 });
 
 test("timeout rollover with a pending tool hint does not lose or duplicate the hint/body", async () => {
