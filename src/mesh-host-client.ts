@@ -50,6 +50,7 @@ export class MeshHostClient {
 
   private ackResolve?: (a: { running: boolean; proto: number }) => void;
   private readyResolve?: () => void;
+  private readySeen = false;
   private stoppedResolve?: () => void;
   private rpcSeq = 0;
   /** In-flight request/ack waiters keyed by reqId, shared by respawn and config-mutation acks.
@@ -179,6 +180,8 @@ export class MeshHostClient {
   private bind(sock: net.Socket): void {
     // A new socket supersedes any prior one: its in-flight requests can never be answered.
     this.rejectAllRpc(new Error(`mesh-host "${this.opts.name}": connection replaced`));
+    this.readySeen = false;
+    this.readyResolve = undefined;
     this.conn = sock;
     const lb = new LineBuffer();
     sock.setEncoding("utf8");
@@ -210,7 +213,9 @@ export class MeshHostClient {
         this.ackResolve?.({ running: msg.running, proto: msg.proto });
         break;
       case "ready":
+        this.readySeen = true;
         this.readyResolve?.();
+        this.readyResolve = undefined;
         break;
       case "replay":
         for (const e of msg.events) {
@@ -257,6 +262,7 @@ export class MeshHostClient {
       throw new Error(`mesh-host "${this.opts.name}": protocol mismatch (daemon ${ack.proto}, backend ${PROTO_VERSION})`);
     }
     if (!ack.running) {
+      if (this.readySeen) return;
       const ready = new Promise<void>((res) => {
         this.readyResolve = res;
       });
@@ -268,6 +274,7 @@ export class MeshHostClient {
         ...(exitedFirst ? [exitedFirst] : []),
       ]);
       waitingForReady = false;
+      this.readyResolve = undefined;
       if (won.kind === "exited") throw new Error(`mesh-host "${this.opts.name}" exited (code ${won.code}) before ready`);
       if (won.kind !== "ready") throw new Error(`mesh-host "${this.opts.name}" not ready (${won.kind})`);
     }

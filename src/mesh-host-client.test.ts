@@ -115,6 +115,42 @@ async function attachToFake(
   return { client, daemon };
 }
 
+test("handshake accepts a ready frame that arrives before the non-running ack is handled", async () => {
+  const sockPath = socket("early-ready");
+  const sockets: net.Socket[] = [];
+  const server = net.createServer((sock) => {
+    sockets.push(sock);
+    sock.setEncoding("utf8");
+    sock.write(encodeFrame({ t: "ready" } as ChildMsg));
+    const lb = new LineBuffer();
+    sock.on("data", (chunk: string) => {
+      for (const line of lb.push(chunk)) {
+        const frame = JSON.parse(line) as ParentMsg;
+        if (frame.t === "hello") {
+          sock.write(encodeFrame({ t: "ack", proto: PROTO_VERSION, running: false, seq: 0 } as ChildMsg));
+        }
+      }
+    });
+    sock.on("error", () => {});
+  });
+  await new Promise<void>((res) => server.listen(sockPath, res));
+
+  const client = new MeshHostClient({ name: cfg.name, config: cfg, socketPath: sockPath });
+  try {
+    await Promise.race([
+      client.attach({ pid: process.pid }),
+      Bun.sleep(500).then(() => {
+        for (const s of sockets) s.write(encodeFrame({ t: "ready" } as ChildMsg));
+        throw new Error("client did not observe early ready");
+      }),
+    ]);
+  } finally {
+    client.disconnect();
+    for (const s of sockets) s.destroy();
+    await new Promise<void>((res) => server.close(() => res()));
+  }
+});
+
 test("setMode resolves with the host ack status", async () => {
   const sock = socket("ack");
   const { client, daemon } = await attachToFake(sock, (frame, s) => {
