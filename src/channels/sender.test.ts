@@ -195,6 +195,26 @@ test("streaming: a segment break with nothing pending sends no empty message", a
   expect(r.creates).toEqual([]);
 });
 
+test("streaming: after an edit failure, a segment break delivers only the unshown remainder", async () => {
+  // edit #1 fails (not 230072) -> give up; the live message keeps "Hello"; a tool boundary must
+  // deliver only " world" as a fresh message, never re-sending the confirmed "Hello".
+  const r = streamRecorder((_req, n) => (n === 1 ? { ok: false, code: 99 } : { ok: true }));
+  const s = new LarkSender({ chatId: "oc_1", send: r.send, update: r.update, streamMinEditIntervalMs: 1000, now: r.now, wait: r.wait });
+  s.streamUpdate("Hello"); await s.whenIdle();
+  s.streamUpdate("Hello world"); await s.whenIdle(); // edit fails -> gave up
+  s.streamSegmentBreak(); await s.whenIdle();
+  expect(r.creates).toEqual(["Hello", " world"]); // no duplicated "Hello"
+});
+
+test("streaming: after an edit failure, commit delivers only the unshown remainder (no whole-turn dup)", async () => {
+  const r = streamRecorder((_req, n) => (n === 1 ? { ok: false, code: 99 } : { ok: true }));
+  const s = new LarkSender({ chatId: "oc_1", send: r.send, update: r.update, streamMinEditIntervalMs: 1000, now: r.now, wait: r.wait });
+  s.streamUpdate("Hello"); await s.whenIdle();
+  s.streamUpdate("Hello world"); await s.whenIdle(); // edit fails -> gave up
+  s.streamCommit(); await s.whenIdle();
+  expect(r.creates).toEqual(["Hello", " world"]); // tail only, not the whole turn re-sent
+});
+
 test("streaming without an update seam: a segment break flushes the segment as its own message", async () => {
   const { send, calls } = recordingSend();
   const s = new LarkSender({ chatId: "oc_1", send }); // no update fn

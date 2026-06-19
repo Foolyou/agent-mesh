@@ -204,10 +204,13 @@ export class LarkSender {
         const liveUpToDate = this.live ? this.live.sentText === segment : segment.trim() === "";
 
         if (liveUpToDate || this.streamGaveUp) {
+          // On give-up, only the text NOT yet confirmed on the live message needs a fresh message;
+          // re-sending the shown prefix (or the whole turn) would duplicate confirmed content.
+          const unshown = this.streamGaveUp ? (this.live ? segment.slice(this.live.sentText.length) : segment) : "";
           // Soft seal first: an in-turn boundary continues the SAME turn in a fresh message.
           if (this.streamSegmentBreaking && !this.streamCommitting) {
             if (this.streamGaveUp) {
-              if (segment.trim()) this.enqueue(segment); // degraded: deliver this segment one-shot
+              if (unshown.trim()) this.enqueue(unshown); // degraded: deliver only the unshown tail
               this.streamGaveUp = false;
             }
             this.streamBaseOffset = full.length; // everything so far is shown/sent for this segment
@@ -216,7 +219,7 @@ export class LarkSender {
             continue; // keep the turn going; the next text opens a new message
           }
           if (this.streamCommitting) {
-            if (this.streamGaveUp && segment.trim()) this.enqueue(full); // fallback for the whole turn
+            if (this.streamGaveUp && unshown.trim()) this.enqueue(unshown); // only the unshown tail
             this.live = undefined;
             this.streamBaseOffset = 0;
             this.streamCommitting = false;
