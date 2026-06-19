@@ -216,13 +216,16 @@ export function reduceTranscript(
       // resend (drop); same-messageId + incoming is a strict superset of accumulated →
       // partial-stream-then-full → replace.
       const openText = (open as any).text as string;
-      if (typeof mid === "string" && mid.length > 0 && (open as any).messageId === mid) {
+      const canDedupeFullResend =
+        (typeof mid === "string" && mid.length > 0 && (open as any).messageId === mid) ||
+        (mid === undefined && (open as any).messageId === undefined);
+      if (canDedupeFullResend) {
         if (text && text === openText) {
-          // Same messageId, exact same accumulated text — duplicate full-message resend.
+          // Exact same accumulated text — duplicate full-message resend.
           return { items: next, ops: [] };
         }
         if (text && text.length > openText.length && text.startsWith(openText)) {
-          // Same messageId, text is a strict superset — partial deltas then full block re-sent.
+          // Text is a strict superset — partial deltas then full block re-sent.
           const merged = { ...(open as any), text } as TranscriptItem;
           next = [...next.slice(0, -1), merged];
           ops.push({ op: "patch", id: open.id, patch: { text } });

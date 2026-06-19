@@ -629,6 +629,7 @@ export class ControlPlane {
     if (idx >= 0) q.splice(idx, 1);
     if (q.length) this.queuedTurns.set(turn.agent, q);
     else this.queuedTurns.delete(turn.agent);
+    this.markMailTurnDelivered(turn);
     this.emit({ kind: "agent_turn", phase: "started", turn, ts: now() });
     this.startTurnHealth(turn);
   }
@@ -752,6 +753,20 @@ export class ControlPlane {
     if (q.length) this.queuedTurns.set(turn.agent, q);
     else this.queuedTurns.delete(turn.agent);
     this.emit({ kind: "agent_turn", phase: "removed", turn, ts: now() });
+  }
+
+  private markMailTurnDelivered(turn: AgentTurn): void {
+    if (turn.source !== "mail" || !turn.mailId) return;
+    this.rememberConsumedMail(turn.agent, [turn.mailId]);
+    this.mailCursors.set(turn.agent, turn.mailId);
+    if (!this.sessionRunDir) return;
+    void mkdir(this.sessionRunDir, { recursive: true, mode: 0o700 })
+      .catch(() => {})
+      .then(() => updateAgentMailCursor(this.sessionRunDir!, this.mesh.name, turn.agent, turn.mailId!))
+      .then((state) => {
+        this.sessionState = state;
+      })
+      .catch((err) => this.log(`persist mail cursor ${turn.agent}=${turn.mailId} failed: ${String(err)}`));
   }
 
   private rememberConsumedMail(agent: AgentId, mailIds: Iterable<string>): void {
@@ -1792,10 +1807,6 @@ export class ControlPlane {
       `\n\n${MAIL_WAKE_GUIDANCE}`;
     try {
       await this.prompt(to, mail, [], this.mailTurn(to, from, body, mailId, meta.seq));
-      if (mailId && this.sessionRunDir) {
-        this.mailCursors.set(to, mailId);
-        await mkdir(this.sessionRunDir, { recursive: true, mode: 0o700 }).catch(() => {}); await updateAgentMailCursor(this.sessionRunDir, this.mesh.name, to, mailId);
-      }
     } catch (err) {
       this.log(`wake(${to}) failed: ${String(err)}`);
     }
@@ -1872,7 +1883,8 @@ export class ControlPlane {
     if (this.sessionRunDir) {
       // Crash safety is at-least-once: if the daemon is killed before this
       // atomic cursor write, this same returned batch can be delivered again.
-      this.sessionState = await mkdir(this.sessionRunDir, { recursive: true, mode: 0o700 }).catch(() => {}); await updateAgentMailCursor(this.sessionRunDir, this.mesh.name, ctx.agentId, nextCursor);
+      await mkdir(this.sessionRunDir, { recursive: true, mode: 0o700 }).catch(() => {});
+      this.sessionState = await updateAgentMailCursor(this.sessionRunDir, this.mesh.name, ctx.agentId, nextCursor);
     }
     this.mailCursors.set(ctx.agentId, nextCursor);
     const readIds = new Set(mail.map((m) => m.id));

@@ -3,7 +3,7 @@
 // the client. createStore() owns the socket + REST command helpers; useStore wires it
 // into React via useSyncExternalStore.
 import { useSyncExternalStore } from "react";
-import type { AgentConfig, GatewayState, ServerMsg, PerMeshState, TranscriptItem, ConvRef, MeshConfig, MeshEdge, PromptImageRef, StartSessionStrategy, HarnessProbeRow, HarnessId, HarnessInstallEvent, RespawnMode, TranscriptSnapshot, AgentStatus, MutationApplyResult, BoardDocument } from "../types";
+import type { AgentConfig, GatewayState, ServerMsg, PerMeshState, TranscriptItem, ConvRef, MeshConfig, MeshEdge, PromptImageRef, StartSessionStrategy, HarnessProbeRow, HarnessId, HarnessInstallEvent, RespawnMode, TranscriptSnapshot, AgentStatus, MutationApplyResult, BoardDocument, FeishuChannelStatus, FeishuMeshChatEnsureResult, FeishuProvisionJobPublic, FeishuProvisionStartRequest } from "../types";
 import type { BoardCommand } from "../../board";
 
 const CAP = 500;
@@ -215,6 +215,12 @@ export interface Store {
   streamHarnessInstall(id: HarnessId, jobId: string, onEvent: (event: HarnessInstallEvent) => void, onClose?: (err?: Error) => void): Promise<void>;
   reprobeHarness(id: HarnessId): Promise<any>;
   interruptAssistant(): Promise<any>;
+  getFeishuStatus(): Promise<FeishuChannelStatus>;
+  startFeishuProvision(input: FeishuProvisionStartRequest): Promise<FeishuProvisionJobPublic>;
+  getFeishuProvision(id: string): Promise<FeishuProvisionJobPublic>;
+  cancelFeishuProvision(id: string): Promise<FeishuProvisionJobPublic>;
+  syncFeishuMeshChats(): Promise<FeishuMeshChatEnsureResult[]>;
+  ensureFeishuMeshChat(mesh: string): Promise<FeishuMeshChatEnsureResult>;
 }
 
 export function createStore(): Store {
@@ -635,6 +641,12 @@ export function createStore(): Store {
     installHarness: (id) => guard(post(`/api/harnesses/${enc(id)}/install`), `install ${id}`),
     streamHarnessInstall,
     reprobeHarness: (id) => guard(post(`/api/harnesses/${enc(id)}/reprobe`), `reprobe ${id}`),
+    getFeishuStatus: () => guard(send("GET", "/api/channels/feishu/status"), "load Feishu"),
+    startFeishuProvision: (input) => guard(post("/api/channels/feishu/provision", input), "bind Feishu"),
+    getFeishuProvision: (id) => guard(send("GET", `/api/channels/feishu/provision/${enc(id)}`), "check Feishu bind"),
+    cancelFeishuProvision: (id) => guard(post(`/api/channels/feishu/provision/${enc(id)}/cancel`), "cancel Feishu bind"),
+    syncFeishuMeshChats: () => guard(post("/api/channels/feishu/sync"), "sync Feishu groups"),
+    ensureFeishuMeshChat: (mesh) => guard(post(`/api/channels/feishu/meshes/${enc(mesh)}/group`), `create Feishu group ${mesh}`),
   };
 }
 

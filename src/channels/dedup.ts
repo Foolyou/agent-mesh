@@ -1,7 +1,7 @@
 // src/channels/dedup.ts
 //
-// Bounded FIFO dedup set for inbound Feishu event_ids (the lark-cli schema documents event_id as
-// globally unique and safe for dedup). Redeliveries — e.g. after a consumer reconnect — must not
+// Bounded FIFO dedup set for inbound Feishu event_ids (SDK receive events include event_id values
+// suitable for dedup). Redeliveries — e.g. after a consumer reconnect — must not
 // be fed to the router twice. Capacity-bounded so a long-lived backend can't grow it unboundedly;
 // the oldest ids are evicted first.
 

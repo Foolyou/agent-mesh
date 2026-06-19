@@ -126,6 +126,25 @@ test("check_mail consumes queued mail turns: emits consumed, clears queue, never
   }
 });
 
+test("check_mail does not re-read a mail turn that already started via push wake", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mesh-mail-started-cursor-"));
+  const created: Record<string, QueueingConnection> = {};
+  const cp = makePlane(root, created);
+
+  try {
+    await cp.start();
+    const res = await (cp as any).handleSendMail({ agentId: "router", role: "router" }, "member", "ping");
+    expect(res).toBe("queued for member as #1; wake scheduled");
+    expect(created.member.inFlight).toHaveLength(1);
+    expect(created.member.inFlight[0].turn?.source).toBe("mail");
+
+    expect(await (cp as any).handleCheckMail({ agentId: "member", role: "member" })).toBe("no new mail");
+  } finally {
+    await cp.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("check_mail leaves queued operator turns and unrelated mail turns alone", async () => {
   const root = await mkdtemp(join(tmpdir(), "mesh-mail-consume-other-"));
   const created: Record<string, QueueingConnection> = {};

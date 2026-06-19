@@ -14,29 +14,47 @@ export function senderAllowed(cfg: FeishuChannelConfig, senderId: string): boole
 /**
  * @-gate.
  *
- * PoC ASSUMPTION (live-verify risk): with only the `im:message.group_at_msg:readonly` scope,
- * Lark delivers group `im.message.receive_v1` events ONLY when the bot is @-mentioned, so any
- * delivered group message is already an @-bot message. The lark-cli projection exposes NO
- * structured `mentions` field, so we do not (and must not) widen scope to fetch one. As
- * defense-in-depth, when a botName is configured we additionally require its rendered mention
- * ("@<botName>", convertlib-resolved) to appear in the group text; an empty botName trusts the
- * scope contract alone. p2p messages always pass.
+ * Group chats require an @ mention by default. A trusted, hard-bound chat can opt out with
+ * `requireMention=false`, but Feishu still must grant and deliver all group-message events.
+ * Prefer the structured mention id because display names are editable; keep botName as a
+ * compatibility fallback. Empty id+name trusts the delivery contract alone. p2p messages always
+ * pass.
  */
-export function passesAtGate(msg: InboundMsg, botName: string): boolean {
+export function passesAtGate(msg: InboundMsg, cfg: FeishuChannelConfig): boolean {
   if (msg.chatType === "p2p") return true;
-  if (!botName) return true; // trust the group_at_msg scope delivery contract
-  return msg.text.includes("@" + botName);
+  if (!cfg.requireMention) return true;
+  if (cfg.botMentionId) return msg.mentions.some((m) => m.id === cfg.botMentionId);
+  if (!cfg.botName) return true; // trust the group_at_msg scope delivery contract
+  return msg.text.includes("@" + cfg.botName);
 }
 
 /**
- * Strip a leading rendered "@<botName>" (with optional surrounding whitespace) from group
- * message text. No-op for p2p or when botName is empty. Only the leading mention is removed;
- * mid-text occurrences are left intact.
+ * Strip a leading rendered bot mention (with optional surrounding whitespace) from group message
+ * text. When `botMentionId` is configured, the matching mention's current display name is used;
+ * `botName` remains a fallback. Only the leading mention is removed; mid-text occurrences remain.
  */
-export function stripBotMention(msg: InboundMsg, botName: string): string {
-  if (msg.chatType !== "group" || !botName) return msg.text;
+export function stripBotMention(msg: InboundMsg, cfg: FeishuChannelConfig): string {
+  if (msg.chatType !== "group") return msg.text;
+  const names = botMentionNames(msg, cfg);
+  if (!names.length) return msg.text;
   let t = msg.text.replace(/^\s+/, "");
-  const at = "@" + botName;
-  if (t.startsWith(at)) t = t.slice(at.length).replace(/^\s+/, "");
+  for (const name of names) {
+    const at = "@" + name;
+    if (t.startsWith(at)) {
+      t = t.slice(at.length).replace(/^\s+/, "");
+      break;
+    }
+  }
   return t;
+}
+
+function botMentionNames(msg: InboundMsg, cfg: FeishuChannelConfig): string[] {
+  const names = new Set<string>();
+  if (cfg.botMentionId) {
+    for (const m of msg.mentions) {
+      if (m.id === cfg.botMentionId && m.name) names.add(m.name);
+    }
+  }
+  if (cfg.botName) names.add(cfg.botName);
+  return [...names];
 }

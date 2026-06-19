@@ -1,16 +1,16 @@
 // src/channels/index.ts
 //
-// Factory entry point used by the backend main process (src/main.ts). Returns a started-able
-// Channel when `<root>/channels/feishu.json` is present + enabled, or undefined otherwise (the
-// caller then leaves the channel off). Wires the REAL lark-cli consumer + sender; the relay
-// logic lives in FeishuChannel. NOT yet referenced by main.ts — that wiring is the final commit.
+// Factory entry points used by the backend main process (src/main.ts). The direct builder creates
+// one started-able Feishu Channel from the current config; the controller wraps it with runtime
+// reload/watch/provisioning support. The relay logic lives in FeishuChannel; transport is the
+// official Feishu/Lark Node SDK.
 
 import type { Channel, MeshGateway } from "./types";
 import { loadFeishuConfig } from "./config";
 import { FeishuChannel } from "./feishu-channel";
-import { LarkConsumer } from "./consumer";
-import { LarkSender } from "./sender";
-import { realSpawnConsumer, realSend } from "./process";
+import { createFeishuClient, LarkConsumer } from "./consumer";
+import { LarkSender, sdkSend } from "./sender";
+import { FeishuChannelController } from "./controller";
 
 export interface BuildFeishuChannelOpts {
   root: string;
@@ -22,16 +22,48 @@ export function buildFeishuChannel(mesh: MeshGateway, opts: BuildFeishuChannelOp
   const log = opts.log ?? ((m) => console.log(m));
   const cfg = loadFeishuConfig(opts.root, log);
   if (!cfg) return undefined;
-  const sender = new LarkSender({ chatId: cfg.chatId, send: realSend(), minIntervalMs: cfg.outbound.minIntervalMs, log });
+  const client = createFeishuClient(cfg);
+  const send = sdkSend(client);
+  const senders = new Map(
+    cfg.bindings.map((binding) => [
+      binding.chatId,
+      new LarkSender({ chatId: binding.chatId, send, minIntervalMs: cfg.outbound.minIntervalMs, log }),
+    ]),
+  );
   return new FeishuChannel({
     mesh,
     config: cfg,
-    sender,
+    senders,
     log,
-    makeConsumer: (onMessage) => new LarkConsumer({ onMessage, spawn: realSpawnConsumer(), log }),
+    makeConsumer: (onMessage) =>
+      new LarkConsumer({
+        appId: cfg.appId,
+        appSecret: cfg.appSecret,
+        domain: cfg.domain,
+        handshakeTimeoutMs: cfg.websocket.handshakeTimeoutMs,
+        pingTimeout: cfg.websocket.pingTimeout,
+        onMessage,
+        log,
+      }),
   });
 }
 
-export { loadFeishuConfig, feishuConfigPath, normalizeFeishuConfig } from "./config";
+export function createFeishuChannelController(mesh: MeshGateway, opts: BuildFeishuChannelOpts): FeishuChannelController {
+  return new FeishuChannelController(mesh, { ...opts, buildChannel: buildFeishuChannel });
+}
+
+export { loadFeishuConfig, feishuConfigPath, normalizeFeishuConfig, readFeishuConfig } from "./config";
 export { senderAllowed, passesAtGate, stripBotMention } from "./gating";
-export type { Channel, MeshGateway, InboundMsg, FeishuChannelConfig } from "./types";
+export type {
+  Channel,
+  MeshGateway,
+  InboundMsg,
+  InboundMention,
+  FeishuChannelConfig,
+  FeishuChannelControl,
+  FeishuChannelStatus,
+  FeishuMeshBinding,
+  FeishuMeshChatEnsureResult,
+  FeishuProvisionJobPublic,
+  FeishuProvisionStartRequest,
+} from "./types";

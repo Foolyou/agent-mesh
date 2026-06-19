@@ -478,6 +478,24 @@ test("no-messageId / codex path is unchanged (coalesces as before)", () => {
   expect(items[0]).toMatchObject({ kind: "message", text: "Hello" });
 });
 
+test("agent_message_chunk without messageId: exact full-resend duplicate is dropped", () => {
+  const items = fold([
+    { sessionUpdate: "agent_message_chunk", content: { text: "你好！有什么可以帮你的吗？" } },
+    { sessionUpdate: "agent_message_chunk", content: { text: "你好！有什么可以帮你的吗？" } },
+  ]);
+  expect(items).toHaveLength(1);
+  expect(items[0]).toMatchObject({ kind: "message", text: "你好！有什么可以帮你的吗？" });
+});
+
+test("agent_message_chunk without messageId: partial then full resend replaces with full text", () => {
+  const items = fold([
+    { sessionUpdate: "agent_message_chunk", content: { text: "你好！" } },
+    { sessionUpdate: "agent_message_chunk", content: { text: "你好！有什么可以帮你的吗？" } },
+  ]);
+  expect(items).toHaveLength(1);
+  expect(items[0]).toMatchObject({ kind: "message", text: "你好！有什么可以帮你的吗？" });
+});
+
 test("agent_thought_chunk with same messageId: duplicate full resend dropped", () => {
   const items = fold([
     { sessionUpdate: "agent_thought_chunk", content: { text: "I will plan" }, messageId: MID },

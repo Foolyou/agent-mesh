@@ -6,6 +6,8 @@ import type { MutationAckStatus } from "../protocol";
 export type { MutationAckStatus };
 import type { BoardDocument } from "../board";
 export type { BoardDocument };
+import type { FeishuChannelStatus, FeishuMeshChatEnsureResult, FeishuProvisionJobPublic, FeishuProvisionStartRequest } from "../channels";
+export type { FeishuChannelStatus, FeishuMeshChatEnsureResult, FeishuProvisionJobPublic, FeishuProvisionStartRequest };
 export type { SessionMode };
 export type { SessionModel };
 export type { PromptImageRef };

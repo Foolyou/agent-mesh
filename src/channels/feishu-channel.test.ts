@@ -4,13 +4,32 @@ import type { MeshGateway, FeishuChannelConfig, InboundMsg } from "./types";
 import type { MeshEvent } from "../acp/types";
 
 function cfg(over: Partial<FeishuChannelConfig> = {}): FeishuChannelConfig {
-  return { enabled: true, mesh: "feishu-poc", chatId: "oc_1", botName: "MeshBot", allowSenders: ["ou_me"], outbound: { minIntervalMs: 0 }, ...over };
+  return {
+    enabled: true,
+    appId: "cli_1",
+    appSecret: "secret",
+    domain: "feishu",
+    mesh: "feishu-poc",
+    chatId: "oc_1",
+    botMentionId: "",
+    botName: "MeshBot",
+    requireMention: true,
+    allowSenders: ["ou_me"],
+    outbound: { minIntervalMs: 0 },
+    websocket: {},
+    bindings: [{ mesh: "feishu-poc", chatId: "oc_1" }],
+    ...over,
+  };
 }
 
 class FakeMesh implements MeshGateway {
   listeners: ((name: string, e: MeshEvent) => void)[] = [];
   prompts: { name: string; text: string }[] = [];
   running = true;
+  startCalls = 0;
+  stopCalls = 0;
+  newSessionCalls = 0;
+  failStart = false;
   router = "router";
   on(l: (name: string, e: MeshEvent) => void) {
     this.listeners.push(l);
@@ -21,6 +40,18 @@ class FakeMesh implements MeshGateway {
   async promptRouter(name: string, text: string) {
     if (!this.running) throw new Error(`mesh "${name}" is not running`);
     this.prompts.push({ name, text });
+  }
+  async startMesh() {
+    this.startCalls++;
+    if (this.failStart) throw new Error("boom");
+    this.running = true;
+  }
+  async stopMesh() {
+    this.stopCalls++;
+    this.running = false;
+  }
+  async newAllSessions() {
+    this.newSessionCalls++;
   }
   routerOf() {
     return this.router;
@@ -63,9 +94,26 @@ function setup(over: Partial<FeishuChannelConfig> = {}, opts: { debounceMs?: num
     },
     debounceMs: opts.debounceMs ?? 800,
     setTimer: timers.setTimer,
+    idempotencyKey: (binding, seq) => `${binding.mesh}:${seq}`,
   });
   ch.start();
   return { ch, mesh, sent, isStopped, push: (m: InboundMsg) => pushInbound(m), timers, started: () => consumerStarted, consumerStopped: () => consumerStopped };
+}
+
+function setupDefaultIdempotency() {
+  const mesh = new FakeMesh();
+  const { sink, sent } = fakeSender();
+  const timers = manualTimers();
+  const ch = new FeishuChannel({
+    mesh,
+    config: cfg(),
+    sender: sink,
+    makeConsumer: () => ({ start() {}, stop() {} }),
+    debounceMs: 800,
+    setTimer: timers.setTimer,
+  });
+  ch.start();
+  return { ch, mesh, sent, timers };
 }
 
 function manualTimers() {
@@ -94,13 +142,38 @@ function manualTimers() {
 }
 
 function inbound(over: Partial<InboundMsg> = {}): InboundMsg {
-  return { eventId: "e1", chatId: "oc_1", chatType: "p2p", senderId: "ou_me", messageType: "text", text: "hi", ...over };
+  return { eventId: "e1", chatId: "oc_1", chatType: "p2p", senderId: "ou_me", messageType: "text", text: "hi", mentions: [], ...over };
 }
-function chunk(agent: string, text: string): MeshEvent {
-  return { kind: "update", agent, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text } }, ts: "t" } as MeshEvent;
+function chunk(agent: string, text: string, messageId?: string): MeshEvent {
+  return {
+    kind: "update",
+    agent,
+    update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text }, ...(messageId ? { messageId } : {}) },
+    ts: "t",
+  } as MeshEvent;
+}
+function chunkContent(agent: string, content: unknown, messageId?: string): MeshEvent {
+  return {
+    kind: "update",
+    agent,
+    update: { sessionUpdate: "agent_message_chunk", content, ...(messageId ? { messageId } : {}) },
+    ts: "t",
+  } as MeshEvent;
 }
 function idle(agent: string): MeshEvent {
   return { kind: "agent_activity", agent, activity: "idle", ts: "t" } as MeshEvent;
+}
+function replayStarted(agent: string): MeshEvent {
+  return { kind: "replay_started", agent, ts: "t" } as MeshEvent;
+}
+function replayFinished(agent: string): MeshEvent {
+  return { kind: "replay_finished", agent, ts: "t" } as MeshEvent;
+}
+
+async function flushAsync(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
 }
 
 // ── inbound ──────────────────────────────────────────────────────────────────
@@ -109,7 +182,10 @@ test("inbound: whitelisted p2p message feeds the router with the feishu prefix",
   const s = setup();
   s.push(inbound({ text: "hello" }));
   await Promise.resolve();
-  expect(s.mesh.prompts).toEqual([{ name: "feishu-poc", text: "[飞书消息] hello" }]);
+  expect(s.mesh.prompts).toHaveLength(1);
+  expect(s.mesh.prompts[0].name).toBe("feishu-poc");
+  expect(s.mesh.prompts[0].text).toContain("来自飞书授权群聊的用户消息");
+  expect(s.mesh.prompts[0].text).toContain("用户消息：hello");
   expect(s.started()).toBe(true);
 });
 
@@ -151,7 +227,8 @@ test("inbound: a wrong-chat event does not consume dedup capacity for the bound 
   s.push(inbound({ eventId: "shared", chatId: "oc_other", text: "noise" }));
   s.push(inbound({ eventId: "shared", chatId: "oc_1", text: "real" }));
   await Promise.resolve();
-  expect(s.mesh.prompts).toEqual([{ name: "feishu-poc", text: "[飞书消息] real" }]);
+  expect(s.mesh.prompts).toHaveLength(1);
+  expect(s.mesh.prompts[0].text).toContain("用户消息：real");
 });
 
 test("inbound: group message without @bot is ignored; with @bot it is stripped and fed", async () => {
@@ -159,17 +236,149 @@ test("inbound: group message without @bot is ignored; with @bot it is stripped a
   s.push(inbound({ eventId: "g1", chatType: "group", text: "just chatting" }));
   s.push(inbound({ eventId: "g2", chatType: "group", text: "@MeshBot do it" }));
   await Promise.resolve();
-  expect(s.mesh.prompts).toEqual([{ name: "feishu-poc", text: "[飞书消息] do it" }]);
+  expect(s.mesh.prompts).toHaveLength(1);
+  expect(s.mesh.prompts[0].text).toContain("用户消息：do it");
 });
 
-test("inbound: a stopped mesh is NOT started — a hint is sent instead", async () => {
+test("inbound: configured trusted group can skip @bot gate", async () => {
+  const s = setup({ requireMention: false });
+  s.push(inbound({ eventId: "g-open", chatType: "group", text: "just chatting" }));
+  await Promise.resolve();
+  expect(s.mesh.prompts).toHaveLength(1);
+  expect(s.mesh.prompts[0].text).toContain("用户消息：just chatting");
+});
+
+test("multiple bindings route inbound and outbound by chat and mesh", async () => {
+  const listeners: ((name: string, e: MeshEvent) => void)[] = [];
+  const prompts: { name: string; text: string }[] = [];
+  const senderA = fakeSender();
+  const senderB = fakeSender();
+  let pushInbound!: (m: InboundMsg) => void;
+  const ch = new FeishuChannel({
+    mesh: {
+      on(l) {
+        listeners.push(l);
+        return () => {};
+      },
+      async promptRouter(name, text) {
+        prompts.push({ name, text });
+      },
+      async startMesh() {},
+      async stopMesh() {},
+      async newAllSessions() {},
+      routerOf(name) {
+        return name === "mesh-b" ? "router-b" : "router-a";
+      },
+      listMeshes() {
+        return [
+          { name: "mesh-a", status: "running" },
+          { name: "mesh-b", status: "running" },
+        ];
+      },
+    },
+    config: cfg({
+      mesh: "mesh-a",
+      chatId: "oc_a",
+      requireMention: false,
+      bindings: [
+        { mesh: "mesh-a", chatId: "oc_a" },
+        { mesh: "mesh-b", chatId: "oc_b" },
+      ],
+    }),
+    senders: new Map([
+      ["oc_a", senderA.sink],
+      ["oc_b", senderB.sink],
+    ]),
+    idempotencyKey: (binding, seq) => `${binding.mesh}:${seq}`,
+    makeConsumer: (onMessage) => {
+      pushInbound = onMessage;
+      return { start() {}, stop() {} };
+    },
+  });
+  ch.start();
+
+  pushInbound(inbound({ chatId: "oc_b", chatType: "group", text: "hello b" }));
+  await Promise.resolve();
+  expect(prompts[0].name).toBe("mesh-b");
+
+  for (const l of listeners) l("mesh-b", chunk("router-b", "B"));
+  for (const l of listeners) l("mesh-b", idle("router-b"));
+  for (const l of listeners) l("mesh-a", chunk("router-a", "A"));
+  for (const l of listeners) l("mesh-a", idle("router-a"));
+  expect(senderB.sent).toEqual([{ text: "B", key: "mesh-b:0" }]);
+  expect(senderA.sent).toEqual([{ text: "A", key: "mesh-a:0" }]);
+});
+
+test("inbound: group @ gate can use mention id instead of display name", async () => {
+  const s = setup({ botMentionId: "ou_bot", botName: "StaleName" });
+  s.push(inbound({
+    eventId: "g-id",
+    chatType: "group",
+    text: "@Legion do it",
+    mentions: [{ key: "_user_1", id: "ou_bot", name: "Legion" }],
+  }));
+  await Promise.resolve();
+  expect(s.mesh.prompts).toHaveLength(1);
+  expect(s.mesh.prompts[0].text).toContain("用户消息：do it");
+});
+
+test("inbound: a stopped mesh is auto-started before routing the message", async () => {
   const s = setup();
   s.mesh.running = false;
   s.push(inbound({ text: "anyone home?" }));
-  await Promise.resolve();
+  await flushAsync();
+  expect(s.mesh.startCalls).toBe(1);
+  expect(s.mesh.prompts).toHaveLength(1);
+  expect(s.mesh.prompts[0].text).toContain("用户消息：anyone home?");
+  expect(s.sent).toHaveLength(0);
+});
+
+test("inbound: an auto-start failure is reported to the bound chat", async () => {
+  const s = setup();
+  s.mesh.running = false;
+  s.mesh.failStart = true;
+  s.push(inbound({ text: "anyone home?" }));
+  await flushAsync();
   expect(s.mesh.prompts).toHaveLength(0);
   expect(s.sent).toHaveLength(1);
-  expect(s.sent[0].text).toContain("未运行");
+  expect(s.sent[0].text).toContain("自动启动失败");
+});
+
+test("command: /mesh status reports the bound mesh status without prompting the router", async () => {
+  const s = setup();
+  s.push(inbound({ text: "/mesh status" }));
+  await flushAsync();
+  expect(s.mesh.prompts).toHaveLength(0);
+  expect(s.sent).toHaveLength(1);
+  expect(s.sent[0].text).toContain("running");
+});
+
+test("command: /mesh stop stops the bound mesh", async () => {
+  const s = setup();
+  s.push(inbound({ text: "/mesh stop" }));
+  await flushAsync();
+  expect(s.mesh.stopCalls).toBe(1);
+  expect(s.mesh.running).toBe(false);
+  expect(s.sent[0].text).toContain("已停止");
+});
+
+test("command: /mesh start starts a stopped bound mesh", async () => {
+  const s = setup();
+  s.mesh.running = false;
+  s.push(inbound({ text: "/mesh start" }));
+  await flushAsync();
+  expect(s.mesh.startCalls).toBe(1);
+  expect(s.mesh.running).toBe(true);
+  expect(s.sent[0].text).toContain("已启动");
+});
+
+test("command: /mesh new-session opens fresh sessions without routing the command", async () => {
+  const s = setup();
+  s.push(inbound({ text: "/mesh new-session" }));
+  await flushAsync();
+  expect(s.mesh.newSessionCalls).toBe(1);
+  expect(s.mesh.prompts).toHaveLength(0);
+  expect(s.sent[0].text).toContain("新 session");
 });
 
 // ── outbound ─────────────────────────────────────────────────────────────────
@@ -181,6 +390,91 @@ test("outbound: router chunks aggregate and flush on turn-idle", () => {
   expect(s.sent).toHaveLength(0); // not until the boundary
   s.mesh.emit("feishu-poc", idle("router"));
   expect(s.sent).toEqual([{ text: "Hello", key: "feishu-poc:0" }]);
+});
+
+test("outbound: default Feishu idempotency keys do not reset to mesh:seq across channel restarts", async () => {
+  const first = setupDefaultIdempotency();
+  first.mesh.emit("feishu-poc", chunk("router", "one"));
+  first.mesh.emit("feishu-poc", idle("router"));
+  await first.ch.stop();
+
+  const second = setupDefaultIdempotency();
+  second.mesh.emit("feishu-poc", chunk("router", "two"));
+  second.mesh.emit("feishu-poc", idle("router"));
+
+  expect(first.sent[0].key).toMatch(/^[0-9a-f-]{36}$/);
+  expect(second.sent[0].key).toMatch(/^[0-9a-f-]{36}$/);
+  expect(second.sent[0].key).not.toBe(first.sent[0].key);
+  expect(second.sent[0].key).not.toBe("feishu-poc:0");
+});
+
+test("outbound: session replay is not mirrored to Feishu and clears pending text", () => {
+  const s = setup();
+  s.mesh.emit("feishu-poc", chunk("router", "pending-live"));
+  s.mesh.emit("feishu-poc", replayStarted("router"));
+  s.mesh.emit("feishu-poc", chunk("router", "old replayed answer"));
+  s.mesh.emit("feishu-poc", idle("router"));
+  s.mesh.emit("feishu-poc", replayFinished("router"));
+  s.mesh.emit("feishu-poc", idle("router"));
+  expect(s.sent).toHaveLength(0);
+
+  s.mesh.emit("feishu-poc", chunk("router", "fresh"));
+  s.mesh.emit("feishu-poc", idle("router"));
+  expect(s.sent).toEqual([{ text: "fresh", key: "feishu-poc:0" }]);
+});
+
+test("outbound: extracts text from nested ACP content blocks", () => {
+  const s = setup();
+  s.mesh.emit("feishu-poc", chunkContent("router", {
+    type: "message",
+    content: [
+      { type: "text", text: "Hello" },
+      { content: { type: "text", text: " world" } },
+    ],
+  }));
+  s.mesh.emit("feishu-poc", idle("router"));
+  expect(s.sent).toEqual([{ text: "Hello world", key: "feishu-poc:0" }]);
+});
+
+test("outbound: drops Claude same-messageId full resend duplicates", () => {
+  const s = setup();
+  s.mesh.emit("feishu-poc", chunk("router", "Hello", "mid-1"));
+  s.mesh.emit("feishu-poc", chunk("router", "Hello", "mid-1"));
+  s.mesh.emit("feishu-poc", idle("router"));
+  expect(s.sent).toEqual([{ text: "Hello", key: "feishu-poc:0" }]);
+});
+
+test("outbound: replaces partial Claude chunks when the same messageId sends the full text", () => {
+  const s = setup();
+  s.mesh.emit("feishu-poc", chunk("router", "Hel", "mid-1"));
+  s.mesh.emit("feishu-poc", chunk("router", "lo", "mid-1"));
+  s.mesh.emit("feishu-poc", chunk("router", "Hello", "mid-1"));
+  s.mesh.emit("feishu-poc", idle("router"));
+  expect(s.sent).toEqual([{ text: "Hello", key: "feishu-poc:0" }]);
+});
+
+test("outbound: drops no-messageId full resend duplicates", () => {
+  const s = setup();
+  s.mesh.emit("feishu-poc", chunk("router", "你好！有什么可以帮你的吗？"));
+  s.mesh.emit("feishu-poc", chunk("router", "你好！有什么可以帮你的吗？"));
+  s.mesh.emit("feishu-poc", idle("router"));
+  expect(s.sent).toEqual([{ text: "你好！有什么可以帮你的吗？", key: "feishu-poc:0" }]);
+});
+
+test("outbound: replaces no-messageId partial chunks when the full text is resent", () => {
+  const s = setup();
+  s.mesh.emit("feishu-poc", chunk("router", "你好！"));
+  s.mesh.emit("feishu-poc", chunk("router", "你好！有什么可以帮你的吗？"));
+  s.mesh.emit("feishu-poc", idle("router"));
+  expect(s.sent).toEqual([{ text: "你好！有什么可以帮你的吗？", key: "feishu-poc:0" }]);
+});
+
+test("outbound: preserves repeated text from different messageIds", () => {
+  const s = setup();
+  s.mesh.emit("feishu-poc", chunk("router", "Hi", "mid-a"));
+  s.mesh.emit("feishu-poc", chunk("router", "Hi", "mid-b"));
+  s.mesh.emit("feishu-poc", idle("router"));
+  expect(s.sent).toEqual([{ text: "HiHi", key: "feishu-poc:0" }]);
 });
 
 test("outbound: debounce flushes without an explicit idle", () => {

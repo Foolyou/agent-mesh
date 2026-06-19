@@ -6,6 +6,7 @@ import { Sidebar } from "./Sidebar";
 import { MeshDetail } from "./MeshDetail";
 import { MeshBuilder } from "./MeshBuilder";
 import { HarnessPanel } from "./HarnessPanel";
+import { FeishuPanel } from "./FeishuPanel";
 import { useIsMobile } from "./useMedia";
 import { ThemeControls } from "./Theme";
 import { I18nContext, loadLang, saveLang, translate, tStatus, type Lang } from "./i18n";
@@ -77,6 +78,7 @@ export function App() {
   const [fullView, setFullView] = useState<FullView>(null);
   const [newMeshOpen, setNewMeshOpen] = useState(false);
   const [harnessOpen, setHarnessOpen] = useState(false);
+  const [feishuOpen, setFeishuOpen] = useState(false);
   const [editInitial, setEditInitial] = useState<import("../types").MeshConfig | null>(null);
   const [fileRoute, setFileRoute] = useState<FileRoute | undefined>(() => parseFileRoute(window.location.pathname));
 
@@ -205,6 +207,9 @@ export function App() {
         <Btn small kind="ghost" title="Harness settings" ariaLabel="Open harness settings" onClick={() => setHarnessOpen(true)}>
           Harnesses
         </Btn>
+        <Btn small kind="ghost" title="Feishu settings" ariaLabel="Open Feishu settings" onClick={() => setFeishuOpen(true)}>
+          Feishu
+        </Btn>
         <Btn
           small
           kind="ghost"
@@ -260,6 +265,7 @@ export function App() {
       ) : null}
 
       <HarnessPanel store={store} open={harnessOpen} onClose={() => setHarnessOpen(false)} />
+      <FeishuPanel store={store} open={feishuOpen} meshes={state.meshes} onClose={() => setFeishuOpen(false)} />
 
       <Toaster store={store} />
       <UpgradePrompt store={store} />

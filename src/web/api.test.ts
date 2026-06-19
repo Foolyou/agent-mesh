@@ -227,6 +227,123 @@ test("GET /api/harnesses/:id/models rejects prototype property names as unknown 
   expect(called).toBe(false);
 });
 
+test("GET /api/channels/feishu/status returns the feishu controller status", async () => {
+  const feishu = {
+    status: () => ({ state: "disabled", configPath: "/tmp/channels/feishu.json", configured: false, enabled: false, updatedAt: "T" }),
+    reload: async () => ({}),
+    startProvision: async () => ({}),
+    getProvision: () => undefined,
+    cancelProvision: () => undefined,
+  };
+  const gw = new WebGateway(fakeManager() as any, undefined, { channels: { feishu: feishu as any } });
+  const r = await handleApi(gw, "GET", "/api/channels/feishu/status", undefined);
+  expect(r.status).toBe(200);
+  expect(r.body).toMatchObject({ state: "disabled", enabled: false });
+});
+
+test("POST /api/channels/feishu/reload is same-origin protected and delegates to controller", async () => {
+  let calls = 0;
+  const feishu = {
+    status: () => ({}),
+    reload: async () => {
+      calls++;
+      return { state: "running", configPath: "/tmp/c", configured: true, enabled: true, updatedAt: "T" };
+    },
+    startProvision: async () => ({}),
+    getProvision: () => undefined,
+    cancelProvision: () => undefined,
+  };
+  const gw = new WebGateway(fakeManager() as any, undefined, { channels: { feishu: feishu as any } });
+  const denied = await handleApi(gw, "POST", "/api/channels/feishu/reload", {});
+  expect(denied.status).toBe(403);
+  const ok = await handleApi(gw, "POST", "/api/channels/feishu/reload", {}, new URLSearchParams(), undefined, undefined, undefined, sameOriginCtx());
+  expect(ok.status).toBe(200);
+  expect(ok.body.state).toBe("running");
+  expect(calls).toBe(1);
+});
+
+test("POST/GET/CANCEL /api/channels/feishu/provision delegates to controller", async () => {
+  const jobs = new Map<string, any>();
+  const feishu = {
+    status: () => ({}),
+    reload: async () => ({}),
+    startProvision: async (input: any) => {
+      const job = { id: "job-1", state: "waiting", createdAt: "T", updatedAt: "T", verificationUrl: "https://open.feishu.cn/x", qrCodeDataUrl: "data:image/png", input };
+      jobs.set(job.id, job);
+      return job;
+    },
+    getProvision: (id: string) => jobs.get(id),
+    cancelProvision: (id: string) => {
+      const job = jobs.get(id);
+      if (job) job.state = "cancelled";
+      return job;
+    },
+  };
+  const gw = new WebGateway(fakeManager() as any, undefined, { channels: { feishu: feishu as any } });
+  const started = await handleApi(gw, "POST", "/api/channels/feishu/provision", { mesh: "m" }, new URLSearchParams(), undefined, undefined, undefined, sameOriginCtx());
+  expect(started.status).toBe(200);
+  expect(started.body).toMatchObject({ id: "job-1", verificationUrl: "https://open.feishu.cn/x" });
+
+  const fetched = await handleApi(gw, "GET", "/api/channels/feishu/provision/job-1", undefined);
+  expect(fetched.body.state).toBe("waiting");
+
+  const cancelled = await handleApi(gw, "POST", "/api/channels/feishu/provision/job-1/cancel", {}, new URLSearchParams(), undefined, undefined, undefined, sameOriginCtx());
+  expect(cancelled.body.state).toBe("cancelled");
+});
+
+test("POST /api/channels/feishu/sync and mesh group endpoints delegate with same-origin protection", async () => {
+  const calls: any[] = [];
+  const feishu = {
+    status: () => ({}),
+    reload: async () => ({}),
+    startProvision: async () => ({}),
+    getProvision: () => undefined,
+    cancelProvision: () => undefined,
+    syncMeshChats: async () => {
+      calls.push(["sync"]);
+      return [{ mesh: "demo", ok: true, chatId: "oc_1" }];
+    },
+    ensureMeshChat: async (mesh: string) => {
+      calls.push(["ensure", mesh]);
+      return { mesh, ok: true, chatId: `oc_${mesh}` };
+    },
+  };
+  const gw = new WebGateway(fakeManager() as any, undefined, { channels: { feishu: feishu as any } });
+  expect((await handleApi(gw, "POST", "/api/channels/feishu/sync", {})).status).toBe(403);
+  const synced = await handleApi(gw, "POST", "/api/channels/feishu/sync", {}, new URLSearchParams(), undefined, undefined, undefined, sameOriginCtx());
+  const ensured = await handleApi(gw, "POST", "/api/channels/feishu/meshes/demo/group", {}, new URLSearchParams(), undefined, undefined, undefined, sameOriginCtx());
+  expect(synced.body).toEqual([{ mesh: "demo", ok: true, chatId: "oc_1" }]);
+  expect(ensured.body).toEqual({ mesh: "demo", ok: true, chatId: "oc_demo" });
+  expect(calls).toEqual([["sync"], ["ensure", "demo"]]);
+});
+
+test("POST /api/meshes auto-creates a Feishu group when a bot is bound", async () => {
+  const m = fakeManager();
+  const calls: string[] = [];
+  const feishu = {
+    status: () => ({}),
+    reload: async () => ({}),
+    startProvision: async () => ({}),
+    getProvision: () => undefined,
+    cancelProvision: () => undefined,
+    syncMeshChats: async () => [],
+    ensureMeshChat: async (mesh: string) => {
+      calls.push(mesh);
+      return { mesh, ok: true, chatId: `oc_${mesh}` };
+    },
+  };
+  const gw = new WebGateway(m as any, undefined, { channels: { feishu: feishu as any } });
+  const r = await handleApi(gw, "POST", "/api/meshes", {
+    name: "new",
+    agents: [{ id: "r", harness: "claude", project: "p", role: "router" }],
+    edges: [],
+  });
+  expect(r.status).toBe(200);
+  expect(m.calls).toContainEqual(["define", "new"]);
+  expect(calls).toEqual(["new"]);
+  expect(r.body.feishu).toMatchObject({ mesh: "new", ok: true, chatId: "oc_new" });
+});
+
 test("POST /api/harnesses/claude/install starts an install job", async () => {
   const gw = new WebGateway(fakeManager() as any);
   const r = await handleApi(

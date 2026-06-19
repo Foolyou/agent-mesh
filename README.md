@@ -139,6 +139,73 @@ Tool calls render as cards with input, status, output, and affected files.
 Markdown links to generated files can open through the file viewer, and image
 attachments can be uploaded to prompts.
 
+### Feishu Gateway
+
+The backend can optionally bridge one Feishu/Lark bot to mesh Routers. It uses
+the official `@larksuiteoapi/node-sdk` long-connection client, so local and
+private deployments do not need a public webhook endpoint. Agent Mesh supports
+one bound bot at a time; binding a new bot replaces the previous credentials and
+creates fresh mesh group bindings for the new bot.
+
+Feishu is disabled by default. The backend watches
+`<root>/channels/feishu.json`; creating or editing that file after startup
+starts, restarts, or stops the channel without restarting Agent Mesh.
+
+```json
+{
+  "enabled": true,
+  "appId": "cli_xxx",
+  "appSecret": "xxx",
+  "domain": "feishu",
+  "botMentionId": "ou_xxx",
+  "botName": "MeshBot",
+  "requireMention": true,
+  "allowSenders": ["ou_xxx"],
+  "outbound": { "minIntervalMs": 500 },
+  "bindings": [
+    { "mesh": "feishu-poc", "chatId": "oc_xxx", "name": "feishu-poc · Mesh 联调" }
+  ]
+}
+```
+
+Open the web UI's **Feishu** panel to bind a bot with the SDK one-click
+provisioning flow. The panel shows the current bot, displays the returned link
+and QR code while authorization is pending, and lists every mesh group binding.
+When Feishu is configured, startup sync creates groups for existing meshes, and
+creating a new mesh creates its group automatically.
+
+For group chats, `botMentionId` is preferred for the @ gate because display
+names can change. `botName` remains a fallback and is also used to strip a
+leading rendered mention from the routed prompt. Set `requireMention` to
+`false` only for explicitly trusted bound groups; the Feishu app must also have
+the all-group-message permission (`im:message.group_msg`) or non-@ messages will
+not be delivered to the backend. Creating mesh groups requires Feishu group
+permissions such as `im:chat`. When a valid inbound message arrives and the
+mapped mesh is stopped, the Feishu channel starts that mesh before routing the
+message to its router.
+
+Messages from `allowSenders` can also control the bound mesh with explicit
+commands:
+
+- `/mesh status`
+- `/mesh start`
+- `/mesh stop`
+- `/mesh restart`
+- `/mesh new-session`
+- `/mesh help`
+
+Useful API endpoints:
+
+- `GET /api/channels/feishu/status`
+- `POST /api/channels/feishu/reload`
+- `POST /api/channels/feishu/provision` starts the SDK one-click app creation
+  flow and returns a verification link plus QR code data URL.
+- `GET /api/channels/feishu/provision/:jobId` checks the creation job. When the
+  scan completes, credentials are written to `channels/feishu.json`.
+- `POST /api/channels/feishu/sync` creates missing Feishu groups for current
+  meshes.
+- `POST /api/channels/feishu/meshes/:mesh/group` creates one missing group.
+
 ### Survive Controller Restarts
 
 Running meshes live in detachable mesh-host processes. The parent backend can

@@ -1554,7 +1554,7 @@ body::after {
   inset: 0;
   background: rgba(4, 5, 7, 0.72);
   backdrop-filter: blur(2px);
-  z-index: 100;
+  z-index: 300;
   display: flex;
   align-items: flex-start;
   justify-content: center;
@@ -1729,6 +1729,91 @@ body::after {
   padding: 3px 6px;
   font-size: 11px;
   overflow-wrap: anywhere;
+}
+
+/* ── Feishu settings ─────────────────────────────────────────────────── */
+.feishu-modal {
+  width: min(840px, 94vw);
+}
+.feishu-modal .mhead .spacer,
+.feishu-status-row .spacer,
+.feishu-section-head .spacer,
+.feishu-job-head .spacer {
+  flex: 1;
+}
+.feishu-body {
+  gap: 14px;
+}
+.feishu-status-row,
+.feishu-section-head,
+.feishu-job-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.feishu-status-row {
+  border: 1px solid var(--line-bright);
+  background: var(--bg-inset);
+  padding: 10px;
+}
+.feishu-title {
+  color: var(--fg);
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+.feishu-meta {
+  color: var(--fg-faint);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.feishu-section-head {
+  color: var(--fg-dim);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  font-size: 11px;
+}
+.feishu-grid {
+  display: grid;
+  gap: 8px;
+}
+.feishu-mesh-row {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--line);
+  background: var(--bg-inset);
+  padding: 9px;
+  min-width: 0;
+}
+.feishu-job {
+  display: grid;
+  justify-items: start;
+  gap: 10px;
+  border: 1px solid var(--line);
+  background: var(--bg-inset);
+  padding: 10px;
+}
+.feishu-qr {
+  width: min(220px, 64vw);
+  aspect-ratio: 1;
+  border: 1px solid var(--line-bright);
+  background: white;
+}
+.feishu-link {
+  color: var(--link);
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 680px) {
+  .feishu-mesh-row {
+    grid-template-columns: 1fr auto;
+  }
+  .feishu-mesh-row .btn {
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
 }
 
 /* ── mesh canvas ───────────────────────────────────────────────────────── */

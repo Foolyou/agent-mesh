@@ -7,7 +7,7 @@ import { join } from "node:path";
 import type { AcpAgentConnection, AcpConnectionOptions } from "./acp/client";
 import type { MeshConfig } from "./acp/types";
 import { ControlPlane } from "./control-plane";
-import { readMailboxEvents } from "./mailbox";
+import { readMailboxEvents, sendMail } from "./mailbox";
 
 const config: MeshConfig = {
   name: "mail-threading",
@@ -32,12 +32,16 @@ class FakeConnection {
   async newSession(): Promise<unknown> {
     return { sessionId: `s-${this.opts.id}` };
   }
-  async prompt(text: string): Promise<unknown> {
+  async prompt(text: string, _images?: unknown, turn?: any): Promise<unknown> {
     this.prompts.push(text);
+    if (turn) {
+      this.opts.onPromptQueued?.(turn);
+      this.opts.onPromptStarted?.(turn);
+    }
     return {};
   }
-  async steerPrompt(text: string): Promise<unknown> {
-    return this.prompt(text);
+  async steerPrompt(text: string, _images?: unknown, turn?: any): Promise<unknown> {
+    return this.prompt(text, _images, turn);
   }
   removeQueued(): unknown[] {
     return [];
@@ -96,9 +100,22 @@ test("send_mail assigns #seq, reply_to renders header and quote, task tags the t
     expect(ev.taskId).toBe("fix-ports");
     expect((ev.meta as any).replyTo).toBe(1);
 
-    // check_mail renders the same header + quote.
+    // The pushed mail has already entered the router context, so check_mail must not re-read it.
+    expect(await (cp as any).handleCheckMail({ agentId: "router", role: "router" })).toBe("no new mail");
+
+    // Unpushed mailbox mail still renders the same header + quote when read via check_mail.
+    await sendMail({
+      mailboxPath: join(root, "mailbox.ndjson"),
+      mesh: config.name,
+      from: "member",
+      to: "router",
+      body: "[FYI] queued",
+      seq: 3,
+      replyTo: 1,
+      task: "fix-ports",
+    });
     const checked = await (cp as any).handleCheckMail({ agentId: "router", role: "router" });
-    expect(checked).toContain("[MAIL #2 from member | task: fix-ports | in reply to #1]: [FYI] port 15001");
+    expect(checked).toContain("[MAIL #3 from member | task: fix-ports | in reply to #1]: [FYI] queued");
     expect(checked).toContain('(#1, router → member, was: "[REQ] which port?")');
   } finally {
     await cp.stop();
@@ -132,8 +149,8 @@ test("repeated empty check_mail calls get a stop-polling reminder; fresh mail re
     expect(second).toContain("no new mail");
     expect(second).toContain("end your turn");
 
-    // Real mail arriving resets the streak: the next single empty check is quiet again.
-    await (cp as any).handleSendMail({ agentId: "router", role: "router" }, "member", "work");
+    // Real unpushed mail arriving resets the streak: the next single empty check is quiet again.
+    await sendMail({ mailboxPath: join(root, "mailbox.ndjson"), mesh: config.name, from: "router", to: "member", body: "work", seq: 1 });
     expect(await (cp as any).handleCheckMail({ agentId: "member", role: "member" })).toContain("[MAIL #1 from router]: work");
     expect(await (cp as any).handleCheckMail({ agentId: "member", role: "member" })).toBe("no new mail");
   } finally {

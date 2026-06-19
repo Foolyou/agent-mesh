@@ -94,6 +94,12 @@ function store(state: GatewayState): Store {
     streamHarnessInstall: noop,
     reprobeHarness: noop,
     interruptAssistant: noop,
+    getFeishuStatus: async () => ({ state: "disabled", configPath: "", configured: false, enabled: false, updatedAt: T }),
+    startFeishuProvision: async () => ({ id: "job", state: "complete", createdAt: T, updatedAt: T }),
+    getFeishuProvision: async () => ({ id: "job", state: "complete", createdAt: T, updatedAt: T }),
+    cancelFeishuProvision: async () => ({ id: "job", state: "cancelled", createdAt: T, updatedAt: T }),
+    syncFeishuMeshChats: async () => [],
+    ensureFeishuMeshChat: async (mesh) => ({ mesh, ok: true, created: false }),
   };
 }
 

@@ -104,6 +104,43 @@ export async function handleApi(
       return ok({ id: harness, installed: row?.installed === true, version: row?.version });
     }
 
+    if (p[0] === "channels" && p[1] === "feishu") {
+      const feishu = gw.feishuChannel();
+      if (!feishu) return fail(404, "feishu channel is not available");
+      if (method === "GET" && p.length === 2) return ok(feishu.status());
+      if (method === "GET" && p.length === 3 && p[2] === "status") return ok(feishu.status());
+      if (method === "POST" && p.length === 3 && p[2] === "reload") {
+        const csrf = sameOriginCheck(ctx.headers, ctx.expectedOrigin);
+        if (!csrf.ok) return { status: 403, body: { error: { message: "forbidden" } } };
+        return ok(await feishu.reload());
+      }
+      if (method === "POST" && p.length === 3 && p[2] === "provision") {
+        const csrf = sameOriginCheck(ctx.headers, ctx.expectedOrigin);
+        if (!csrf.ok) return { status: 403, body: { error: { message: "forbidden" } } };
+        return ok(await feishu.startProvision(body ?? {}));
+      }
+      if (method === "POST" && p.length === 3 && p[2] === "sync") {
+        const csrf = sameOriginCheck(ctx.headers, ctx.expectedOrigin);
+        if (!csrf.ok) return { status: 403, body: { error: { message: "forbidden" } } };
+        return ok(await feishu.syncMeshChats());
+      }
+      if (method === "POST" && p.length === 5 && p[2] === "meshes" && p[4] === "group") {
+        const csrf = sameOriginCheck(ctx.headers, ctx.expectedOrigin);
+        if (!csrf.ok) return { status: 403, body: { error: { message: "forbidden" } } };
+        return ok(await feishu.ensureMeshChat(str(p[3])));
+      }
+      if (method === "GET" && p.length === 4 && p[2] === "provision") {
+        const job = feishu.getProvision(str(p[3]));
+        return job ? ok(job) : fail(404, "feishu provision job not found");
+      }
+      if (method === "POST" && p.length === 5 && p[2] === "provision" && p[4] === "cancel") {
+        const csrf = sameOriginCheck(ctx.headers, ctx.expectedOrigin);
+        if (!csrf.ok) return { status: 403, body: { error: { message: "forbidden" } } };
+        const job = feishu.cancelProvision(str(p[3]));
+        return job ? ok(job) : fail(404, "feishu provision job not found");
+      }
+    }
+
     if (p[0] === "uploads") {
       if (method === "POST" && p.length === 1) {
         const bucket = str(query.get("bucket"));
@@ -150,7 +187,14 @@ export async function handleApi(
       if (method === "POST" && p.length === 1) {
         validateMeshConfig(body as MeshConfig);
         await gw.defineMesh(body as MeshConfig);
-        return ok();
+        const feishu = gw.feishuChannel();
+        if (!feishu) return ok();
+        const meshName = str((body as MeshConfig)?.name);
+        try {
+          return ok({ feishu: await feishu.ensureMeshChat(meshName) });
+        } catch (e: any) {
+          return ok({ feishu: { mesh: meshName, ok: false, error: str(e?.message ?? e) } });
+        }
       }
       // POST /api/meshes/reload
       if (method === "POST" && p.length === 2 && p[1] === "reload") {

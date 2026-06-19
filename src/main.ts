@@ -17,7 +17,7 @@ import { runMeshHost } from "./mesh-host";
 import { resolveRoot, expandHome } from "./root";
 import { uploadRoot } from "./web/uploads";
 import { assistantCliDeprecationWarnings, assistantHarnessPassthrough, noAssistantSelected, parseAssistantHarness } from "./cli-options";
-import { buildFeishuChannel } from "./channels";
+import { createFeishuChannelController } from "./channels";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import * as service from "./service";
@@ -62,7 +62,8 @@ async function buildGateway() {
     : noAssistant
       ? undefined
       : new MeshAssistant(manager, { cwd: join(root, "assistant"), harness: assistantHarness, uploadRoot: uploadRoot(root), onCapabilities: (caps) => gateway?.setAssistantCapabilities(caps) });
-  gateway = new WebGateway(manager, assistant, { root });
+  const feishu = fake ? undefined : createFeishuChannelController(manager, { root });
+  gateway = new WebGateway(manager, assistant, { root, channels: { feishu } });
   if (!fake) {
     // Reconnect to any mesh daemons that outlived a previous backend (the whole point of
     // the daemon model): their agents kept running; we re-attach and the daemon replays
@@ -79,18 +80,16 @@ async function buildGateway() {
       .then(() => gateway.setAssistantStatus("ready"))
       .catch(() => gateway.setAssistantStatus("absent"));
   }
-  // External chat bridge (Feishu PoC). Only when not fake and `<root>/channels/feishu.json`
-  // is present + enabled — otherwise buildFeishuChannel returns undefined and this is a no-op.
-  // It hangs off this backend process (not a per-mesh host daemon) and is reaped by reapOnExit.
-  const channel = fake ? undefined : buildFeishuChannel(manager, { root });
-  if (channel) {
+  // External chat bridge (Feishu). Optional: the backend can boot with no config, then the
+  // controller hot-reloads `<root>/channels/feishu.json` when the user enables it later.
+  if (feishu) {
     try {
-      channel.start();
+      await feishu.start();
     } catch (err) {
       console.warn(`  feishu channel failed to start: ${String(err)}`);
     }
   }
-  return { manager, assistant, gateway, channel };
+  return { manager, assistant, gateway, feishu };
 }
 
 function reapOnExit(stop: () => Promise<void> | void) {
@@ -144,13 +143,13 @@ if (cmd === "up" || cmd === "start") {
   }
 } else if (cmd === "backend") {
   const port = Number(process.env.MESH_API_PORT) || Number(argVal("--port")) || 7300;
-  const { manager, assistant, gateway, channel } = await buildGateway();
+  const { manager, assistant, gateway, feishu } = await buildGateway();
   const server = startApiServer(gateway, { port, hostname });
   console.log(`\n  mesh backend (REST + WS) → ${server.url}${fake ? "  (fake)" : `  · root: ${root}`}\n`);
   reapOnExit(async () => {
     server.stop();
     gateway.dispose();
-    await channel?.stop(); // SIGTERM the lark-cli consumer before exit — no orphan
+    await feishu?.stop();
     manager.disconnectAll?.(); // leave mesh daemons running for the next backend to reattach
     await assistant?.stop?.();
   });
@@ -163,13 +162,13 @@ if (cmd === "up" || cmd === "start") {
 } else {
   // default: combined single process
   const port = Number(process.env.MESH_WEB_PORT) || Number(argVal("--port")) || 7317;
-  const { manager, assistant, gateway, channel } = await buildGateway();
+  const { manager, assistant, gateway, feishu } = await buildGateway();
   const server = startWebServer({ port, gateway, hostname });
   console.log(`\n  agent-mesh web console → ${server.url}${fake ? "  (fake mode)" : `  · root: ${root}`}\n`);
   reapOnExit(async () => {
     server.stop();
     gateway.dispose();
-    await channel?.stop(); // SIGTERM the lark-cli consumer before exit — no orphan
+    await feishu?.stop();
     manager.disconnectAll?.(); // leave mesh daemons running for the next backend to reattach
     await assistant?.stop?.();
   });

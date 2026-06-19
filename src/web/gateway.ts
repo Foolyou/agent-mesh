@@ -32,6 +32,7 @@ import type {
   AgentUsage,
   TranscriptSnapshot,
 } from "./types";
+import type { FeishuChannelControl } from "../channels";
 
 /** The MeshManager surface the gateway depends on (structural — tests use a fake). */
 export interface ManagerLike {
@@ -142,7 +143,7 @@ export class WebGateway {
   constructor(
     private manager: ManagerLike,
     private assistant?: AssistantLike,
-    private opts: { root?: string; appVersion?: string } = {},
+    private opts: { root?: string; appVersion?: string; channels?: { feishu?: FeishuChannelControl } } = {},
   ) {
     this.state = {
       appVersion: opts.appVersion ?? defaultAppVersion(),
@@ -153,6 +154,10 @@ export class WebGateway {
     this.refreshMeshes();
     this.unsubMgr = manager.on((name, e) => this.ingest(name, e));
     if (assistant) this.unsubAssistant = assistant.on((u) => this.ingestAssistant(u));
+  }
+
+  feishuChannel(): FeishuChannelControl | undefined {
+    return this.opts.channels?.feishu;
   }
 
   dispose(): void {
