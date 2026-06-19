@@ -2856,6 +2856,18 @@ legend.builder-section-head {
     max-width: 100vw;
     overflow-x: hidden;
   }
+  /* iOS Safari soft keyboard: pin the app shell to the visual viewport so the
+     layout can't collapse upward when the keyboard opens. --mesh-vvtop tracks
+     visualViewport.offsetTop and returns to 0 once the keyboard is dismissed,
+     so no residual offset is left behind. Desktop keeps the static grid above. */
+  .app {
+    position: fixed;
+    top: var(--mesh-vvtop, 0px);
+    left: 0;
+    right: 0;
+    height: var(--mesh-vvh, 100dvh);
+    overflow: hidden;
+  }
   .app,
   .topbar,
   .body,
