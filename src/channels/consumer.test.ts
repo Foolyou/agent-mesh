@@ -1,5 +1,6 @@
 import { test, expect } from "bun:test";
-import { LarkConsumer, parseInboundEvent, textFromContent, type FeishuWsClient, type ReceiveEvent } from "./consumer";
+import { LarkConsumer, parseInboundEvent, sdkDownloadImage, textFromContent, type FeishuWsClient, type ReceiveEvent } from "./consumer";
+import { MAX_UPLOAD_BYTES } from "../web/uploads";
 import type { InboundMsg } from "./types";
 
 function event(over: Partial<ReceiveEvent> = {}): ReceiveEvent {
@@ -106,4 +107,35 @@ test("start wires the SDK dispatcher and stop closes the websocket", async () =>
   expect(got.map((m) => m.eventId)).toEqual(["e2"]);
   c.stop();
   expect(closed).toBe(true);
+});
+
+test("sdkDownloadImage caps the stream at MAX_UPLOAD_BYTES and aborts before buffering it all", async () => {
+  let pulledAfterCap = false;
+  const half = Math.ceil(MAX_UPLOAD_BYTES / 2) + 1024;
+  async function* stream() {
+    yield Buffer.alloc(half);
+    yield Buffer.alloc(half); // crosses MAX_UPLOAD_BYTES
+    pulledAfterCap = true; // must never run: the reader aborts at the cap
+    yield Buffer.alloc(8);
+  }
+  const client = { im: { v1: { messageResource: { get: async () => ({ getReadableStream: () => stream() }) } } } } as unknown as Parameters<typeof sdkDownloadImage>[0];
+  let err: unknown;
+  try {
+    await sdkDownloadImage(client)({ messageId: "om", imageKey: "img_secret_KEY" });
+  } catch (e) {
+    err = e;
+  }
+  expect(err).toBeInstanceOf(Error);
+  expect(String((err as Error).message)).not.toContain("img_secret_KEY"); // generic error, no key leak
+  expect(pulledAfterCap).toBe(false); // stopped before reading the rest of the resource
+});
+
+test("sdkDownloadImage returns bytes for an under-cap stream", async () => {
+  async function* stream() {
+    yield Buffer.from([1, 2, 3]);
+    yield Buffer.from([4, 5]);
+  }
+  const client = { im: { v1: { messageResource: { get: async () => ({ getReadableStream: () => stream() }) } } } } as unknown as Parameters<typeof sdkDownloadImage>[0];
+  const out = await sdkDownloadImage(client)({ messageId: "om", imageKey: "img" });
+  expect(Array.from(out.bytes)).toEqual([1, 2, 3, 4, 5]);
 });

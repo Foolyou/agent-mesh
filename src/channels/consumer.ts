@@ -7,6 +7,7 @@
 
 import * as lark from "@larksuiteoapi/node-sdk";
 import type { DownloadedImage, FeishuDomain, InboundImageDownloader, InboundMention, InboundMsg } from "./types";
+import { MAX_UPLOAD_BYTES } from "../web/uploads";
 
 type ReceiveHandler = NonNullable<lark.EventHandles["im.message.receive_v1"]>;
 export type ReceiveEvent = Parameters<ReceiveHandler>[0];
@@ -172,8 +173,17 @@ export function sdkDownloadImage(client: lark.Client): InboundImageDownloader {
     });
     const stream = res.getReadableStream();
     const chunks: Buffer[] = [];
+    let total = 0;
     for await (const chunk of stream as AsyncIterable<Buffer | Uint8Array | string>) {
-      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      total += buf.byteLength;
+      if (total > MAX_UPLOAD_BYTES) {
+        // Stop reading before buffering the whole oversize resource; storeUploads would reject it
+        // anyway. Generic error only — never include the resource key.
+        (stream as { destroy?: () => void }).destroy?.();
+        throw new Error("inbound image exceeds size limit");
+      }
+      chunks.push(buf);
     }
     return { bytes: new Uint8Array(Buffer.concat(chunks)) };
   };
