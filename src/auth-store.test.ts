@@ -151,6 +151,17 @@ test("findApprovedDeviceId matches only approved devices by hashed token", () =>
   expect(findApprovedDeviceId(file, generateToken())).toBeUndefined();
 });
 
+test("findApprovedDeviceId scans the whole allowlist (no early return) and matches regardless of position", () => {
+  // The match sits LAST among many approved entries: a correct full-scan still returns it. (This is a
+  // behavior proxy for the no-early-return property that keeps lookup time position-independent.)
+  const target = generateToken();
+  const devices: DevicesFile["devices"] = {};
+  for (let i = 0; i < 10; i++) devices[`dv_${i}`] = { status: "approved", tokenHash: hashToken(generateToken()), createdAt: future(0) };
+  devices.dv_last = { status: "approved", tokenHash: hashToken(target), createdAt: future(0) };
+  const file: DevicesFile = { version: 1, devices, pending: {} };
+  expect(findApprovedDeviceId(file, target)).toBe("dv_last");
+});
+
 test("bootstrapTokenValid: true only for a live unconsumed token; false when expired/consumed/wrong", () => {
   const token = generateToken();
   const base: DevicesFile = { ...emptyDevices(), bootstrap: { tokenHash: hashToken(token), createdAt: past(1000), expiresAt: future(60_000) } };
@@ -203,6 +214,22 @@ test("isFeishuAllowed is true only for an approved (channelKey, openId)", async 
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("sanitizeFeishuAuth canonically re-keys allow entries: a wrong stored key heals to the entry fields", () => {
+  const file = sanitizeFeishuAuth(
+    {
+      version: 1,
+      // stored under a bogus/drifted key, but the entry fields are valid
+      allow: { "WRONG_DRIFTED_KEY": { channelKey: "feishu:cli_abc", openId: "ou_123", status: "approved", approvedAt: future(0) } },
+      pending: {},
+    },
+    NOW,
+  );
+  const canonical = feishuAllowKey("feishu:cli_abc", "ou_123");
+  expect(Object.keys(file.allow)).toEqual([canonical]); // re-keyed; the wrong key is not retained
+  expect(file.allow.WRONG_DRIFTED_KEY).toBeUndefined();
+  expect(isFeishuAllowed(file, "feishu:cli_abc", "ou_123")).toBe(true); // canonical lookup finds it
 });
 
 test("a revoked feishu entry is not allowed", () => {

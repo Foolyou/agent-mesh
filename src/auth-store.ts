@@ -280,9 +280,13 @@ export function sanitizeFeishuAuth(parsed: unknown, now: number = Date.now()): F
   const allow: Record<string, FeishuAllowEntry> = {};
   const pallow = asObject(o.allow);
   if (pallow) {
-    for (const [key, value] of Object.entries(pallow)) {
+    // The entry fields are the source of truth — re-key under the canonical
+    // feishuAllowKey(channelKey, openId) rather than trusting the stored JSON key. A hand-edited or
+    // migrated file whose key drifted from its (channelKey, openId) is healed here, so the canonical
+    // lookup in isFeishuAllowed always finds a valid entry (and a stale wrong key is not retained).
+    for (const value of Object.values(pallow)) {
       const entry = sanitizeFeishuAllow(value);
-      if (entry) allow[key.slice(0, MAX_ID)] = entry;
+      if (entry) allow[feishuAllowKey(entry.channelKey, entry.openId)] = entry;
     }
   }
   const pending: Record<string, FeishuPending> = {};
@@ -334,13 +338,16 @@ export async function updateFeishuAuth(
 
 // ── read-side queries (pure, for the hot path / verify) ──────────────────────
 
-/** Return the deviceId of the approved device whose token matches, else undefined. Constant-time
- *  hash compare per candidate; revoked / pending devices never match. */
+/** Return the deviceId of the approved device whose token matches, else undefined. Scans the WHOLE
+ *  allowlist (no early return) so the lookup time does not reveal the matching device's position in
+ *  the map; the constant-time `verifyTokenHash` runs for every approved candidate. Revoked / pending
+ *  devices never match. */
 export function findApprovedDeviceId(file: DevicesFile, token: string): string | undefined {
+  let matched: string | undefined;
   for (const [id, rec] of Object.entries(file.devices)) {
-    if (rec.status === "approved" && verifyTokenHash(token, rec.tokenHash)) return id;
+    if (rec.status === "approved" && verifyTokenHash(token, rec.tokenHash)) matched = id;
   }
-  return undefined;
+  return matched;
 }
 
 /** True iff `(channelKey, openId)` is present and approved. */
