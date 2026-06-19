@@ -311,29 +311,78 @@ export interface FileLockOptions {
   staleMs?: number;
 }
 
+/** The lock-file body: a UNIQUE owner token (random UUID) plus pid + createdAt. The random owner is
+ *  what makes stale recovery race-safe — a breaker can tell "the stale lock I observed" apart from "a
+ *  fresh lock some other process just acquired", because their owner tokens differ. */
+function makeLockOwner(): string {
+  return JSON.stringify({ owner: randomUUID(), pid: process.pid, createdAt: Date.now() });
+}
+
+/** Age of a lock body in ms. Prefers the in-payload `createdAt` (filesystem-clock-independent); falls
+ *  back to the file mtime for a legacy/foreign/corrupt body. */
+function lockAgeMs(content: string, mtimeMs: number): number {
+  try {
+    const o = JSON.parse(content) as { createdAt?: unknown };
+    if (typeof o?.createdAt === "number") return Date.now() - o.createdAt;
+  } catch {
+    /* not our JSON body — fall back to mtime */
+  }
+  return Date.now() - mtimeMs;
+}
+
+/** Break a stale lock ONLY if, on a fresh re-read immediately before removal, it still carries the
+ *  SAME body we observed as stale (`observedContent`) AND is still stale. This closes the stale-break
+ *  race: if another process already broke the stale lock and acquired a fresh one (different owner
+ *  token → different body), we leave that fresh lock intact and let the caller retry the exclusive
+ *  create. Returns true iff this call removed the lock. Exported for the regression test.
+ *
+ *  Residual (sub-ms) window: between this re-read and the rm, a third party could swap in a fresh
+ *  lock with — astronomically unlikely — identical bytes; UUID owner tokens make that practically
+ *  impossible, and the worst case is one extra contended retry, never two writers in the section. */
+export async function tryBreakStaleLock(lockPath: string, observedContent: string, staleMs: number): Promise<boolean> {
+  let content: string;
+  let mtimeMs: number;
+  try {
+    content = await readFile(lockPath, "utf8");
+    mtimeMs = (await stat(lockPath)).mtimeMs;
+  } catch {
+    return false; // vanished between observation and break → caller retries the create
+  }
+  if (content !== observedContent) return false; // replaced by a different owner → never remove it
+  if (lockAgeMs(content, mtimeMs) <= staleMs) return false; // refreshed → no longer stale
+  await rm(lockPath, { force: true }).catch(() => {});
+  return true;
+}
+
 async function acquireLockfile(lockPath: string, opts?: FileLockOptions): Promise<void> {
   const staleMs = opts?.staleMs ?? LOCK_STALE_MS;
   const deadline = Date.now() + (opts?.timeoutMs ?? LOCK_TIMEOUT_MS);
+  const owner = makeLockOwner();
   for (;;) {
     try {
       const fh = await open(lockPath, "wx"); // exclusive create — fails EEXIST if held
       try {
-        await fh.write(`${process.pid}:${Date.now()}`);
+        await fh.write(owner);
       } finally {
         await fh.close();
       }
-      return;
+      return; // we hold it (and only we know `owner`)
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
-      // Held: break it if the holder looks dead (stale mtime), else wait and retry.
+      // Observe the current holder's body + age.
+      let observed: { content: string; ageMs: number } | undefined;
       try {
+        const content = await readFile(lockPath, "utf8");
         const st = await stat(lockPath);
-        if (Date.now() - st.mtimeMs > staleMs) {
-          await rm(lockPath, { force: true }).catch(() => {});
-          continue;
-        }
+        observed = { content, ageMs: lockAgeMs(content, st.mtimeMs) };
       } catch {
-        continue; // lock vanished between EEXIST and stat → race to re-acquire
+        continue; // vanished between EEXIST and read → retry the exclusive create immediately
+      }
+      if (observed.ageMs > staleMs) {
+        // Conditionally break it; whether or not we removed it, loop back and RACE for the exclusive
+        // create — never assume ownership just because we removed a stale lock.
+        await tryBreakStaleLock(lockPath, observed.content, staleMs);
+        continue;
       }
       if (Date.now() >= deadline) throw new Error("auth file lock timeout");
       await sleep(LOCK_RETRY_MS);
