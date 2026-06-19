@@ -12,7 +12,7 @@ import { loadFeishuConfig } from "./config";
 import { FeishuChannel } from "./feishu-channel";
 import { createFeishuClient, LarkConsumer } from "./consumer";
 import { LarkSender, sdkSend, sdkUpdate } from "./sender";
-import { CardSender, sdkCardCreate, sdkCardSend, sdkCardContent, sdkCardFinalize } from "./card-sender";
+import { CardSender, sdkCardCreate, sdkCardSend, sdkCardContent, sdkCardFinalize, type CardSenderOptions } from "./card-sender";
 import { FeishuChannelController } from "./controller";
 
 export interface BuildFeishuChannelOpts {
@@ -63,15 +63,24 @@ export function createOutboundSender(client: lark.Client, cfg: FeishuChannelConf
   const streamingOn = cfg.outbound.streaming !== false;
   const cardkitOn = cfg.outbound.cardkit !== false;
   if (!streamingOn || !cardkitOn) return textSender;
-  return new CardSender({
+  return new CardSender(cardSenderOptions(client, cfg, chatId, textSender, log));
+}
+
+/** Build the CardSender options for a binding. The card path gets the configured timing — the hard
+ *  inter-op gap (minIntervalMs) and the per-card edit gap (from outbound.streamMinEditIntervalMs) —
+ *  which were previously only wired to the text fallback. Exported so wiring is unit-testable. */
+export function cardSenderOptions(client: lark.Client, cfg: FeishuChannelConfig, chatId: string, fallback: OutboundSink, log: (msg: string) => void): CardSenderOptions {
+  return {
     chatId,
     create: sdkCardCreate(client),
     send: sdkCardSend(client),
     content: sdkCardContent(client),
     finalize: sdkCardFinalize(client),
-    fallback: textSender,
+    fallback,
+    minIntervalMs: cfg.outbound.minIntervalMs,
+    minEditIntervalMs: cfg.outbound.streamMinEditIntervalMs,
     log,
-  });
+  };
 }
 
 export function createFeishuChannelController(mesh: MeshGateway, opts: BuildFeishuChannelOpts): FeishuChannelController {

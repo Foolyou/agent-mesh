@@ -1,8 +1,9 @@
 import { test, expect } from "bun:test";
-import { createOutboundSender } from "./index";
+import { createOutboundSender, cardSenderOptions } from "./index";
 import { createFeishuClient } from "./consumer";
 import { CardSender } from "./card-sender";
 import { LarkSender } from "./sender";
+import type { OutboundSink } from "./feishu-channel";
 import type { FeishuChannelConfig } from "./types";
 
 function cfg(outbound: Partial<FeishuChannelConfig["outbound"]> = {}): FeishuChannelConfig {
@@ -38,4 +39,14 @@ test("outbound.cardkit=false wires the plain text LarkSender", () => {
 test("streaming=false uses the text sender regardless of cardkit", () => {
   const sink = createOutboundSender(client, cfg({ streaming: false, cardkit: true }), "oc_1", () => {});
   expect(sink).toBeInstanceOf(LarkSender);
+});
+
+test("cardSenderOptions passes the configured timing through to the CardSender", () => {
+  const fallback: OutboundSink = { enqueue() {}, stop() {} };
+  const opts = cardSenderOptions(client, cfg({ minIntervalMs: 5, streamMinEditIntervalMs: 7 }), "oc_1", fallback, () => {});
+  expect(opts.minIntervalMs).toBe(5); // hard inter-op gap
+  expect(opts.minEditIntervalMs).toBe(7); // per-card edit gap (from outbound.streamMinEditIntervalMs)
+  expect(opts.fallback).toBe(fallback);
+  expect(typeof opts.create).toBe("function");
+  expect(typeof opts.finalize).toBe("function");
 });

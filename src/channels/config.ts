@@ -66,6 +66,9 @@ export function normalizeFeishuConfig(parsed: unknown): FeishuChannelConfig | un
   const streaming = out.streaming === false ? false : true;
   const cardkit = out.cardkit === false ? false : true;
   const streamMinEditIntervalMs = positiveNumberOrUndefined(out.streamMinEditIntervalMs);
+  const streamCommitDebounceMs = typeof out.streamCommitDebounceMs === "number" && Number.isFinite(out.streamCommitDebounceMs) && out.streamCommitDebounceMs > 0
+    ? out.streamCommitDebounceMs
+    : 3000;
   const maxEditsPerMessage = positiveNumberOrUndefined(out.maxEditsPerMessage);
   const ws = (p.websocket ?? {}) as Record<string, unknown>;
   const handshakeTimeoutMs = positiveNumberOrUndefined(ws.handshakeTimeoutMs);
@@ -85,6 +88,7 @@ export function normalizeFeishuConfig(parsed: unknown): FeishuChannelConfig | un
       minIntervalMs,
       streaming,
       cardkit,
+      streamCommitDebounceMs,
       ...(streamMinEditIntervalMs !== undefined ? { streamMinEditIntervalMs } : {}),
       ...(maxEditsPerMessage !== undefined ? { maxEditsPerMessage } : {}),
     },

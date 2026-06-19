@@ -174,6 +174,9 @@ function toolCall(agent: string, toolCallId?: string, title?: string, sessionUpd
 function replayStarted(agent: string): MeshEvent {
   return { kind: "replay_started", agent, ts: "t" } as MeshEvent;
 }
+function agentTurnStarted(agent: string): MeshEvent {
+  return { kind: "agent_turn", phase: "started", turn: { id: "tn", agent, source: "mail", text: "", preview: "", ts: "t" }, ts: "t" } as MeshEvent;
+}
 function replayFinished(agent: string): MeshEvent {
   return { kind: "replay_finished", agent, ts: "t" } as MeshEvent;
 }
@@ -546,15 +549,19 @@ function setupStreaming(over: Partial<FeishuChannelConfig> = {}) {
   const mesh = new FakeMesh();
   const ss = streamingSink();
   const timers = manualTimers();
+  let pushInbound!: (m: InboundMsg) => void;
   const ch = new FeishuChannel({
     mesh,
     config: cfg(over),
     sender: ss.sink,
-    makeConsumer: () => ({ start() {}, stop() {} }),
+    makeConsumer: (onMessage) => {
+      pushInbound = onMessage;
+      return { start() {}, stop() {} };
+    },
     setTimer: timers.setTimer,
   });
   ch.start();
-  return { ch, mesh, ...ss };
+  return { ch, mesh, timers, push: (m: InboundMsg) => pushInbound(m), ...ss };
 }
 
 test("streaming: router chunks drive in-place edits and idle commits the turn", () => {
@@ -639,4 +646,82 @@ test("streaming disabled: a tool_call does not segment", () => {
   s.mesh.emit("feishu-poc", chunk("router", "x"));
   s.mesh.emit("feishu-poc", toolCall("router", "call-1", "bash"));
   expect(s.segments).toEqual([]);
+});
+
+// ── outbound turn-boundary fallback (feishu-outbound-turn-delay) ─────────────────
+
+test("streaming: a turn with no idle commits via the fallback timer; next turn is fresh", () => {
+  const s = setupStreaming();
+  s.mesh.emit("feishu-poc", chunk("router", "one")); // turn 1, no idle ever arrives
+  expect(s.commits()).toBe(0);
+  s.timers.advance(3000); // streamCommitDebounceMs default
+  expect(s.commits()).toBe(1); // fallback timer finalized the turn
+  s.mesh.emit("feishu-poc", chunk("router", "two")); // turn 2
+  expect(s.updates.at(-1)).toBe("two"); // fresh — NOT "onetwo"
+  expect(s.updates.some((u) => u.includes("onetwo"))).toBe(false);
+  s.mesh.emit("feishu-poc", idle("router"));
+  expect(s.commits()).toBe(2);
+});
+
+test("streaming: a late idle after the fallback timer does not commit twice", () => {
+  const s = setupStreaming();
+  s.mesh.emit("feishu-poc", chunk("router", "hello"));
+  s.timers.advance(3000); // fallback fires
+  expect(s.commits()).toBe(1);
+  s.mesh.emit("feishu-poc", idle("router")); // late idle for the same turn
+  expect(s.commits()).toBe(1); // no double commit
+});
+
+test("streaming: idle within the window cancels the fallback timer (single commit)", () => {
+  const s = setupStreaming();
+  s.mesh.emit("feishu-poc", chunk("router", "hi"));
+  s.mesh.emit("feishu-poc", idle("router")); // commit now
+  expect(s.commits()).toBe(1);
+  s.timers.advance(3000); // stale timer must have been cancelled
+  expect(s.commits()).toBe(1);
+});
+
+test("streaming: a tool_call with no following text finalizes via the fallback timer", () => {
+  const s = setupStreaming();
+  s.mesh.emit("feishu-poc", chunk("router", "before"));
+  s.mesh.emit("feishu-poc", toolCall("router", "call-1", "bash"));
+  // no following text, no idle
+  expect(s.commits()).toBe(0);
+  s.timers.advance(3000);
+  expect(s.segments).toEqual([{ toolName: "bash" }]);
+  expect(s.commits()).toBe(1); // sealed, not carried into the next turn
+});
+
+test("streaming: a new router turn-start finalizes a residual previous turn", () => {
+  const s = setupStreaming();
+  s.mesh.emit("feishu-poc", chunk("router", "one")); // turn 1, no idle
+  s.mesh.emit("feishu-poc", agentTurnStarted("router")); // turn 2 begins before the fallback fires
+  expect(s.commits()).toBe(1); // residual turn 1 finalized at the turn-start boundary
+  s.mesh.emit("feishu-poc", chunk("router", "two"));
+  expect(s.updates.at(-1)).toBe("two"); // fresh, not concatenated
+  expect(s.updates.some((u) => u.includes("onetwo"))).toBe(false);
+});
+
+test("streaming: turn-start with no residual buffer is a no-op", () => {
+  const s = setupStreaming();
+  s.mesh.emit("feishu-poc", agentTurnStarted("router"));
+  expect(s.commits()).toBe(0);
+  expect(s.updates).toEqual([]);
+});
+
+test("inbound: a new prompt finalizes residual streaming buffer before routing", async () => {
+  const s = setupStreaming();
+  s.mesh.emit("feishu-poc", chunk("router", "previous")); // residual, no idle
+  s.push(inbound({ text: "next question" }));
+  await flushAsync();
+  expect(s.commits()).toBe(1); // residual finalized before promptRouter
+  expect(s.mesh.prompts).toHaveLength(1);
+});
+
+test("non-streaming: original debounce flush behavior is unchanged", () => {
+  const s = setupStreaming({ outbound: { minIntervalMs: 0, streaming: false } });
+  s.mesh.emit("feishu-poc", chunk("router", "Hi"));
+  expect(s.enqueued).toEqual([]); // debounced, not sent yet
+  s.timers.advance(800); // original debounceMs
+  expect(s.enqueued).toEqual(["Hi"]);
 });
