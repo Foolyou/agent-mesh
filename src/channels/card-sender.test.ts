@@ -753,6 +753,48 @@ test("size rollover budgets by UTF-8 bytes (CJK/emoji), never splitting a charac
   for (const c of r.creates) expect(byteLen(c.text)).toBeLessThanOrEqual(14);
 });
 
+test("size rollover never shrinks the visible card backward (monotonic display)", async () => {
+  // card fills to exactly budget, then more text arrives whose optimal split head is shorter than
+  // what's already shown — the first card must NOT be rewritten to shorter text.
+  const r = cardRecorder();
+  const fb = fakeFallback();
+  const s = makeSender(r, fb, { enableToolHint: false, minEditIntervalMs: 0, maxCardBytes: 9 });
+  s.streamUpdate("aaaa\nbbbb"); // 9 bytes == budget, shown whole
+  await s.whenIdle();
+  s.streamUpdate("aaaa\nbbbb\ncccc"); // optimal split head ("aaaa\n") is shorter than shown text
+  await s.whenIdle();
+  s.streamCommit();
+  await s.whenIdle();
+  expect(r.creates[0].text).toBe("aaaa\nbbbb"); // first card kept its full shown text
+  // no content edit ever rewrote the first card to shorter text
+  expect(r.contents.filter((c) => c.cardId === "card1" && c.content.length < "aaaa\nbbbb".length)).toHaveLength(0);
+  expect(r.creates.map((c) => c.text).join("")).toBe("aaaa\nbbbb\ncccc"); // no loss, no dup
+});
+
+test("default tool hint + size rollover: first post-tool card shows the hint, content preserved", async () => {
+  const r = cardRecorder();
+  const fb = fakeFallback();
+  const s = makeSender(r, fb, { minEditIntervalMs: 0, maxCardBytes: 40 }); // hints default on
+  const full = "introaaaa\n\nbbbbbbbbcc";
+  s.streamUpdate("intro");
+  await s.whenIdle();
+  s.streamSegmentBreak({ toolName: "bash" }); // seals card 1, arms the hint for the next card
+  await s.whenIdle();
+  s.streamUpdate(full); // post-tool text large enough to roll by size
+  await s.whenIdle();
+  s.streamCommit();
+  await s.whenIdle();
+  const hint = "🔧 调用工具：bash\n\n";
+  expect(r.creates[0].text).toBe("intro");
+  expect(r.creates[1].text.startsWith(hint)).toBe(true); // hint is the first line of the first post-tool card
+  // strip the cosmetic hint; the real turn text is preserved across cards with no loss
+  const reconstructed = r.creates.map((c) => c.text.replace(hint, "")).join("");
+  expect(reconstructed).toBe(full);
+  const sorted = [...r.seqLog].sort((a, b) => a - b);
+  expect(r.seqLog).toEqual(sorted);
+  expect(new Set(r.seqLog).size).toBe(r.seqLog.length);
+});
+
 test("size rollover keeps sequence strictly increasing across content edits and rollovers", async () => {
   const r = cardRecorder();
   const fb = fakeFallback();

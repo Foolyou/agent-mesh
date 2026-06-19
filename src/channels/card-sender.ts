@@ -424,6 +424,19 @@ export class CardSender implements OutboundSink {
    *  that reopens the fence / resends the table header. Only `headText` (real turn body) advances the
    *  offset; the close fence is display-only. A failed op falls back to text from the confirmed point. */
   private async sizeRollOver(split: CardSizeSplit): Promise<void> {
+    // Monotonic display: never rewrite the live card to SHORTER text. If the optimal split head is
+    // shorter than what's already shown (a card filled to budget then grew), seal the live card
+    // as-is and continue the tail on a fresh card — no backward edit.
+    if (this.live && split.headText.length < this.live.sentText.length) {
+      const shownBytes = byteLen(this.composeDisplay(this.live.sentText));
+      if (shownBytes > this.maxCardBytes) {
+        this.log(`feishu card: soft over-budget rollover (${shownBytes}B > ${this.maxCardBytes}B); sealing without shrinking`);
+      }
+      const ctx = continuationAfter(this.live.sentText, { openFence: this.pendingContinuation?.openFence, tableHeader: this.pendingContinuation?.tableHeader });
+      await this.finalizeCurrentCard("size_rollover"); // advances by live.sentText.length; clears prefixes
+      this.pendingContinuation = ctx; // reopen any structure the sealed text left open
+      return;
+    }
     const headDisplay = this.composeDisplay(split.headText) + split.closeFence;
     if (!this.live) {
       try {
@@ -758,6 +771,32 @@ export function planSizeSplit(
       ? { displayPrefix: `${start.tableHeader}\n`, tableHeader: start.tableHeader }
       : undefined;
   return { headText: head, closeFence: close, continuation: degenerateContinuation };
+}
+
+/** The structure still open at the END of `text` (scanned from an inherited `start` state) — used to
+ *  reopen a fence / resend a table header on the next card when a card is sealed as-is (shrink guard)
+ *  rather than at a planned split boundary. */
+function continuationAfter(text: string, start?: { openFence?: string; tableHeader?: string }): CardContinuation | undefined {
+  let inFence = !!start?.openFence;
+  let fenceReopen = start?.openFence ?? "";
+  let tableHeader = start?.tableHeader ?? "";
+  const lines = text.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const fm = line.match(FENCE_RE);
+    if (fm) {
+      if (!inFence) { inFence = true; fenceReopen = fm[1] + (fm[2] ?? ""); }
+      else { inFence = false; fenceReopen = ""; }
+    } else if (!inFence) {
+      if (tableHeader) { if (!isTableRow(line)) tableHeader = ""; }
+      else if (isTableRow(line) && i + 1 < lines.length && isTableSeparator(lines[i + 1])) {
+        tableHeader = `${line}\n${lines[i + 1]}`;
+      }
+    }
+  }
+  if (inFence) return { displayPrefix: `${fenceReopen}\n`, openFence: fenceReopen };
+  if (tableHeader) return { displayPrefix: `${tableHeader}\n`, tableHeader };
+  return undefined;
 }
 
 function firstCodePoint(s: string): string {
