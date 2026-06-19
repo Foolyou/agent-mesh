@@ -107,6 +107,38 @@ test("device revoke works by deviceId and by label; unknown target fails", async
   }
 });
 
+test("device approve decides success from the LOCKED entry: two concurrent approves → exactly one succeeds", async () => {
+  const root = await tmp();
+  try {
+    await seedPendingDevice(root, "RACE", "dv_race");
+    const [a, b] = await Promise.all([
+      runAuthCli(root, "device", ["approve", "RACE"]),
+      runAuthCli(root, "device", ["approve", "RACE"]),
+    ]);
+    expect([a.exitCode, b.exitCode].sort()).toEqual([0, 2]); // one consumes in-lock, the other no-ops
+    const loser = a.exitCode === 2 ? a : b;
+    expect(loser.err.join("\n")).toContain("already approved, expired, or raced");
+    const file = await readDevices(root);
+    expect(file.devices.dv_race.status).toBe("approved");
+    expect(Object.keys(file.pending)).toEqual([]); // consumed exactly once
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("device approve --label present but no value errors (exit 2), nothing approved", async () => {
+  const root = await tmp();
+  try {
+    await seedPendingDevice(root, "NL", "dv_nl");
+    const r = await runAuthCli(root, "device", ["approve", "NL", "--label"]);
+    expect(r.exitCode).toBe(2);
+    expect(r.err.join("\n")).toContain("invalid --label");
+    expect((await readDevices(root)).devices.dv_nl).toBeUndefined(); // pending not consumed
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 // ── feishu approve via short-id → decrypt → allow ─────────────────────────────
 
 test("feishu approve decrypts the pending token and allows the decoded (channelKey, openId)", async () => {
@@ -139,6 +171,25 @@ test("feishu approve trusts the DECRYPTED identity, not the advisory pending pla
     const file = await readFeishuAuth(root);
     expect(isFeishuAllowed(file, "feishu:cli_abc", "ou_REAL")).toBe(true); // decrypted wins
     expect(isFeishuAllowed(file, "feishu:cli_abc", "ou_FAKE")).toBe(false); // advisory ignored
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("feishu approve decides success from the LOCKED pending: two concurrent approves → exactly one succeeds", async () => {
+  const root = await tmp();
+  try {
+    const keys = await ensureKeys(root);
+    const token = encryptAuthCode(keys, { channelKey: "feishu:cli_abc", openId: "ou_race", appId: "cli_abc", ttlSeconds: 600 });
+    await seedFeishuPending(root, "FR", "ou_race", token);
+    const [a, b] = await Promise.all([
+      runAuthCli(root, "feishu", ["approve", "FR"]),
+      runAuthCli(root, "feishu", ["approve", "FR"]),
+    ]);
+    expect([a.exitCode, b.exitCode].sort()).toEqual([0, 2]); // decrypt+transition happen in-lock once
+    const file = await readFeishuAuth(root);
+    expect(isFeishuAllowed(file, "feishu:cli_abc", "ou_race")).toBe(true);
+    expect(Object.keys(file.pending)).toEqual([]); // consumed exactly once
   } finally {
     await rm(root, { recursive: true, force: true });
   }

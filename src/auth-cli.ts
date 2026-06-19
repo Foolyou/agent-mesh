@@ -95,13 +95,12 @@ export async function deviceList(root: string): Promise<CliResult> {
 
 export async function deviceApprove(root: string, code: string, label?: string): Promise<CliResult> {
   if (!code) return fail("usage: mesh device approve <code> [--label <name>]");
-  const file = await readDevices(root);
-  const pending = file.pending[code];
-  if (!pending) return fail(`no pending device code '${code}' (already approved or expired?)`);
-  const deviceId = pending.deviceId;
+  // The LOCKED mutator is the source of truth: look up + transition inside the lock so a concurrent
+  // CLI that consumed the same code can't make us print "approved" off a stale pre-lock read.
+  let deviceId: string | undefined;
   await updateDevices(root, (f) => {
     const p = f.pending[code];
-    if (!p) return; // raced away between read and lock — nothing to do
+    if (!p) return; // not present in-lock → no transition; deviceId stays undefined
     delete f.pending[code];
     f.devices[p.deviceId] = {
       ...(label ? { label } : {}),
@@ -110,7 +109,9 @@ export async function deviceApprove(root: string, code: string, label?: string):
       createdAt: p.createdAt,
       approvedAt: nowIso(),
     };
+    deviceId = p.deviceId;
   });
+  if (!deviceId) return fail(`no pending device code '${code}' (already approved, expired, or raced)`);
   return ok(`approved device ${deviceId}${label ? ` (label: ${label})` : ""}`);
 }
 
@@ -161,23 +162,25 @@ export async function feishuList(root: string): Promise<CliResult> {
 
 export async function feishuApprove(root: string, code: string): Promise<CliResult> {
   if (!code) return fail("usage: mesh feishu approve <code>");
-  const file = await readFeishuAuth(root);
-  const pending = file.pending[code];
-  if (!pending) return fail(`no pending feishu authorization '${code}' (already approved or expired?)`);
-
-  // Short-id flow: the encrypted token is the source of truth. Decrypt it and trust ONLY the decoded
-  // (channelKey, openId, appId) — never the advisory plaintext fields on the pending entry.
+  // Loading keys is async, so do it BEFORE the lock (read-only, harmless). The decrypt itself is sync
+  // and happens INSIDE the locked mutator against the pending entry observed there — so we always act
+  // on the current `f.pending[code]`, never a pre-lock copy that a concurrent writer could have
+  // replaced. Decrypt failure leaves pending untouched.
   const keys = (await loadKeys(root)) ?? NO_KEYS;
-  let payload;
-  try {
-    payload = decryptAuthCode(keys, pending.encryptedToken);
-  } catch (e) {
-    // AuthCodeError messages are already generic + key/plaintext-free; never leak a raw crypto error.
-    const msg = e instanceof AuthCodeError ? e.message : "invalid or unrecognized authorization code";
-    return fail(msg); // no state change on a failed decrypt (matches design §2.1)
-  }
-
+  let approved: { openId: string; channelKey: string; appId: string } | undefined;
+  let decryptError: string | undefined;
   await updateFeishuAuth(root, (f) => {
+    const p = f.pending[code];
+    if (!p) return; // not present in-lock → no change (approved/decryptError stay undefined → "missing")
+    let payload;
+    try {
+      payload = decryptAuthCode(keys, p.encryptedToken); // the in-lock entry is the source of truth
+    } catch (e) {
+      // generic + key/plaintext-free; leave pending untouched (no state change, design §2.1)
+      decryptError = e instanceof AuthCodeError ? e.message : "invalid or unrecognized authorization code";
+      return;
+    }
+    // Trust ONLY the decoded identity — never the advisory plaintext on the pending entry.
     delete f.pending[code];
     f.allow[feishuAllowKey(payload.channelKey, payload.openId)] = {
       channelKey: payload.channelKey,
@@ -185,8 +188,11 @@ export async function feishuApprove(root: string, code: string): Promise<CliResu
       status: "approved",
       approvedAt: nowIso(),
     };
+    approved = { openId: payload.openId, channelKey: payload.channelKey, appId: payload.appId };
   });
-  return ok(`approved ${payload.openId} on ${payload.channelKey} (appId ${payload.appId})`);
+  if (approved) return ok(`approved ${approved.openId} on ${approved.channelKey} (appId ${approved.appId})`);
+  if (decryptError) return fail(decryptError);
+  return fail(`no pending feishu authorization '${code}' (already approved, expired, or raced)`);
 }
 
 export async function feishuRevoke(root: string, channelKey: string, openId: string): Promise<CliResult> {
@@ -292,7 +298,9 @@ export async function runAuthCli(root: string, group: string, args: string[]): P
   if (group === "device") {
     if (action === "list") return deviceList(root);
     if (action === "approve") {
+      const hadLabel = rest.includes("--label");
       const { value: label, rest: pos } = takeFlag(rest, "--label");
+      if (hadLabel && label === undefined) return fail("invalid --label (missing value)", ...usage);
       return deviceApprove(root, pos[0], label);
     }
     if (action === "revoke") return deviceRevoke(root, rest[0]);
