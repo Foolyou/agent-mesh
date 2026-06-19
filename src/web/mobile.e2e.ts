@@ -102,6 +102,74 @@ try {
     await page.waitForSelector(".mseg .conv-panel .composer textarea", { timeout: 6000 });
   });
 
+  // Drive window.visualViewport the way iOS Safari does when the soft keyboard
+  // opens/closes: shrink height and (when the page scrolls under the keyboard)
+  // shift offsetTop. We override the native getters and fire the matching event,
+  // then let the installed rAF-coalesced handler flush --mesh-vvh/--mesh-vvtop.
+  const origVvHeight = await page.evaluate(() => window.visualViewport?.height ?? window.innerHeight);
+  async function driveVisualViewport(height: number, offsetTop: number, fire: "resize" | "scroll") {
+    await page.evaluate(
+      ({ height, offsetTop, fire }) => {
+        const vv = window.visualViewport;
+        if (!vv) throw new Error("no visualViewport in this browser");
+        Object.defineProperty(vv, "height", { configurable: true, get: () => height });
+        Object.defineProperty(vv, "offsetTop", { configurable: true, get: () => offsetTop });
+        vv.dispatchEvent(new Event(fire));
+      },
+      { height, offsetTop, fire },
+    );
+    // two frames so the coalesced update() definitely flushes the CSS vars
+    await page.evaluate(() => new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r()))));
+  }
+  const readVv = () =>
+    page.evaluate(() => {
+      const cs = getComputedStyle(document.documentElement);
+      return { top: cs.getPropertyValue("--mesh-vvtop").trim(), h: cs.getPropertyValue("--mesh-vvh").trim() };
+    });
+  const boxOf = async (sel: string) => {
+    const b = await page.locator(sel).first().boundingBox();
+    if (!b) throw new Error(`${sel} has no box (not visible)`);
+    return b;
+  };
+
+  await step("visualViewport shrink + scroll keeps the mobile shell pinned (no collapse)", async () => {
+    // keyboard up: viewport shrinks AND the page scrolls so offsetTop > 0
+    await driveVisualViewport(500, 40, "scroll");
+    const up = await readVv();
+    if (up.h !== "500px") throw new Error(`--mesh-vvh did not shrink: ${up.h}`);
+    if (up.top !== "40px") throw new Error(`--mesh-vvtop did not follow offsetTop: ${up.top}`);
+
+    const app = await boxOf(".app");
+    // app shell is pinned to the visual viewport: top == offsetTop, height == vvh
+    if (Math.abs(app.y - 40) > 1) throw new Error(`app not pinned to offsetTop=40: y=${app.y}`);
+    if (Math.abs(app.height - 500) > 1) throw new Error(`app height not vvh=500: h=${app.height}`);
+
+    const visTop = app.y;
+    const visBottom = app.y + app.height; // bottom edge of the visible visual viewport
+    // no collapse-at-top: the topbar hugs the shell top, not pushed down by a big gap
+    const topbar = await boxOf(".topbar");
+    if (topbar.y - visTop > 2) throw new Error(`top gap above topbar: ${topbar.y - visTop}px`);
+
+    // topbar, chat segment, mtabs and composer all stay inside the visible band
+    for (const sel of [".topbar", ".mseg", ".mtabs", ".mseg .composer"]) {
+      const b = await boxOf(sel);
+      if (b.y >= visBottom || b.y + b.height <= visTop) throw new Error(`${sel} outside the visible viewport`);
+    }
+    // the composer must not run past the bottom of the visual viewport (off-screen behind the keyboard)
+    const composer = await boxOf(".mseg .composer");
+    if (composer.y + composer.height > visBottom + 1)
+      throw new Error(`composer runs out of viewport: bottom=${composer.y + composer.height} > ${visBottom}`);
+    await page.screenshot({ path: `${SHOTS}/m-04-keyboard.png` });
+
+    // keyboard dismissed: height restored, offsetTop must return to 0 (no residual offset)
+    await driveVisualViewport(origVvHeight, 0, "resize");
+    const down = await readVv();
+    if (down.top !== "0px") throw new Error(`--mesh-vvtop did not reset to 0: ${down.top}`);
+    const appBack = await boxOf(".app");
+    if (Math.abs(appBack.y) > 1) throw new Error(`app left with residual offset after keyboard close: y=${appBack.y}`);
+    if (!(await noHScroll())) throw new Error("horizontal overflow after keyboard cycle");
+  });
+
   await step("Map segment shows the topology", async () => {
     await page.locator('.mtab:has-text("Map")').click();
     await page.waitForSelector(".mseg .topo svg .node", { timeout: 4000 });
