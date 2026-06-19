@@ -158,6 +158,12 @@ function buildPairs(): AuditPair[] {
   pairs.push({ id: "tinted-text:bad", family: "tinted-text", fg: "bad", bg: { mix: "bad", pct: 12, over: "bg-inset" }, note: "bad text on its ~12% tinted panel (.compose-interrupt)" });
   pairs.push({ id: "tinted-text:warn", family: "tinted-text", fg: "warn", bg: { mix: "warn", pct: 10, over: "bg-inset" }, note: "warn text on its ~10% tinted panel (limit / queue)" });
 
+  // 3b. Hyperlink text (.feishu-link, future links) reads as words on every surface it
+  //     can render on — AA 4.5. `link` is its own first-class token (defaults to info),
+  //     so a theme that picks a low-contrast link colour is caught by the gate.
+  for (const bg of SURFACES)
+    pairs.push({ id: `status-text:link/${bg}`, family: "status-text", fg: "link", bg, note: `link text on ${surfaceLabel[bg]} surface` });
+
   // 4. Status hues as DOTS / LEFT-BORDERS / BADGE EDGES — non-text 3.0 on base.
   for (const role of ["ok", "warn", "bad", "info", "off"] as ThemeVar[])
     pairs.push({ id: `status-dot:${role}`, family: "status-dot", fg: role, bg: "bg", note: `${role} status dot / border on base` });

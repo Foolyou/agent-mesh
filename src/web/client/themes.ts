@@ -17,6 +17,7 @@ export const THEME_KEYS = [
   "bad",
   "off",
   "info",
+  "link",
   "good",
   "accent",
   "focus",
@@ -54,6 +55,7 @@ export const BUILTIN_THEMES: Theme[] = [
       bad: "#f0584b",
       off: "#5a6068",
       info: "#5ac8e0",
+      link: "#5ac8e0",
       good: "#6cd39a",
       accent: "#b9a3f0",
       focus: "#5ac8e0",
@@ -78,6 +80,7 @@ export const BUILTIN_THEMES: Theme[] = [
       bad: "#ff5e46",
       off: "#7a6238",
       info: "#e8a13a",
+      link: "#e8a13a",
       good: "#bcd16a",
       accent: "#e0b0ff",
       focus: "#ffb02e",
@@ -102,6 +105,7 @@ export const BUILTIN_THEMES: Theme[] = [
       bad: "#f0586b",
       off: "#5a6878",
       info: "#5aa8e0",
+      link: "#5aa8e0",
       good: "#5fd0b0",
       accent: "#b6a8f2",
       focus: "#5aa8e0",
@@ -126,6 +130,7 @@ export const BUILTIN_THEMES: Theme[] = [
       bad: "#ad281c",
       off: "#84817a",
       info: "#005c84",
+      link: "#005c84",
       good: "#137040",
       accent: "#6a34a0",
       focus: "#005c84",
@@ -150,6 +155,7 @@ export const BUILTIN_THEMES: Theme[] = [
       bad: "#e26d6d",
       off: "#6a6a6a",
       info: "#c4c4c4",
+      link: "#c4c4c4",
       good: "#c8c8c8",
       accent: "#d6d6d6",
       focus: "#c4c4c4",
@@ -175,6 +181,7 @@ export const BUILTIN_THEMES: Theme[] = [
       bad: "#a52521",
       off: "#728294",
       info: "#1f57a4",
+      link: "#1f57a4",
       good: "#15705f",
       accent: "#5a32b0",
       focus: "#1f57a4",
@@ -200,6 +207,7 @@ export const BUILTIN_THEMES: Theme[] = [
       bad: "#a32b22",
       off: "#7d846f",
       info: "#155a64",
+      link: "#155a64",
       good: "#246424",
       accent: "#5a3fa8",
       focus: "#155a64",
@@ -225,6 +233,7 @@ export const BUILTIN_THEMES: Theme[] = [
       bad: "#9f2632",
       off: "#857579",
       info: "#7a3f73",
+      link: "#7a3f73",
       good: "#13714a",
       accent: "#8a3fb0",
       focus: "#7a3f73",
@@ -261,7 +270,15 @@ export function migratePalette(v: unknown): Palette | null {
   const out = {} as Palette;
   for (const k of THEME_KEYS) {
     if (isHexColor(src[k])) out[k] = (src[k] as string).trim();
-    else {
+    else if (k === "link" && isHexColor(src["info"])) {
+      // `link` was promoted from a bare CSS var to a first-class token. A palette saved
+      // before that has no `link`; seed it from the palette's OWN `info` (same role/hue,
+      // already contrast-checked) so an upgrade doesn't recolor existing links to the
+      // default theme's link. Only fall through to the default `link` when `info` is
+      // unusable too (handled by the branch below).
+      out[k] = (src["info"] as string).trim();
+      filledAny = true;
+    } else {
       out[k] = base[k];
       filledAny = true;
     }

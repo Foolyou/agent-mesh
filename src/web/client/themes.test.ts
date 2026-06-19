@@ -47,6 +47,38 @@ test("migratePalette fills tokens missing from a stale stored custom palette", (
   expect(migrated.focus).toBe(BUILTIN_THEMES[0].palette.focus);
 });
 
+test("migratePalette seeds a missing link from the palette's OWN info (not the default)", () => {
+  // `link` was promoted from a bare CSS var to a first-class token; a custom palette
+  // saved before that has no `link`. It must inherit the palette's own info hue so an
+  // upgrade doesn't recolor the user's links to the default theme's link.
+  const legacy: Record<string, string> = {};
+  for (const k of THEME_KEYS) legacy[k] = (BUILTIN_THEMES[1].palette as any)[k]; // amber
+  delete legacy["link"];
+  expect(isPalette(legacy)).toBe(false); // strict check rejects the missing token
+  const m = migratePalette(legacy)!;
+  expect(isPalette(m)).toBe(true);
+  expect(m.link).toBe(BUILTIN_THEMES[1].palette.info); // amber's own info
+  expect(m.link).not.toBe(BUILTIN_THEMES[0].palette.link); // NOT the default theme's link
+});
+
+test("migratePalette falls back to the default link when the palette's info is also unusable", () => {
+  const legacy: Record<string, unknown> = {};
+  for (const k of THEME_KEYS) legacy[k] = (BUILTIN_THEMES[2].palette as any)[k]; // ice
+  delete legacy["link"];
+  legacy["info"] = "not-a-color"; // info can't seed link either
+  const m = migratePalette(legacy)!;
+  expect(isPalette(m)).toBe(true);
+  expect(m.link).toBe(BUILTIN_THEMES[0].palette.link); // default link fallback
+  expect(m.info).toBe(BUILTIN_THEMES[0].palette.info); // malformed info defaulted as usual
+});
+
+test("migratePalette keeps a user's explicit link override", () => {
+  const custom: Record<string, string> = {};
+  for (const k of THEME_KEYS) custom[k] = (BUILTIN_THEMES[3].palette as any)[k]; // paper
+  custom["link"] = "#123456";
+  expect(migratePalette(custom)!.link).toBe("#123456");
+});
+
 test("migratePalette preserves a user override of a newly-added token", () => {
   const custom: Record<string, string> = {};
   for (const k of THEME_KEYS) custom[k] = (BUILTIN_THEMES[1].palette as any)[k];

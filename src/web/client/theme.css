@@ -18,6 +18,7 @@
   --bad: #f0584b; /* dead */
   --off: #5a6068; /* stopped */
   --info: #5ac8e0; /* mail / interactive hint */
+  --link: #5ac8e0; /* hyperlink text (defaults to info; per-theme via palette) */
   --good: #6cd39a; /* syntax: strings */
   --accent: #b9a3f0; /* thinking / compacting accent */
   --focus: #5ac8e0; /* focus ring */

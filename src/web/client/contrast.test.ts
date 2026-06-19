@@ -39,6 +39,17 @@ test("good/accent/focus are first-class palette tokens", () => {
       expect((theme.palette as any)[k], `${theme.name}.${k}`).toMatch(/^#[0-9a-fA-F]{6}$/);
 });
 
+// `link` (hyperlink text, e.g. .feishu-link) is a first-class token and must be gated as
+// readable text on every surface, so a future theme can't ship a low-contrast link colour.
+test("link is a first-class palette token covered by the contrast contract", () => {
+  expect(THEME_KEYS).toContain("link");
+  for (const theme of BUILTIN_THEMES)
+    expect((theme.palette as any).link, `${theme.name}.link`).toMatch(/^#[0-9a-fA-F]{6}$/);
+  const linkSurfaces = AUDIT_PAIRS.filter((pr) => pr.fg === "link" && !pr.advisory).map((pr) => pr.bg);
+  for (const surf of ["bg", "bg-raise", "bg-inset"] as const)
+    expect(linkSurfaces, `link must be gated on the ${surf} surface`).toContain(surf);
+});
+
 // AAA is advisory: we don't fail on it, but we DO assert primary body text clears AAA on
 // every surface in every theme — that's a deliberate quality bar, not a stretch goal.
 test("primary text (fg) clears AAA on every surface in every theme", () => {
