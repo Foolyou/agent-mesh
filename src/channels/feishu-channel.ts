@@ -17,6 +17,7 @@ import type { MeshEvent, PromptImageRef } from "../acp/types";
 import type { Channel, FeishuChannelConfig, FeishuMeshBinding, InboundImageDownloader, InboundMsg, MeshGateway } from "./types";
 import { BoundedDedup } from "./dedup";
 import { applyAllowSeed, feishuChannelKey, passesAtGate, senderAuthorized, stripBotMention } from "./gating";
+import type { AssistantGateway } from "./assistant-gateway";
 import { storeUploads, type UploadFileLike } from "../web/uploads";
 import { emptyFeishuAuth, feishuAuthPath, readFeishuAuth, updateFeishuAuth, type FeishuAuthFile } from "../auth-store";
 import { ensureKeys, encryptAuthCode, type KeysFile } from "../auth-codes";
@@ -103,6 +104,12 @@ export interface FeishuChannelOptions {
   shortAuthId?: () => string;
   /** Injectable clock (epoch ms) for pending timestamps in tests; defaults to Date.now. */
   now?: () => number;
+  /** Gateway to the central Mesh Assistant. An authorized p2p (DM) message routes here (device-auth
+   *  Phase 5); group chats are unaffected. Absent => p2p gets an "assistant unavailable" notice. */
+  assistant?: AssistantGateway;
+  /** Make an outbound sender for an arbitrary chat id on demand (p2p chats have no preconfigured
+   *  sender). index.ts wires the real CardKit streaming sender; tests inject a fake. */
+  makeSender?: (chatId: string) => OutboundSink;
 }
 
 interface BindingRuntime {
@@ -168,6 +175,12 @@ export class FeishuChannel implements Channel {
   private authUnwatch?: () => void;
   private cancelAuthReload?: () => void;
 
+  // ── p2p -> Mesh Assistant (Phase 5) ──
+  /** Gateway to the shared Mesh Assistant session for authorized p2p DMs (undefined => notice path). */
+  private readonly assistant?: AssistantGateway;
+  /** Factory for an on-demand outbound sender for a p2p chat id (no preconfigured binding). */
+  private readonly makeSender?: (chatId: string) => OutboundSink;
+
   private consumer?: InboundSource;
   private unsub?: () => void;
   private started = false;
@@ -186,6 +199,8 @@ export class FeishuChannel implements Channel {
     this.root = opts.root;
     this.downloadImage = opts.downloadImage;
     this.storeImages = opts.storeImages ?? storeUploads;
+    this.assistant = opts.assistant;
+    this.makeSender = opts.makeSender;
     // Dynamic auth gate setup. The store seam is the real auth-store/auth-codes against `root` (so
     // production needs no index.ts change), or an injected fake, or absent (legacy in-memory gate).
     this.channelKey = feishuChannelKey(opts.config.appId);

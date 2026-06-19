@@ -8,6 +8,7 @@
 import * as lark from "@larksuiteoapi/node-sdk";
 import type { Channel, FeishuChannelConfig, MeshGateway } from "./types";
 import type { OutboundSink } from "./feishu-channel";
+import type { AssistantGateway } from "./assistant-gateway";
 import { loadFeishuConfig } from "./config";
 import { FeishuChannel } from "./feishu-channel";
 import { createFeishuClient, LarkConsumer, sdkDownloadImage } from "./consumer";
@@ -18,6 +19,8 @@ import { FeishuChannelController } from "./controller";
 export interface BuildFeishuChannelOpts {
   root: string;
   log?: (msg: string) => void;
+  /** Gateway to the central Mesh Assistant for authorized p2p DMs (device-auth Phase 5). */
+  assistant?: AssistantGateway;
 }
 
 /** Build the Feishu channel for a backend, or undefined when not configured/enabled. */
@@ -35,6 +38,10 @@ export function buildFeishuChannel(mesh: MeshGateway, opts: BuildFeishuChannelOp
     senders,
     log,
     root: opts.root,
+    assistant: opts.assistant,
+    // p2p DMs have no preconfigured sender: make one on demand for the user's p2p chat (same CardKit
+    // streaming sender as bound chats), so the assistant reply reuses the existing outbound machinery.
+    makeSender: (chatId) => createOutboundSender(client, cfg, chatId, log),
     downloadImage: sdkDownloadImage(client),
     makeConsumer: (onMessage) =>
       new LarkConsumer({
@@ -91,6 +98,8 @@ export function createFeishuChannelController(mesh: MeshGateway, opts: BuildFeis
 
 export { loadFeishuConfig, feishuConfigPath, normalizeFeishuConfig, readFeishuConfig } from "./config";
 export { senderAllowed, passesAtGate, stripBotMention } from "./gating";
+export { unavailableAssistantGateway } from "./assistant-gateway";
+export type { AssistantGateway } from "./assistant-gateway";
 export type {
   Channel,
   MeshGateway,

@@ -8,7 +8,7 @@
 // The subprocess-per-mesh model is unchanged; the backend (or combined) process owns
 // MeshManager and reaps the whole mesh-host subprocess tree on exit.
 import { MeshManager } from "./mesh-manager";
-import { MeshAssistant } from "./mesh-assistant";
+import { MeshAssistant, meshAssistantGateway } from "./mesh-assistant";
 import { WebGateway } from "./web/gateway";
 import { startWebServer } from "./web/server";
 import { startApiServer } from "./web/api-server";
@@ -17,7 +17,7 @@ import { runMeshHost } from "./mesh-host";
 import { resolveRoot, expandHome } from "./root";
 import { uploadRoot } from "./web/uploads";
 import { assistantCliDeprecationWarnings, assistantHarnessPassthrough, noAssistantSelected, parseAssistantHarness } from "./cli-options";
-import { createFeishuChannelController } from "./channels";
+import { createFeishuChannelController, unavailableAssistantGateway } from "./channels";
 import { runAuthCommand } from "./auth-cli";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -63,7 +63,11 @@ async function buildGateway() {
     : noAssistant
       ? undefined
       : new MeshAssistant(manager, { cwd: join(root, "assistant"), harness: assistantHarness, uploadRoot: uploadRoot(root), onCapabilities: (caps) => gateway?.setAssistantCapabilities(caps) });
-  const feishu = fake ? undefined : createFeishuChannelController(manager, { root });
+  // Inject the Mesh Assistant gateway for authorized p2p DMs (Phase 5). When the assistant is disabled
+  // (--no-assistant), inject an always-unavailable gateway so p2p uniformly gets the notice path.
+  const feishu = fake
+    ? undefined
+    : createFeishuChannelController(manager, { root, assistant: assistant ? meshAssistantGateway(assistant) : unavailableAssistantGateway() });
   gateway = new WebGateway(manager, assistant, { root, channels: { feishu } });
   if (!fake) {
     // Reconnect to any mesh daemons that outlived a previous backend (the whole point of
