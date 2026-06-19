@@ -194,12 +194,18 @@ export class FeishuChannel implements Channel {
     this.authCodeTtlSeconds = opts.authCodeTtlSeconds ?? 86400; // 1 day
     this.shortAuthId = opts.shortAuthId ?? defaultShortAuthId;
     this.nowFn = opts.now ?? (() => Date.now());
-    // Seed the in-memory snapshot from config allowSenders so the gate works immediately (and so the
-    // legacy no-store path still honors allowSenders). With a store, initAuth() replaces this with the
-    // authoritative persisted snapshot.
-    const seed = emptyFeishuAuth();
-    applyAllowSeed(seed, this.channelKey, this.seedOpenIds, new Date(this.nowFn()).toISOString());
-    this.authSnapshot = seed;
+    // Gate snapshot. With a store (production root / injected): start UNDEFINED so the gate fails
+    // closed until initAuth() loads the AUTHORITATIVE persisted registry — the allowSenders seed must
+    // never act as a live gate (a CLI-revoked open_id still in allowSenders would otherwise slip
+    // through the init window). Without a store (legacy/no-root): seed the in-memory snapshot so
+    // allowSenders still gates synchronously.
+    if (this.authStore) {
+      this.authSnapshot = undefined;
+    } else {
+      const seed = emptyFeishuAuth();
+      applyAllowSeed(seed, this.channelKey, this.seedOpenIds, new Date(this.nowFn()).toISOString());
+      this.authSnapshot = seed;
+    }
     const bindings = normalizedBindings(opts.config);
     for (const binding of bindings) {
       const sender = opts.senders?.get(binding.chatId) ?? (binding.chatId === opts.config.chatId ? opts.sender : undefined);
@@ -227,12 +233,28 @@ export class FeishuChannel implements Channel {
       }
     }
     this.unsub = this.mesh.on((name, e) => this.onMeshEvent(name, e));
+    // With a store, DEFER inbound until the authoritative snapshot is loaded: the init window must not
+    // (a) let a revoked-but-seeded sender through (snapshot is undefined => deny), nor (b) auth-code a
+    // seed user who is about to be authorized. Without a store, start inbound immediately on the seed.
+    if (this.authStore) void this.initAuthThenConsume();
+    else this.startConsumer();
+    this.log(`feishu channel: started with ${this.runtimes.length} mesh chat binding(s)`);
+  }
+
+  /** Create + start the inbound consumer. Idempotent; no-op once stopped. */
+  private startConsumer(): void {
+    if (!this.started || this.consumer) return;
     this.consumer = this.makeConsumer((m) => {
       void this.onInbound(m);
     });
     this.consumer.start();
-    void this.initAuth(); // persist-seed + load the authoritative snapshot + start the registry watcher
-    this.log(`feishu channel: started with ${this.runtimes.length} mesh chat binding(s)`);
+  }
+
+  /** Persist-seed + load the authoritative auth snapshot, then start inbound — unless stopped meanwhile. */
+  private async initAuthThenConsume(): Promise<void> {
+    await this.initAuth();
+    if (!this.started) return; // stopped during init: never start the consumer
+    this.startConsumer();
   }
 
   /** With a store (root configured): persist the allowSenders seed (idempotent, never un-revoke), load

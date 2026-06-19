@@ -865,7 +865,7 @@ function imageMsg(over: Partial<InboundMsg> = {}): InboundMsg {
   return inbound({ messageType: "image", messageId: "om_img", imageKey: "img_secret_KEY", text: "", ...over });
 }
 
-function setupImage(opts: { download?: InboundImageDownloader; root?: string } = {}) {
+async function setupImage(opts: { download?: InboundImageDownloader; root?: string } = {}) {
   const mesh = new FakeMesh();
   const { sink, sent } = fakeSender();
   const logs: string[] = [];
@@ -890,11 +890,12 @@ function setupImage(opts: { download?: InboundImageDownloader; root?: string } =
     storeImages,
   });
   ch.start();
+  await flushAsync(); // let initAuth load the snapshot + start the (deferred) consumer
   return { ch, mesh, sent, logs, push: (m: InboundMsg) => pushInbound(m), downloadCalls, storeCalls };
 }
 
 test("inbound image: downloads, provisions refs (bucket=mesh), prompts router with images", async () => {
-  const s = setupImage();
+  const s = await setupImage();
   s.push(imageMsg());
   await settle();
   expect(s.downloadCalls).toEqual([{ messageId: "om_img", imageKey: "img_secret_KEY" }]);
@@ -908,7 +909,7 @@ test("inbound image: downloads, provisions refs (bucket=mesh), prompts router wi
 
 test("inbound image: download failure sends a notice, does not prompt, and never leaks image_key", async () => {
   // The SDK error MESSAGE itself embeds the resource key — neither logs nor the group notice may echo it.
-  const s = setupImage({ download: async () => { throw new Error("GET /im/v1/messages/om/resources/img_secret_KEY failed 404"); } });
+  const s = await setupImage({ download: async () => { throw new Error("GET /im/v1/messages/om/resources/img_secret_KEY failed 404"); } });
   s.push(imageMsg({ imageKey: "img_secret_KEY" }));
   await settle();
   expect(s.mesh.prompts).toHaveLength(0);
@@ -918,7 +919,7 @@ test("inbound image: download failure sends a notice, does not prompt, and never
 });
 
 test("inbound image: missing message_id sends a notice and does not download or prompt", async () => {
-  const s = setupImage();
+  const s = await setupImage();
   s.push(imageMsg({ messageId: "" }));
   await settle();
   expect(s.downloadCalls).toHaveLength(0);
@@ -927,7 +928,7 @@ test("inbound image: missing message_id sends a notice and does not download or 
 });
 
 test("inbound image: missing image_key sends a notice and does not download or prompt", async () => {
-  const s = setupImage();
+  const s = await setupImage();
   s.push(imageMsg({ imageKey: undefined }));
   await settle();
   expect(s.downloadCalls).toHaveLength(0);
@@ -1066,6 +1067,49 @@ test("auth gate: a registry load failure fails closed — even a seeded sender i
   await flushAsync();
   expect(s.mesh.prompts).toHaveLength(0); // fail closed
   expect(s.logs.join("\n")).toContain("failing closed");
+});
+
+test("auth gate: startup race — inbound is deferred until the authoritative snapshot loads; a revoked seed is never let through the init window", async () => {
+  // Registry already has ou_me REVOKED, but config allowSenders still lists ou_me (a stale migration
+  // source). A load that hasn't resolved must NOT start inbound on the config seed.
+  let file: FeishuAuthFile = emptyFeishuAuth();
+  file.allow[feishuAllowKey("feishu:cli_1", "ou_me")] = { channelKey: "feishu:cli_1", openId: "ou_me", status: "revoked", approvedAt: "t" };
+  let releaseRead!: () => void;
+  const held = new Promise<void>((r) => { releaseRead = r; });
+  const store: FeishuAuthStore = {
+    read: async () => { await held; return JSON.parse(JSON.stringify(file)) as FeishuAuthFile; },
+    update: async (mut) => { mut(file); return file; }, // seed write resolves; applyAllowSeed won't un-revoke
+    ensureKeys: async () => ({ version: 1, active: "k1", keys: { k1: { secret: Buffer.alloc(32, 1).toString("base64"), createdAt: "t" } } }),
+    encrypt: (_k, i) => `ENVELOPE(${i.openId})`,
+    watch: () => () => {},
+  };
+  const mesh = new FakeMesh();
+  const { sink, sent } = fakeSender();
+  let pushInbound: ((m: InboundMsg) => void) | undefined;
+  let consumerStarted = false;
+  const ch = new FeishuChannel({
+    mesh,
+    config: cfg({ allowSenders: ["ou_me"] }),
+    sender: sink,
+    makeConsumer: (onMessage) => { pushInbound = onMessage; return { start: () => { consumerStarted = true; }, stop() {} }; },
+    setTimer: manualTimers().setTimer,
+    authStore: store,
+  });
+  ch.start();
+  await flushAsync();
+  // init is blocked on read() → consumer NOT started, no inbound wired yet (deferred)
+  expect(consumerStarted).toBe(false);
+  expect(pushInbound).toBeUndefined();
+
+  releaseRead(); // authoritative load completes
+  await flushAsync();
+  expect(consumerStarted).toBe(true); // inbound starts only now
+  expect(pushInbound).toBeTypeOf("function");
+
+  pushInbound!(inbound({ text: "hi" })); // ou_me is revoked in the registry → still denied
+  await flushAsync();
+  expect(mesh.prompts).toHaveLength(0);
+  expect(isFeishuAllowed(file, "feishu:cli_1", "ou_me")).toBe(false); // seed never un-revoked it
 });
 
 test("auth gate: stop() closes the registry watcher", async () => {
