@@ -10,6 +10,7 @@ import {
   runEnrollment,
   setDeviceToken,
   startDevice,
+  submitBootstrap,
   wsUrlWithToken,
 } from "./device-auth";
 
@@ -116,6 +117,32 @@ test("runEnrollment resolves revoked/unknown without looping forever, and failed
 
   const startFails = (() => Promise.resolve(jsonResponse({}, 500))) as any;
   expect(await runEnrollment({}, startFails, () => Promise.resolve())).toBe("failed");
+});
+
+test("submitBootstrap sends Bearer dormant token + body token, never URL/persists the bootstrap token", async () => {
+  setDeviceToken("dormant-tok"); // the device's own token from start()
+  const calls: Array<{ url: string; init: any }> = [];
+  const fetchMock = ((url: string, init: any) => {
+    calls.push({ url, init });
+    return Promise.resolve(jsonResponse({ ok: true }));
+  }) as any;
+
+  expect(await submitBootstrap("BOOT-1time", fetchMock)).toBe(true);
+  const { url, init } = calls[0];
+  expect(url).toBe("/api/auth/device/bootstrap");
+  expect(url).not.toContain("token="); // never in the URL
+  expect(init.method).toBe("POST");
+  expect(init.headers).toEqual({ "content-type": "application/json", Authorization: "Bearer dormant-tok" });
+  expect(JSON.parse(init.body)).toEqual({ bootstrapToken: "BOOT-1time" }); // travels in the body only
+  // the bootstrap token is NOT persisted; the stored device token is untouched (submitBootstrap
+  // never calls setDeviceToken — the one-time bootstrap token lives only in this request body).
+  expect(getDeviceToken()).toBe("dormant-tok");
+});
+
+test("submitBootstrap returns false generically on 401 and on network error", async () => {
+  setDeviceToken("dormant-tok");
+  expect(await submitBootstrap("x", (() => Promise.resolve(jsonResponse({ error: { message: "unauthorized" } }, 401))) as any)).toBe(false);
+  expect(await submitBootstrap("x", (() => Promise.reject(new Error("net"))) as any)).toBe(false);
 });
 
 test("runEnrollment stops when shouldContinue turns false (unmount)", async () => {

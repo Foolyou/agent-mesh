@@ -2,9 +2,9 @@
 // authorization against the REAL server gate via bootAuthorized() — so a loopback-only dev/host
 // session (no token, server-trusted) opens normally, while an unauthorized remote sees a MINIMAL
 // device-code page that polls for approval. The page never surfaces internal failure reasons.
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { App } from "./App";
-import { bootAuthorized, runEnrollment, type DeviceAuthPhase } from "./device-auth";
+import { bootAuthorized, runEnrollment, submitBootstrap, type DeviceAuthPhase } from "./device-auth";
 
 type BootPhase = "checking" | "authorized" | "unauthorized";
 
@@ -44,7 +44,22 @@ function UnauthorizedPage({ onApproved }: { onApproved: () => void }) {
   const [code, setCode] = useState<string | null>(null);
   const [status, setStatus] = useState<DeviceAuthPhase>("pending");
   const [failed, setFailed] = useState(false);
+  const [bootstrapToken, setBootstrapToken] = useState("");
+  const [bootstrapBusy, setBootstrapBusy] = useState(false);
+  const [bootstrapError, setBootstrapError] = useState(false);
   const started = useRef(false);
+
+  async function onSubmitBootstrap(e: FormEvent) {
+    e.preventDefault();
+    const token = bootstrapToken.trim();
+    if (!token || bootstrapBusy) return;
+    setBootstrapBusy(true);
+    setBootstrapError(false);
+    const ok = await submitBootstrap(token);
+    setBootstrapBusy(false);
+    if (ok) onApproved();
+    else setBootstrapError(true); // generic — never reveals which part failed
+  }
 
   useEffect(() => {
     if (started.current) return; // StrictMode double-invoke guard: enroll exactly once
@@ -79,6 +94,23 @@ function UnauthorizedPage({ onApproved }: { onApproved: () => void }) {
               {code}
             </div>
             <div className="boot-msg">{statusLine(status)}</div>
+            <form className="boot-form" onSubmit={onSubmitBootstrap}>
+              <div className="boot-msg">Or paste a one-time bootstrap token from the host log:</div>
+              <input
+                type="text"
+                className="boot-input"
+                aria-label="bootstrap token"
+                autoComplete="off"
+                spellCheck={false}
+                value={bootstrapToken}
+                onChange={(e) => setBootstrapToken(e.target.value)}
+                placeholder="bootstrap token"
+              />
+              <button type="submit" className="btn" disabled={bootstrapBusy || !bootstrapToken.trim()}>
+                {bootstrapBusy ? "Authorizing…" : "Authorize this device"}
+              </button>
+              {bootstrapError ? <div className="boot-msg">Couldn’t authorize with that token. Check it and try again.</div> : null}
+            </form>
           </>
         ) : (
           <div className="boot-msg">Requesting a device code…</div>

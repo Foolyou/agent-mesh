@@ -91,6 +91,24 @@ export async function pollDeviceStatus(fetchFn: FetchFn = fetch): Promise<Device
   }
 }
 
+/** First-device bootstrap (design §6): send the operator's one-time bootstrap token (from the host
+ *  log) to consume it and approve THIS device. The bearer is our DORMANT device token (from start,
+ *  in localStorage); the bootstrap token travels only in the request body — it is never persisted
+ *  and never put in a URL. Returns true on success; any failure → false (the caller shows a generic
+ *  message, never an internal reason). */
+export async function submitBootstrap(bootstrapToken: string, fetchFn: FetchFn = fetch): Promise<boolean> {
+  try {
+    const res = await fetchFn("/api/auth/device/bootstrap", {
+      method: "POST",
+      headers: authHeaders({ "content-type": "application/json" }),
+      body: JSON.stringify({ bootstrapToken }),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 export interface EnrollmentHandlers {
   onCode?: (code: string) => void;
   onStatus?: (status: DeviceAuthPhase) => void;
