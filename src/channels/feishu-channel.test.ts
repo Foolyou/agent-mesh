@@ -1,7 +1,7 @@
 import { test, expect } from "bun:test";
 import { FeishuChannel } from "./feishu-channel";
-import type { MeshGateway, FeishuChannelConfig, InboundMsg } from "./types";
-import type { MeshEvent } from "../acp/types";
+import type { MeshGateway, FeishuChannelConfig, InboundMsg, InboundImageDownloader } from "./types";
+import type { MeshEvent, PromptImageRef } from "../acp/types";
 
 function cfg(over: Partial<FeishuChannelConfig> = {}): FeishuChannelConfig {
   return {
@@ -24,7 +24,7 @@ function cfg(over: Partial<FeishuChannelConfig> = {}): FeishuChannelConfig {
 
 class FakeMesh implements MeshGateway {
   listeners: ((name: string, e: MeshEvent) => void)[] = [];
-  prompts: { name: string; text: string }[] = [];
+  prompts: { name: string; text: string; images?: PromptImageRef[] }[] = [];
   running = true;
   startCalls = 0;
   stopCalls = 0;
@@ -37,9 +37,9 @@ class FakeMesh implements MeshGateway {
       this.listeners = this.listeners.filter((x) => x !== l);
     };
   }
-  async promptRouter(name: string, text: string) {
+  async promptRouter(name: string, text: string, images?: PromptImageRef[]) {
     if (!this.running) throw new Error(`mesh "${name}" is not running`);
-    this.prompts.push({ name, text });
+    this.prompts.push({ name, text, images });
   }
   async startMesh() {
     this.startCalls++;
@@ -142,7 +142,7 @@ function manualTimers() {
 }
 
 function inbound(over: Partial<InboundMsg> = {}): InboundMsg {
-  return { eventId: "e1", chatId: "oc_1", chatType: "p2p", senderId: "ou_me", messageType: "text", text: "hi", mentions: [], ...over };
+  return { eventId: "e1", chatId: "oc_1", chatType: "p2p", senderId: "ou_me", messageType: "text", text: "hi", mentions: [], messageId: "om_1", ...over };
 }
 function chunk(agent: string, text: string, messageId?: string): MeshEvent {
   return {
@@ -816,4 +816,91 @@ test("async sink: replay clear during an in-flight commit keeps the barrier; pos
   expect(updates.at(-1)).toBe("fresh"); // delivered only after the sink went idle
   expect(updates.some((u) => u.startsWith("RACED:"))).toBe(false);
   expect(commits).toBe(1); // replay clears add no extra commit (nothing live to seal)
+});
+
+// ── inbound image (feishu-inbound-image) ────────────────────────────────────────
+
+function settle(): Promise<void> {
+  return new Promise((r) => setTimeout(r, 0)); // drain the async download/store/prompt chain
+}
+
+function imageMsg(over: Partial<InboundMsg> = {}): InboundMsg {
+  return inbound({ messageType: "image", messageId: "om_img", imageKey: "img_secret_KEY", text: "", ...over });
+}
+
+function setupImage(opts: { download?: InboundImageDownloader; root?: string } = {}) {
+  const mesh = new FakeMesh();
+  const { sink, sent } = fakeSender();
+  const logs: string[] = [];
+  let pushInbound!: (m: InboundMsg) => void;
+  const downloadCalls: { messageId: string; imageKey: string }[] = [];
+  const storeCalls: { root: string; bucket: string; count: number }[] = [];
+  const download: InboundImageDownloader = opts.download ?? (async (req) => { downloadCalls.push(req); return { bytes: new Uint8Array([1, 2, 3, 4]) }; });
+  const storeImages = async (root: string, bucket: string, files: { name?: string }[]): Promise<PromptImageRef[]> => {
+    storeCalls.push({ root, bucket, count: files.length });
+    return files.map((f, i) => ({ id: `id${i}.png`, mimeType: "image/png", name: f.name ?? "x", bucket, path: `${root}/uploads/${bucket}/id${i}.png`, url: `/api/uploads/${bucket}/id${i}.png` }));
+  };
+  const ch = new FeishuChannel({
+    mesh,
+    config: cfg(),
+    sender: sink,
+    makeConsumer: (onMessage) => { pushInbound = onMessage; return { start() {}, stop() {} }; },
+    log: (m) => logs.push(m),
+    setTimer: manualTimers().setTimer,
+    root: opts.root ?? "/data/root",
+    downloadImage: download,
+    storeImages,
+  });
+  ch.start();
+  return { ch, mesh, sent, logs, push: (m: InboundMsg) => pushInbound(m), downloadCalls, storeCalls };
+}
+
+test("inbound image: downloads, provisions refs (bucket=mesh), prompts router with images", async () => {
+  const s = setupImage();
+  s.push(imageMsg());
+  await settle();
+  expect(s.downloadCalls).toEqual([{ messageId: "om_img", imageKey: "img_secret_KEY" }]);
+  expect(s.storeCalls[0].bucket).toBe("feishu-poc"); // mesh name as upload bucket
+  expect(s.mesh.prompts).toHaveLength(1);
+  expect(s.mesh.prompts[0].text).toContain("用户发送了一张图片");
+  expect(s.mesh.prompts[0].images).toHaveLength(1);
+  expect(s.mesh.prompts[0].images![0].path).toContain("uploads/feishu-poc"); // agent-readable path ref
+  expect(s.sent).toHaveLength(0); // no error notice
+});
+
+test("inbound image: download failure sends a notice, does not prompt, and never leaks image_key", async () => {
+  // The SDK error MESSAGE itself embeds the resource key — neither logs nor the group notice may echo it.
+  const s = setupImage({ download: async () => { throw new Error("GET /im/v1/messages/om/resources/img_secret_KEY failed 404"); } });
+  s.push(imageMsg({ imageKey: "img_secret_KEY" }));
+  await settle();
+  expect(s.mesh.prompts).toHaveLength(0);
+  expect(s.sent.some((x) => x.text.includes("下载失败"))).toBe(true);
+  expect(s.sent.map((x) => x.text).join("\n")).not.toContain("img_secret_KEY"); // notice must not leak the key
+  expect(s.logs.join("\n")).not.toContain("img_secret_KEY"); // logs must not leak the key (no raw error text)
+});
+
+test("inbound image: missing message_id sends a notice and does not download or prompt", async () => {
+  const s = setupImage();
+  s.push(imageMsg({ messageId: "" }));
+  await settle();
+  expect(s.downloadCalls).toHaveLength(0);
+  expect(s.mesh.prompts).toHaveLength(0);
+  expect(s.sent.some((x) => x.text.includes("无法处理"))).toBe(true);
+});
+
+test("inbound image: missing image_key sends a notice and does not download or prompt", async () => {
+  const s = setupImage();
+  s.push(imageMsg({ imageKey: undefined }));
+  await settle();
+  expect(s.downloadCalls).toHaveLength(0);
+  expect(s.mesh.prompts).toHaveLength(0);
+  expect(s.sent.some((x) => x.text.includes("无法处理"))).toBe(true);
+});
+
+test("inbound image: when image handling is not configured, sends a notice and does not prompt", async () => {
+  const s = setup(); // no root/downloadImage wired
+  s.push(imageMsg());
+  await settle();
+  expect(s.mesh.prompts).toHaveLength(0);
+  expect(s.sent.some((x) => x.text.includes("未启用图片处理"))).toBe(true);
 });
