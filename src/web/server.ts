@@ -7,6 +7,8 @@
 // Same browser origin either way; the SPA is identical and never knows the difference.
 import index from "./client/index.html";
 import { handleApi } from "./api";
+import { authorizeRequest, bearerToken, gateLogLine, isPreAuthApiPath, type AuthGateResult } from "./auth";
+import { resolveRoot } from "../root";
 import type { WebGateway } from "./gateway";
 
 const SPA_CACHE_CONTROL = "no-store, max-age=0, must-revalidate";
@@ -19,6 +21,9 @@ export interface WebServerOptions {
   dev?: boolean;
   gateway?: WebGateway;
   backendUrl?: string;
+  /** Escape hatch (design §6 rule 5): trust loopback even on an exposed bind. Defaults to the
+   *  `MESH_TRUST_LOOPBACK_WHEN_EXPOSED=1` env var (off), but an explicit option wins for tests. */
+  trustLoopbackWhenExposed?: boolean;
 }
 export interface WebServerHandle {
   port: number;
@@ -31,6 +36,7 @@ export interface WebServerHandle {
 interface WsData {
   unsub?: () => void; // gateway mode
   back?: WebSocket; // proxy mode (upstream backend socket)
+  token?: string; // device token observed at upgrade (forwarded to the backend in proxy mode)
 }
 
 export function startWebServer(opts: WebServerOptions = {}): WebServerHandle {
@@ -40,6 +46,33 @@ export function startWebServer(opts: WebServerOptions = {}): WebServerHandle {
   const wsBackend = backendUrl ? backendUrl.replace(/^http/, "ws") + "/ws" : undefined;
   const dev = opts.dev ?? process.env.NODE_ENV !== "production";
   const hostname = opts.hostname ?? "127.0.0.1";
+  // Auth root: the gateway carries it in-process; in proxy mode the web tier (where the real browser
+  // socket terminates and the authoritative gate runs) resolves the SAME root directly (design §6 /
+  // proposal A). A divergent root simply makes non-loopback fail closed.
+  const authRoot = gw ? gw.authRoot() : resolveRoot();
+  // Proxy mode has no in-process gateway; device-auth routes don't touch it, so a bare stub lets
+  // handleApi serve them locally (it never reaches a gateway-using route for these paths).
+  const proxyDeviceGw = {} as unknown as WebGateway;
+  const trustLoopbackWhenExposed = opts.trustLoopbackWhenExposed ?? process.env.MESH_TRUST_LOOPBACK_WHEN_EXPOSED === "1";
+  // Observability (design §6 Open Q 6A): log every deny + the first allow per (remote, via, route)
+  // so the funnel topology can be validated without per-request spam. Never logs a token.
+  const loggedGate = new Set<string>();
+  async function gate(req: Request, srv: Bun.Server<WsData>, url: URL, route: "api" | "ws"): Promise<{ result: AuthGateResult; token: string | undefined }> {
+    const remoteAddress = srv.requestIP(req)?.address; // socket-derived; never a header
+    // Token transport is per prdmgr's locked channels: `/api/*` ONLY via Authorization: Bearer
+    // (URLs leak through history / logs / referrers); `/ws` via `?token=` (the browser WS client
+    // can't set headers), with Bearer also accepted if technically present.
+    const token = route === "ws"
+      ? url.searchParams.get("token") ?? bearerToken(req.headers) ?? undefined
+      : bearerToken(req.headers) ?? undefined;
+    const result = await authorizeRequest({ root: authRoot, token, remoteAddress, bindHostname: hostname, trustLoopbackWhenExposed });
+    const key = `${remoteAddress}|${result.via}|${route}`;
+    if (!result.ok || !loggedGate.has(key)) {
+      if (loggedGate.size < 1000) loggedGate.add(key);
+      console.log(gateLogLine(route, result, remoteAddress, hostname));
+    }
+    return { result, token };
+  }
   const assetServer = Bun.serve({
     port: 0,
     hostname: "127.0.0.1",
@@ -59,20 +92,33 @@ export function startWebServer(opts: WebServerOptions = {}): WebServerHandle {
       const url = new URL(req.url);
 
       if (url.pathname === "/ws") {
-        if (srv.upgrade(req, { data: {} })) return undefined;
+        const { result, token } = await gate(req, srv, url, "ws");
+        if (!result.ok) return new Response("unauthorized", { status: 401 });
+        if (srv.upgrade(req, { data: { token } })) return undefined;
         return new Response("ws upgrade failed", { status: 400 });
       }
 
       if (url.pathname.startsWith("/api/")) {
+        // Device-auth endpoints are pre-auth (they authenticate the device); everything else is gated
+        // here at the tier that terminates the real browser socket (true in gateway AND proxy mode).
+        if (!isPreAuthApiPath(url.pathname)) {
+          const { result } = await gate(req, srv, url, "api");
+          if (!result.ok) return Response.json({ error: { message: "unauthorized" } }, { status: 401 });
+        }
+        const remoteAddress = srv.requestIP(req)?.address;
         const hasBody = req.method !== "GET" && req.method !== "HEAD";
-        if (gw) {
+        // Device-auth endpoints are handled at THIS tier in both modes, because this is where the
+        // real browser socket terminates — so the pending device's coarse `remoteHint` reflects the
+        // true browser origin, not the web→backend loopback hop. They don't use the gateway, so a
+        // bare stub is enough in proxy mode (no spoofed header reaches the decision).
+        if (gw || isPreAuthApiPath(url.pathname)) {
           const body = hasBody ? await requestBody(req) : undefined;
           const expectedOrigin = `http://${req.headers.get("host") ?? url.host}`;
-          const r = await handleApi(gw, req.method, url.pathname, body, url.searchParams, undefined, undefined, undefined, { headers: req.headers, expectedOrigin });
+          const r = await handleApi(gw ?? proxyDeviceGw, req.method, url.pathname, body, url.searchParams, undefined, undefined, undefined, { headers: req.headers, expectedOrigin, root: authRoot, remoteAddress, bindHostname: hostname });
           if (r.body instanceof Response) return r.body;
           return Response.json(r.body, { status: r.status });
         }
-        // proxy mode: forward to the backend verbatim
+        // proxy mode, non-device route: forward to the backend verbatim (web-tier gate already passed)
         const body = hasBody ? await req.arrayBuffer() : undefined;
         const resp = await fetch(backendUrl + url.pathname + url.search, {
           method: req.method,
@@ -106,8 +152,9 @@ export function startWebServer(opts: WebServerOptions = {}): WebServerHandle {
           });
           return;
         }
-        // proxy mode: bridge the browser socket to a backend socket
-        const back = new WebSocket(wsBackend!);
+        // proxy mode: bridge the browser socket to a backend socket. Forward the device token so the
+        // backend's defense-in-depth gate sees it (the web tier already enforced the authoritative gate).
+        const back = new WebSocket(ws.data.token ? `${wsBackend!}?token=${encodeURIComponent(ws.data.token)}` : wsBackend!);
         ws.data.back = back;
         back.onmessage = (e) => {
           try {

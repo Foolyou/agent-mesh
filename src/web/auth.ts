@@ -53,6 +53,103 @@ function newDeviceId(): string {
   return `dv_${randomUUID().replace(/-/g, "")}`;
 }
 
+// ── request gate (design §6 trust model) ─────────────────────────────────────
+
+export type RemoteClass = "loopback" | "remote";
+
+/** Normalize a socket address for loopback comparison: lowercase, strip an IPv6 zone id and
+ *  brackets, and unwrap an IPv4-mapped IPv6 (`::ffff:127.0.0.1`). */
+function normalizeAddr(addr: string): string {
+  let a = addr.trim().toLowerCase().replace(/%.*$/, "");
+  if (a.startsWith("[") && a.endsWith("]")) a = a.slice(1, -1);
+  if (a.startsWith("::ffff:")) a = a.slice("::ffff:".length);
+  return a;
+}
+
+/** Classify a SOCKET-DERIVED remote address (never a header). Unknown/empty → `remote` (fail safe):
+ *  an address we cannot read must never be granted loopback trust. Covers 127.0.0.0/8, ::1, and
+ *  IPv4-mapped loopback. */
+export function classifyRemoteAddress(remoteAddress: string | undefined): RemoteClass {
+  if (!remoteAddress || typeof remoteAddress !== "string") return "remote";
+  const a = normalizeAddr(remoteAddress);
+  if (a === "::1") return "loopback";
+  if (/^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(a)) return "loopback";
+  return "remote";
+}
+
+/** Is the server BIND hostname loopback-only (the dev default, where implicit loopback trust is
+ *  safe)? `undefined` → true, matching the server's own `?? "127.0.0.1"` default. A wildcard /
+ *  LAN / tailnet bind (`0.0.0.0`, `::`, an IP, a hostname) is exposed → false. */
+export function isLoopbackBind(hostname: string | undefined): boolean {
+  if (hostname == null || hostname === "") return true;
+  const h = normalizeAddr(hostname);
+  return h === "localhost" || h === "::1" || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(h);
+}
+
+/** Coarse, non-PII origin class recorded on a pending device for the operator's `mesh device list`. */
+export function remoteHintFor(remoteClass: RemoteClass, bindExposed: boolean): string {
+  if (remoteClass === "remote") return "remote";
+  return bindExposed ? "exposed-loopback" : "loopback";
+}
+
+export interface AuthGateOptions {
+  /** Auth store root; undefined disables the token path (loopback-only gate). */
+  root: string | undefined;
+  /** Bearer/query token presented by the caller, if any. */
+  token: string | undefined;
+  /** SOCKET-derived remote address (Bun `server.requestIP(req).address`); NEVER a header value. */
+  remoteAddress: string | undefined;
+  /** The server's bind hostname. */
+  bindHostname: string | undefined;
+  /** Escape hatch: trust loopback even on an exposed bind. Default false. */
+  trustLoopbackWhenExposed?: boolean;
+}
+
+export interface AuthGateResult {
+  ok: boolean;
+  via: "token" | "loopback" | "denied";
+  remoteClass: RemoteClass;
+  bindExposed: boolean;
+}
+
+/** The authoritative gate for non-device `/api/*` and `/ws`. Approved device token wins regardless
+ *  of origin; otherwise implicit loopback trust is granted ONLY when the remote is loopback AND the
+ *  bind is loopback-only (or the explicit exposed-loopback override is on). Everything else is denied.
+ *  Pure (apart from reading the device store) and header-free, so a spoofed `X-Forwarded-*` can never
+ *  change the decision — the caller passes a socket-derived address. */
+export async function authorizeRequest(o: AuthGateOptions, now: number = Date.now()): Promise<AuthGateResult> {
+  const remoteClass = classifyRemoteAddress(o.remoteAddress);
+  const bindExposed = !isLoopbackBind(o.bindHostname);
+
+  if (o.root && o.token) {
+    const file = await readDevices(o.root, now);
+    if (findApprovedDeviceId(file, o.token)) return { ok: true, via: "token", remoteClass, bindExposed };
+  }
+  if (remoteClass === "loopback" && (!bindExposed || o.trustLoopbackWhenExposed === true)) {
+    return { ok: true, via: "loopback", remoteClass, bindExposed };
+  }
+  return { ok: false, via: "denied", remoteClass, bindExposed };
+}
+
+/** True for the pre-auth device-auth endpoints, which must bypass the gate (they authenticate the
+ *  device itself). Everything else under `/api/*` is gated. */
+export function isPreAuthApiPath(pathname: string): boolean {
+  return /^\/api\/auth\/device\/(start|status|verify|bootstrap)\/?$/.test(pathname);
+}
+
+/** A single-line, SECRET-FREE summary of a gate decision for the server log (no token, code, or
+ *  Authorization). The raw remote IP is included (it's the operator's own infra) so the funnel
+ *  topology can be validated — design §6 Open Q 6A. */
+export function gateLogLine(
+  route: string,
+  r: AuthGateResult,
+  remoteAddress: string | undefined,
+  bindHostname: string | undefined,
+): string {
+  const bind = `${bindHostname ?? "127.0.0.1"}(${r.bindExposed ? "exposed" : "loopback"})`;
+  return `[auth] ${r.ok ? "allow" : "DENY"} ${route} via=${r.via} remote=${remoteAddress ?? "?"}(${r.remoteClass}) bind=${bind}`;
+}
+
 // Crockford-ish base32 without ambiguous glyphs (no I/L/O/U, no 0/1) — a short code a human reads
 // aloud / types from another screen. This is a DISPLAY code, not a secret (the secret is the token).
 const CODE_ALPHABET = "ABCDEFGHJKMNPQRSTVWXYZ23456789";

@@ -6,6 +6,13 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { handleApi, type ApiRequestContext } from "./api";
+import {
+  authorizeRequest,
+  classifyRemoteAddress,
+  isLoopbackBind,
+  isPreAuthApiPath,
+  remoteHintFor,
+} from "./auth";
 import { readDevices, updateDevices, type DevicesFile } from "../auth-store";
 import { generateToken, hashToken } from "../auth-codes";
 
@@ -207,4 +214,73 @@ test("device endpoints fail closed when no auth root is configured", async () =>
     const r = await handleApi(gw, "POST", path, {}, new URLSearchParams(), undefined, undefined, undefined, {});
     expect(r.status).toBe(500);
   }
+});
+
+// ── request gate (commit 2) ──────────────────────────────────────────────────
+
+test("classifyRemoteAddress recognizes loopback (incl. 127.0.0.0/8, ::1, ipv4-mapped, zone id)", () => {
+  for (const a of ["127.0.0.1", "127.5.6.7", "::1", "::ffff:127.0.0.1", "[::1]", "::1%lo0", " 127.0.0.1 "])
+    expect(classifyRemoteAddress(a)).toBe("loopback");
+  for (const a of ["10.0.0.4", "203.0.113.9", "192.168.1.5", "::ffff:8.8.8.8", "fe80::1", "100.115.92.3"])
+    expect(classifyRemoteAddress(a)).toBe("remote");
+  expect(classifyRemoteAddress(undefined)).toBe("remote"); // unknown → fail safe
+  expect(classifyRemoteAddress("")).toBe("remote");
+});
+
+test("isLoopbackBind: loopback-only hostnames vs exposed binds", () => {
+  for (const h of [undefined, "", "127.0.0.1", "::1", "localhost", "127.0.0.5"]) expect(isLoopbackBind(h)).toBe(true);
+  for (const h of ["0.0.0.0", "::", "192.168.1.10", "100.115.92.3", "example.tailnet.ts.net"]) expect(isLoopbackBind(h)).toBe(false);
+});
+
+test("authorizeRequest: loopback-only bind grants implicit loopback trust without a token", async () => {
+  const r = await authorizeRequest({ root: undefined, token: undefined, remoteAddress: "127.0.0.1", bindHostname: "127.0.0.1" });
+  expect(r).toMatchObject({ ok: true, via: "loopback", remoteClass: "loopback", bindExposed: false });
+});
+
+test("authorizeRequest: exposed bind does NOT trust loopback by default; override flips it", async () => {
+  const base = { root: undefined, token: undefined, remoteAddress: "127.0.0.1", bindHostname: "0.0.0.0" } as const;
+  const denied = await authorizeRequest(base);
+  expect(denied).toMatchObject({ ok: false, via: "denied", remoteClass: "loopback", bindExposed: true });
+  const overridden = await authorizeRequest({ ...base, trustLoopbackWhenExposed: true });
+  expect(overridden).toMatchObject({ ok: true, via: "loopback", bindExposed: true });
+});
+
+test("authorizeRequest: a non-loopback remote is denied without a token, even on a loopback bind", async () => {
+  const r = await authorizeRequest({ root: undefined, token: undefined, remoteAddress: "203.0.113.9", bindHostname: "127.0.0.1" });
+  expect(r).toMatchObject({ ok: false, via: "denied", remoteClass: "remote" });
+});
+
+test("authorizeRequest: an approved device token passes from a non-loopback remote on an exposed bind", async () => {
+  await withRoot(async (root) => {
+    const issued = (await start(root)).body;
+    await updateDevices(root, (f: DevicesFile) => {
+      const pend = f.pending[issued.code];
+      delete f.pending[issued.code];
+      f.devices[pend.deviceId] = { status: "approved", tokenHash: pend.tokenHash, createdAt: pend.createdAt, approvedAt: new Date().toISOString() };
+    });
+    const okTok = await authorizeRequest({ root, token: issued.token, remoteAddress: "203.0.113.9", bindHostname: "0.0.0.0" });
+    expect(okTok).toMatchObject({ ok: true, via: "token" });
+    // a revoked/unknown token from the same remote stays denied
+    const denied = await authorizeRequest({ root, token: "bogus", remoteAddress: "203.0.113.9", bindHostname: "0.0.0.0" });
+    expect(denied.ok).toBe(false);
+  });
+});
+
+test("authorizeRequest decision is header-free: remoteAddress is the only origin signal", () => {
+  // The signature takes a socket-derived address; there is no header parameter, so a spoofed
+  // X-Forwarded-* cannot reach the decision. This documents that invariant.
+  expect(Object.keys({ root: 0, token: 0, remoteAddress: 0, bindHostname: 0, trustLoopbackWhenExposed: 0 })).not.toContain("headers");
+});
+
+test("isPreAuthApiPath matches only the device-auth endpoints", () => {
+  for (const p of ["/api/auth/device/start", "/api/auth/device/status", "/api/auth/device/verify", "/api/auth/device/bootstrap"])
+    expect(isPreAuthApiPath(p)).toBe(true);
+  for (const p of ["/api/state", "/api/auth/device", "/api/auth/device/start/x", "/api/meshes", "/ws", "/api/auth/devices"])
+    expect(isPreAuthApiPath(p)).toBe(false);
+});
+
+test("remoteHintFor gives a coarse, non-PII origin class", () => {
+  expect(remoteHintFor("loopback", false)).toBe("loopback");
+  expect(remoteHintFor("loopback", true)).toBe("exposed-loopback");
+  expect(remoteHintFor("remote", false)).toBe("remote");
 });

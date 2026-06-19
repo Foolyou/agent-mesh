@@ -13,7 +13,17 @@ import { clearHarnessModelsCache, probeHarnessModels } from "../harness-models";
 import { HARNESSES } from "../harness";
 import { getHarnessInstallJob, HarnessInstallError, startHarnessInstall, type InstallEvent } from "../harness-install";
 import type { RespawnMode } from "../control-plane";
-import { bearerToken, coarseUserAgentClass, deviceBootstrap, deviceStart, deviceStatus, deviceVerify } from "./auth";
+import {
+  bearerToken,
+  classifyRemoteAddress,
+  coarseUserAgentClass,
+  deviceBootstrap,
+  deviceStart,
+  deviceStatus,
+  deviceVerify,
+  isLoopbackBind,
+  remoteHintFor,
+} from "./auth";
 
 export interface ApiResult {
   status: number;
@@ -27,6 +37,10 @@ export interface ApiRequestContext {
   expectedOrigin?: string;
   /** Resolved mesh root; the device-auth store lives under `<root>/auth/`. */
   root?: string;
+  /** SOCKET-derived remote address (Bun `server.requestIP`); only a coarse origin class is recorded. */
+  remoteAddress?: string;
+  /** The server's bind hostname, for the coarse origin class. */
+  bindHostname?: string;
   clearProbeCache?: (id?: AgentConfig["harness"]) => void;
   clearModelsCache?: (id?: AgentConfig["harness"]) => void;
 }
@@ -62,9 +76,11 @@ export async function handleApi(
       if (!ctx.root) return fail(500, "auth store not configured");
       const headers = ctx.headers;
       if (method === "POST" && p[2] === "start") {
+        const remoteHint = remoteHintFor(classifyRemoteAddress(ctx.remoteAddress), !isLoopbackBind(ctx.bindHostname));
         return ok(await deviceStart(ctx.root, {
           existingToken: bearerToken(headers),
           userAgentClass: coarseUserAgentClass(headers),
+          remoteHint,
         }));
       }
       if (method === "GET" && p[2] === "status") {

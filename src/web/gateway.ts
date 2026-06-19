@@ -160,6 +160,12 @@ export class WebGateway {
     return this.opts.channels?.feishu;
   }
 
+  /** The resolved mesh root, under which the device-auth store lives (`<root>/auth/`). Narrow,
+   *  read-only — the server layer needs it to evaluate the device-token gate. */
+  authRoot(): string | undefined {
+    return this.opts.root;
+  }
+
   dispose(): void {
     this.unsubMgr?.();
     this.unsubAssistant?.();

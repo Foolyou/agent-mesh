@@ -3,11 +3,15 @@
 // `mesh web`) serves the SPA and reverse-proxies here. This is the stateful engine:
 // it owns the WebGateway, which owns MeshManager + the mesh-host subprocesses.
 import { handleApi } from "./api";
+import { authorizeRequest, bearerToken, gateLogLine, isPreAuthApiPath } from "./auth";
 import type { WebGateway } from "./gateway";
 
 export interface ApiServerOptions {
   port?: number;
   hostname?: string;
+  /** Escape hatch (design §6 rule 5): trust loopback even on an exposed bind. Defaults to the
+   *  `MESH_TRUST_LOOPBACK_WHEN_EXPOSED=1` env var (off); an explicit option wins for tests. */
+  trustLoopbackWhenExposed?: boolean;
 }
 export interface ServerHandle {
   port: number;
@@ -22,20 +26,44 @@ interface WsData {
 export function startApiServer(gw: WebGateway, opts: ApiServerOptions = {}): ServerHandle {
   // Default to loopback so the REST API + WS fan-out are never exposed on all interfaces.
   const hostname = opts.hostname ?? "127.0.0.1";
+  const authRoot = gw.authRoot();
+  const trustLoopbackWhenExposed = opts.trustLoopbackWhenExposed ?? process.env.MESH_TRUST_LOOPBACK_WHEN_EXPOSED === "1";
+  // Log every deny + the first allow per (remote, via, route); never logs a token (design §6).
+  const loggedGate = new Set<string>();
+  async function gate(req: Request, srv: Bun.Server<WsData>, url: URL, route: "api" | "ws"): Promise<boolean> {
+    const remoteAddress = srv.requestIP(req)?.address; // socket-derived; never a header
+    // `/api/*` ONLY via Authorization: Bearer (URLs leak); `/ws` via `?token=` (+ Bearer if present).
+    const token = route === "ws"
+      ? url.searchParams.get("token") ?? bearerToken(req.headers) ?? undefined
+      : bearerToken(req.headers) ?? undefined;
+    const result = await authorizeRequest({ root: authRoot, token, remoteAddress, bindHostname: hostname, trustLoopbackWhenExposed });
+    const key = `${remoteAddress}|${result.via}|${route}`;
+    if (!result.ok || !loggedGate.has(key)) {
+      if (loggedGate.size < 1000) loggedGate.add(key);
+      console.log(gateLogLine(route, result, remoteAddress, hostname));
+    }
+    return result.ok;
+  }
   const server = Bun.serve<WsData>({
     port: opts.port ?? 7300,
     hostname,
     async fetch(req, srv) {
       const url = new URL(req.url);
       if (url.pathname === "/ws") {
+        if (!(await gate(req, srv, url, "ws"))) return new Response("unauthorized", { status: 401 });
         if (srv.upgrade(req, { data: {} })) return undefined;
         return new Response("ws upgrade failed", { status: 400 });
       }
       if (url.pathname.startsWith("/api/")) {
+        // Device-auth endpoints are pre-auth; everything else is gated by socket address + bind.
+        if (!isPreAuthApiPath(url.pathname) && !(await gate(req, srv, url, "api"))) {
+          return Response.json({ error: { message: "unauthorized" } }, { status: 401 });
+        }
+        const remoteAddress = srv.requestIP(req)?.address;
         const hasBody = req.method !== "GET" && req.method !== "HEAD";
         const body = hasBody ? await requestBody(req) : undefined;
         const expectedOrigin = `http://${req.headers.get("host") ?? url.host}`;
-        const r = await handleApi(gw, req.method, url.pathname, body, url.searchParams, undefined, undefined, undefined, { headers: req.headers, expectedOrigin });
+        const r = await handleApi(gw, req.method, url.pathname, body, url.searchParams, undefined, undefined, undefined, { headers: req.headers, expectedOrigin, root: authRoot, remoteAddress, bindHostname: hostname });
         if (r.body instanceof Response) return r.body;
         return Response.json(r.body, { status: r.status });
       }
