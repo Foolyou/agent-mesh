@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { AuthorContext } from "./AuthorContext";
 import { Markdown } from "./Markdown";
 import { useI18n } from "./i18n";
+import { authHeaders } from "./device-auth";
 
 type LoadState =
   | { kind: "loading" }
@@ -44,7 +45,7 @@ export function FileViewer({ route }: { route: FileRoute }) {
         : `/api/agents/${encodeURIComponent(route.agentName)}/files/${route.path}`;
     void (async () => {
       try {
-        const resp = await fetch(url);
+        const resp = await fetch(url, { headers: authHeaders() });
         if (!resp.ok) {
           if (alive) setState({ kind: "error", status: resp.status, message: statusText(resp.status) });
           return;

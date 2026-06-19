@@ -3,10 +3,11 @@ import { createRoot } from "react-dom/client";
 import "./theme.css";
 import { initTheme } from "./themes";
 import { installVisualViewportHeightVar } from "./viewport";
-import { App } from "./App";
+import { Boot } from "./Boot";
 
 initTheme(); // apply the persisted theme before first paint (no flash)
 installVisualViewportHeightVar({ window, target: document.documentElement });
 
 const root = document.getElementById("root");
-if (root) createRoot(root).render(<App />);
+// Boot gates on device authorization before mounting the console (and opening the WS).
+if (root) createRoot(root).render(<Boot />);

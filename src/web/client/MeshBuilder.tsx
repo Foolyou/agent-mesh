@@ -2,6 +2,7 @@
 // src/mesh-validate.ts; the server re-validates and any error is shown inline.
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
 import type { Store } from "./store";
+import { authHeaders } from "./device-auth";
 import type { HarnessId, AgentRole, MeshConfig, ThinkingEffort } from "../types";
 import { isEffortSupportedByHarness, supportedEffortsForConfig } from "../../harness-utils";
 import { DEFAULT_AUTO_COMPACT_SETTINGS, parseCompactThreshold } from "../../auto-compact";
@@ -251,7 +252,7 @@ export function MeshBuilder({
     setAgents((as) => as.map((a, j) => (j === i ? { ...a, ...patch } : a)));
   const refreshHarnesses = useCallback(async () => {
     try {
-      const res = await fetch("/api/harnesses");
+      const res = await fetch("/api/harnesses", { headers: authHeaders() });
       const rows = (await res.json()) as HarnessProbeRow[];
       if (!res.ok || !Array.isArray(rows)) throw new Error("bad harness probe response");
       setHarnessInstalled(Object.fromEntries(rows.map((r) => [r.id, r.installed])) as Partial<Record<HarnessId, boolean>>);
@@ -263,7 +264,7 @@ export function MeshBuilder({
   const refreshModels = useCallback(async (harness: HarnessId, refresh = false) => {
     setModelProbes((current) => ({ ...current, [harness]: { status: "loading", models: current[harness]?.models ?? [] } }));
     try {
-      const res = await fetch(`/api/harnesses/${encodeURIComponent(harness)}/models${refresh ? "?refresh=1" : ""}`);
+      const res = await fetch(`/api/harnesses/${encodeURIComponent(harness)}/models${refresh ? "?refresh=1" : ""}`, { headers: authHeaders() });
       const body = await res.json().catch(() => ({}));
       if (!res.ok || !Array.isArray(body?.models)) throw new Error(body?.error?.message ?? "bad model probe response");
       setModelProbes((current) => ({ ...current, [harness]: { status: "ready", models: body.models } }));
