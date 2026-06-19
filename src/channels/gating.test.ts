@@ -1,5 +1,6 @@
 import { test, expect } from "bun:test";
-import { senderAllowed, passesAtGate, stripBotMention } from "./gating";
+import { applyAllowSeed, feishuChannelKey, senderAllowed, senderAuthorized, passesAtGate, stripBotMention } from "./gating";
+import { emptyFeishuAuth, feishuAllowKey, type FeishuAuthFile } from "../auth-store";
 import type { FeishuChannelConfig, InboundMsg } from "./types";
 
 function cfg(over: Partial<FeishuChannelConfig> = {}): FeishuChannelConfig {
@@ -29,6 +30,52 @@ test("senderAllowed only passes whitelisted open_ids", () => {
   expect(senderAllowed(cfg(), "ou_me")).toBe(true);
   expect(senderAllowed(cfg(), "ou_stranger")).toBe(false);
   expect(senderAllowed(cfg({ allowSenders: [] }), "ou_me")).toBe(false); // empty => nothing passes
+});
+
+// ── dynamic auth gate (design §1.4 / §5.2) ───────────────────────────────────
+
+test("feishuChannelKey is 'feishu:' + appId", () => {
+  expect(feishuChannelKey("cli_abc")).toBe("feishu:cli_abc");
+});
+
+function approvedSnapshot(channelKey: string, openId: string): FeishuAuthFile {
+  const f = emptyFeishuAuth();
+  f.allow[feishuAllowKey(channelKey, openId)] = { channelKey, openId, status: "approved", approvedAt: "2026-06-20T00:00:00.000Z" };
+  return f;
+}
+
+test("senderAuthorized fails closed without a snapshot", () => {
+  expect(senderAuthorized(undefined, "feishu:cli_1", "ou_me")).toBe(false);
+  expect(senderAuthorized(emptyFeishuAuth(), "feishu:cli_1", "ou_me")).toBe(false); // empty registry => deny
+});
+
+test("senderAuthorized passes only an approved (channelKey, openId)", () => {
+  const snap = approvedSnapshot("feishu:cli_1", "ou_me");
+  expect(senderAuthorized(snap, "feishu:cli_1", "ou_me")).toBe(true);
+  expect(senderAuthorized(snap, "feishu:cli_1", "ou_other")).toBe(false); // same channel, different open id
+  expect(senderAuthorized(snap, "feishu:cli_2", "ou_me")).toBe(false); // same open id, different app/channel
+});
+
+test("senderAuthorized denies a revoked entry", () => {
+  const snap = approvedSnapshot("feishu:cli_1", "ou_me");
+  snap.allow[feishuAllowKey("feishu:cli_1", "ou_me")].status = "revoked";
+  expect(senderAuthorized(snap, "feishu:cli_1", "ou_me")).toBe(false);
+});
+
+test("applyAllowSeed adds absent entries as approved and is idempotent", () => {
+  const f = emptyFeishuAuth();
+  expect(applyAllowSeed(f, "feishu:cli_1", ["ou_a", "ou_b", ""], "2026-06-20T00:00:00.000Z")).toBe(true);
+  expect(Object.keys(f.allow)).toHaveLength(2); // blank open id skipped
+  expect(f.allow[feishuAllowKey("feishu:cli_1", "ou_a")].status).toBe("approved");
+  // second pass adds nothing
+  expect(applyAllowSeed(f, "feishu:cli_1", ["ou_a", "ou_b"], "2026-06-20T01:00:00.000Z")).toBe(false);
+});
+
+test("applyAllowSeed never overrides an existing entry (preserves a CLI revoke)", () => {
+  const f = approvedSnapshot("feishu:cli_1", "ou_me");
+  f.allow[feishuAllowKey("feishu:cli_1", "ou_me")].status = "revoked";
+  expect(applyAllowSeed(f, "feishu:cli_1", ["ou_me"], "2026-06-20T02:00:00.000Z")).toBe(false); // not re-approved
+  expect(f.allow[feishuAllowKey("feishu:cli_1", "ou_me")].status).toBe("revoked");
 });
 
 test("passesAtGate always passes p2p", () => {

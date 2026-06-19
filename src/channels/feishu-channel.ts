@@ -16,9 +16,13 @@
 import type { MeshEvent, PromptImageRef } from "../acp/types";
 import type { Channel, FeishuChannelConfig, FeishuMeshBinding, InboundImageDownloader, InboundMsg, MeshGateway } from "./types";
 import { BoundedDedup } from "./dedup";
-import { passesAtGate, senderAllowed, stripBotMention } from "./gating";
+import { applyAllowSeed, feishuChannelKey, passesAtGate, senderAuthorized, stripBotMention } from "./gating";
 import { storeUploads, type UploadFileLike } from "../web/uploads";
-import { randomUUID } from "node:crypto";
+import { emptyFeishuAuth, feishuAuthPath, readFeishuAuth, updateFeishuAuth, type FeishuAuthFile } from "../auth-store";
+import { ensureKeys, encryptAuthCode, type KeysFile } from "../auth-codes";
+import { randomUUID, randomBytes } from "node:crypto";
+import { watch } from "node:fs";
+import { dirname } from "node:path";
 
 /** Reuse the web upload store for inbound image provisioning (落盘 + refs the agent can read). */
 type StoreImages = (root: string, bucket: string, files: UploadFileLike[]) => Promise<PromptImageRef[]>;
@@ -55,6 +59,22 @@ export interface InboundSource {
   stop(): Promise<void> | void;
 }
 
+/** Narrow seam over the auth registry (`<root>/auth/feishu.json`) + code crypto. Defaults to the
+ *  frozen auth-store / auth-codes against `root`; injected for tests. Present only when a `root`
+ *  (or an explicit store) is configured — without it the channel runs the legacy in-memory gate. */
+export interface FeishuAuthStore {
+  /** Load the current registry snapshot (sanitized; never throws — empty on corrupt/missing). */
+  read(): Promise<FeishuAuthFile>;
+  /** Concurrency-safe read-modify-write of the registry. */
+  update(mutator: (file: FeishuAuthFile) => void): Promise<FeishuAuthFile>;
+  /** Ensure an active auth-code encryption key exists. */
+  ensureKeys(): Promise<KeysFile>;
+  /** Encrypt an authorization-code envelope for (channelKey, openId, appId). */
+  encrypt(keys: KeysFile, input: { channelKey: string; openId: string; appId: string; ttlSeconds: number }): string;
+  /** Watch the registry file for changes; `onChange` fires on each change. Returns an unsubscribe. */
+  watch(onChange: () => void): () => void;
+}
+
 export interface FeishuChannelOptions {
   mesh: MeshGateway;
   config: FeishuChannelConfig;
@@ -74,6 +94,15 @@ export interface FeishuChannelOptions {
   downloadImage?: InboundImageDownloader;
   /** Provision downloaded images into agent-readable refs. Defaults to the web {@link storeUploads}. */
   storeImages?: StoreImages;
+  /** Dynamic auth registry seam. Defaults to the real auth-store/auth-codes against `root`. Injected
+   *  for tests. Absent + no `root` => legacy in-memory allowSenders gate (silent deny, no auth code). */
+  authStore?: FeishuAuthStore;
+  /** Pending authorization-code (envelope) lifetime in seconds. Default 1 day. */
+  authCodeTtlSeconds?: number;
+  /** Short opaque auth-code id generator (collision-checked at write). Default: random base32. */
+  shortAuthId?: () => string;
+  /** Injectable clock (epoch ms) for pending timestamps in tests; defaults to Date.now. */
+  now?: () => number;
 }
 
 interface BindingRuntime {
@@ -123,6 +152,22 @@ export class FeishuChannel implements Channel {
   private readonly byChat = new Map<string, BindingRuntime>();
   private readonly byMesh = new Map<string, BindingRuntime>();
 
+  // ── dynamic auth gate (Phase 3) ──
+  /** Registry channel key for this bot: feishu:<appId>. The auth unit is (channelKey, openId). */
+  private readonly channelKey: string;
+  /** open_ids to seed as approved from config allowSenders (top-level + per-binding). */
+  private readonly seedOpenIds: string[];
+  /** Auth registry seam; present iff a root/store is configured (production always has root). */
+  private readonly authStore?: FeishuAuthStore;
+  private readonly authCodeTtlSeconds: number;
+  private readonly shortAuthId: () => string;
+  private readonly nowFn: () => number;
+  /** Current in-memory registry snapshot — the gate's ONLY source (never read a file in onInbound).
+   *  Seeded from config allowSenders at construction; replaced by the persisted store after load. */
+  private authSnapshot?: FeishuAuthFile;
+  private authUnwatch?: () => void;
+  private cancelAuthReload?: () => void;
+
   private consumer?: InboundSource;
   private unsub?: () => void;
   private started = false;
@@ -141,6 +186,26 @@ export class FeishuChannel implements Channel {
     this.root = opts.root;
     this.downloadImage = opts.downloadImage;
     this.storeImages = opts.storeImages ?? storeUploads;
+    // Dynamic auth gate setup. The store seam is the real auth-store/auth-codes against `root` (so
+    // production needs no index.ts change), or an injected fake, or absent (legacy in-memory gate).
+    this.channelKey = feishuChannelKey(opts.config.appId);
+    this.seedOpenIds = collectAllowSenders(opts.config);
+    this.authStore = opts.authStore ?? (opts.root ? realAuthStore(opts.root) : undefined);
+    this.authCodeTtlSeconds = opts.authCodeTtlSeconds ?? 86400; // 1 day
+    this.shortAuthId = opts.shortAuthId ?? defaultShortAuthId;
+    this.nowFn = opts.now ?? (() => Date.now());
+    // Gate snapshot. With a store (production root / injected): start UNDEFINED so the gate fails
+    // closed until initAuth() loads the AUTHORITATIVE persisted registry — the allowSenders seed must
+    // never act as a live gate (a CLI-revoked open_id still in allowSenders would otherwise slip
+    // through the init window). Without a store (legacy/no-root): seed the in-memory snapshot so
+    // allowSenders still gates synchronously.
+    if (this.authStore) {
+      this.authSnapshot = undefined;
+    } else {
+      const seed = emptyFeishuAuth();
+      applyAllowSeed(seed, this.channelKey, this.seedOpenIds, new Date(this.nowFn()).toISOString());
+      this.authSnapshot = seed;
+    }
     const bindings = normalizedBindings(opts.config);
     for (const binding of bindings) {
       const sender = opts.senders?.get(binding.chatId) ?? (binding.chatId === opts.config.chatId ? opts.sender : undefined);
@@ -168,16 +233,83 @@ export class FeishuChannel implements Channel {
       }
     }
     this.unsub = this.mesh.on((name, e) => this.onMeshEvent(name, e));
+    // With a store, DEFER inbound until the authoritative snapshot is loaded: the init window must not
+    // (a) let a revoked-but-seeded sender through (snapshot is undefined => deny), nor (b) auth-code a
+    // seed user who is about to be authorized. Without a store, start inbound immediately on the seed.
+    if (this.authStore) void this.initAuthThenConsume();
+    else this.startConsumer();
+    this.log(`feishu channel: started with ${this.runtimes.length} mesh chat binding(s)`);
+  }
+
+  /** Create + start the inbound consumer. Idempotent; no-op once stopped. */
+  private startConsumer(): void {
+    if (!this.started || this.consumer) return;
     this.consumer = this.makeConsumer((m) => {
       void this.onInbound(m);
     });
     this.consumer.start();
-    this.log(`feishu channel: started with ${this.runtimes.length} mesh chat binding(s)`);
+  }
+
+  /** Persist-seed + load the authoritative auth snapshot, then start inbound — unless stopped meanwhile. */
+  private async initAuthThenConsume(): Promise<void> {
+    await this.initAuth();
+    if (!this.started) return; // stopped during init: never start the consumer
+    this.startConsumer();
+  }
+
+  /** With a store (root configured): persist the allowSenders seed (idempotent, never un-revoke), load
+   *  the authoritative snapshot, and start the registry watcher. Without a store: keep the in-memory
+   *  config seed (legacy). FAIL CLOSED — if persist/load fails, drop the snapshot so the gate denies. */
+  private async initAuth(): Promise<void> {
+    const store = this.authStore;
+    if (!store) return; // legacy: in-memory config seed remains the snapshot
+    try {
+      await store.update((f) => {
+        applyAllowSeed(f, this.channelKey, this.seedOpenIds, new Date(this.nowFn()).toISOString());
+      });
+      this.authSnapshot = await store.read();
+      this.log(`feishu channel: auth registry loaded (approved=${countApproved(this.authSnapshot, this.channelKey)})`);
+    } catch (e) {
+      this.authSnapshot = undefined; // fail closed: deny everyone until a successful (re)load
+      this.log(`feishu channel: auth registry init failed; failing closed error=${errorClass(e)}`);
+    }
+    if (!this.started) return; // stopped mid-init; don't attach a watcher
+    try {
+      this.authUnwatch = store.watch(() => this.scheduleAuthReload());
+    } catch (e) {
+      // A watcher we can't attach (e.g. the auth dir doesn't exist) must not crash startup; the
+      // snapshot just won't live-reload until the next restart. Stay fail-closed if init also failed.
+      this.log(`feishu channel: auth registry watch failed; continuing without live reload error=${errorClass(e)}`);
+    }
+  }
+
+  private scheduleAuthReload(): void {
+    this.cancelAuthReload?.();
+    this.cancelAuthReload = this.setTimer(() => {
+      this.cancelAuthReload = undefined;
+      void this.reloadAuthSnapshot();
+    }, 200);
+  }
+
+  private async reloadAuthSnapshot(): Promise<void> {
+    const store = this.authStore;
+    if (!store) return;
+    try {
+      this.authSnapshot = await store.read();
+      this.log(`feishu channel: auth registry reloaded (approved=${countApproved(this.authSnapshot, this.channelKey)})`);
+    } catch (e) {
+      this.authSnapshot = undefined; // fail closed on reload failure
+      this.log(`feishu channel: auth registry reload failed; failing closed error=${errorClass(e)}`);
+    }
   }
 
   async stop(): Promise<void> {
     if (!this.started) return;
     this.started = false;
+    this.authUnwatch?.(); // close the registry watcher
+    this.authUnwatch = undefined;
+    this.cancelAuthReload?.(); // drop a pending debounced reload
+    this.cancelAuthReload = undefined;
     for (const rt of this.runtimes) {
       rt.cancelDebounce?.();
       rt.cancelDebounce = undefined;
@@ -211,12 +343,16 @@ export class FeishuChannel implements Channel {
       this.log(`feishu channel: inbound dropped duplicate event=${m.eventId}`);
       return;
     }
-    if (!senderAllowed(cfg, m.senderId)) {
-      this.log(`feishu channel: inbound dropped sender event=${m.eventId} sender=${m.senderId}`);
+    // @-gate FIRST so we only consider (and only ever auth-code) messages that actually address the
+    // bot — a non-@ group message stays ignored, never triggering an authorization reply.
+    if (!passesAtGate(m, cfg)) {
+      this.log(`feishu channel: inbound dropped @gate event=${m.eventId} mentionCount=${m.mentions.length}`);
       return;
     }
-    if (!passesAtGate(m, cfg)) {
-      this.log(`feishu channel: inbound dropped @gate event=${m.eventId} mentions=${mentionIds(m) || "-"}`);
+    // Dynamic sender gate: (feishu:<appId>, open_id) must be approved in the registry snapshot. Fail
+    // closed; an unauthorized (but bot-addressed) sender gets a short auth code and is NOT routed.
+    if (!senderAuthorized(this.authSnapshot, this.channelKey, m.senderId)) {
+      await this.denyUnauthorized(rt, m);
       return;
     }
 
@@ -299,6 +435,68 @@ export class FeishuChannel implements Channel {
       return;
     }
     await this.deliverPrompt(rt, m.eventId, "用户发送了一张图片。", refs);
+  }
+
+  /** An unauthorized but bot-addressed sender. With a store: mint a short opaque auth code (the full
+   *  encrypted envelope is written to pending[shortId], NEVER sent/logged) and reply with just the
+   *  short id + how the operator approves it. Without a store (legacy/no root): silent low-noise deny. */
+  private async denyUnauthorized(rt: BindingRuntime, m: InboundMsg): Promise<void> {
+    if (!this.authStore) {
+      this.log(`feishu channel: inbound denied (no auth registry) event=${m.eventId}`);
+      return;
+    }
+    try {
+      const shortId = await this.issueAuthCode(m.senderId);
+      rt.sender.enqueue(authCodeReply(shortId));
+      this.log(`feishu channel: inbound unauthorized -> issued auth code event=${m.eventId}`);
+    } catch (e) {
+      // never surface the raw crypto/store error (could embed key material / paths)
+      this.log(`feishu channel: failed to issue auth code event=${m.eventId} error=${errorClass(e)}`);
+      rt.sender.enqueue("授权失败，请稍后再试或联系管理员。");
+    }
+  }
+
+  /** Return a short auth-code id for this sender: REUSE the existing (unexpired) pending id for the
+   *  same (channelKey, openId) if one exists, otherwise mint a fresh encrypted envelope under a
+   *  collision-free short id. The envelope is the source of truth; only the short id is ever shown to
+   *  the user. */
+  private async issueAuthCode(openId: string): Promise<string> {
+    const store = this.authStore!;
+    const keys = await store.ensureKeys();
+    const now = this.nowFn();
+    let shortId = "";
+    await store.update((f) => {
+      // Reuse an existing pending id for this identity if one is present. The file is GC'd on read, so
+      // any entry here is unexpired — reusing keeps a just-sent short id valid across repeated
+      // messages (no new envelope minted), instead of replacing and invalidating it.
+      for (const [id, p] of Object.entries(f.pending)) {
+        if (p.channelKey === this.channelKey && p.openId === openId) {
+          shortId = id;
+          return;
+        }
+      }
+      // None yet: mint a fresh envelope under a collision-free short id (all inside the lock).
+      shortId = this.freshShortId(f.pending);
+      f.pending[shortId] = {
+        encryptedToken: store.encrypt(keys, { channelKey: this.channelKey, openId, appId: this.cfg.appId, ttlSeconds: this.authCodeTtlSeconds }),
+        channelKey: this.channelKey,
+        openId,
+        appId: this.cfg.appId,
+        firstSeenAt: new Date(now).toISOString(),
+        expiresAt: new Date(now + this.authCodeTtlSeconds * 1000).toISOString(),
+      };
+    });
+    return shortId;
+  }
+
+  /** A short opaque id not already present in `pending`. Retries to avoid a (vanishingly unlikely)
+   *  collision; throws after a bounded number of attempts rather than overwrite another pending. */
+  private freshShortId(pending: Record<string, unknown>): string {
+    for (let i = 0; i < 100; i++) {
+      const id = this.shortAuthId();
+      if (id && !pending[id]) return id;
+    }
+    throw new Error("could not allocate a unique auth code id");
   }
 
   private async handleCommand(rt: BindingRuntime, command: MeshCommand): Promise<void> {
@@ -618,6 +816,70 @@ function normalizedBindings(cfg: FeishuChannelConfig): FeishuMeshBinding[] {
   return [];
 }
 
+/** Union of top-level and per-binding allowSenders — all map to the one channelKey (feishu:<appId>)
+ *  since a bot has a single app credential (design §1.4). Used only to SEED the registry. */
+function collectAllowSenders(cfg: FeishuChannelConfig): string[] {
+  const out = new Set<string>();
+  for (const s of cfg.allowSenders ?? []) if (s) out.add(s);
+  for (const b of cfg.bindings ?? []) for (const s of b.allowSenders ?? []) if (s) out.add(s);
+  return [...out];
+}
+
+/** Count approved entries for a channelKey in a snapshot — for a non-sensitive load log. */
+function countApproved(file: FeishuAuthFile | undefined, channelKey: string): number {
+  if (!file) return 0;
+  return Object.values(file.allow).filter((e) => e.channelKey === channelKey && e.status === "approved").length;
+}
+
+/** The real auth registry seam: frozen auth-store/auth-codes against `root` + an fs.watch on the
+ *  registry file's directory (created by the persist-seed before watch() is called). */
+function realAuthStore(root: string): FeishuAuthStore {
+  return {
+    read: () => readFeishuAuth(root),
+    update: (mutator) => updateFeishuAuth(root, mutator),
+    ensureKeys: () => ensureKeys(root),
+    encrypt: (keys, input) => encryptAuthCode(keys, input),
+    watch: (onChange) => {
+      const path = feishuAuthPath(root);
+      const w = watch(dirname(path), (_event, filename) => {
+        if (filename && String(filename) !== "feishu.json") return;
+        onChange();
+      });
+      return () => w.close();
+    },
+  };
+}
+
+/** A short opaque auth-code id: 40 random bits as 8 unambiguous base32 chars (no I/L/O/U). Opaque to
+ *  the user; the real secret is the encrypted envelope it indexes. */
+function defaultShortAuthId(): string {
+  const alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+  const bytes = randomBytes(5);
+  let bits = 0;
+  let value = 0;
+  let out = "";
+  for (const b of bytes) {
+    value = (value << 8) | b;
+    bits += 8;
+    while (bits >= 5) {
+      out += alphabet[(value >>> (bits - 5)) & 31];
+      bits -= 5;
+    }
+  }
+  return out;
+}
+
+/** The group reply for an unauthorized sender: the short id + how the operator approves it. Carries NO
+ *  open_id / app_id / encrypted envelope. */
+function authCodeReply(shortId: string): string {
+  return [
+    "你尚未获授权使用本群的 mesh。",
+    "请把下面的授权码发给管理员，由其在宿主机控制台批准：",
+    `  ${shortId}`,
+    "（管理员执行：mesh feishu approve <授权码>）",
+  ].join("\n");
+}
+
 /** Extract plain text from an ACP content block (string, {text}, arrays, or nested content). */
 function textOf(content: unknown): string {
   if (content == null) return "";
@@ -697,11 +959,10 @@ function errorClass(e: unknown): string {
 }
 
 function inboundMeta(m: InboundMsg): string {
-  return `event=${m.eventId} chatType=${m.chatType} sender=${m.senderId} type=${m.messageType} mentions=${mentionIds(m) || "-"} textChars=${m.text.length}`;
-}
-
-function mentionIds(m: InboundMsg): string {
-  return m.mentions.map((x) => x.id || x.name || x.key).filter(Boolean).join(",");
+  // Logged BEFORE the auth gate, so it must carry NO identity that names a not-yet-authorized person:
+  // no sender open_id, and only a COUNT of mentions (raw mention ids/names can be open_id / user
+  // identity values). Routing identifiers only.
+  return `event=${m.eventId} chatType=${m.chatType} type=${m.messageType} mentionCount=${m.mentions.length} textChars=${m.text.length}`;
 }
 
 type MeshCommandKind = "help" | "status" | "start" | "stop" | "restart" | "new-session";

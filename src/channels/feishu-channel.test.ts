@@ -1,7 +1,44 @@
 import { test, expect } from "bun:test";
-import { FeishuChannel } from "./feishu-channel";
+import { FeishuChannel, type FeishuAuthStore } from "./feishu-channel";
 import type { MeshGateway, FeishuChannelConfig, InboundMsg, InboundImageDownloader } from "./types";
 import type { MeshEvent, PromptImageRef } from "../acp/types";
+import { emptyFeishuAuth, feishuAllowKey, isFeishuAllowed, type FeishuAuthFile } from "../auth-store";
+import type { KeysFile } from "../auth-codes";
+
+/** An in-memory FeishuAuthStore for tests: real-ish read/update/ensureKeys/encrypt/watch with no fs.
+ *  `fire()` simulates a registry-file change so the channel's watcher reload path can be exercised. */
+function memAuthStore(opts: { failRead?: boolean } = {}) {
+  let file: FeishuAuthFile = emptyFeishuAuth();
+  let watcher: (() => void) | undefined;
+  const keys: KeysFile = { version: 1, active: "k1", keys: { k1: { secret: Buffer.alloc(32, 1).toString("base64"), createdAt: "t" } } };
+  const store: FeishuAuthStore = {
+    read: async () => {
+      if (opts.failRead) throw new Error("read boom");
+      return JSON.parse(JSON.stringify(file)) as FeishuAuthFile; // fresh copy, like a real load
+    },
+    update: async (mut) => {
+      mut(file);
+      return file;
+    },
+    ensureKeys: async () => keys,
+    encrypt: (_keys, input) => `ENVELOPE(${input.channelKey}|${input.openId}|${input.appId})`,
+    watch: (onChange) => {
+      watcher = onChange;
+      return () => {
+        watcher = undefined;
+      };
+    },
+  };
+  return {
+    store,
+    current: () => file,
+    set: (f: FeishuAuthFile) => {
+      file = f;
+    },
+    fire: () => watcher?.(),
+    hasWatcher: () => !!watcher,
+  };
+}
 
 function cfg(over: Partial<FeishuChannelConfig> = {}): FeishuChannelConfig {
   return {
@@ -828,7 +865,7 @@ function imageMsg(over: Partial<InboundMsg> = {}): InboundMsg {
   return inbound({ messageType: "image", messageId: "om_img", imageKey: "img_secret_KEY", text: "", ...over });
 }
 
-function setupImage(opts: { download?: InboundImageDownloader; root?: string } = {}) {
+async function setupImage(opts: { download?: InboundImageDownloader; root?: string } = {}) {
   const mesh = new FakeMesh();
   const { sink, sent } = fakeSender();
   const logs: string[] = [];
@@ -848,15 +885,17 @@ function setupImage(opts: { download?: InboundImageDownloader; root?: string } =
     log: (m) => logs.push(m),
     setTimer: manualTimers().setTimer,
     root: opts.root ?? "/data/root",
+    authStore: memAuthStore().store, // in-memory: avoids real fs at the dummy root; seed approves ou_me
     downloadImage: download,
     storeImages,
   });
   ch.start();
+  await flushAsync(); // let initAuth load the snapshot + start the (deferred) consumer
   return { ch, mesh, sent, logs, push: (m: InboundMsg) => pushInbound(m), downloadCalls, storeCalls };
 }
 
 test("inbound image: downloads, provisions refs (bucket=mesh), prompts router with images", async () => {
-  const s = setupImage();
+  const s = await setupImage();
   s.push(imageMsg());
   await settle();
   expect(s.downloadCalls).toEqual([{ messageId: "om_img", imageKey: "img_secret_KEY" }]);
@@ -870,7 +909,7 @@ test("inbound image: downloads, provisions refs (bucket=mesh), prompts router wi
 
 test("inbound image: download failure sends a notice, does not prompt, and never leaks image_key", async () => {
   // The SDK error MESSAGE itself embeds the resource key — neither logs nor the group notice may echo it.
-  const s = setupImage({ download: async () => { throw new Error("GET /im/v1/messages/om/resources/img_secret_KEY failed 404"); } });
+  const s = await setupImage({ download: async () => { throw new Error("GET /im/v1/messages/om/resources/img_secret_KEY failed 404"); } });
   s.push(imageMsg({ imageKey: "img_secret_KEY" }));
   await settle();
   expect(s.mesh.prompts).toHaveLength(0);
@@ -880,7 +919,7 @@ test("inbound image: download failure sends a notice, does not prompt, and never
 });
 
 test("inbound image: missing message_id sends a notice and does not download or prompt", async () => {
-  const s = setupImage();
+  const s = await setupImage();
   s.push(imageMsg({ messageId: "" }));
   await settle();
   expect(s.downloadCalls).toHaveLength(0);
@@ -889,7 +928,7 @@ test("inbound image: missing message_id sends a notice and does not download or 
 });
 
 test("inbound image: missing image_key sends a notice and does not download or prompt", async () => {
-  const s = setupImage();
+  const s = await setupImage();
   s.push(imageMsg({ imageKey: undefined }));
   await settle();
   expect(s.downloadCalls).toHaveLength(0);
@@ -903,4 +942,226 @@ test("inbound image: when image handling is not configured, sends a notice and d
   await settle();
   expect(s.mesh.prompts).toHaveLength(0);
   expect(s.sent.some((x) => x.text.includes("未启用图片处理"))).toBe(true);
+});
+
+// ── dynamic auth gate (Phase 3): registry-backed (channelKey, openId) ─────────
+
+async function setupAuth(over: Partial<FeishuChannelConfig> = {}, store = memAuthStore()) {
+  const mesh = new FakeMesh();
+  const { sink, sent } = fakeSender();
+  const timers = manualTimers();
+  const logs: string[] = [];
+  let pushInbound!: (m: InboundMsg) => void;
+  let n = 0;
+  const ch = new FeishuChannel({
+    mesh,
+    config: cfg(over),
+    sender: sink,
+    makeConsumer: (onMessage) => { pushInbound = onMessage; return { start() {}, stop() {} }; },
+    setTimer: timers.setTimer,
+    idempotencyKey: (b, seq) => `${b.mesh}:${seq}`,
+    authStore: store.store,
+    shortAuthId: () => `SH${n++}`,
+    now: () => 1_700_000_000_000,
+    log: (m) => logs.push(m),
+  });
+  ch.start();
+  await flushAsync(); // let initAuth persist-seed + load the snapshot + attach the watcher
+  return { ch, mesh, sent, logs, auth: store, timers, push: (m: InboundMsg) => pushInbound(m) };
+}
+
+function approve(store: ReturnType<typeof memAuthStore>, openId: string, channelKey = "feishu:cli_1") {
+  return store.store.update((f) => {
+    f.allow[feishuAllowKey(channelKey, openId)] = { channelKey, openId, status: "approved", approvedAt: "t" };
+  });
+}
+
+test("auth gate: a seeded allowSenders open_id is routed (registry-backed, not the legacy gate)", async () => {
+  const s = await setupAuth(); // allowSenders ["ou_me"] persisted as approved at start
+  expect(isFeishuAllowed(s.auth.current(), "feishu:cli_1", "ou_me")).toBe(true); // persisted, not just in-memory
+  s.push(inbound({ text: "hi" }));
+  await flushAsync();
+  expect(s.mesh.prompts).toHaveLength(1);
+});
+
+test("auth gate: an unauthorized (but @-addressed) sender gets a short id auth code and is NOT routed", async () => {
+  const s = await setupAuth();
+  s.push(inbound({ senderId: "ou_stranger", chatType: "group", text: "@MeshBot help" }));
+  await flushAsync();
+  expect(s.mesh.prompts).toHaveLength(0); // never routed
+  expect(s.sent).toHaveLength(1);
+  const ids = Object.keys(s.auth.current().pending);
+  expect(ids).toHaveLength(1);
+  const shortId = ids[0];
+  const reply = s.sent[0].text;
+  expect(reply).toContain(shortId); // shows the short id
+  expect(reply).toContain("mesh feishu approve"); // and how to approve
+  // the encrypted envelope is the pending's source of truth, and must NEVER appear in the reply
+  const pending = s.auth.current().pending[shortId];
+  expect(pending.encryptedToken).toContain("ENVELOPE(feishu:cli_1|ou_stranger|cli_1)");
+  expect(reply).not.toContain("ENVELOPE");
+  expect(reply).not.toContain("ou_stranger"); // no open_id / app_id leak in the reply
+  expect(reply).not.toContain("cli_1");
+});
+
+test("auth gate: the unauthorized deny path never logs the sender open_id / mention ids / app_id / envelope", async () => {
+  const s = await setupAuth();
+  s.push(inbound({
+    senderId: "ou_stranger",
+    chatType: "group",
+    text: "@MeshBot help",
+    mentions: [{ key: "_user_1", id: "ou_secret_mention", name: "SecretName" }],
+  }));
+  await flushAsync();
+  const logtext = s.logs.join("\n");
+  expect(logtext).not.toContain("ou_stranger"); // sender open_id must not appear in any pre/post-gate log
+  expect(logtext).not.toContain("ou_secret_mention"); // raw mention id (can be an open_id) not logged
+  expect(logtext).not.toContain("SecretName"); // mention display name not logged either
+  expect(logtext).not.toContain("ENVELOPE"); // encrypted envelope never logged
+  expect(logtext).not.toContain("cli_1"); // app_id / channelKey not leaked
+});
+
+test("auth gate: an @-gate-dropped message logs only a mention count, never raw mention ids/names", async () => {
+  const s = await setupAuth();
+  // group message that fails the @-gate (no @MeshBot) but carries a mention to someone else
+  s.push(inbound({
+    chatType: "group",
+    text: "hey folks",
+    mentions: [{ key: "_user_1", id: "ou_secret_mention", name: "SecretName" }],
+  }));
+  await flushAsync();
+  expect(s.mesh.prompts).toHaveLength(0);
+  const logtext = s.logs.join("\n");
+  expect(logtext).toContain("dropped @gate");
+  expect(logtext).toContain("mentionCount=1"); // count only
+  expect(logtext).not.toContain("ou_secret_mention");
+  expect(logtext).not.toContain("SecretName");
+});
+
+test("auth gate: repeated unauthorized messages from one sender reuse the SAME short id (don't invalidate it)", async () => {
+  const s = await setupAuth();
+  s.push(inbound({ eventId: "u1", senderId: "ou_stranger", chatType: "group", text: "@MeshBot hi" }));
+  await flushAsync();
+  s.push(inbound({ eventId: "u2", senderId: "ou_stranger", chatType: "group", text: "@MeshBot again" }));
+  await flushAsync();
+  const ids = Object.keys(s.auth.current().pending);
+  expect(ids).toHaveLength(1); // one pending entry for the identity, not replaced
+  expect(s.sent).toHaveLength(2);
+  expect(s.sent[0].text).toContain(ids[0]);
+  expect(s.sent[1].text).toContain(ids[0]); // both replies carry the same still-valid short id
+});
+
+test("auth gate: a non-@ group message from an unauthorized sender is ignored (no auth-code spam)", async () => {
+  const s = await setupAuth();
+  s.push(inbound({ senderId: "ou_stranger", chatType: "group", text: "just chatting" }));
+  await flushAsync();
+  expect(s.mesh.prompts).toHaveLength(0);
+  expect(s.sent).toHaveLength(0); // @gate dropped it before the auth gate — no reply
+  expect(Object.keys(s.auth.current().pending)).toHaveLength(0);
+});
+
+test("auth gate: per (channelKey, openId) — a watcher reload picks up a newly approved sender", async () => {
+  const s = await setupAuth({ allowSenders: [] }); // nothing seeded
+  s.push(inbound({ senderId: "ou_a", text: "hi" }));
+  await flushAsync();
+  expect(s.mesh.prompts).toHaveLength(0); // ou_a not yet approved -> denied
+
+  await approve(s.auth, "ou_a"); // CLI approves out of band
+  s.auth.fire(); // registry file changed
+  s.timers.advance(200); // debounce
+  await flushAsync();
+
+  s.push(inbound({ eventId: "e2", senderId: "ou_a", text: "hi again" }));
+  await flushAsync();
+  expect(s.mesh.prompts).toHaveLength(1); // now routed
+  // a different open id is still denied (granularity)
+  s.push(inbound({ eventId: "e3", senderId: "ou_b", chatType: "group", text: "@MeshBot hi" }));
+  await flushAsync();
+  expect(s.mesh.prompts).toHaveLength(1);
+});
+
+test("auth gate: a revoke (via reload) flips a previously authorized sender back to denied", async () => {
+  const s = await setupAuth(); // ou_me approved
+  s.push(inbound({ text: "hi" }));
+  await flushAsync();
+  expect(s.mesh.prompts).toHaveLength(1);
+
+  await s.auth.store.update((f) => { f.allow[feishuAllowKey("feishu:cli_1", "ou_me")].status = "revoked"; });
+  s.auth.fire();
+  s.timers.advance(200);
+  await flushAsync();
+
+  s.push(inbound({ eventId: "e2", text: "hi again" }));
+  await flushAsync();
+  expect(s.mesh.prompts).toHaveLength(1); // still 1 — the revoked sender is denied
+});
+
+test("auth gate: start-time seed never re-approves a sender the registry already has revoked", async () => {
+  const store = memAuthStore();
+  await store.store.update((f) => {
+    f.allow[feishuAllowKey("feishu:cli_1", "ou_me")] = { channelKey: "feishu:cli_1", openId: "ou_me", status: "revoked", approvedAt: "t" };
+  });
+  const s = await setupAuth({ allowSenders: ["ou_me"] }, store); // config still lists ou_me
+  expect(s.auth.current().allow[feishuAllowKey("feishu:cli_1", "ou_me")].status).toBe("revoked"); // not un-revoked
+  s.push(inbound({ text: "hi" }));
+  await flushAsync();
+  expect(s.mesh.prompts).toHaveLength(0); // revoke wins over the seed
+});
+
+test("auth gate: a registry load failure fails closed — even a seeded sender is denied", async () => {
+  const s = await setupAuth({}, memAuthStore({ failRead: true }));
+  s.push(inbound({ text: "hi" }));
+  await flushAsync();
+  expect(s.mesh.prompts).toHaveLength(0); // fail closed
+  expect(s.logs.join("\n")).toContain("failing closed");
+});
+
+test("auth gate: startup race — inbound is deferred until the authoritative snapshot loads; a revoked seed is never let through the init window", async () => {
+  // Registry already has ou_me REVOKED, but config allowSenders still lists ou_me (a stale migration
+  // source). A load that hasn't resolved must NOT start inbound on the config seed.
+  let file: FeishuAuthFile = emptyFeishuAuth();
+  file.allow[feishuAllowKey("feishu:cli_1", "ou_me")] = { channelKey: "feishu:cli_1", openId: "ou_me", status: "revoked", approvedAt: "t" };
+  let releaseRead!: () => void;
+  const held = new Promise<void>((r) => { releaseRead = r; });
+  const store: FeishuAuthStore = {
+    read: async () => { await held; return JSON.parse(JSON.stringify(file)) as FeishuAuthFile; },
+    update: async (mut) => { mut(file); return file; }, // seed write resolves; applyAllowSeed won't un-revoke
+    ensureKeys: async () => ({ version: 1, active: "k1", keys: { k1: { secret: Buffer.alloc(32, 1).toString("base64"), createdAt: "t" } } }),
+    encrypt: (_k, i) => `ENVELOPE(${i.openId})`,
+    watch: () => () => {},
+  };
+  const mesh = new FakeMesh();
+  const { sink, sent } = fakeSender();
+  let pushInbound: ((m: InboundMsg) => void) | undefined;
+  let consumerStarted = false;
+  const ch = new FeishuChannel({
+    mesh,
+    config: cfg({ allowSenders: ["ou_me"] }),
+    sender: sink,
+    makeConsumer: (onMessage) => { pushInbound = onMessage; return { start: () => { consumerStarted = true; }, stop() {} }; },
+    setTimer: manualTimers().setTimer,
+    authStore: store,
+  });
+  ch.start();
+  await flushAsync();
+  // init is blocked on read() → consumer NOT started, no inbound wired yet (deferred)
+  expect(consumerStarted).toBe(false);
+  expect(pushInbound).toBeUndefined();
+
+  releaseRead(); // authoritative load completes
+  await flushAsync();
+  expect(consumerStarted).toBe(true); // inbound starts only now
+  expect(pushInbound).toBeTypeOf("function");
+
+  pushInbound!(inbound({ text: "hi" })); // ou_me is revoked in the registry → still denied
+  await flushAsync();
+  expect(mesh.prompts).toHaveLength(0);
+  expect(isFeishuAllowed(file, "feishu:cli_1", "ou_me")).toBe(false); // seed never un-revoked it
+});
+
+test("auth gate: stop() closes the registry watcher", async () => {
+  const s = await setupAuth();
+  expect(s.auth.hasWatcher()).toBe(true);
+  await s.ch.stop();
+  expect(s.auth.hasWatcher()).toBe(false);
 });
