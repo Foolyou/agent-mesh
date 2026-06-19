@@ -134,7 +134,7 @@ test("start auto-creates missing mesh groups for an already-bound bot", async ()
 // ── feishuMeshChatName: "<mesh>@<hostname>" ─────────────────────────────────────
 
 test("feishuMeshChatName renders <mesh>@<hostname>", () => {
-  expect(feishuMeshChatName("feishu-poc", "my-host")).toBe("feishu-poc@my-host");
+  expect(feishuMeshChatName("ops", "my-host")).toBe("ops@my-host");
 });
 
 test("feishuMeshChatName falls back to 'mesh' when the mesh name is blank", () => {
@@ -142,8 +142,8 @@ test("feishuMeshChatName falls back to 'mesh' when the mesh name is blank", () =
 });
 
 test("feishuMeshChatName falls back to 'host' when the hostname is empty/blank", () => {
-  expect(feishuMeshChatName("feishu-poc", "")).toBe("feishu-poc@host");
-  expect(feishuMeshChatName("feishu-poc", "   ")).toBe("feishu-poc@host");
+  expect(feishuMeshChatName("ops", "")).toBe("ops@host");
+  expect(feishuMeshChatName("ops", "   ")).toBe("ops@host");
 });
 
 test("feishuMeshChatName caps total length, reserving budget for the host suffix", () => {
@@ -155,7 +155,7 @@ test("feishuMeshChatName caps total length, reserving budget for the host suffix
 });
 
 test("feishuMeshChatName carries no 联调 / PoC / Mesh wording", () => {
-  const name = feishuMeshChatName("feishu-poc", "my-host");
+  const name = feishuMeshChatName("ops", "my-host");
   expect(name).not.toContain("联调");
   expect(name).not.toContain("PoC");
   expect(name).not.toContain("Mesh");
