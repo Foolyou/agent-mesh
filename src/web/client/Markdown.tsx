@@ -3,6 +3,7 @@ import { Streamdown, type UrlTransform, type Components } from "streamdown";
 import rehypeSanitize from "rehype-sanitize";
 import { defaultSchema } from "hast-util-sanitize";
 import { useAuthor, type AuthorRef } from "./AuthorContext";
+import { AuthedImage } from "./AuthedImage";
 
 function isHttpUrl(value: string): boolean {
   try {
@@ -90,7 +91,9 @@ function Image({ node: _node, src: rawSrc, ...rest }: WithNode<ComponentProps<"i
   const author = useAuthor();
   const src = typeof rawSrc === "string" ? rewriteAgentImageSrc(rawSrc, author) : undefined;
   if (!src) return null;
-  return <img {...rest} src={src} referrerPolicy="no-referrer" loading="lazy" />;
+  // A rewritten artifact image is a same-origin /api/* URL → AuthedImage fetches it with Bearer;
+  // data:/external images pass straight through.
+  return <AuthedImage {...rest} src={src} referrerPolicy="no-referrer" loading="lazy" />;
 }
 
 function Strong({ node: _node, children, ...rest }: WithNode<ComponentProps<"strong">>) {

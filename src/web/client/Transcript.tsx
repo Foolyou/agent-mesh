@@ -6,6 +6,7 @@ import type { TranscriptItem } from "../types";
 import { Empty, fmtTime } from "./ui";
 import { useI18n } from "./i18n";
 import { Markdown } from "./Markdown";
+import { AuthedImage } from "./AuthedImage";
 import { AuthorContext, type AuthorRef } from "./AuthorContext";
 import { VirtualTranscript } from "./VirtualTranscript";
 import type { TranscriptMeasurementCacheScope } from "./transcript-measurement-cache";
@@ -33,7 +34,7 @@ function Msg({ item, author }: { item: Extract<TranscriptItem, { kind: "message"
           <div className="sent-images">
             {item.images.map((img) => (
               <button className="sent-image" key={img.url ?? img.id} type="button" title={img.name} onClick={() => setLightbox({ url: img.url ?? "", name: img.name })}>
-                <img src={img.url} alt={img.name} loading="lazy" />
+                <AuthedImage src={img.url} alt={img.name} loading="lazy" />
               </button>
             ))}
           </div>
@@ -44,7 +45,7 @@ function Msg({ item, author }: { item: Extract<TranscriptItem, { kind: "message"
           <button className="lightbox-close" type="button" title="close" onClick={() => setLightbox(null)}>
             ×
           </button>
-          <img src={lightbox.url} alt={lightbox.name} />
+          <AuthedImage src={lightbox.url} alt={lightbox.name} />
         </div>
       ) : null}
     </div>
@@ -287,7 +288,7 @@ function AttachmentCard({ item, meshId }: { item: Extract<TranscriptItem, { kind
     <div className="attachment">
       <a className="attachment-link" href={viewer} onClick={openViewer} title={label}>
         {isImage ? (
-          <img className="attachment-image" src={api} alt={label} loading="lazy" referrerPolicy="no-referrer" style={{ maxWidth: "100%", maxHeight: "320px", borderRadius: "6px" }} />
+          <AuthedImage className="attachment-image" src={api} alt={label} loading="lazy" referrerPolicy="no-referrer" style={{ maxWidth: "100%", maxHeight: "320px", borderRadius: "6px" }} />
         ) : (
           <span className="attachment-name">📎 {label}</span>
         )}

@@ -5,6 +5,7 @@
 import { useSyncExternalStore } from "react";
 import type { AgentConfig, GatewayState, ServerMsg, PerMeshState, TranscriptItem, ConvRef, MeshConfig, MeshEdge, PromptImageRef, StartSessionStrategy, HarnessProbeRow, HarnessId, HarnessInstallEvent, RespawnMode, TranscriptSnapshot, AgentStatus, MutationApplyResult, BoardDocument, FeishuChannelStatus, FeishuMeshChatEnsureResult, FeishuProvisionJobPublic, FeishuProvisionStartRequest } from "../types";
 import type { BoardCommand } from "../../board";
+import { authHeaders, getDeviceToken, wsUrlWithToken } from "./device-auth";
 
 const CAP = 500;
 const HARNESS_CHANGE_DEBOUNCE_MS = 300;
@@ -468,7 +469,7 @@ export function createStore(): Store {
   let delay = 500;
   function connect() {
     const proto = location.protocol === "https:" ? "wss" : "ws";
-    const ws = new WebSocket(`${proto}://${location.host}/ws`);
+    const ws = new WebSocket(wsUrlWithToken(proto, location.host, getDeviceToken()));
     ws.onopen = () => {
       connected = true;
       delay = 500;
@@ -536,7 +537,7 @@ export function createStore(): Store {
   async function send(method: string, path: string, body?: unknown): Promise<any> {
     const res = await fetch(path, {
       method,
-      headers: body !== undefined ? { "content-type": "application/json" } : {},
+      headers: authHeaders(body !== undefined ? { "content-type": "application/json" } : undefined),
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
     const json = await res.json().catch(() => ({}));
@@ -546,7 +547,7 @@ export function createStore(): Store {
   const post = (path: string, body?: unknown) => send("POST", path, body);
   async function streamHarnessInstall(id: HarnessId, jobId: string, onEvent: (event: HarnessInstallEvent) => void, onClose?: (err?: Error) => void): Promise<void> {
     try {
-      const res = await fetch(`/api/harnesses/${enc(id)}/install/${enc(jobId)}/stream`);
+      const res = await fetch(`/api/harnesses/${enc(id)}/install/${enc(jobId)}/stream`, { headers: authHeaders() });
       if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
@@ -574,7 +575,8 @@ export function createStore(): Store {
   async function uploadImages(bucket: string, files: File[]): Promise<PromptImageRef[]> {
     const fd = new FormData();
     for (const file of files) fd.append("files", file, file.name);
-    const res = await fetch(`/api/uploads?bucket=${enc(bucket)}`, { method: "POST", body: fd });
+    // FormData sets its own multipart content-type; only add the bearer header.
+    const res = await fetch(`/api/uploads?bucket=${enc(bucket)}`, { method: "POST", headers: authHeaders(), body: fd });
     const json = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(json?.error?.message ?? `HTTP ${res.status}`);
     return json as PromptImageRef[];

@@ -51,7 +51,10 @@ test("relative href without AuthorContext renders as plain text — no dead anch
 
 test("img does not leak the hast `node` AST as a DOM attribute", () => {
   const html = renderMd("![pic](diagram.png)");
-  expect(html).toContain('src="/api/agents/codex-1/files/diagram.png"');
+  // A rewritten agent-file image renders via AuthedImage (fetched with Bearer client-side), so the
+  // raw /api URL is not a static src; the point of this test is that no `node` AST attr leaks.
+  expect(html).toContain("<img");
+  expect(html).not.toContain('src="/api/agents/'); // never a bare, un-authed image src
   expect(html).not.toContain("node=");
 });
 

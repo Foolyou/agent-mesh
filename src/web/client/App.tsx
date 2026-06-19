@@ -2,6 +2,7 @@
 // wires the store, and lays out the TTY-style console shell.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createStore, useStore, useConnected, useToasts, useUpgrade, type Store } from "./store";
+import { authHeaders } from "./device-auth";
 import { Sidebar } from "./Sidebar";
 import { MeshDetail } from "./MeshDetail";
 import { MeshBuilder } from "./MeshBuilder";
@@ -90,7 +91,7 @@ export function App() {
 
   async function openEditor(name: string) {
     try {
-      const res = await fetch(`/api/meshes/${encodeURIComponent(name)}/config`);
+      const res = await fetch(`/api/meshes/${encodeURIComponent(name)}/config`, { headers: authHeaders() });
       if (!res.ok) throw new Error("config unavailable");
       setEditInitial(await res.json());
       setNewMeshOpen(true);

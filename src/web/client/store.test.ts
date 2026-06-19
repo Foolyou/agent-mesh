@@ -363,6 +363,35 @@ test("loadOlderTranscript prepends older items and updates cursor metadata", asy
   }
 });
 
+test("api fetches carry Authorization: Bearer and never a URL token", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalLS = (globalThis as any).localStorage;
+  const mem = new Map<string, string>();
+  (globalThis as any).localStorage = {
+    getItem: (k: string) => (mem.has(k) ? mem.get(k)! : null),
+    setItem: (k: string, v: string) => void mem.set(k, v),
+    removeItem: (k: string) => void mem.delete(k),
+  };
+  mem.set("mesh.deviceToken", "tok-store");
+  const fetchMock = mock(() => Promise.resolve(responseJson({ items: [], hasMore: false })));
+  globalThis.fetch = fetchMock as any;
+  try {
+    const store = createStore();
+    store.apply({
+      t: "snapshot",
+      state: { ...seed(), perMesh: { demo: { ...seed().perMesh.demo, transcripts: { "codex-1": { items: [message("new-0")], hasMore: true, oldestSeq: "new-0" } } } } },
+    });
+    await store.loadOlderTranscript("demo", "codex-1");
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, any];
+    expect(url).not.toContain("token="); // no URL token on /api/*
+    expect(init.headers).toEqual({ Authorization: "Bearer tok-store" });
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalLS === undefined) delete (globalThis as any).localStorage;
+    else (globalThis as any).localStorage = originalLS;
+  }
+});
+
 test("loadInitialTranscript replaces placeholder items and updates cursor metadata", async () => {
   const originalFetch = globalThis.fetch;
   const tail = Array.from({ length: 100 }, (_, i) => message(`tail-${i}`));

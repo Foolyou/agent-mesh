@@ -164,8 +164,12 @@ test("image attachment renders an inline image from the mesh-scoped artifact API
     [{ id: "att:dev|out/chart.png|t1", kind: "attachment", agent: "dev", path: "out/chart.png", caption: "the chart", contentType: "image/png", ts: T }],
     { meshId: "demo", agent: "dev" },
   );
+  // The image attachment renders via AuthedImage: an <img> that fetches the artifact bytes WITH the
+  // device bearer token client-side, so the raw /api URL is NOT a static un-authed src (on the
+  // server render there is no src yet). The viewer link (mesh route) is unchanged.
   expect(html).toContain("<img");
-  expect(html).toContain('src="/api/meshes/demo/agents/dev/artifacts/out/chart.png"');
+  expect(html).toContain('class="attachment-image"');
+  expect(html).not.toContain('src="/api/meshes/'); // never a bare, un-authed image src
   expect(html).toContain('href="/mesh/demo/agent/dev/artifact/out/chart.png"');
   expect(html).toContain("the chart");
 });
@@ -194,8 +198,10 @@ test("a published attachment from another agent forwards to that agent's artifac
     [{ id: "att:builder|art.png|t1", kind: "attachment", agent: "builder", path: "art.png", contentType: "image/png", ts: T }],
     { meshId: "demo", agent: "reviewer" },
   );
-  // The card uses the attachment's own owner (builder), not the viewing author (reviewer).
-  expect(html).toContain('src="/api/meshes/demo/agents/builder/artifacts/art.png"');
+  // The card uses the attachment's own owner (builder), not the viewing author (reviewer). The
+  // owner is encoded in the (unchanged) viewer link; the image bytes load via AuthedImage + Bearer.
+  expect(html).toContain('href="/mesh/demo/agent/builder/artifact/art.png"');
+  expect(html).not.toContain("agent/reviewer/");
 });
 
 test("user-bubble artifact: link stays inert without an author context", () => {
