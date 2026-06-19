@@ -29,8 +29,16 @@ test("normalizeFeishuConfig fills defaults and carries enabled through", () => {
   expect(cfg!.requireMention).toBe(true);
   expect(cfg!.allowSenders).toEqual([]);
   expect(cfg!.outbound.minIntervalMs).toBe(500);
+  expect(cfg!.outbound.streaming).toBe(true);
+  expect(cfg!.outbound.cardkit).toBe(true); // CardKit is the default outbound path
   expect(cfg!.websocket).toEqual({});
   expect(cfg!.enabled).toBe(true);
+});
+
+test("normalizeFeishuConfig respects outbound.cardkit=false (opt out of CardKit)", () => {
+  const cfg = normalizeFeishuConfig({ enabled: true, appId: "cli_1", appSecret: "secret", mesh: "m", chatId: "oc_1", outbound: { cardkit: false } });
+  expect(cfg!.outbound.cardkit).toBe(false);
+  expect(cfg!.outbound.streaming).toBe(true); // independent of cardkit
 });
 
 test("normalizeFeishuConfig rejects missing required fields", () => {

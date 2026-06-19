@@ -4,6 +4,9 @@ import {
   streamingCardJson,
   defaultCardSummary,
   stableCardKey,
+  sdkCardCreate,
+  sdkCardContent,
+  sdkCardFinalize,
   type CardCreateRequest,
   type CardCreateResult,
   type CardSendRequest,
@@ -532,6 +535,41 @@ test("degraded fallback uses the REAL text sender's own segment break — no dup
   s.streamCommit(); await s.whenIdle();
   expect(creates).toEqual([" world", "more"]); // two text messages, no dup of "Hello"/" world", no loss
   expect(updates).toEqual([]);
+});
+
+// ── SDK adapter payloads (fake client) ──────────────────────────────────────────
+
+test("sdkCardCreate sends a card_json payload carrying the streaming config", async () => {
+  const captured: any[] = [];
+  const client = { cardkit: { v1: { card: { create: async (p: any) => { captured.push(p); return { code: 0, data: { card_id: "cid" } }; } } } } } as any;
+  const res = await sdkCardCreate(client)({ elementId: "md", text: "hi" });
+  expect(res.ok).toBe(true);
+  expect(res.cardId).toBe("cid");
+  expect(captured[0].data.type).toBe("card_json");
+  const card = JSON.parse(captured[0].data.data);
+  expect(card.config.update_multi).toBe(true);
+  expect(card.config.streaming_config).toBeDefined();
+});
+
+test("sdkCardContent puts content, sequence and uuid in the request data", async () => {
+  const captured: any[] = [];
+  const client = { cardkit: { v1: { cardElement: { content: async (p: any) => { captured.push(p); return { code: 0 }; } } } } } as any;
+  const res = await sdkCardContent(client)({ cardId: "c1", elementId: "md", content: "hi", sequence: 3, uuid: "u-3" });
+  expect(res.ok).toBe(true);
+  expect(captured[0].path).toEqual({ card_id: "c1", element_id: "md" });
+  expect(captured[0].data).toMatchObject({ content: "hi", sequence: 3, uuid: "u-3" });
+});
+
+test("sdkCardFinalize turns streaming off and carries summary + uuid", async () => {
+  const captured: any[] = [];
+  const client = { cardkit: { v1: { card: { settings: async (p: any) => { captured.push(p); return { code: 0 }; } } } } } as any;
+  const res = await sdkCardFinalize(client)({ cardId: "c1", sequence: 5, uuid: "u-5", summary: "the answer" });
+  expect(res.ok).toBe(true);
+  expect(captured[0].data.uuid).toBe("u-5");
+  expect(captured[0].data.sequence).toBe(5);
+  const settings = JSON.parse(captured[0].data.settings);
+  expect(settings.config.streaming_mode).toBe(false);
+  expect(settings.config.summary.content).toBe("the answer");
 });
 
 // ── lifecycle ────────────────────────────────────────────────────────────────────

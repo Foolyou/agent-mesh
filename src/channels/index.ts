@@ -5,11 +5,14 @@
 // reload/watch/provisioning support. The relay logic lives in FeishuChannel; transport is the
 // official Feishu/Lark Node SDK.
 
-import type { Channel, MeshGateway } from "./types";
+import * as lark from "@larksuiteoapi/node-sdk";
+import type { Channel, FeishuChannelConfig, MeshGateway } from "./types";
+import type { OutboundSink } from "./feishu-channel";
 import { loadFeishuConfig } from "./config";
 import { FeishuChannel } from "./feishu-channel";
 import { createFeishuClient, LarkConsumer } from "./consumer";
 import { LarkSender, sdkSend, sdkUpdate } from "./sender";
+import { CardSender, sdkCardCreate, sdkCardSend, sdkCardContent, sdkCardFinalize } from "./card-sender";
 import { FeishuChannelController } from "./controller";
 
 export interface BuildFeishuChannelOpts {
@@ -23,21 +26,8 @@ export function buildFeishuChannel(mesh: MeshGateway, opts: BuildFeishuChannelOp
   const cfg = loadFeishuConfig(opts.root, log);
   if (!cfg) return undefined;
   const client = createFeishuClient(cfg);
-  const send = sdkSend(client);
-  const update = sdkUpdate(client);
   const senders = new Map(
-    cfg.bindings.map((binding) => [
-      binding.chatId,
-      new LarkSender({
-        chatId: binding.chatId,
-        send,
-        update,
-        minIntervalMs: cfg.outbound.minIntervalMs,
-        streamMinEditIntervalMs: cfg.outbound.streamMinEditIntervalMs,
-        maxEditsPerMessage: cfg.outbound.maxEditsPerMessage,
-        log,
-      }),
-    ]),
+    cfg.bindings.map((binding) => [binding.chatId, createOutboundSender(client, cfg, binding.chatId, log)]),
   );
   return new FeishuChannel({
     mesh,
@@ -54,6 +44,33 @@ export function buildFeishuChannel(mesh: MeshGateway, opts: BuildFeishuChannelOp
         onMessage,
         log,
       }),
+  });
+}
+
+/** Build the outbound sink for one bound chat. Default path is the CardKit streaming `CardSender`
+ *  wrapping a text `LarkSender` as its fallback; `outbound.cardkit=false` (or `streaming=false`)
+ *  selects the plain text sender. No client-version probing — CardKit is the advertised default. */
+export function createOutboundSender(client: lark.Client, cfg: FeishuChannelConfig, chatId: string, log: (msg: string) => void): OutboundSink {
+  const textSender = new LarkSender({
+    chatId,
+    send: sdkSend(client),
+    update: sdkUpdate(client),
+    minIntervalMs: cfg.outbound.minIntervalMs,
+    streamMinEditIntervalMs: cfg.outbound.streamMinEditIntervalMs,
+    maxEditsPerMessage: cfg.outbound.maxEditsPerMessage,
+    log,
+  });
+  const streamingOn = cfg.outbound.streaming !== false;
+  const cardkitOn = cfg.outbound.cardkit !== false;
+  if (!streamingOn || !cardkitOn) return textSender;
+  return new CardSender({
+    chatId,
+    create: sdkCardCreate(client),
+    send: sdkCardSend(client),
+    content: sdkCardContent(client),
+    finalize: sdkCardFinalize(client),
+    fallback: textSender,
+    log,
   });
 }
 

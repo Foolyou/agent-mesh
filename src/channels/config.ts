@@ -64,6 +64,7 @@ export function normalizeFeishuConfig(parsed: unknown): FeishuChannelConfig | un
     ? out.minIntervalMs
     : 500;
   const streaming = out.streaming === false ? false : true;
+  const cardkit = out.cardkit === false ? false : true;
   const streamMinEditIntervalMs = positiveNumberOrUndefined(out.streamMinEditIntervalMs);
   const maxEditsPerMessage = positiveNumberOrUndefined(out.maxEditsPerMessage);
   const ws = (p.websocket ?? {}) as Record<string, unknown>;
@@ -83,6 +84,7 @@ export function normalizeFeishuConfig(parsed: unknown): FeishuChannelConfig | un
     outbound: {
       minIntervalMs,
       streaming,
+      cardkit,
       ...(streamMinEditIntervalMs !== undefined ? { streamMinEditIntervalMs } : {}),
       ...(maxEditsPerMessage !== undefined ? { maxEditsPerMessage } : {}),
     },
