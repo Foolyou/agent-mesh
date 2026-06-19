@@ -1,6 +1,9 @@
 import { test, expect } from "bun:test";
 import {
   CardSender,
+  streamingCardJson,
+  defaultCardSummary,
+  stableCardKey,
   type CardCreateRequest,
   type CardCreateResult,
   type CardSendRequest,
@@ -441,6 +444,63 @@ test("degraded mode segments per tool call: no dup, no loss across the boundary"
   s.streamCommit();
   await s.whenIdle();
   expect(fb.commits).toBe(2);
+});
+
+// ── CardKit payload / idempotency ───────────────────────────────────────────────
+
+test("streamingCardJson declares update_multi, streaming_mode, streaming_config and a summary", () => {
+  const json = JSON.parse(streamingCardJson("md", "Hello world"));
+  expect(json.schema).toBe("2.0");
+  expect(json.config.update_multi).toBe(true);
+  expect(json.config.streaming_mode).toBe(true);
+  expect(json.config.streaming_config).toBeDefined();
+  expect(json.config.summary).toBeDefined();
+  expect(json.config.summary.content).toBeTruthy();
+  const el = json.body.elements[0];
+  expect(el.tag).toBe("markdown");
+  expect(el.element_id).toBe("md");
+  expect(el.content).toBe("Hello world");
+});
+
+test("defaultCardSummary uses the first line, truncates long text, falls back when empty", () => {
+  expect(defaultCardSummary("short answer")).toBe("short answer");
+  expect(defaultCardSummary("line one\nline two")).toBe("line one");
+  expect(defaultCardSummary("")).toBeTruthy(); // non-empty generic fallback
+  expect(defaultCardSummary("x".repeat(100)).length).toBeLessThanOrEqual(41);
+});
+
+test("stableCardKey is deterministic and uuid-safe", () => {
+  expect(stableCardKey("card1", 3)).toBe(stableCardKey("card1", 3));
+  expect(stableCardKey("card1", 3)).not.toBe(stableCardKey("card1", 4));
+  expect(stableCardKey("card1", 3)).not.toBe(stableCardKey("card2", 3));
+  expect(stableCardKey("card1", 3)).toMatch(/^[A-Za-z0-9_-]{1,50}$/);
+});
+
+test("content and finalize ops carry a stable uuid keyed on cardId + sequence", async () => {
+  const r = cardRecorder();
+  const fb = fakeFallback();
+  const s = makeSender(r, fb, { enableToolHint: false });
+  s.streamUpdate("a");
+  await s.whenIdle();
+  s.streamUpdate("ab");
+  await s.whenIdle();
+  s.streamCommit();
+  await s.whenIdle();
+  expect(r.contents[0].uuid).toBe(stableCardKey(r.contents[0].cardId, r.contents[0].sequence));
+  expect(r.finalizes[0].uuid).toBe(stableCardKey(r.finalizes[0].cardId, r.finalizes[0].sequence));
+  expect(r.contents[0].uuid).not.toBe(r.finalizes[0].uuid); // distinct sequences
+});
+
+test("finalize updates the card summary derived from the final body", async () => {
+  const r = cardRecorder();
+  const fb = fakeFallback();
+  const s = makeSender(r, fb, { enableToolHint: false });
+  s.streamUpdate("Hello world this is the full answer");
+  await s.whenIdle();
+  s.streamCommit();
+  await s.whenIdle();
+  expect(r.finalizes[0].summary).toBeTruthy();
+  expect(r.finalizes[0].summary).toContain("Hello");
 });
 
 // ── lifecycle ────────────────────────────────────────────────────────────────────

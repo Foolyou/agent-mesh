@@ -57,6 +57,8 @@ export interface CardContentRequest {
   content: string;
   /** Strictly increasing per card; Feishu rejects out-of-order ops with 300317. */
   sequence: number;
+  /** Stable idempotency key (cardId + sequence) so a retried op is de-duplicated by Feishu. */
+  uuid: string;
 }
 export interface CardContentResult {
   ok: boolean;
@@ -67,6 +69,10 @@ export interface CardContentResult {
 export interface CardFinalizeRequest {
   cardId: string;
   sequence: number;
+  /** Stable idempotency key (cardId + sequence). */
+  uuid: string;
+  /** Summary to set on the card so it doesn't stay stuck showing "generating". */
+  summary: string;
 }
 export interface CardFinalizeResult {
   ok: boolean;
@@ -103,6 +109,9 @@ export interface CardSenderOptions {
   /** Render the segment-break hint appended to a sealed card. Centralized so prdmgr can tune copy.
    *  Return "" to suppress. Default {@link defaultToolHint}. */
   toolHint?: (meta?: SegmentBreak) => string;
+  /** Derive the card summary (chat-list / notification text) from the card body. Centralized so it
+   *  can be tuned later. Default {@link defaultCardSummary}. */
+  cardSummary?: (body: string) => string;
   log?: (msg: string) => void;
   wait?: (ms: number) => Promise<void>;
   now?: () => number;
@@ -130,6 +139,7 @@ export class CardSender implements OutboundSink {
   private readonly minIntervalMs: number;
   private readonly enableToolHint: boolean;
   private readonly toolHint: (meta?: SegmentBreak) => string;
+  private readonly cardSummary: (body: string) => string;
   private readonly log: (msg: string) => void;
   private readonly wait: (ms: number) => Promise<void>;
   private readonly now: () => number;
@@ -185,6 +195,7 @@ export class CardSender implements OutboundSink {
     this.minIntervalMs = opts.minIntervalMs ?? 0;
     this.enableToolHint = opts.enableToolHint ?? true;
     this.toolHint = opts.toolHint ?? defaultToolHint;
+    this.cardSummary = opts.cardSummary ?? defaultCardSummary;
     this.log = opts.log ?? (() => {});
     this.wait = opts.wait ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
     this.now = opts.now ?? (() => Date.now());
@@ -374,7 +385,7 @@ export class CardSender implements OutboundSink {
 
     try {
       const seq = this.nextSeq();
-      const r = await this.content({ cardId: this.live.cardId, elementId: this.elementId, content: this.composeDisplay(body), sequence: seq });
+      const r = await this.content({ cardId: this.live.cardId, elementId: this.elementId, content: this.composeDisplay(body), sequence: seq, uuid: stableCardKey(this.live.cardId, seq) });
       this.lastEditAt = this.now();
       if (r.ok) {
         this.live.sentText = body;
@@ -420,7 +431,8 @@ export class CardSender implements OutboundSink {
    *  here loses nothing — log and move on rather than re-sending. */
   private async doFinalize(live: LiveCard): Promise<void> {
     try {
-      const r = await this.finalize({ cardId: live.cardId, sequence: this.nextSeq() });
+      const seq = this.nextSeq();
+      const r = await this.finalize({ cardId: live.cardId, sequence: seq, uuid: stableCardKey(live.cardId, seq), summary: this.cardSummary(live.sentText) });
       this.lastEditAt = this.now();
       if (!r.ok) this.log(`feishu card: finalize failed${codeInfo(r)}; card left in streaming state`);
     } catch (e) {
@@ -496,16 +508,41 @@ function codeInfo(r: { code?: number; message?: string }): string {
   return `${r.code !== undefined ? ` (code ${r.code})` : ""}${r.message ? `: ${r.message}` : ""}`;
 }
 
+/** Stable idempotency key for a card op: identical (cardId, sequence) always yields the same uuid,
+ *  so a retried content/finalize op is de-duplicated by Feishu rather than double-applied. */
+export function stableCardKey(cardId: string, sequence: number): string {
+  return safeUuid(`${cardId}-${sequence}`);
+}
+
+/** Default card summary (chat-list / notification text), derived from the card body. Centralized so
+ *  the copy can be tuned later. First line, truncated; a generic line when there is no body yet. */
+export function defaultCardSummary(body: string): string {
+  const firstLine = (body ?? "").trim().split("\n")[0]?.trim() ?? "";
+  if (!firstLine) return "Agent 回复";
+  return firstLine.length > 40 ? `${firstLine.slice(0, 40)}…` : firstLine;
+}
+
 // ── real CardKit SDK seams ────────────────────────────────────────────────────
 // Wiring these into index.ts is a later commit; they exist so the seam is complete and the payload
 // shapes are type-checked against the SDK. Exact JSON 2.0 / settings payloads are acceptable-risk
 // per the agreed design and need live validation before relying on the card visuals.
 
-/** Build a minimal JSON 2.0 card carrying one streaming markdown element. */
+/** Build a JSON 2.0 card carrying one streaming markdown element. Declares update_multi (the card is
+ *  shared and updated in place), streaming_mode + streaming_config (typewriter animation), and a
+ *  summary so the chat list / notification doesn't render empty. */
 export function streamingCardJson(elementId: string, text: string): string {
   return JSON.stringify({
     schema: "2.0",
-    config: { streaming_mode: true },
+    config: {
+      update_multi: true,
+      streaming_mode: true,
+      streaming_config: {
+        print_frequency_ms: { default: 70 },
+        print_step: { default: 1 },
+        print_strategy: "fast",
+      },
+      summary: { content: defaultCardSummary(text) },
+    },
     body: {
       elements: [{ tag: "markdown", element_id: elementId, content: text }],
     },
@@ -542,7 +579,7 @@ export function sdkCardContent(client: lark.Client): CardContentFn {
   return async (req: CardContentRequest): Promise<CardContentResult> => {
     const res = await client.cardkit.v1.cardElement.content({
       path: { card_id: req.cardId, element_id: req.elementId },
-      data: { content: req.content, sequence: req.sequence },
+      data: { content: req.content, sequence: req.sequence, uuid: req.uuid },
     });
     const code = res.code ?? 0;
     return { ok: code === 0, code, message: res.msg };
@@ -553,7 +590,11 @@ export function sdkCardFinalize(client: lark.Client): CardFinalizeFn {
   return async (req: CardFinalizeRequest): Promise<CardFinalizeResult> => {
     const res = await client.cardkit.v1.card.settings({
       path: { card_id: req.cardId },
-      data: { settings: JSON.stringify({ config: { streaming_mode: false } }), sequence: req.sequence },
+      data: {
+        settings: JSON.stringify({ config: { streaming_mode: false, summary: { content: req.summary } } }),
+        sequence: req.sequence,
+        uuid: req.uuid,
+      },
     });
     const code = res.code ?? 0;
     return { ok: code === 0, code, message: res.msg };
