@@ -50,7 +50,7 @@ function cfg(over: Partial<FeishuChannelConfig> = {}): FeishuChannelConfig {
     chatId: "oc_1",
     botMentionId: "",
     botName: "MeshBot",
-    requireMention: true,
+    requireMention: false, // default test binding is a trusted group; @-gate tests set this true
     allowSenders: ["ou_me"],
     outbound: { minIntervalMs: 0 },
     websocket: {},
@@ -179,7 +179,7 @@ function manualTimers() {
 }
 
 function inbound(over: Partial<InboundMsg> = {}): InboundMsg {
-  return { eventId: "e1", chatId: "oc_1", chatType: "p2p", senderId: "ou_me", messageType: "text", text: "hi", mentions: [], messageId: "om_1", ...over };
+  return { eventId: "e1", chatId: "oc_1", chatType: "group", senderId: "ou_me", messageType: "text", text: "hi", mentions: [], messageId: "om_1", ...over };
 }
 function chunk(agent: string, text: string, messageId?: string): MeshEvent {
   return {
@@ -226,9 +226,9 @@ async function flushAsync(): Promise<void> {
 
 // ── inbound ──────────────────────────────────────────────────────────────────
 
-test("inbound: whitelisted p2p message feeds the router with the feishu prefix", async () => {
+test("inbound: an authorized bound group message feeds the router with the feishu prefix", async () => {
   const s = setup();
-  s.push(inbound({ text: "hello" }));
+  s.push(inbound({ text: "hello" })); // bound group chat (oc_1), authorized sender
   await Promise.resolve();
   expect(s.mesh.prompts).toHaveLength(1);
   expect(s.mesh.prompts[0].name).toBe("feishu-poc");
@@ -280,7 +280,7 @@ test("inbound: a wrong-chat event does not consume dedup capacity for the bound 
 });
 
 test("inbound: group message without @bot is ignored; with @bot it is stripped and fed", async () => {
-  const s = setup();
+  const s = setup({ requireMention: true });
   s.push(inbound({ eventId: "g1", chatType: "group", text: "just chatting" }));
   s.push(inbound({ eventId: "g2", chatType: "group", text: "@MeshBot do it" }));
   await Promise.resolve();
@@ -1022,7 +1022,7 @@ test("auth gate: the unauthorized deny path never logs the sender open_id / ment
 });
 
 test("auth gate: an @-gate-dropped message logs only a mention count, never raw mention ids/names", async () => {
-  const s = await setupAuth();
+  const s = await setupAuth({ requireMention: true });
   // group message that fails the @-gate (no @MeshBot) but carries a mention to someone else
   s.push(inbound({
     chatType: "group",
@@ -1052,7 +1052,7 @@ test("auth gate: repeated unauthorized messages from one sender reuse the SAME s
 });
 
 test("auth gate: a non-@ group message from an unauthorized sender is ignored (no auth-code spam)", async () => {
-  const s = await setupAuth();
+  const s = await setupAuth({ requireMention: true });
   s.push(inbound({ senderId: "ou_stranger", chatType: "group", text: "just chatting" }));
   await flushAsync();
   expect(s.mesh.prompts).toHaveLength(0);
@@ -1172,16 +1172,19 @@ test("auth gate: stop() closes the registry watcher", async () => {
  *  update to subscribers; availability is toggleable. */
 function fakeAssistant() {
   let available = true;
+  let externalBusy = false; // a turn from another source (WebUI/API) holds the shared session
   let resolveCurrent: (() => void) | null = null;
   const prompts: { text: string; images?: unknown }[] = [];
   const listeners: ((u: unknown) => void)[] = [];
   return {
     setAvailable: (v: boolean) => { available = v; },
+    setExternalBusy: (v: boolean) => { externalBusy = v; },
     prompts,
     emit: (u: unknown) => { for (const l of [...listeners]) l(u); },
     finishTurn: () => { const r = resolveCurrent; resolveCurrent = null; r?.(); },
     gateway: {
       available: () => available,
+      busy: () => externalBusy || resolveCurrent !== null,
       prompt: (text: string, images?: unknown) => {
         prompts.push({ text, images });
         return new Promise<void>((res) => { resolveCurrent = res; });
@@ -1344,4 +1347,68 @@ test("p2p: stop() stops dynamically-created p2p senders", async () => {
   expect(s.p2pSenders.has("p2p_me")).toBe(true);
   await s.ch.stop();
   expect(s.p2pSenders.get("p2p_me")!.isStopped()).toBe(true);
+});
+
+test("p2p: chatType is authoritative — a p2p DM to a BOUND chatId still routes to the assistant, not the mesh", async () => {
+  const s = await setupP2p();
+  // oc_1 is a bound group; a p2p message to that same id must still go to the assistant (Medium #2)
+  s.push(inbound({ chatType: "p2p", chatId: "oc_1", senderId: "ou_me", text: "dm to a bound id" }));
+  await flushAsync();
+  expect(s.assistant.prompts).toHaveLength(1);
+  expect(s.assistant.prompts[0].text).toContain("dm to a bound id");
+  expect(s.mesh.prompts).toHaveLength(0); // never reached a mesh router
+});
+
+test("p2p: while the shared assistant is busy with another source, a DM is rejected and never binds to its updates", async () => {
+  const s = await setupP2p();
+  s.assistant.setExternalBusy(true); // a WebUI/API turn is already streaming on the shared session
+  s.push(inbound({ chatType: "p2p", chatId: "p2p_me", senderId: "ou_me", text: "hi" }));
+  await flushAsync();
+  expect(s.assistant.prompts).toHaveLength(0); // not routed
+  expect(s.sentText("p2p_me")).toContain("助手正在处理其他请求");
+  // the OTHER source now emits an update — it must NOT be mirrored to the p2p chat
+  s.assistant.emit(rawChunk("output for the other source"));
+  await flushAsync();
+  expect(s.sentText("p2p_me")).not.toContain("output for the other source");
+});
+
+test("p2p: an assistant failure during stop() does not enqueue a notice onto the stopping sender", async () => {
+  // slow consumer.stop so stop() is mid-teardown while the assistant prompt rejects
+  let releaseConsumerStop!: () => void;
+  const consumerStopGate = new Promise<void>((r) => { releaseConsumerStop = r; });
+  const mesh = new FakeMesh();
+  const timers = manualTimers();
+  const auth = memAuthStore();
+  let rejectPrompt!: (e: Error) => void;
+  const p2pSenders = new Map<string, ReturnType<typeof fakeSender>>();
+  const listeners: ((u: unknown) => void)[] = [];
+  let pushInbound!: (m: InboundMsg) => void;
+  const ch = new FeishuChannel({
+    mesh,
+    config: cfg(),
+    sender: fakeSender().sink,
+    makeConsumer: (onMessage) => { pushInbound = onMessage; return { start() {}, stop: () => consumerStopGate }; },
+    setTimer: timers.setTimer,
+    authStore: auth.store,
+    assistant: {
+      available: () => true,
+      busy: () => false,
+      prompt: () => new Promise<void>((_res, rej) => { rejectPrompt = rej; }),
+      onAssistant: (l) => { listeners.push(l); return () => {}; },
+    },
+    makeSender: (chatId) => { const f = fakeSender(); p2pSenders.set(chatId, f); return f.sink; },
+    now: () => 1_700_000_000_000,
+  });
+  ch.start();
+  await flushAsync();
+  pushInbound(inbound({ chatType: "p2p", chatId: "p2p_me", senderId: "ou_me", text: "hi" }));
+  await flushAsync();
+  const stopping = ch.stop(); // sets started=false, then awaits the slow consumer stop
+  await flushAsync();
+  rejectPrompt(new Error("assistant died")); // prompt rejects while stopping
+  await flushAsync();
+  releaseConsumerStop();
+  await stopping;
+  // no failure notice was enqueued after stop began
+  expect((p2pSenders.get("p2p_me")?.sent ?? []).some((x) => x.text.includes("助手处理失败"))).toBe(false);
 });

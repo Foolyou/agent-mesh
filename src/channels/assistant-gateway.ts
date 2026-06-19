@@ -16,6 +16,10 @@ export interface AssistantGateway {
    *  this; when false the channel replies with a short "assistant unavailable" notice and does not
    *  route. */
   available(): boolean;
+  /** Is the SHARED assistant session already running a turn (from ANY source — WebUI/API/another p2p
+   *  chat)? The channel must NOT bind a p2p chat to the assistant's streamed updates while busy, or it
+   *  would mirror another source's output to that chat. p2p fails closed (notice) when busy. */
+  busy(): boolean;
   /** Feed a user message (optionally with image refs) to the shared assistant session. Resolves when
    *  the assistant's turn completes — that resolution IS the turn-idle boundary the channel uses to
    *  finalize the streamed outbound reply. */
@@ -30,6 +34,7 @@ export interface AssistantGateway {
 export function unavailableAssistantGateway(): AssistantGateway {
   return {
     available: () => false,
+    busy: () => false,
     prompt: async () => {
       throw new Error("Mesh Assistant is not available");
     },

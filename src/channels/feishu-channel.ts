@@ -352,15 +352,17 @@ export class FeishuChannel implements Channel {
 
   // ── inbound: Feishu -> router ───────────────────────────────────────────────
   private async onInbound(m: InboundMsg): Promise<void> {
-    // Bound-chat gate FIRST: a bound conversation keeps its existing group/mesh behavior. The bot may
-    // sit in other chats; an UNBOUND p2p DM routes to the Mesh Assistant (Phase 5), while an unbound
-    // group chat is silently dropped (unchanged). (Bound chats win, which preserves the p2p-to-bound
-    // test fixture; real p2p DMs are never in `byChat` since bindings are groups.)
-    const rt = this.byChat.get(m.chatId);
-    if (!rt) {
-      if (m.chatType === "p2p") await this.onInboundP2p(m);
+    // chatType is AUTHORITATIVE: a p2p DM always routes to the Mesh Assistant (Phase 5), regardless of
+    // any binding, while group messages keep the bound-chat -> mesh behavior. (Bindings are group
+    // chats, so a real p2p DM is never in `byChat` anyway; checking chatType first makes the rule
+    // explicit and prevents a misconfigured p2p binding from reaching a mesh.)
+    if (m.chatType === "p2p") {
+      await this.onInboundP2p(m);
       return;
     }
+    // Group: only explicitly bound conversations are served; unbound group chats are dropped before dedup.
+    const rt = this.byChat.get(m.chatId);
+    if (!rt) return;
     const cfg = this.bindingConfig(rt.binding);
     this.log(`feishu channel: inbound ${inboundMeta(m)}`);
     if (this.dedup.check(m.eventId)) {
@@ -525,12 +527,25 @@ export class FeishuChannel implements Channel {
 
   private async runP2pTurn(rt: BindingRuntime, text: string, images?: PromptImageRef[]): Promise<void> {
     if (!this.started || !this.assistant) return;
-    this.activeAssistantRuntime = rt; // assistant updates now mirror to this chat
+    // The assistant session is SHARED with WebUI/API. If a turn from ANOTHER source is already
+    // streaming, binding this chat to the update stream would mirror that turn's output here. Fail
+    // closed: never set activeAssistantRuntime while busy — reject with a notice instead. (Our own
+    // p2p turns are serialized by the queue, so `busy` here means a non-Feishu source holds the turn.)
+    if (this.assistant.busy()) {
+      this.log(`feishu channel: p2p deferred — assistant busy chat=${rt.binding.chatId}`);
+      rt.sender.enqueue("助手正在处理其他请求，请稍后再试。");
+      return;
+    }
+    this.activeAssistantRuntime = rt; // only now bind assistant updates to this chat
     try {
       await this.assistant.prompt(feishuAssistantPrompt(text), images);
     } catch (e) {
-      this.log(`feishu channel: assistant prompt failed chat=${rt.binding.chatId} error=${errorClass(e)}`);
-      rt.sender.enqueue("消息已收到，但助手处理失败，请稍后再试。");
+      // Don't send a failure notice if we're tearing down (stop() set started=false) or no longer the
+      // active turn — avoids enqueuing onto a sink that's being stopped.
+      if (this.started && this.activeAssistantRuntime === rt) {
+        this.log(`feishu channel: assistant prompt failed chat=${rt.binding.chatId} error=${errorClass(e)}`);
+        rt.sender.enqueue("消息已收到，但助手处理失败，请稍后再试。");
+      }
     } finally {
       // prompt() resolving IS the turn-idle boundary: finalize the streamed reply.
       if (this.started) this.finalizeTurn(rt);

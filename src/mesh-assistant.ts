@@ -156,6 +156,7 @@ export class MeshAssistant {
 export function meshAssistantGateway(assistant: MeshAssistant): AssistantGateway {
   return {
     available: () => assistant.available,
+    busy: () => assistant.busy,
     prompt: (text, images) => assistant.prompt(text, images).then(() => {}),
     onAssistant: (listener) => assistant.on(listener),
   };
