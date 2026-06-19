@@ -739,3 +739,46 @@ test("stop() cancels a pending streaming fallback timer (no stale commit after t
   expect(s.commits()).toBe(commitsAfterStop);
   expect(s.updates.length).toBe(updatesAfterStop);
 });
+
+test("async sink: a next-turn chunk during an in-flight commit is delivered fresh, not dropped/raced", async () => {
+  // Models CardSender's async finalize: while a commit is in flight, a streamUpdate would be wiped
+  // by the pending reset, so the channel must hold next-turn events until whenIdle() resolves.
+  const mesh = new FakeMesh();
+  const updates: string[] = [];
+  let commits = 0;
+  let inflight = 0;
+  let resolveIdle: (() => void) | null = null;
+  const sink = {
+    enqueue() {},
+    stop() {},
+    streamUpdate: (t: string) => { if (inflight > 0) return; updates.push(t); }, // commit-in-flight drops edits
+    streamCommit: () => { commits++; inflight++; },
+    whenIdle: () => (inflight === 0 ? Promise.resolve() : new Promise<void>((r) => { resolveIdle = r; })),
+  };
+  const releaseCommit = () => { inflight = 0; resolveIdle?.(); resolveIdle = null; };
+  const timers = manualTimers();
+  const ch = new FeishuChannel({ mesh, config: cfg(), sender: sink, makeConsumer: () => ({ start() {}, stop() {} }), setTimer: timers.setTimer });
+  ch.start();
+
+  mesh.emit("feishu-poc", chunk("router", "one"));
+  mesh.emit("feishu-poc", idle("router")); // finish turn 1 -> streamCommit (async, in flight)
+  expect(commits).toBe(1);
+  mesh.emit("feishu-poc", chunk("router", "two")); // turn 2's first chunk before finalize resolves
+  expect(updates.includes("two")).toBe(false); // held by the barrier, not raced onto the old card
+  releaseCommit();
+  await flushAsync();
+  expect(updates.at(-1)).toBe("two"); // delivered fresh once the commit barrier drained
+  expect(updates.some((u) => u.includes("onetwo"))).toBe(false);
+});
+
+test("fallback split: a late same-turn chunk after the fallback fires opens a fresh card (no concat)", () => {
+  const s = setupStreaming();
+  s.mesh.emit("feishu-poc", chunk("router", "part1"));
+  s.timers.advance(3000); // a mid-turn silence beyond the window finalizes early (documented tradeoff)
+  expect(s.commits()).toBe(1);
+  s.mesh.emit("feishu-poc", chunk("router", "part2")); // the same turn continues with more text
+  expect(s.updates.at(-1)).toBe("part2"); // fresh card, only the new content
+  expect(s.updates.some((u) => u.includes("part1part2"))).toBe(false); // never concatenated onto the old card
+  s.mesh.emit("feishu-poc", idle("router"));
+  expect(s.commits()).toBe(2);
+});
