@@ -528,12 +528,13 @@ test("stop() unsubscribes, stops the consumer and sender", async () => {
 function streamingSink() {
   const updates: string[] = [];
   let commits = 0;
+  let stopped = false;
   const enqueued: string[] = [];
   const segments: ({ toolName?: string } | undefined)[] = [];
   return {
     sink: {
       enqueue: (text: string) => enqueued.push(text),
-      stop: () => {},
+      stop: () => { stopped = true; },
       streamUpdate: (t: string) => updates.push(t),
       streamCommit: () => { commits++; },
       streamSegmentBreak: (meta?: { toolName?: string }) => segments.push(meta),
@@ -542,6 +543,7 @@ function streamingSink() {
     enqueued,
     segments,
     commits: () => commits,
+    isStopped: () => stopped,
   };
 }
 
@@ -724,4 +726,16 @@ test("non-streaming: original debounce flush behavior is unchanged", () => {
   expect(s.enqueued).toEqual([]); // debounced, not sent yet
   s.timers.advance(800); // original debounceMs
   expect(s.enqueued).toEqual(["Hi"]);
+});
+
+test("stop() cancels a pending streaming fallback timer (no stale commit after teardown)", async () => {
+  const s = setupStreaming();
+  s.mesh.emit("feishu-poc", chunk("router", "pending")); // schedules the fallback timer
+  await s.ch.stop();
+  expect(s.isStopped()).toBe(true);
+  const commitsAfterStop = s.commits();
+  const updatesAfterStop = s.updates.length;
+  s.timers.advance(3000); // the stale timer must NOT fire
+  expect(s.commits()).toBe(commitsAfterStop);
+  expect(s.updates.length).toBe(updatesAfterStop);
 });

@@ -154,9 +154,13 @@ export class FeishuChannel implements Channel {
     for (const rt of this.runtimes) {
       rt.cancelDebounce?.();
       rt.cancelDebounce = undefined;
+      rt.cancelStreamFinish?.(); // drop the streaming fallback timer so it can't fire after teardown
+      rt.cancelStreamFinish = undefined;
       rt.buffer = ""; // drop any un-flushed tail rather than sending during teardown
       rt.currentMessageId = undefined;
       rt.currentMessageStart = 0;
+      rt.streamTurnActive = false;
+      rt.seenToolCalls.clear();
       rt.replaying = false;
     }
     this.unsub?.();
