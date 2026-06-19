@@ -618,11 +618,55 @@ test("planSizeSplit resends the table header when forced to split inside a table
   expect(r.closeFence).toBe("");
 });
 
-test("planSizeSplit carries an inherited open fence (multi-card code block)", () => {
-  const r = planSizeSplit("MORE1\nMORE2\nMORE3", 10, { openFence: "```py" })!;
+/** Contract every split result must satisfy: head is a true prefix; the displayed head (inherited
+ *  prefix + head + close fence) fits the budget; and a non-empty tail remains. */
+function assertSplitValid(body: string, budget: number, start: { displayPrefix?: string; openFence?: string; tableHeader?: string } | undefined, r: NonNullable<ReturnType<typeof planSizeSplit>>) {
+  const prefix = start?.displayPrefix ?? (start?.openFence ? `${start.openFence}\n` : start?.tableHeader ? `${start.tableHeader}\n` : "");
+  expect(body.startsWith(r.headText)).toBe(true); // true prefix, no fabricated chars/newlines
+  expect(byteLen(prefix) + byteLen(r.headText) + byteLen(r.closeFence)).toBeLessThanOrEqual(budget);
+  expect(r.headText.length).toBeGreaterThan(0);
+  expect(body.slice(r.headText.length).length).toBeGreaterThan(0); // tail remains
+}
+
+test("planSizeSplit carries an inherited open fence and budgets its reopened prefix", () => {
+  const start = { openFence: "```py", displayPrefix: "```py\n" };
+  const r = planSizeSplit("MORE1\nMORE2\nMORE3", 20, start)!;
   expect(r.headText).toBe("MORE1\n");
   expect(r.closeFence).toBe("```");
   expect(r.continuation?.openFence).toBe("```py");
+  assertSplitValid("MORE1\nMORE2\nMORE3", 20, start, r); // prefix + head + close <= budget
+});
+
+test("planSizeSplit preserves a ~~~ fence marker when closing/reopening", () => {
+  const r = planSizeSplit("~~~js\nAAAA\nBBBB\nCCCC\n~~~", 14)!;
+  expect(r.headText).toBe("~~~js\nAAAA\n");
+  expect(r.closeFence).toBe("~~~"); // same marker, not backticks
+  expect(r.continuation?.openFence).toBe("~~~js");
+});
+
+test("planSizeSplit splits a single over-budget line UTF-8-safely at a code-point boundary", () => {
+  const body = "中".repeat(20); // 60 bytes, no newline
+  const r = planSizeSplit(body, 14)!;
+  expect(r.headText).toBe("中中中中"); // 12 bytes <= 14, never 13 (would split a char)
+  expect(byteLen(r.headText)).toBe(12);
+  assertSplitValid(body, 14, undefined, r);
+});
+
+test("planSizeSplit single-line fallback never splits an emoji surrogate pair", () => {
+  const body = "🔧".repeat(10); // 40 bytes, 4 bytes each
+  const r = planSizeSplit(body, 14)!;
+  expect(r.headText).toBe("🔧🔧🔧"); // 12 bytes; the 4th would be 16 > 14
+  expect([...r.headText].length).toBe(3); // whole code points
+  assertSplitValid(body, 14, undefined, r);
+});
+
+test("planSizeSplit single over-budget line inside an inherited fence still closes/reopens", () => {
+  const body = "x".repeat(40); // one long code line, no newline
+  const start = { openFence: "```py", displayPrefix: "```py\n" };
+  const r = planSizeSplit(body, 20, start)!;
+  expect(r.closeFence).toBe("```");
+  expect(r.continuation?.openFence).toBe("```py");
+  assertSplitValid(body, 20, start, r);
 });
 
 test("planSizeSplit budgets by UTF-8 bytes, not JS length (CJK/emoji)", () => {

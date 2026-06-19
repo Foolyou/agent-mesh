@@ -552,19 +552,49 @@ export interface CardSizeSplit {
   continuation?: CardContinuation;
 }
 
-/** Plan a structure-aware split of `body` so the current card stays under `budgetBytes` (UTF-8).
- *  Splits are preferred at blank-line, then any line boundary OUTSIDE code fences and tables; a code
- *  block / table larger than the budget is split at a line boundary with the fence closed+reopened
- *  or the table header resent. `start` carries an open fence / table header inherited from a prior
- *  continued card so multi-card code blocks / tables keep repairing. Returns null when `body` fits. */
-export function planSizeSplit(body: string, budgetBytes: number, start?: { openFence?: string; tableHeader?: string }): CardSizeSplit | null {
-  if (byteLen(body) <= budgetBytes && !start?.openFence && !start?.tableHeader) return null;
-  if (byteLen(body) <= budgetBytes) return null;
+/** Bare fence marker (``` or ~~~) of a reopen token like "```js" / "~~~". */
+function fenceMarkerOf(fence: string): string {
+  return fence.trimStart().startsWith("~~~") ? "~~~" : "```";
+}
+
+/** Largest code-point-aligned prefix of `text` whose UTF-8 byte length is <= budget. Iterating with
+ *  for..of yields whole code points, so multi-byte chars / emoji are never split mid-sequence. */
+function takeByBytes(text: string, budget: number): string {
+  let out = "";
+  let bytes = 0;
+  for (const ch of text) {
+    const cb = byteLen(ch);
+    if (bytes + cb > budget) break;
+    out += ch;
+    bytes += cb;
+  }
+  return out;
+}
+
+/** Plan a structure-aware split of `body` so the current card's DISPLAY (inherited prefix + head +
+ *  optional close fence) stays under `budgetBytes` (UTF-8). Splits are preferred at blank-line, then
+ *  any line boundary OUTSIDE code fences and tables; a code block / table larger than the budget is
+ *  split at a line boundary with the fence closed+reopened (same marker) or the table header resent.
+ *  A single line larger than the budget is split UTF-8-safely at a code-point boundary (still a true
+ *  prefix of `body`). `start` carries the current card's display prefix (for budgeting) and any open
+ *  fence / table header inherited from a prior continued card (so multi-card structures keep
+ *  repairing). Returns null when the prefix + body already fit. */
+export function planSizeSplit(
+  body: string,
+  budgetBytes: number,
+  start?: { displayPrefix?: string; openFence?: string; tableHeader?: string },
+): CardSizeSplit | null {
+  const inheritedPrefix = start?.displayPrefix
+    ?? (start?.openFence ? `${start.openFence}\n` : start?.tableHeader ? `${start.tableHeader}\n` : "");
+  const prefixBytes = byteLen(inheritedPrefix);
+  if (prefixBytes + byteLen(body) <= budgetBytes) return null;
+
   const lines = body.split("\n");
   let inFence = !!start?.openFence;
   let fenceReopen = start?.openFence ?? "";
+  let fenceMarker = start?.openFence ? fenceMarkerOf(start.openFence) : "```";
   let tableHeader = start?.tableHeader ?? "";
-  let bytes = 0;
+  let bytes = prefixBytes; // the display already carries the inherited prefix
   let safeEnd = -1; // blank-line boundary outside structures (best)
   let anyEnd = -1; // any line boundary outside structures
   let forcedEnd = -1;
@@ -574,11 +604,13 @@ export function planSizeSplit(body: string, budgetBytes: number, start?: { openF
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     const lineBytes = (i === 0 ? 0 : 1) + byteLen(line); // include the joining "\n"
-    const reserve = inFence ? byteLen("\n```") : 0; // room to close an open fence
+    // Reserve room for what the head display appends: a closing fence (with its newline) inside a
+    // code block, or just the head's own trailing newline otherwise.
+    const reserve = inFence ? byteLen(`\n${fenceMarker}`) : 1;
     if (i > 0 && bytes + lineBytes + reserve > budgetBytes) {
       forcedEnd = i - 1;
       if (inFence) {
-        forcedClose = "```";
+        forcedClose = fenceMarker;
         forcedReopen = { displayPrefix: `${fenceReopen}\n`, openFence: fenceReopen };
       } else if (tableHeader) {
         forcedReopen = { displayPrefix: `${tableHeader}\n`, tableHeader };
@@ -589,7 +621,7 @@ export function planSizeSplit(body: string, budgetBytes: number, start?: { openF
 
     const fm = line.match(FENCE_RE);
     if (fm) {
-      if (!inFence) { inFence = true; fenceReopen = fm[1] + (fm[2] ?? ""); }
+      if (!inFence) { inFence = true; fenceReopen = fm[1] + (fm[2] ?? ""); fenceMarker = fm[1]; }
       else { inFence = false; fenceReopen = ""; }
     } else if (!inFence) {
       if (tableHeader) {
@@ -605,18 +637,54 @@ export function planSizeSplit(body: string, budgetBytes: number, start?: { openF
     }
   }
 
-  let end: number;
+  let end = -1;
   let closeFence = "";
   let continuation: CardContinuation | undefined;
   if (safeEnd >= 0) end = safeEnd;
   else if (anyEnd >= 0) end = anyEnd;
   else if (forcedEnd >= 0) { end = forcedEnd; closeFence = forcedClose; continuation = forcedReopen; }
-  else end = 0; // degenerate: a single first line larger than the budget
   if (end > lines.length - 2) end = lines.length - 2; // always leave a tail
-  if (end < 0) end = 0;
 
-  const headText = `${lines.slice(0, end + 1).join("\n")}\n`;
-  return { headText, closeFence, continuation };
+  if (end >= 0) {
+    const headText = `${lines.slice(0, end + 1).join("\n")}\n`;
+    // A clean line-boundary head that fits the display budget and leaves a tail wins.
+    if (headText.length < body.length && prefixBytes + byteLen(headText) + byteLen(closeFence) <= budgetBytes) {
+      return { headText, closeFence, continuation };
+    }
+  }
+
+  // Degenerate: no usable line boundary (e.g. a single line larger than the budget). Split the body
+  // UTF-8-safely at a code-point boundary inside the current structural context, repairing fences /
+  // tables so the head card and the continued card both render.
+  const ctxInFence = !!start?.openFence;
+  const ctxFenceMarker = start?.openFence ? fenceMarkerOf(start.openFence) : "```";
+  const close = ctxInFence ? ctxFenceMarker : "";
+  const closeBytes = close ? byteLen(`\n${close}`) : 0;
+  const avail = budgetBytes - prefixBytes - closeBytes;
+  let head = takeByBytes(body, avail);
+  if (head.length === 0) head = firstCodePoint(body); // guarantee progress (>= 1 code point)
+  if (head.length >= body.length) {
+    // took everything — back off one code point so there is a tail to continue
+    const backed = head.slice(0, head.length - lastCodePointLen(head));
+    head = backed.length > 0 ? backed : firstCodePoint(body);
+  }
+  const degenerateContinuation: CardContinuation | undefined = ctxInFence
+    ? { displayPrefix: `${start!.openFence}\n`, openFence: start!.openFence }
+    : start?.tableHeader
+      ? { displayPrefix: `${start.tableHeader}\n`, tableHeader: start.tableHeader }
+      : undefined;
+  return { headText: head, closeFence: close, continuation: degenerateContinuation };
+}
+
+function firstCodePoint(s: string): string {
+  for (const ch of s) return ch;
+  return "";
+}
+
+function lastCodePointLen(s: string): number {
+  let last = "";
+  for (const ch of s) last = ch;
+  return last.length;
 }
 
 /** Stable idempotency key for a card op: identical (cardId, sequence) always yields the same uuid,
