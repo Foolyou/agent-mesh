@@ -17,8 +17,12 @@ test("meshAssistantGateway adapts a MeshAssistant: available() is live, prompt +
   // duck-typed MeshAssistant slice (avoids spawning a real ACP connection)
   const fake = {
     _available: false,
+    _busy: false,
     get available() {
       return this._available;
+    },
+    get busy() {
+      return this._busy;
     },
     async prompt(text: string, images?: unknown) {
       calls.push({ text, images });
@@ -37,6 +41,10 @@ test("meshAssistantGateway adapts a MeshAssistant: available() is live, prompt +
   expect(gw.available()).toBe(false);
   fake._available = true;
   expect(gw.available()).toBe(true); // evaluated lazily — reflects live state
+
+  expect(gw.busy()).toBe(false);
+  fake._busy = true;
+  expect(gw.busy()).toBe(true); // busy() delegates to MeshAssistant.busy, live
 
   const r = await gw.prompt("hello", []);
   expect(r).toBeUndefined(); // Promise<void>

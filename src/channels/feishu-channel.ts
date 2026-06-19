@@ -496,6 +496,14 @@ export class FeishuChannel implements Channel {
       rt.sender.enqueue("助手未启用。");
       return;
     }
+    // Busy-reject BEFORE any image download/store: the shared session is held by another source, so
+    // this turn would be rejected anyway — don't fetch/persist image bytes for nothing. runP2pTurn
+    // keeps its own busy guard as a second defense for the enqueue→execute race.
+    if (this.assistant.busy()) {
+      this.log(`feishu channel: inbound p2p deferred — assistant busy event=${m.eventId}`);
+      rt.sender.enqueue("助手正在处理其他请求，请稍后再试。");
+      return;
+    }
     if (m.messageType === "image") {
       const refs = await this.provisionImage(rt, m, P2P_IMAGE_BUCKET);
       if (refs) this.enqueueP2pTurn(rt, "用户发送了一张图片。", refs);

@@ -1372,6 +1372,41 @@ test("p2p: while the shared assistant is busy with another source, a DM is rejec
   expect(s.sentText("p2p_me")).not.toContain("output for the other source");
 });
 
+test("p2p: a busy assistant rejects an image DM BEFORE any download/store (no wasted fetch)", async () => {
+  const downloaded: unknown[] = [];
+  const stored: unknown[] = [];
+  const mesh = new FakeMesh();
+  const timers = manualTimers();
+  const auth = memAuthStore();
+  const assistant = fakeAssistant();
+  const p2pSenders = new Map<string, ReturnType<typeof fakeSender>>();
+  let pushInbound!: (m: InboundMsg) => void;
+  const ch = new FeishuChannel({
+    mesh,
+    config: cfg(),
+    sender: fakeSender().sink,
+    makeConsumer: (onMessage) => { pushInbound = onMessage; return { start() {}, stop() {} }; },
+    setTimer: timers.setTimer,
+    authStore: auth.store,
+    assistant: assistant.gateway,
+    makeSender: (chatId) => { const f = fakeSender(); p2pSenders.set(chatId, f); return f.sink; },
+    root: "/data/root",
+    downloadImage: async (req) => { downloaded.push(req); return { bytes: new Uint8Array([1]) }; },
+    storeImages: async (_r, bucket, files) => { stored.push({ bucket }); return files.map((f, i) => ({ id: `id${i}.png`, mimeType: "image/png", name: "x", bucket, path: "p", url: "u" })); },
+    now: () => 1_700_000_000_000,
+  });
+  ch.start();
+  await flushAsync();
+  assistant.setExternalBusy(true); // another source holds the shared session
+  pushInbound(inbound({ chatType: "p2p", chatId: "p2p_img", senderId: "ou_me", messageType: "image", messageId: "om_x", imageKey: "img_k", text: "" }));
+  await flushAsync();
+  expect(downloaded).toHaveLength(0); // never fetched the image
+  expect(stored).toHaveLength(0); // never stored it
+  expect(assistant.prompts).toHaveLength(0); // never prompted
+  expect((p2pSenders.get("p2p_img")?.sent ?? []).map((x) => x.text).join("")).toContain("助手正在处理其他请求");
+  await ch.stop();
+});
+
 test("p2p: an assistant failure during stop() does not enqueue a notice onto the stopping sender", async () => {
   // slow consumer.stop so stop() is mid-teardown while the assistant prompt rejects
   let releaseConsumerStop!: () => void;
