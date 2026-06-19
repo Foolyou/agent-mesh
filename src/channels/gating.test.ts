@@ -22,7 +22,7 @@ function cfg(over: Partial<FeishuChannelConfig> = {}): FeishuChannelConfig {
 }
 
 function msg(over: Partial<InboundMsg> = {}): InboundMsg {
-  return { eventId: "e1", chatId: "oc_1", chatType: "p2p", senderId: "ou_me", messageType: "text", text: "hi", mentions: [], ...over };
+  return { eventId: "e1", chatId: "oc_1", chatType: "p2p", senderId: "ou_me", messageType: "text", text: "hi", mentions: [], messageId: "om_1", ...over };
 }
 
 test("senderAllowed only passes whitelisted open_ids", () => {

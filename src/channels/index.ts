@@ -10,7 +10,7 @@ import type { Channel, FeishuChannelConfig, MeshGateway } from "./types";
 import type { OutboundSink } from "./feishu-channel";
 import { loadFeishuConfig } from "./config";
 import { FeishuChannel } from "./feishu-channel";
-import { createFeishuClient, LarkConsumer } from "./consumer";
+import { createFeishuClient, LarkConsumer, sdkDownloadImage } from "./consumer";
 import { LarkSender, sdkSend, sdkUpdate } from "./sender";
 import { CardSender, sdkCardCreate, sdkCardSend, sdkCardContent, sdkCardFinalize, type CardSenderOptions } from "./card-sender";
 import { FeishuChannelController } from "./controller";
@@ -34,6 +34,8 @@ export function buildFeishuChannel(mesh: MeshGateway, opts: BuildFeishuChannelOp
     config: cfg,
     senders,
     log,
+    root: opts.root,
+    downloadImage: sdkDownloadImage(client),
     makeConsumer: (onMessage) =>
       new LarkConsumer({
         appId: cfg.appId,

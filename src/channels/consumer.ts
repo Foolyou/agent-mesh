@@ -6,7 +6,7 @@
 // delegated to the SDK.
 
 import * as lark from "@larksuiteoapi/node-sdk";
-import type { FeishuDomain, InboundMention, InboundMsg } from "./types";
+import type { DownloadedImage, FeishuDomain, InboundImageDownloader, InboundMention, InboundMsg } from "./types";
 
 type ReceiveHandler = NonNullable<lark.EventHandles["im.message.receive_v1"]>;
 export type ReceiveEvent = Parameters<ReceiveHandler>[0];
@@ -87,21 +87,35 @@ export class LarkConsumer {
 }
 
 export function parseInboundEvent(data: ReceiveEvent): InboundMsg | undefined {
-  const eventId = str(data.event_id) || str(data.uuid) || str(data.message?.message_id);
+  const messageId = str(data.message?.message_id);
+  const eventId = str(data.event_id) || str(data.uuid) || messageId;
   const chatId = str(data.message?.chat_id);
   const senderId = str(data.sender?.sender_id?.open_id);
   const chatType = data.message?.chat_type === "group" ? "group" : data.message?.chat_type === "p2p" ? "p2p" : undefined;
   if (!eventId || !chatId || !senderId || !chatType) return undefined;
   const messageType = str(data.message?.message_type) || "text";
+  const content = str(data.message?.content);
   return {
     eventId,
     chatId,
     chatType,
     senderId,
     messageType,
-    text: textFromContent(str(data.message?.content), data.message?.mentions),
+    text: textFromContent(content, data.message?.mentions),
     mentions: mentionsFrom(data.message?.mentions),
+    messageId,
+    ...(messageType === "image" ? { imageKey: imageKeyFromContent(content) } : {}),
   };
+}
+
+/** Extract `image_key` from an image message's content JSON, or undefined when absent/malformed. */
+export function imageKeyFromContent(content: string): string | undefined {
+  try {
+    const parsed = JSON.parse(content) as { image_key?: unknown };
+    return typeof parsed.image_key === "string" && parsed.image_key ? parsed.image_key : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export function textFromContent(content: string, mentions?: ReceiveEvent["message"]["mentions"]): string {
@@ -146,6 +160,23 @@ export function createFeishuClient(cfg: { appId: string; appSecret: string; doma
     appSecret: cfg.appSecret,
     domain: sdkDomain(cfg.domain ?? "feishu"),
   });
+}
+
+/** Download an inbound image resource via the bot client (GET .../messages/:id/resources/:key),
+ *  collecting the SDK's readable stream into bytes. Injected as the channel's image downloader. */
+export function sdkDownloadImage(client: lark.Client): InboundImageDownloader {
+  return async ({ messageId, imageKey }): Promise<DownloadedImage> => {
+    const res = await client.im.v1.messageResource.get({
+      path: { message_id: messageId, file_key: imageKey },
+      params: { type: "image" },
+    });
+    const stream = res.getReadableStream();
+    const chunks: Buffer[] = [];
+    for await (const chunk of stream as AsyncIterable<Buffer | Uint8Array | string>) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    }
+    return { bytes: new Uint8Array(Buffer.concat(chunks)) };
+  };
 }
 
 function createRealWsClient(params: {

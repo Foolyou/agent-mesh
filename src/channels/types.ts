@@ -5,7 +5,7 @@
 // has one bot credential set. Inbound user text is routed by chat_id to the matching mesh router,
 // and router chunks are mirrored back to that mesh's Feishu group.
 
-import type { MeshEvent } from "../acp/types";
+import type { MeshEvent, PromptImageRef } from "../acp/types";
 
 /** A startable/stoppable external bridge. stop() must leave no orphaned subprocess. */
 export interface Channel {
@@ -18,7 +18,7 @@ export interface Channel {
  *  channel from reaching into unrelated control-plane APIs. */
 export interface MeshGateway {
   on(listener: (name: string, e: MeshEvent) => void): () => void;
-  promptRouter(name: string, text: string): Promise<void>;
+  promptRouter(name: string, text: string, images?: PromptImageRef[]): Promise<void>;
   startMesh(name: string): Promise<void>;
   stopMesh(name: string): Promise<void>;
   newAllSessions(name: string): Promise<void>;
@@ -38,6 +38,10 @@ export interface InboundMsg {
   messageType: string; // text / post / image / ...
   text: string;
   mentions: InboundMention[];
+  /** Raw Feishu message_id (needed to download message resources like images). */
+  messageId: string;
+  /** image_key from an `image` message's content, used to download the image resource. */
+  imageKey?: string;
 }
 
 export interface InboundMention {
@@ -45,6 +49,18 @@ export interface InboundMention {
   id: string;
   name: string;
 }
+
+/** Bytes of a downloaded inbound image resource. mimeType/name are advisory; the upload store
+ *  sniffs the real type from the bytes. */
+export interface DownloadedImage {
+  bytes: Uint8Array;
+  name?: string;
+  mimeType?: string;
+}
+
+/** Download an inbound image resource by (message_id, image_key). Injected so the channel is
+ *  unit-tested without the SDK; index.ts wires the real bot-client download. */
+export type InboundImageDownloader = (req: { messageId: string; imageKey: string }) => Promise<DownloadedImage>;
 
 /** Resolved Feishu channel config (from `<root>/channels/feishu.json`; user-owned runtime
  *  data). */

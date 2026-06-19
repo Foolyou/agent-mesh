@@ -38,7 +38,32 @@ test("parseInboundEvent maps SDK receive events to InboundMsg", () => {
     messageType: "text",
     text: "hello",
     mentions: [{ key: "_user_1", id: "ou_bot", name: "Legion" }],
+    messageId: "om_1",
   } as InboundMsg);
+});
+
+test("parseInboundEvent captures message_id and an image message's image_key", () => {
+  const msg = parseInboundEvent(event({
+    message: {
+      message_id: "om_img",
+      create_time: "1",
+      chat_id: "oc_1",
+      chat_type: "p2p",
+      message_type: "image",
+      content: JSON.stringify({ image_key: "img_v3_xyz" }),
+    },
+  }));
+  expect(msg?.messageId).toBe("om_img");
+  expect(msg?.messageType).toBe("image");
+  expect(msg?.imageKey).toBe("img_v3_xyz");
+});
+
+test("parseInboundEvent leaves imageKey undefined for malformed image content", () => {
+  const msg = parseInboundEvent(event({
+    message: { message_id: "om_x", create_time: "1", chat_id: "oc_1", chat_type: "p2p", message_type: "image", content: "not-json" },
+  }));
+  expect(msg?.messageId).toBe("om_x");
+  expect(msg?.imageKey).toBeUndefined();
 });
 
 test("parseInboundEvent rejects malformed / incomplete events", () => {

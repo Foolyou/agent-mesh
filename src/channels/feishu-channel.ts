@@ -13,11 +13,15 @@
 // against fakes; index.ts wires the real LarkConsumer + LarkSender. The channel only ever READS
 // the mesh control plane (on / promptRouter / routerOf / listMeshes).
 
-import type { MeshEvent } from "../acp/types";
-import type { Channel, FeishuChannelConfig, FeishuMeshBinding, InboundMsg, MeshGateway } from "./types";
+import type { MeshEvent, PromptImageRef } from "../acp/types";
+import type { Channel, FeishuChannelConfig, FeishuMeshBinding, InboundImageDownloader, InboundMsg, MeshGateway } from "./types";
 import { BoundedDedup } from "./dedup";
 import { passesAtGate, senderAllowed, stripBotMention } from "./gating";
+import { storeUploads, type UploadFileLike } from "../web/uploads";
 import { randomUUID } from "node:crypto";
+
+/** Reuse the web upload store for inbound image provisioning (落盘 + refs the agent can read). */
+type StoreImages = (root: string, bucket: string, files: UploadFileLike[]) => Promise<PromptImageRef[]>;
 
 /** Metadata for an in-turn segment boundary (e.g. the router invoking a tool). */
 export interface SegmentBreak {
@@ -64,6 +68,12 @@ export interface FeishuChannelOptions {
   debounceMs?: number;
   dedupCapacity?: number;
   idempotencyKey?: (binding: FeishuMeshBinding, seq: number, text: string) => string;
+  /** Data root for inbound image uploads (passed to storeUploads). Absent => image inbound disabled. */
+  root?: string;
+  /** Download an inbound image resource. Absent => image inbound disabled. */
+  downloadImage?: InboundImageDownloader;
+  /** Provision downloaded images into agent-readable refs. Defaults to the web {@link storeUploads}. */
+  storeImages?: StoreImages;
 }
 
 interface BindingRuntime {
@@ -106,6 +116,9 @@ export class FeishuChannel implements Channel {
   private readonly streaming: boolean;
   private readonly dedup: BoundedDedup;
   private readonly idempotencyKey: (binding: FeishuMeshBinding, seq: number, text: string) => string;
+  private readonly root?: string;
+  private readonly downloadImage?: InboundImageDownloader;
+  private readonly storeImages: StoreImages;
   private readonly runtimes: BindingRuntime[] = [];
   private readonly byChat = new Map<string, BindingRuntime>();
   private readonly byMesh = new Map<string, BindingRuntime>();
@@ -125,6 +138,9 @@ export class FeishuChannel implements Channel {
     this.streaming = opts.config.outbound?.streaming !== false;
     this.dedup = new BoundedDedup(opts.dedupCapacity ?? 1000);
     this.idempotencyKey = opts.idempotencyKey ?? (() => randomUUID());
+    this.root = opts.root;
+    this.downloadImage = opts.downloadImage;
+    this.storeImages = opts.storeImages ?? storeUploads;
     const bindings = normalizedBindings(opts.config);
     for (const binding of bindings) {
       const sender = opts.senders?.get(binding.chatId) ?? (binding.chatId === opts.config.chatId ? opts.sender : undefined);
@@ -203,6 +219,14 @@ export class FeishuChannel implements Channel {
       this.log(`feishu channel: inbound dropped @gate event=${m.eventId} mentions=${mentionIds(m) || "-"}`);
       return;
     }
+
+    // Image message: download the resource, provision agent-readable refs, prompt the router. Not a
+    // text/command path — image content carries no prompt text.
+    if (m.messageType === "image") {
+      await this.handleInboundImage(rt, m);
+      return;
+    }
+
     const text = stripBotMention(m, cfg).trim();
     if (!text) {
       this.log(`feishu channel: inbound dropped empty event=${m.eventId}`);
@@ -216,23 +240,63 @@ export class FeishuChannel implements Channel {
       return;
     }
 
+    await this.deliverPrompt(rt, m.eventId, text);
+  }
+
+  /** Start the mesh if needed, finalize any residual streaming turn (pre-prompt boundary — never on
+   *  command/gated messages), then feed the router the prompt (optionally with image refs). */
+  private async deliverPrompt(rt: BindingRuntime, eventId: string, text: string, images?: PromptImageRef[]): Promise<void> {
     if (!(await this.ensureMeshRunning(rt))) return;
-    // Deterministic pre-prompt boundary: finalize any residual streaming buffer from the previous
-    // turn BEFORE feeding a new prompt, so a not-yet-flushed reply can't get concatenated with the
-    // next turn's chunks. Only here (we are about to call promptRouter) — never on command/gated
-    // messages. Complements (does not replace) the fallback timer, since router replies can also be
-    // triggered by mail rather than inbound Feishu messages.
+    // Pre-prompt boundary: finalize a not-yet-flushed reply so it can't concatenate with the next
+    // turn's chunks. Complements the fallback timer (router replies can also be mail-triggered).
     if (rt.streamTurnActive || rt.buffer.trim()) {
       this.tlog(rt, "inbound-residual-finish");
       this.finalizeTurn(rt);
     }
     try {
-      this.log(`feishu channel: routing inbound event=${m.eventId} to mesh "${rt.binding.mesh}"`);
-      await this.mesh.promptRouter(rt.binding.mesh, feishuUserPrompt(text));
+      this.log(`feishu channel: routing inbound event=${eventId} to mesh "${rt.binding.mesh}"${images?.length ? ` images=${images.length}` : ""}`);
+      await this.mesh.promptRouter(rt.binding.mesh, feishuUserPrompt(text), images);
     } catch (e) {
       this.log(`feishu channel: promptRouter failed: ${String(e)}`);
       rt.sender.enqueue(`消息已收到，但投递到 mesh "${rt.binding.mesh}" 失败：${shortError(e)}`);
     }
+  }
+
+  /** Download an inbound image, provision agent-readable refs (reusing the web upload store), and
+   *  prompt the router. On any failure (no download capability, missing ids, download/store error)
+   *  send a short notice to the group and do NOT prompt the router. Never logs/leaks the image_key. */
+  private async handleInboundImage(rt: BindingRuntime, m: InboundMsg): Promise<void> {
+    if (!this.downloadImage || !this.root) {
+      this.log(`feishu channel: inbound image but image handling not configured event=${m.eventId}`);
+      rt.sender.enqueue("收到一张图片，但当前未启用图片处理。");
+      return;
+    }
+    if (!m.messageId || !m.imageKey) {
+      this.log(`feishu channel: inbound image missing ids event=${m.eventId} hasMessageId=${!!m.messageId} hasImageKey=${!!m.imageKey}`);
+      rt.sender.enqueue("收到一张图片但无法处理。");
+      return;
+    }
+    let refs: PromptImageRef[];
+    try {
+      const img = await this.downloadImage({ messageId: m.messageId, imageKey: m.imageKey });
+      const file: UploadFileLike = {
+        name: img.name ?? "feishu-image",
+        type: img.mimeType,
+        size: img.bytes.byteLength,
+        arrayBuffer: async () => new Uint8Array(img.bytes).buffer,
+      };
+      refs = await this.storeImages(this.root, rt.binding.mesh, [file]);
+    } catch (e) {
+      this.log(`feishu channel: inbound image download/store failed event=${m.eventId}: ${shortError(e)}`);
+      rt.sender.enqueue("收到一张图片但下载失败。");
+      return;
+    }
+    if (!refs.length) {
+      this.log(`feishu channel: inbound image produced no refs event=${m.eventId}`);
+      rt.sender.enqueue("收到一张图片但无法处理。");
+      return;
+    }
+    await this.deliverPrompt(rt, m.eventId, "用户发送了一张图片。", refs);
   }
 
   private async handleCommand(rt: BindingRuntime, command: MeshCommand): Promise<void> {
