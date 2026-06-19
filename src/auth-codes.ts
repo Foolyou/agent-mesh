@@ -18,8 +18,8 @@
 // safely via `AuthCodeError` with a generic, key-free, plaintext-free message; the raw crypto error and
 // the key bytes never escape. The caller decides what (if anything) to surface.
 
-import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { chmod, mkdir, open, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import {
   createCipheriv,
   createDecipheriv,
@@ -199,16 +199,24 @@ export function decryptAuthCode(keys: KeysFile, code: string, opts?: { now?: () 
     throw new AuthCodeError("invalid");
   }
 
-  // 4. Parse + validate the plaintext payload.
+  // 4. Parse the plaintext payload.
   let payload: { v?: unknown; ck?: unknown; oid?: unknown; app?: unknown; iat?: unknown; exp?: unknown; n?: unknown };
   try {
     payload = JSON.parse(plaintext);
   } catch {
     throw new AuthCodeError("invalid");
   }
+  if (!payload || typeof payload !== "object") throw new AuthCodeError("invalid");
+
+  // 5. Expiry BEFORE version/field validation (spec §2.1 order: tag → exp → v → fields). A
+  //    GCM-valid but expired code reports "expired" even if its version/fields are otherwise
+  //    off, so an expired old-format code never masquerades as a tamper ("invalid").
+  if (typeof payload.exp === "number" && nowSeconds(opts?.now) >= payload.exp) {
+    throw new AuthCodeError("expired");
+  }
+
+  // 6. Version + required fields (any mismatch → invalid).
   if (
-    !payload ||
-    typeof payload !== "object" ||
     payload.v !== PAYLOAD_VERSION ||
     typeof payload.ck !== "string" ||
     typeof payload.oid !== "string" ||
@@ -219,9 +227,6 @@ export function decryptAuthCode(keys: KeysFile, code: string, opts?: { now?: () 
   ) {
     throw new AuthCodeError("invalid");
   }
-
-  // 5. Expiry (distinct, presentable failure).
-  if (nowSeconds(opts?.now) >= payload.exp) throw new AuthCodeError("expired");
 
   return {
     channelKey: payload.ck,
@@ -267,25 +272,103 @@ export function authKeysPath(root: string): string {
   return join(authDir(root), "keys.json");
 }
 
-// In-process write serialization keyed by absolute path (the board-store / mailbox pattern). A
-// cross-process lockfile (CLI vs backend) is added with the rest of the auth store in a later step.
-const keyLocks = new Map<string, Promise<unknown>>();
+// ── shared auth-store fs primitives (used here for keys.json and by auth-store.ts) ───────────────
+//
+// Two writers can touch an auth file: the running backend and a separate `mesh …` CLI process. So a
+// safe read-modify-write needs BOTH an in-process per-path lock (board-store / mailbox pattern) AND a
+// cross-process advisory lockfile. `withFileLock` composes them: in-process callers serialize on the
+// promise chain first, then exactly one of them arbitrates with other OS processes via the lockfile.
+// These live in this (lower-level) module so auth-store.ts can import them without a cycle.
 
-async function withKeyLock<T>(path: string, run: () => Promise<T>): Promise<T> {
-  const previous = keyLocks.get(path) ?? Promise.resolve();
+const fileLocks = new Map<string, Promise<unknown>>();
+const LOCK_STALE_MS = 15_000; // a lockfile older than this is assumed orphaned (crashed holder) and broken
+const LOCK_TIMEOUT_MS = 10_000;
+const LOCK_RETRY_MS = 25;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function withInProcLock<T>(path: string, run: () => Promise<T>): Promise<T> {
+  const previous = fileLocks.get(path) ?? Promise.resolve();
   let release!: () => void;
   const current = new Promise<void>((resolve) => {
     release = resolve;
   });
   const chained = previous.then(() => current, () => current);
-  keyLocks.set(path, chained);
+  fileLocks.set(path, chained);
   await previous.catch(() => {});
   try {
     return await run();
   } finally {
     release();
-    if (keyLocks.get(path) === chained) keyLocks.delete(path);
+    if (fileLocks.get(path) === chained) fileLocks.delete(path);
   }
+}
+
+export interface FileLockOptions {
+  timeoutMs?: number;
+  staleMs?: number;
+}
+
+async function acquireLockfile(lockPath: string, opts?: FileLockOptions): Promise<void> {
+  const staleMs = opts?.staleMs ?? LOCK_STALE_MS;
+  const deadline = Date.now() + (opts?.timeoutMs ?? LOCK_TIMEOUT_MS);
+  for (;;) {
+    try {
+      const fh = await open(lockPath, "wx"); // exclusive create — fails EEXIST if held
+      try {
+        await fh.write(`${process.pid}:${Date.now()}`);
+      } finally {
+        await fh.close();
+      }
+      return;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+      // Held: break it if the holder looks dead (stale mtime), else wait and retry.
+      try {
+        const st = await stat(lockPath);
+        if (Date.now() - st.mtimeMs > staleMs) {
+          await rm(lockPath, { force: true }).catch(() => {});
+          continue;
+        }
+      } catch {
+        continue; // lock vanished between EEXIST and stat → race to re-acquire
+      }
+      if (Date.now() >= deadline) throw new Error("auth file lock timeout");
+      await sleep(LOCK_RETRY_MS);
+    }
+  }
+}
+
+/** Run `run` holding both the in-process and cross-process locks for `path`. The whole
+ *  read-modify-write must happen inside `run` so concurrent (same- or cross-process) callers can
+ *  never both observe an absent file and double-create. Not re-entrant — callers must not nest
+ *  `withFileLock` on the same path. */
+export async function withFileLock<T>(path: string, run: () => Promise<T>, opts?: FileLockOptions): Promise<T> {
+  return withInProcLock(path, async () => {
+    const lockPath = `${path}.lock`;
+    await mkdir(dirname(lockPath), { recursive: true, mode: 0o700 }).catch(() => {});
+    await acquireLockfile(lockPath, opts);
+    try {
+      return await run();
+    } finally {
+      await rm(lockPath, { force: true }).catch(() => {});
+    }
+  });
+}
+
+/** Atomic file write: tmp + fsync-free rename, dir 0700 / file `mode` (default 0600). Does NOT lock —
+ *  call inside `withFileLock` for a concurrency-safe write. */
+export async function atomicWriteFile(path: string, data: string, mode: number = 0o600): Promise<void> {
+  const dir = dirname(path);
+  await mkdir(dir, { recursive: true, mode: 0o700 });
+  await chmod(dir, 0o700).catch(() => {});
+  const tmp = `${path}.${process.pid}.${Date.now()}.${randomUUID()}.tmp`;
+  await writeFile(tmp, data, { mode });
+  await chmod(tmp, mode).catch(() => {});
+  await rename(tmp, path);
+  await chmod(path, mode).catch(() => {});
 }
 
 function sanitizeKeys(parsed: unknown): KeysFile | undefined {
@@ -322,19 +405,13 @@ export async function loadKeys(root: string): Promise<KeysFile | undefined> {
   }
 }
 
-/** Atomic write (tmp + rename), dir 0700 / file 0600. Serialized in-process per path. */
+async function writeKeysUnlocked(root: string, keys: KeysFile): Promise<void> {
+  await atomicWriteFile(authKeysPath(root), JSON.stringify(keys, null, 2), 0o600);
+}
+
+/** Atomic write (tmp + rename), dir 0700 / file 0600. Serialized under the file lock. */
 export async function saveKeys(root: string, keys: KeysFile): Promise<void> {
-  const dir = authDir(root);
-  const path = authKeysPath(root);
-  await withKeyLock(path, async () => {
-    await mkdir(dir, { recursive: true, mode: 0o700 });
-    await chmod(dir, 0o700).catch(() => {});
-    const tmp = `${path}.${process.pid}.${Date.now()}.${randomUUID()}.tmp`;
-    await writeFile(tmp, JSON.stringify(keys, null, 2), { mode: 0o600 });
-    await chmod(tmp, 0o600).catch(() => {});
-    await rename(tmp, path);
-    await chmod(path, 0o600).catch(() => {});
-  });
+  await withFileLock(authKeysPath(root), () => writeKeysUnlocked(root, keys));
 }
 
 function nextKid(keys: Record<string, StoredKey>): string {
@@ -353,22 +430,33 @@ function freshKey(kid: string, now?: () => number): { kid: string; key: StoredKe
   };
 }
 
-/** Return the key store, lazily creating a first active key (`k1`) on a cold store. Idempotent. */
+/** Return the key store, lazily creating a first active key (`k1`) on a cold store. Idempotent. The
+ *  whole load-or-create runs under the file lock, so concurrent cold-start callers (same process or
+ *  CLI-vs-backend) can never both see an absent store and generate divergent `k1` keys. */
 export async function ensureKeys(root: string, now?: () => number): Promise<KeysFile> {
-  const existing = await loadKeys(root);
-  if (existing) return existing;
-  const { kid, key } = freshKey("k1", now);
-  const created: KeysFile = { version: 1, active: kid, keys: { [kid]: key } };
-  await saveKeys(root, created);
-  return created;
+  return withFileLock(authKeysPath(root), async () => {
+    const existing = await loadKeys(root);
+    if (existing) return existing;
+    const { kid, key } = freshKey("k1", now);
+    const created: KeysFile = { version: 1, active: kid, keys: { [kid]: key } };
+    await writeKeysUnlocked(root, created);
+    return created;
+  });
 }
 
 /** Add a new key, mark it active for new codes, and KEEP existing keys so outstanding codes still
- *  decrypt across the rotation overlap (until they expire and the old key is pruned out-of-band). */
+ *  decrypt across the rotation overlap (until they expire and the old key is pruned out-of-band).
+ *  Read-modify-write under the file lock (no nested lock — does its own load + write). */
 export async function rotateKeys(root: string, now?: () => number): Promise<KeysFile> {
-  const current = await ensureKeys(root, now);
-  const { kid, key } = freshKey(nextKid(current.keys), now);
-  const rotated: KeysFile = { version: current.version, active: kid, keys: { ...current.keys, [kid]: key } };
-  await saveKeys(root, rotated);
-  return rotated;
+  return withFileLock(authKeysPath(root), async () => {
+    let current = await loadKeys(root);
+    if (!current) {
+      const seed = freshKey("k1", now);
+      current = { version: 1, active: seed.kid, keys: { [seed.kid]: seed.key } };
+    }
+    const { kid, key } = freshKey(nextKid(current.keys), now);
+    const rotated: KeysFile = { version: current.version, active: kid, keys: { ...current.keys, [kid]: key } };
+    await writeKeysUnlocked(root, rotated);
+    return rotated;
+  });
 }

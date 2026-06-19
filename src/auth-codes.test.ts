@@ -1,10 +1,12 @@
 import { expect, test } from "bun:test";
-import { mkdtemp, rm, readFile, stat, writeFile, mkdir } from "node:fs/promises";
+import { mkdtemp, rm, stat, writeFile, mkdir, utimes } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { createCipheriv, randomBytes } from "node:crypto";
 import {
   AuthCodeError,
   authKeysPath,
+  atomicWriteFile,
   decryptAuthCode,
   encryptAuthCode,
   ensureKeys,
@@ -14,8 +16,26 @@ import {
   rotateKeys,
   saveKeys,
   verifyTokenHash,
+  withFileLock,
   type KeysFile,
 } from "./auth-codes";
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Forge a GCM-VALID envelope with an arbitrary plaintext object, using the test's known key bytes.
+ *  Lets us exercise decrypt's validation ORDER (e.g. an expired code whose payload version is wrong)
+ *  without exposing a production helper. */
+function forgeCode(keys: KeysFile, kid: string, payloadObj: unknown): string {
+  const key = Buffer.from(keys.keys[kid].secret, "base64");
+  const iv = randomBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", key, iv);
+  const ct = Buffer.concat([cipher.update(JSON.stringify(payloadObj), "utf8"), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  const env = { v: 1, kid, iv: iv.toString("base64url"), tag: tag.toString("base64url"), ct: ct.toString("base64url") };
+  return Buffer.from(JSON.stringify(env), "utf8").toString("base64url");
+}
 
 async function tmp(): Promise<string> {
   return mkdtemp(join(tmpdir(), "auth-codes-"));
@@ -280,6 +300,137 @@ test("rotateKeys: adds k2 as active, keeps k1, and persists; a code under k1 sti
     expect(decryptAuthCode(reloaded!, oldCode).openId).toBe("ou_123"); // overlap: old code still decrypts
     const newEnv = JSON.parse(Buffer.from(encryptAuthCode(reloaded!, baseInput), "base64url").toString("utf8"));
     expect(newEnv.kid).toBe("k2");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+// ── decrypt validation ORDER: exp before version/fields (spec §2.1) ──────────────
+
+test("expired beats version: a GCM-valid but version-mismatched AND expired code reports expired, not invalid", () => {
+  const ks = keyStore();
+  const nowSec = 1_700_000_000;
+  // payload version 2 (unknown to the current decoder) AND already expired
+  const code = forgeCode(ks, "k1", { v: 2, ck: "feishu:cli_abc", oid: "ou_123", app: "cli_abc", iat: nowSec - 100, exp: nowSec - 10, n: "nn" });
+  let err: unknown;
+  try {
+    decryptAuthCode(ks, code, { now: () => nowSec * 1000 });
+  } catch (e) {
+    err = e;
+  }
+  expect(err).toBeInstanceOf(AuthCodeError);
+  expect((err as AuthCodeError).reason).toBe("expired"); // exp checked before version
+});
+
+test("not-expired but version-mismatched code reports invalid", () => {
+  const ks = keyStore();
+  const nowSec = 1_700_000_000;
+  const code = forgeCode(ks, "k1", { v: 2, ck: "feishu:cli_abc", oid: "ou_123", app: "cli_abc", iat: nowSec, exp: nowSec + 600, n: "nn" });
+  let err: unknown;
+  try {
+    decryptAuthCode(ks, code, { now: () => nowSec * 1000 });
+  } catch (e) {
+    err = e;
+  }
+  expect((err as AuthCodeError).reason).toBe("invalid");
+});
+
+test("GCM-valid payload with a non-numeric exp falls through to invalid (not expired)", () => {
+  const ks = keyStore();
+  const code = forgeCode(ks, "k1", { v: 1, ck: "feishu:cli_abc", oid: "ou_123", app: "cli_abc", iat: 1, exp: "soon", n: "nn" });
+  expect(() => decryptAuthCode(ks, code)).toThrow(AuthCodeError);
+  try {
+    decryptAuthCode(ks, code);
+  } catch (e) {
+    expect((e as AuthCodeError).reason).toBe("invalid");
+  }
+});
+
+// ── key-store concurrency: no cold-start double-generation, rotation keeps old keys ──
+
+test("concurrent ensureKeys on a cold store all return the SAME k1 secret (no double-generation)", async () => {
+  const root = await tmp();
+  try {
+    const results = await Promise.all(Array.from({ length: 8 }, () => ensureKeys(root)));
+    const secrets = new Set(results.map((r) => r.keys[r.active].secret));
+    expect(secrets.size).toBe(1); // every caller observed/created the one key
+    expect(results.every((r) => r.active === "k1")).toBe(true);
+    const onDisk = await loadKeys(root);
+    expect(onDisk!.keys.k1.secret).toBe([...secrets][0]); // and it matches what was persisted
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("sequential rotations keep every prior key; codes from each era still decrypt via the reloaded store", async () => {
+  const root = await tmp();
+  try {
+    const v1 = await ensureKeys(root);
+    const c1 = encryptAuthCode(v1, baseInput); // k1
+    const v2 = await rotateKeys(root);
+    const c2 = encryptAuthCode(v2, baseInput); // k2
+    const v3 = await rotateKeys(root);
+    const c3 = encryptAuthCode(v3, baseInput); // k3
+
+    expect(v3.active).toBe("k3");
+    const reloaded = await loadKeys(root);
+    expect(Object.keys(reloaded!.keys).sort()).toEqual(["k1", "k2", "k3"]); // nothing dropped
+    expect(decryptAuthCode(reloaded!, c1).openId).toBe("ou_123");
+    expect(decryptAuthCode(reloaded!, c2).openId).toBe("ou_123");
+    expect(decryptAuthCode(reloaded!, c3).openId).toBe("ou_123");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+// ── withFileLock basic behavior (the shared cross-process lock primitive) ────────
+
+test("withFileLock serializes overlapping holders on the same path", async () => {
+  const root = await tmp();
+  try {
+    const path = join(root, "auth", "x.json");
+    const order: string[] = [];
+    const p1 = withFileLock(path, async () => {
+      order.push("1-start");
+      await delay(30);
+      order.push("1-end");
+    });
+    const p2 = withFileLock(path, async () => {
+      order.push("2-start");
+      order.push("2-end");
+    });
+    await Promise.all([p1, p2]);
+    expect(order).toEqual(["1-start", "1-end", "2-start", "2-end"]); // p2 waited for p1
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("withFileLock breaks a stale lockfile (orphaned by a crashed holder) instead of hanging", async () => {
+  const root = await tmp();
+  try {
+    const path = join(root, "auth", "x.json");
+    const lockPath = `${path}.lock`;
+    await mkdir(dirname(lockPath), { recursive: true });
+    await writeFile(lockPath, "99999:0"); // a leftover lock from a dead pid
+    const old = new Date(Date.now() - 60_000);
+    await utimes(lockPath, old, old); // make it look stale
+    let ran = false;
+    await withFileLock(path, async () => { ran = true; }, { staleMs: 1_000, timeoutMs: 3_000 });
+    expect(ran).toBe(true); // broke the stale lock and proceeded
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("atomicWriteFile writes 0600 and is readable back", async () => {
+  const root = await tmp();
+  try {
+    const path = join(root, "auth", "blob.json");
+    await atomicWriteFile(path, JSON.stringify({ hello: "world" }));
+    const st = await stat(path);
+    expect(st.mode & 0o777).toBe(0o600);
+    expect(JSON.parse(await Bun.file(path).text())).toEqual({ hello: "world" });
   } finally {
     await rm(root, { recursive: true, force: true });
   }
