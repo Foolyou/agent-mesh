@@ -85,6 +85,9 @@ export class LarkSender {
   private streamPending?: string;
   /** A turn boundary was requested: flush the latest text now, then seal for the next turn. */
   private streamCommitting = false;
+  /** An in-turn segment boundary (tool call) was requested: seal the current message and continue
+   *  the same turn in a fresh one. */
+  private streamSegmentBreaking = false;
   /** The message being grown right now (undefined => the next op creates a fresh one). */
   private live?: LiveMessage;
   /** Chars already sealed into PRIOR (rolled-over) messages of THIS turn. */
@@ -137,13 +140,33 @@ export class LarkSender {
   streamCommit(): void {
     if (this.stopped) return;
     if (!this.update) {
-      // Degraded mode: deliver the whole turn as one ordinary message.
-      const text = this.streamPending ?? "";
+      // Degraded mode: deliver the remaining segment as one ordinary message.
+      const full = this.streamPending ?? "";
+      const seg = full.slice(this.streamBaseOffset);
       this.streamPending = undefined;
-      if (text.trim()) this.enqueue(text);
+      this.streamBaseOffset = 0;
+      if (seg.trim()) this.enqueue(seg);
       return;
     }
     this.streamCommitting = true;
+    void this.driveStream();
+  }
+
+  /** In-turn boundary (tool call): seal the current live message and continue the SAME turn in a
+   *  fresh one, so the boundary visually splits the reply. Never emits an empty message. */
+  streamSegmentBreak(): void {
+    if (this.stopped) return;
+    if (!this.update) {
+      // Degraded mode: flush the current segment now; the next text becomes a separate message.
+      const full = this.streamPending ?? "";
+      const seg = full.slice(this.streamBaseOffset);
+      if (seg.trim()) {
+        this.enqueue(seg);
+        this.streamBaseOffset = full.length;
+      }
+      return;
+    }
+    this.streamSegmentBreaking = true;
     void this.driveStream();
   }
 
@@ -163,6 +186,7 @@ export class LarkSender {
   private resetStream(): void {
     this.streamPending = undefined;
     this.streamCommitting = false;
+    this.streamSegmentBreaking = false;
     this.live = undefined;
     this.streamBaseOffset = 0;
     this.streamGaveUp = false;
@@ -180,11 +204,23 @@ export class LarkSender {
         const liveUpToDate = this.live ? this.live.sentText === segment : segment.trim() === "";
 
         if (liveUpToDate || this.streamGaveUp) {
+          // Soft seal first: an in-turn boundary continues the SAME turn in a fresh message.
+          if (this.streamSegmentBreaking && !this.streamCommitting) {
+            if (this.streamGaveUp) {
+              if (segment.trim()) this.enqueue(segment); // degraded: deliver this segment one-shot
+              this.streamGaveUp = false;
+            }
+            this.streamBaseOffset = full.length; // everything so far is shown/sent for this segment
+            this.live = undefined;
+            this.streamSegmentBreaking = false;
+            continue; // keep the turn going; the next text opens a new message
+          }
           if (this.streamCommitting) {
             if (this.streamGaveUp && segment.trim()) this.enqueue(full); // fallback for the whole turn
             this.live = undefined;
             this.streamBaseOffset = 0;
             this.streamCommitting = false;
+            this.streamSegmentBreaking = false;
             this.streamGaveUp = false;
             this.streamPending = undefined;
           }

@@ -175,3 +175,33 @@ test("streaming: without an update seam, commit delivers the whole turn as one o
   expect(r.creates).toEqual(["partial final"]);
   expect(r.updates).toEqual([]);
 });
+
+test("streaming: a segment break seals the live message and the next text opens a new one", async () => {
+  const r = streamRecorder();
+  const s = new LarkSender({ chatId: "oc_1", send: r.send, update: r.update, streamMinEditIntervalMs: 1000, now: r.now, wait: r.wait });
+  s.streamUpdate("Before"); await s.whenIdle();
+  s.streamSegmentBreak(); await s.whenIdle();
+  s.streamUpdate("BeforeAfter"); await s.whenIdle(); // full turn text; only the tail is the new message
+  s.streamCommit(); await s.whenIdle();
+  expect(r.creates).toEqual(["Before", "After"]); // two messages, no duplicated prefix
+  expect(r.updates).toEqual([]);
+});
+
+test("streaming: a segment break with nothing pending sends no empty message", async () => {
+  const r = streamRecorder();
+  const s = new LarkSender({ chatId: "oc_1", send: r.send, update: r.update, now: r.now, wait: r.wait });
+  s.streamSegmentBreak(); await s.whenIdle();
+  s.streamCommit(); await s.whenIdle();
+  expect(r.creates).toEqual([]);
+});
+
+test("streaming without an update seam: a segment break flushes the segment as its own message", async () => {
+  const { send, calls } = recordingSend();
+  const s = new LarkSender({ chatId: "oc_1", send }); // no update fn
+  s.streamUpdate("seg1");
+  s.streamSegmentBreak();
+  s.streamUpdate("seg1seg2");
+  s.streamCommit();
+  await s.whenIdle();
+  expect(calls.map((c) => c.text)).toEqual(["seg1", "seg2"]); // each segment its own message, no dup
+});
