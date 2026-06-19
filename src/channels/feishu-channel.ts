@@ -180,6 +180,14 @@ export class FeishuChannel implements Channel {
   private readonly assistant?: AssistantGateway;
   /** Factory for an on-demand outbound sender for a p2p chat id (no preconfigured binding). */
   private readonly makeSender?: (chatId: string) => OutboundSink;
+  /** Per-p2p-chat outbound runtime, created lazily (keyed by p2p chatId). */
+  private readonly p2pRuntimes = new Map<string, BindingRuntime>();
+  /** Serializes p2p assistant turns: the assistant session is SHARED (v1), so only one turn runs at a
+   *  time and its streamed updates map unambiguously to the chat that initiated it. */
+  private p2pTurnQueue: Promise<void> = Promise.resolve();
+  /** The p2p runtime currently receiving the in-flight assistant turn's updates (else undefined). */
+  private activeAssistantRuntime?: BindingRuntime;
+  private assistantUnsub?: () => void;
 
   private consumer?: InboundSource;
   private unsub?: () => void;
@@ -248,6 +256,8 @@ export class FeishuChannel implements Channel {
       }
     }
     this.unsub = this.mesh.on((name, e) => this.onMeshEvent(name, e));
+    // Mirror the shared Mesh Assistant's streamed updates to whichever p2p chat owns the in-flight turn.
+    if (this.assistant) this.assistantUnsub = this.assistant.onAssistant((u) => this.onAssistantUpdate(u));
     // With a store, DEFER inbound until the authoritative snapshot is loaded: the init window must not
     // (a) let a revoked-but-seeded sender through (snapshot is undefined => deny), nor (b) auth-code a
     // seed user who is about to be authorized. Without a store, start inbound immediately on the seed.
@@ -325,33 +335,32 @@ export class FeishuChannel implements Channel {
     this.authUnwatch = undefined;
     this.cancelAuthReload?.(); // drop a pending debounced reload
     this.cancelAuthReload = undefined;
-    for (const rt of this.runtimes) {
-      rt.cancelDebounce?.();
-      rt.cancelDebounce = undefined;
-      rt.cancelStreamFinish?.(); // drop the streaming fallback timer so it can't fire after teardown
-      rt.cancelStreamFinish = undefined;
-      rt.buffer = ""; // drop any un-flushed tail rather than sending during teardown
-      rt.currentMessageId = undefined;
-      rt.currentMessageStart = 0;
-      rt.streamTurnActive = false;
-      rt.committing = false;
-      rt.queuedEvents = []; // drop events queued behind a commit barrier; never send during teardown
-      rt.seenToolCalls.clear();
-      rt.replaying = false;
-    }
+    this.assistantUnsub?.(); // stop mirroring assistant updates
+    this.assistantUnsub = undefined;
+    this.activeAssistantRuntime = undefined;
+    this.p2pTurnQueue = Promise.resolve(); // drop any queued p2p turns; never run during teardown
+    for (const rt of this.runtimes) teardownRuntime(rt);
+    for (const rt of this.p2pRuntimes.values()) teardownRuntime(rt);
     this.unsub?.();
     this.unsub = undefined;
     await this.consumer?.stop();
-    for (const sender of new Set(this.runtimes.map((rt) => rt.sender))) sender.stop();
+    // stop every distinct sender (bound bindings + lazily-created p2p senders) so nothing leaks
+    const senders = new Set<OutboundSink>([...this.runtimes, ...this.p2pRuntimes.values()].map((rt) => rt.sender));
+    for (const sender of senders) sender.stop();
+    this.p2pRuntimes.clear();
   }
 
   // ── inbound: Feishu -> router ───────────────────────────────────────────────
   private async onInbound(m: InboundMsg): Promise<void> {
-    // Bound-chat gate FIRST: this channel serves only explicitly bound conversations. The bot may
-    // sit in other chats, so events from unknown chats are silently dropped before dedup.
-    // Silent on purpose; never log message content.
+    // Bound-chat gate FIRST: a bound conversation keeps its existing group/mesh behavior. The bot may
+    // sit in other chats; an UNBOUND p2p DM routes to the Mesh Assistant (Phase 5), while an unbound
+    // group chat is silently dropped (unchanged). (Bound chats win, which preserves the p2p-to-bound
+    // test fixture; real p2p DMs are never in `byChat` since bindings are groups.)
     const rt = this.byChat.get(m.chatId);
-    if (!rt) return;
+    if (!rt) {
+      if (m.chatType === "p2p") await this.onInboundP2p(m);
+      return;
+    }
     const cfg = this.bindingConfig(rt.binding);
     this.log(`feishu channel: inbound ${inboundMeta(m)}`);
     if (this.dedup.check(m.eventId)) {
@@ -413,19 +422,20 @@ export class FeishuChannel implements Channel {
     }
   }
 
-  /** Download an inbound image, provision agent-readable refs (reusing the web upload store), and
-   *  prompt the router. On any failure (no download capability, missing ids, download/store error)
-   *  send a short notice to the group and do NOT prompt the router. Never logs/leaks the image_key. */
-  private async handleInboundImage(rt: BindingRuntime, m: InboundMsg): Promise<void> {
+  /** Download an inbound image and provision agent-readable refs under `bucket` (reusing the web upload
+   *  store). On any failure (no download capability, missing ids, download/store error, no refs) send a
+   *  short notice to `rt.sender` and return undefined; the caller then just returns. Never logs/leaks
+   *  the image_key (logs the error CLASS only). */
+  private async provisionImage(rt: BindingRuntime, m: InboundMsg, bucket: string): Promise<PromptImageRef[] | undefined> {
     if (!this.downloadImage || !this.root) {
       this.log(`feishu channel: inbound image but image handling not configured event=${m.eventId}`);
       rt.sender.enqueue("收到一张图片，但当前未启用图片处理。");
-      return;
+      return undefined;
     }
     if (!m.messageId || !m.imageKey) {
       this.log(`feishu channel: inbound image missing ids event=${m.eventId} hasMessageId=${!!m.messageId} hasImageKey=${!!m.imageKey}`);
       rt.sender.enqueue("收到一张图片但无法处理。");
-      return;
+      return undefined;
     }
     let refs: PromptImageRef[];
     try {
@@ -436,20 +446,104 @@ export class FeishuChannel implements Channel {
         size: img.bytes.byteLength,
         arrayBuffer: async () => new Uint8Array(img.bytes).buffer,
       };
-      refs = await this.storeImages(this.root, rt.binding.mesh, [file]);
+      refs = await this.storeImages(this.root, bucket, [file]);
     } catch (e) {
       // Safe log only: a raw SDK error message can embed the request path / file_key, so log the
       // error CLASS (never the message) to avoid leaking the resource key.
       this.log(`feishu channel: inbound image download/store failed event=${m.eventId} error=${errorClass(e)}`);
       rt.sender.enqueue("收到一张图片但下载失败。");
-      return;
+      return undefined;
     }
     if (!refs.length) {
       this.log(`feishu channel: inbound image produced no refs event=${m.eventId}`);
       rt.sender.enqueue("收到一张图片但无法处理。");
+      return undefined;
+    }
+    return refs;
+  }
+
+  /** Group image: provision refs (bucket = mesh name) and prompt the bound router. */
+  private async handleInboundImage(rt: BindingRuntime, m: InboundMsg): Promise<void> {
+    const refs = await this.provisionImage(rt, m, rt.binding.mesh);
+    if (!refs) return;
+    await this.deliverPrompt(rt, m.eventId, "用户发送了一张图片。", refs);
+  }
+
+  // ── p2p -> Mesh Assistant (Phase 5) ─────────────────────────────────────────
+  /** An UNBOUND p2p DM. Same Phase 3 auth gate as group (deny -> short auth code, no @gate needed for
+   *  p2p); an authorized message routes to the shared Mesh Assistant. Group behavior is untouched. */
+  private async onInboundP2p(m: InboundMsg): Promise<void> {
+    // Sender/runtime FIRST (before dedup): an unhandleable p2p event (no sender factory) is dropped
+    // without consuming dedup capacity, mirroring how unbound chats drop before dedup.
+    const rt = this.getP2pRuntime(m.chatId);
+    if (!rt) {
+      this.log(`feishu channel: inbound p2p dropped — no sender available event=${m.eventId}`);
       return;
     }
-    await this.deliverPrompt(rt, m.eventId, "用户发送了一张图片。", refs);
+    this.log(`feishu channel: inbound p2p ${inboundMeta(m)}`);
+    if (this.dedup.check(m.eventId)) {
+      this.log(`feishu channel: inbound p2p dropped duplicate event=${m.eventId}`);
+      return;
+    }
+    if (!senderAuthorized(this.authSnapshot, this.channelKey, m.senderId)) {
+      await this.denyUnauthorized(rt, m); // Phase 3 deny -> short auth code (never routes to assistant)
+      return;
+    }
+    if (!this.assistant || !this.assistant.available()) {
+      this.log(`feishu channel: inbound p2p assistant unavailable event=${m.eventId}`);
+      rt.sender.enqueue("助手未启用。");
+      return;
+    }
+    if (m.messageType === "image") {
+      const refs = await this.provisionImage(rt, m, P2P_IMAGE_BUCKET);
+      if (refs) this.enqueueP2pTurn(rt, "用户发送了一张图片。", refs);
+      return;
+    }
+    const text = m.text.trim();
+    if (!text) {
+      this.log(`feishu channel: inbound p2p dropped empty event=${m.eventId}`);
+      return;
+    }
+    this.enqueueP2pTurn(rt, text);
+  }
+
+  /** Lazily build (and cache) the outbound runtime for a p2p chat. Undefined when no sender factory. */
+  private getP2pRuntime(chatId: string): BindingRuntime | undefined {
+    const existing = this.p2pRuntimes.get(chatId);
+    if (existing) return existing;
+    if (!this.makeSender) return undefined;
+    const rt: BindingRuntime = { binding: { mesh: "", chatId }, sender: this.makeSender(chatId), routerId: "", buffer: "", currentMessageStart: 0, flushSeq: 0, replaying: false, streamTurnActive: false, committing: false, commitGen: 0, queuedEvents: [], seenToolCalls: new Set() };
+    this.p2pRuntimes.set(chatId, rt);
+    return rt;
+  }
+
+  /** Queue a p2p assistant turn. The shared session runs ONE turn at a time so each turn's streamed
+   *  updates map unambiguously to the chat that initiated it (v1 locked decision). */
+  private enqueueP2pTurn(rt: BindingRuntime, text: string, images?: PromptImageRef[]): void {
+    this.p2pTurnQueue = this.p2pTurnQueue.then(() => this.runP2pTurn(rt, text, images)).catch(() => {});
+  }
+
+  private async runP2pTurn(rt: BindingRuntime, text: string, images?: PromptImageRef[]): Promise<void> {
+    if (!this.started || !this.assistant) return;
+    this.activeAssistantRuntime = rt; // assistant updates now mirror to this chat
+    try {
+      await this.assistant.prompt(feishuAssistantPrompt(text), images);
+    } catch (e) {
+      this.log(`feishu channel: assistant prompt failed chat=${rt.binding.chatId} error=${errorClass(e)}`);
+      rt.sender.enqueue("消息已收到，但助手处理失败，请稍后再试。");
+    } finally {
+      // prompt() resolving IS the turn-idle boundary: finalize the streamed reply.
+      if (this.started) this.finalizeTurn(rt);
+      if (this.activeAssistantRuntime === rt) this.activeAssistantRuntime = undefined;
+    }
+  }
+
+  /** Mirror one streamed assistant update to the active p2p runtime via the SAME outbound machinery as
+   *  router events (only the event source differs). No active turn => ignore. */
+  private onAssistantUpdate(u: unknown): void {
+    const rt = this.activeAssistantRuntime;
+    if (!rt || !this.started) return;
+    this.dispatchRouterEvent(rt, { kind: "update", update: u } as MeshEvent);
   }
 
   /** An unauthorized but bot-addressed sender. With a store: mint a short opaque auth code (the full
@@ -829,6 +923,34 @@ function normalizedBindings(cfg: FeishuChannelConfig): FeishuMeshBinding[] {
   if (cfg.bindings?.length) return cfg.bindings;
   if (cfg.mesh && cfg.chatId) return [{ mesh: cfg.mesh, chatId: cfg.chatId }];
   return [];
+}
+
+/** Upload bucket for p2p-DM images: a single shared space (the assistant has one session). */
+const P2P_IMAGE_BUCKET = "assistant";
+
+/** Reset a runtime's outbound state on teardown so timers/barriers/buffers can't fire after stop(). */
+function teardownRuntime(rt: BindingRuntime): void {
+  rt.cancelDebounce?.();
+  rt.cancelDebounce = undefined;
+  rt.cancelStreamFinish?.(); // drop the streaming fallback timer so it can't fire after teardown
+  rt.cancelStreamFinish = undefined;
+  rt.buffer = ""; // drop any un-flushed tail rather than sending during teardown
+  rt.currentMessageId = undefined;
+  rt.currentMessageStart = 0;
+  rt.streamTurnActive = false;
+  rt.committing = false;
+  rt.queuedEvents = []; // drop events queued behind a commit barrier; never send during teardown
+  rt.seenToolCalls.clear();
+  rt.replaying = false;
+}
+
+/** Frame a p2p-DM user message for the shared Mesh Assistant (a private chat, not a bound group). */
+function feishuAssistantPrompt(text: string): string {
+  return [
+    "来自飞书私聊的已授权用户消息。你是总控 Mesh Assistant；请直接回复该用户，回复内容会原样发回其飞书私聊。",
+    "",
+    `用户消息：${text}`,
+  ].join("\n");
 }
 
 /** Union of top-level and per-binding allowSenders — all map to the one channelKey (feishu:<appId>)

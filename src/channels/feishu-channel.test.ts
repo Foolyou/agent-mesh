@@ -1165,3 +1165,183 @@ test("auth gate: stop() closes the registry watcher", async () => {
   await s.ch.stop();
   expect(s.auth.hasWatcher()).toBe(false);
 });
+
+// ── p2p -> Mesh Assistant (Phase 5) ───────────────────────────────────────────
+
+/** A fake AssistantGateway: prompt() stays pending until finishTurn(); emit() pushes a streamed
+ *  update to subscribers; availability is toggleable. */
+function fakeAssistant() {
+  let available = true;
+  let resolveCurrent: (() => void) | null = null;
+  const prompts: { text: string; images?: unknown }[] = [];
+  const listeners: ((u: unknown) => void)[] = [];
+  return {
+    setAvailable: (v: boolean) => { available = v; },
+    prompts,
+    emit: (u: unknown) => { for (const l of [...listeners]) l(u); },
+    finishTurn: () => { const r = resolveCurrent; resolveCurrent = null; r?.(); },
+    gateway: {
+      available: () => available,
+      prompt: (text: string, images?: unknown) => {
+        prompts.push({ text, images });
+        return new Promise<void>((res) => { resolveCurrent = res; });
+      },
+      onAssistant: (l: (u: unknown) => void) => {
+        listeners.push(l);
+        return () => { const i = listeners.indexOf(l); if (i >= 0) listeners.splice(i, 1); };
+      },
+    } as import("./assistant-gateway").AssistantGateway,
+  };
+}
+
+function rawChunk(text: string) {
+  return { sessionUpdate: "agent_message_chunk", content: { type: "text", text } };
+}
+
+async function setupP2p(over: Partial<FeishuChannelConfig> = {}, opts: { noAssistant?: boolean } = {}) {
+  const mesh = new FakeMesh();
+  const timers = manualTimers();
+  const auth = memAuthStore();
+  const assistant = fakeAssistant();
+  const boundSender = fakeSender();
+  const p2pSenders = new Map<string, ReturnType<typeof fakeSender>>();
+  const logs: string[] = [];
+  let pushInbound!: (m: InboundMsg) => void;
+  let n = 0;
+  const ch = new FeishuChannel({
+    mesh,
+    config: cfg(over),
+    sender: boundSender.sink, // bound chat (oc_1) sender — group path
+    makeConsumer: (onMessage) => { pushInbound = onMessage; return { start() {}, stop() {} }; },
+    setTimer: timers.setTimer,
+    idempotencyKey: (b, seq) => `${b.mesh || "p2p"}:${seq}`,
+    authStore: auth.store,
+    assistant: opts.noAssistant ? undefined : assistant.gateway,
+    makeSender: (chatId) => { const f = fakeSender(); p2pSenders.set(chatId, f); return f.sink; },
+    shortAuthId: () => `SHP${n++}`,
+    now: () => 1_700_000_000_000,
+    log: (m) => logs.push(m),
+  });
+  ch.start();
+  await flushAsync();
+  const sentText = (chatId: string) => (p2pSenders.get(chatId)?.sent ?? []).map((x) => x.text).join("");
+  return { ch, mesh, assistant, auth, timers, logs, p2pSenders, boundSender, sentText, push: (m: InboundMsg) => pushInbound(m) };
+}
+
+test("p2p: an authorized DM routes to the assistant; streamed chunks mirror to that p2p chat", async () => {
+  const s = await setupP2p(); // allowSenders ["ou_me"] seeded approved
+  s.push(inbound({ chatType: "p2p", chatId: "p2p_me", senderId: "ou_me", text: "hello assistant" }));
+  await flushAsync();
+  expect(s.assistant.prompts).toHaveLength(1);
+  expect(s.assistant.prompts[0].text).toContain("用户消息：hello assistant");
+  s.assistant.emit(rawChunk("hi from the assistant"));
+  await flushAsync();
+  s.assistant.finishTurn(); // turn-end boundary
+  await flushAsync();
+  expect(s.sentText("p2p_me")).toContain("hi from the assistant");
+  expect(s.mesh.prompts).toHaveLength(0); // never went to a mesh router
+});
+
+test("p2p: an unauthorized DM gets a short auth code and never reaches the assistant", async () => {
+  const s = await setupP2p();
+  s.push(inbound({ chatType: "p2p", chatId: "p2p_x", senderId: "ou_stranger", text: "let me in" }));
+  await flushAsync();
+  expect(s.assistant.prompts).toHaveLength(0); // not routed
+  const reply = s.sentText("p2p_x");
+  const ids = Object.keys(s.auth.current().pending);
+  expect(ids).toHaveLength(1);
+  expect(reply).toContain(ids[0]); // short id shown
+  expect(reply).toContain("mesh feishu approve");
+  expect(reply).not.toContain("ENVELOPE");
+});
+
+test("p2p: when the assistant is unavailable, reply with a notice and do not prompt", async () => {
+  const s = await setupP2p();
+  s.assistant.setAvailable(false);
+  s.push(inbound({ chatType: "p2p", chatId: "p2p_me", senderId: "ou_me", text: "hi" }));
+  await flushAsync();
+  expect(s.assistant.prompts).toHaveLength(0);
+  expect(s.sentText("p2p_me")).toContain("助手未启用");
+});
+
+test("p2p: with no assistant gateway at all, reply with the notice (no crash)", async () => {
+  const s = await setupP2p({}, { noAssistant: true });
+  s.push(inbound({ chatType: "p2p", chatId: "p2p_me", senderId: "ou_me", text: "hi" }));
+  await flushAsync();
+  expect(s.sentText("p2p_me")).toContain("助手未启用");
+});
+
+test("p2p: two concurrent authorized DMs serialize; each reply goes back to its own chat (no cross-talk)", async () => {
+  const s = await setupP2p({ allowSenders: ["ou_A", "ou_B"] });
+  s.push(inbound({ chatType: "p2p", chatId: "cA", senderId: "ou_A", text: "from A", eventId: "a1" }));
+  s.push(inbound({ chatType: "p2p", chatId: "cB", senderId: "ou_B", text: "from B", eventId: "b1" }));
+  await flushAsync();
+  // serialized: only A's turn is in flight
+  expect(s.assistant.prompts).toHaveLength(1);
+  expect(s.assistant.prompts[0].text).toContain("from A");
+  s.assistant.emit(rawChunk("reply to A"));
+  await flushAsync();
+  s.assistant.finishTurn(); // A done -> B starts
+  await flushAsync();
+  expect(s.assistant.prompts).toHaveLength(2);
+  expect(s.assistant.prompts[1].text).toContain("from B");
+  s.assistant.emit(rawChunk("reply to B"));
+  await flushAsync();
+  s.assistant.finishTurn();
+  await flushAsync();
+  expect(s.sentText("cA")).toContain("reply to A");
+  expect(s.sentText("cA")).not.toContain("reply to B");
+  expect(s.sentText("cB")).toContain("reply to B");
+  expect(s.sentText("cB")).not.toContain("reply to A");
+});
+
+test("p2p: a group bound chat still routes to its mesh (group path unchanged)", async () => {
+  const s = await setupP2p();
+  s.push(inbound({ chatType: "group", chatId: "oc_1", senderId: "ou_me", text: "@MeshBot do it" }));
+  await flushAsync();
+  expect(s.mesh.prompts).toHaveLength(1);
+  expect(s.mesh.prompts[0].name).toBe("feishu-poc");
+  expect(s.mesh.prompts[0].text).toContain("用户消息：do it");
+  expect(s.assistant.prompts).toHaveLength(0); // group never goes to the assistant
+});
+
+test("p2p: an image DM provisions refs and prompts the assistant with images", async () => {
+  const downloaded: { messageId: string; imageKey: string }[] = [];
+  const mesh = new FakeMesh();
+  const timers = manualTimers();
+  const auth = memAuthStore();
+  const assistant = fakeAssistant();
+  const p2pSenders = new Map<string, ReturnType<typeof fakeSender>>();
+  let pushInbound!: (m: InboundMsg) => void;
+  const ch = new FeishuChannel({
+    mesh,
+    config: cfg(),
+    sender: fakeSender().sink,
+    makeConsumer: (onMessage) => { pushInbound = onMessage; return { start() {}, stop() {} }; },
+    setTimer: timers.setTimer,
+    authStore: auth.store,
+    assistant: assistant.gateway,
+    makeSender: (chatId) => { const f = fakeSender(); p2pSenders.set(chatId, f); return f.sink; },
+    root: "/data/root",
+    downloadImage: async (req) => { downloaded.push(req); return { bytes: new Uint8Array([1, 2, 3]) }; },
+    storeImages: async (_root, bucket, files) => files.map((f, i) => ({ id: `id${i}.png`, mimeType: "image/png", name: f.name ?? "x", bucket, path: `/p/${bucket}/id${i}.png`, url: `/u/${bucket}/id${i}.png` })),
+    now: () => 1_700_000_000_000,
+  });
+  ch.start();
+  await flushAsync();
+  pushInbound(inbound({ chatType: "p2p", chatId: "p2p_img", senderId: "ou_me", messageType: "image", messageId: "om_x", imageKey: "img_k", text: "" }));
+  await flushAsync();
+  expect(downloaded).toEqual([{ messageId: "om_x", imageKey: "img_k" }]);
+  expect(assistant.prompts).toHaveLength(1);
+  expect((assistant.prompts[0].images as unknown[]).length).toBe(1);
+  await ch.stop();
+});
+
+test("p2p: stop() stops dynamically-created p2p senders", async () => {
+  const s = await setupP2p();
+  s.push(inbound({ chatType: "p2p", chatId: "p2p_me", senderId: "ou_me", text: "hi" }));
+  await flushAsync();
+  expect(s.p2pSenders.has("p2p_me")).toBe(true);
+  await s.ch.stop();
+  expect(s.p2pSenders.get("p2p_me")!.isStopped()).toBe(true);
+});
