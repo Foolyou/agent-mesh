@@ -466,7 +466,7 @@ Ordered so file-range overlaps are serialized (esp. everything touching `feishu-
    snapshot; emit auth code on deny; seed from existing `allowSenders`. Touches `gating.ts`,
    `feishu-channel.ts`, `types.ts`/`config.ts`. Tests: unknown sender → code reply + no route; approved
    sender (via store) → routes; per-`(channel,open_id)` granularity; revoke. *Serial vs phase 5
-   (both edit `feishu-channel.ts`).* 
+   (both edit `feishu-channel.ts`).*
 4. **WebUI device auth (A).** Endpoints in `api.ts`, remote-address plumb in `server.ts`/`api-server.ts`,
    token gate on `/api/*` + `/ws`, client unauthorized page + boot verify + localStorage token, loopback
    rule + bootstrap (§6). Tests: issue/poll/verify, approval flips status, revoke rejects, loopback
@@ -474,7 +474,7 @@ Ordered so file-range overlaps are serialized (esp. everything touching `feishu-
 5. **p2p → Mesh Assistant (C).** `AssistantGateway` seam, `mesh-assistant.ts` exposure, `main.ts` wiring,
    p2p branch in `feishu-channel.ts` reusing outbound streaming. Tests with a fake assistant gateway:
    p2p→assistant.prompt + streamed reply mirrored; group unchanged; no-assistant notice. *Serial after
-   phase 3 (shared `feishu-channel.ts`).* 
+   phase 3 (shared `feishu-channel.ts`).*
 6. **Hardening / docs.** Bootstrap-token flag, key rotation command polish, operator docs, the prod
    loopback validation (Open Q 6A) and any follow-up if loopback-trust is unusable in the funnel
    topology.
