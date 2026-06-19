@@ -515,6 +515,110 @@ function codeInfo(r: { code?: number; message?: string }): string {
   return `${r.code !== undefined ? ` (code ${r.code})` : ""}${r.message ? `: ${r.message}` : ""}`;
 }
 
+/** UTF-8 byte length — card budgets are bytes, not JS string units. */
+export function byteLen(s: string): number {
+  return Buffer.byteLength(s, "utf8");
+}
+
+const FENCE_RE = /^\s*(```|~~~)(.*)$/;
+
+function isTableRow(line: string): boolean {
+  return line.includes("|") && line.trim().length > 0;
+}
+
+/** A markdown table delimiter row, e.g. `| --- | :--: |` / `---|---`. */
+function isTableSeparator(line: string): boolean {
+  const t = line.trim();
+  if (!t.includes("-")) return false;
+  return /^\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?$/.test(t);
+}
+
+/** What a card is structurally in the middle of, so a continued card can reopen it. */
+export interface CardContinuation {
+  /** Display text prepended to the next card's body (reopened fence / resent table header). */
+  displayPrefix: string;
+  /** The opening fence to reopen if the next card continues an open code block. */
+  openFence?: string;
+  /** The header+separator rows to resend if the next card continues a table. */
+  tableHeader?: string;
+}
+
+export interface CardSizeSplit {
+  /** Prefix of `body` to keep on the current card; ends at a line boundary (trailing "\n"). */
+  headText: string;
+  /** "" or "```"/"~~~" — appended after headText to close an open code block on the current card. */
+  closeFence: string;
+  /** Structure to reopen on the next card; absent for a clean boundary split. */
+  continuation?: CardContinuation;
+}
+
+/** Plan a structure-aware split of `body` so the current card stays under `budgetBytes` (UTF-8).
+ *  Splits are preferred at blank-line, then any line boundary OUTSIDE code fences and tables; a code
+ *  block / table larger than the budget is split at a line boundary with the fence closed+reopened
+ *  or the table header resent. `start` carries an open fence / table header inherited from a prior
+ *  continued card so multi-card code blocks / tables keep repairing. Returns null when `body` fits. */
+export function planSizeSplit(body: string, budgetBytes: number, start?: { openFence?: string; tableHeader?: string }): CardSizeSplit | null {
+  if (byteLen(body) <= budgetBytes && !start?.openFence && !start?.tableHeader) return null;
+  if (byteLen(body) <= budgetBytes) return null;
+  const lines = body.split("\n");
+  let inFence = !!start?.openFence;
+  let fenceReopen = start?.openFence ?? "";
+  let tableHeader = start?.tableHeader ?? "";
+  let bytes = 0;
+  let safeEnd = -1; // blank-line boundary outside structures (best)
+  let anyEnd = -1; // any line boundary outside structures
+  let forcedEnd = -1;
+  let forcedClose = "";
+  let forcedReopen: CardContinuation | undefined;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const lineBytes = (i === 0 ? 0 : 1) + byteLen(line); // include the joining "\n"
+    const reserve = inFence ? byteLen("\n```") : 0; // room to close an open fence
+    if (i > 0 && bytes + lineBytes + reserve > budgetBytes) {
+      forcedEnd = i - 1;
+      if (inFence) {
+        forcedClose = "```";
+        forcedReopen = { displayPrefix: `${fenceReopen}\n`, openFence: fenceReopen };
+      } else if (tableHeader) {
+        forcedReopen = { displayPrefix: `${tableHeader}\n`, tableHeader };
+      }
+      break;
+    }
+    bytes += lineBytes;
+
+    const fm = line.match(FENCE_RE);
+    if (fm) {
+      if (!inFence) { inFence = true; fenceReopen = fm[1] + (fm[2] ?? ""); }
+      else { inFence = false; fenceReopen = ""; }
+    } else if (!inFence) {
+      if (tableHeader) {
+        if (!isTableRow(line)) tableHeader = ""; // table ended
+      } else if (isTableRow(line) && i + 1 < lines.length && isTableSeparator(lines[i + 1])) {
+        tableHeader = `${line}\n${lines[i + 1]}`;
+      }
+    }
+
+    if (!inFence && !tableHeader) {
+      anyEnd = i;
+      if (line.trim() === "") safeEnd = i;
+    }
+  }
+
+  let end: number;
+  let closeFence = "";
+  let continuation: CardContinuation | undefined;
+  if (safeEnd >= 0) end = safeEnd;
+  else if (anyEnd >= 0) end = anyEnd;
+  else if (forcedEnd >= 0) { end = forcedEnd; closeFence = forcedClose; continuation = forcedReopen; }
+  else end = 0; // degenerate: a single first line larger than the budget
+  if (end > lines.length - 2) end = lines.length - 2; // always leave a tail
+  if (end < 0) end = 0;
+
+  const headText = `${lines.slice(0, end + 1).join("\n")}\n`;
+  return { headText, closeFence, continuation };
+}
+
 /** Stable idempotency key for a card op: identical (cardId, sequence) always yields the same uuid,
  *  so a retried content/finalize op is de-duplicated by Feishu rather than double-applied. */
 export function stableCardKey(cardId: string, sequence: number): string {

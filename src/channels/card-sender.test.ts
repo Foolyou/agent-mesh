@@ -7,6 +7,8 @@ import {
   sdkCardCreate,
   sdkCardContent,
   sdkCardFinalize,
+  planSizeSplit,
+  byteLen,
   type CardCreateRequest,
   type CardCreateResult,
   type CardSendRequest,
@@ -570,6 +572,66 @@ test("sdkCardFinalize turns streaming off and carries summary + uuid", async () 
   const settings = JSON.parse(captured[0].data.settings);
   expect(settings.config.streaming_mode).toBe(false);
   expect(settings.config.summary.content).toBe("the answer");
+});
+
+// ── planSizeSplit (structure-aware, byte-budgeted) ──────────────────────────────
+
+test("planSizeSplit returns null when the body fits the byte budget", () => {
+  expect(planSizeSplit("hello world", 100)).toBeNull();
+});
+
+test("planSizeSplit prefers a blank-line (paragraph) boundary", () => {
+  const body = "aaaa\n\nbbbb\n\ncccc";
+  const r = planSizeSplit(body, 10)!;
+  expect(r).not.toBeNull();
+  expect(body.startsWith(r.headText)).toBe(true);
+  expect(r.headText).toBe("aaaa\n\n");
+  expect(r.closeFence).toBe("");
+  expect(r.continuation).toBeUndefined();
+});
+
+test("planSizeSplit falls back to any line boundary when there is no blank line", () => {
+  const r = planSizeSplit("aaaa\nbbbb\ncccc", 10)!;
+  expect(r.headText).toBe("aaaa\nbbbb\n");
+  expect(r.closeFence).toBe("");
+});
+
+test("planSizeSplit closes and reopens a code fence when forced to split inside it", () => {
+  const r = planSizeSplit("```js\nAAAA\nBBBB\nCCCC\n```", 14)!;
+  expect(r.headText).toBe("```js\nAAAA\n");
+  expect(r.closeFence).toBe("```");
+  expect(r.continuation?.openFence).toBe("```js");
+  expect(r.continuation?.displayPrefix).toBe("```js\n");
+});
+
+test("planSizeSplit splits BEFORE a code fence when a safe boundary precedes it", () => {
+  const r = planSizeSplit("intro text\n\n```js\nAAAA\nBBBB\nCCCC\n```", 14)!;
+  expect(r.headText).toBe("intro text\n\n");
+  expect(r.continuation).toBeUndefined(); // the whole fence rolls to the next card intact
+});
+
+test("planSizeSplit resends the table header when forced to split inside a table", () => {
+  const body = "| H1 | H2 |\n| --- | --- |\n| a | b |\n| c | d |\n| e | f |";
+  const r = planSizeSplit(body, 45)!;
+  expect(r.continuation?.tableHeader).toBe("| H1 | H2 |\n| --- | --- |");
+  expect(r.continuation?.displayPrefix).toBe("| H1 | H2 |\n| --- | --- |\n");
+  expect(r.closeFence).toBe("");
+});
+
+test("planSizeSplit carries an inherited open fence (multi-card code block)", () => {
+  const r = planSizeSplit("MORE1\nMORE2\nMORE3", 10, { openFence: "```py" })!;
+  expect(r.headText).toBe("MORE1\n");
+  expect(r.closeFence).toBe("```");
+  expect(r.continuation?.openFence).toBe("```py");
+});
+
+test("planSizeSplit budgets by UTF-8 bytes, not JS length (CJK/emoji)", () => {
+  expect(byteLen("中")).toBe(3);
+  expect(byteLen("🔧")).toBe(4);
+  const body = "中文测试\n\n日本語テスト";
+  const r = planSizeSplit(body, 14)!;
+  expect(r.headText).toBe("中文测试\n\n"); // 12 + 2 newline bytes = 14, fits; CJK not split
+  expect(byteLen(r.headText)).toBe(14);
 });
 
 // ── lifecycle ────────────────────────────────────────────────────────────────────
