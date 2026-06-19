@@ -235,12 +235,14 @@ export async function authBootstrap(root: string, ttlArg?: string): Promise<CliR
   const token = generateToken();
   const now = Date.now();
   const expiresAt = new Date(now + ttl * 1000).toISOString();
+  let replaced = false;
   await updateDevices(root, (f) => {
+    replaced = !!f.bootstrap; // a single bootstrap slot — note whether we superseded a prior one
     // hash only — the raw token never touches the store; replaces any prior (incl. consumed) token
     f.bootstrap = { tokenHash: hashToken(token), createdAt: new Date(now).toISOString(), expiresAt };
   });
   return ok(
-    `bootstrap token issued (one-time, expires ${expiresAt}):`,
+    `bootstrap token ${replaced ? "replaced" : "minted"} (one-time, expires ${expiresAt}):`,
     `  ${token}`,
     "Use it once from the new device to enroll. It is stored only as a hash and shown here only once.",
   );
@@ -289,7 +291,9 @@ export async function runAuthCli(root: string, group: string, args: string[]): P
   if (action === "list") return authList(root);
   if (action === "rotate-key") return authRotateKey(root);
   if (action === "bootstrap") {
+    const hadFlag = rest.includes("--ttl");
     const { value: ttl } = takeFlag(rest, "--ttl");
+    if (hadFlag && ttl === undefined) return fail("invalid --ttl (missing value)", ...usage);
     return authBootstrap(root, ttl);
   }
   return fail(...usage);

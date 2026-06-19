@@ -269,10 +269,24 @@ test("auth bootstrap issues a one-time token, prints it once, and stores ONLY it
     expect(file.bootstrap!.tokenHash).toBe(hashToken(token));
     expect(verifyTokenHash(token, file.bootstrap!.tokenHash)).toBe(true);
     expect(bootstrapTokenValid(file, token)).toBe(true);
-    // the raw token must NOT be persisted anywhere in the store file
+    expect(r.out.join("\n")).toContain("minted"); // first issuance
+    // the raw token must NOT be persisted anywhere — neither the loaded model nor the on-disk file
+    expect(JSON.stringify(await readDevices(root))).not.toContain(token);
     const raw = await readFile(devicesPath(root), "utf8");
     expect(raw).not.toContain(token);
     expect(raw).toContain(file.bootstrap!.tokenHash);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("auth bootstrap with --ttl present but no value errors and writes nothing", async () => {
+  const root = await tmp();
+  try {
+    const r = await runAuthCli(root, "auth", ["bootstrap", "--ttl"]);
+    expect(r.exitCode).toBe(2);
+    expect(r.err.join("\n")).toContain("invalid --ttl");
+    expect((await readDevices(root)).bootstrap).toBeUndefined(); // nothing written
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -297,11 +311,24 @@ test("auth bootstrap --ttl sets expiresAt to roughly now + ttl; invalid ttl erro
   }
 });
 
+test("auth bootstrap with an invalid ttl on a fresh store writes nothing", async () => {
+  const root = await tmp();
+  try {
+    const e = await runAuthCli(root, "auth", ["bootstrap", "--ttl", "-1"]);
+    expect(e.exitCode).toBe(2);
+    expect((await readDevices(root)).bootstrap).toBeUndefined(); // no partial write
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("auth bootstrap re-issue supersedes the previous token (old token no longer valid)", async () => {
   const root = await tmp();
   try {
     const first = (await runAuthCli(root, "auth", ["bootstrap"])).out[1].trim();
-    const second = (await runAuthCli(root, "auth", ["bootstrap"])).out[1].trim();
+    const r2 = await runAuthCli(root, "auth", ["bootstrap"]);
+    const second = r2.out[1].trim();
+    expect(r2.out.join("\n")).toContain("replaced"); // second issuance supersedes the first
     expect(second).not.toBe(first);
     const file = await readDevices(root);
     expect(bootstrapTokenValid(file, second)).toBe(true);
