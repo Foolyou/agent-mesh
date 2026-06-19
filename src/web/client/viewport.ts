@@ -5,6 +5,7 @@ type ViewportLike = {
   removeEventListener?: (name: "resize", listener: () => void) => void;
   visualViewport?: {
     height: number;
+    offsetTop?: number;
     addEventListener?: (name: "resize" | "scroll", listener: () => void) => void;
     removeEventListener?: (name: "resize" | "scroll", listener: () => void) => void;
   } | null;
@@ -20,6 +21,14 @@ export function viewportHeightCssValue(win: ViewportLike): string {
   return `${Math.round(win.visualViewport?.height ?? win.innerHeight)}px`;
 }
 
+// Vertical offset of the visual viewport inside the layout viewport. On iOS Safari
+// this becomes > 0 when the soft keyboard pushes content up; it must return to 0
+// when the keyboard is dismissed (or there is no visual viewport) so no residual
+// offset is left behind after the app shell is pinned to top: var(--mesh-vvtop).
+export function viewportTopCssValue(win: ViewportLike): string {
+  return `${Math.round(win.visualViewport?.offsetTop ?? 0)}px`;
+}
+
 export function installVisualViewportHeightVar({
   window: win,
   target,
@@ -29,7 +38,10 @@ export function installVisualViewportHeightVar({
 }): () => void {
   let queued = false;
   let disposed = false;
-  const apply = () => target.style.setProperty("--mesh-vvh", viewportHeightCssValue(win));
+  const apply = () => {
+    target.style.setProperty("--mesh-vvh", viewportHeightCssValue(win));
+    target.style.setProperty("--mesh-vvtop", viewportTopCssValue(win));
+  };
   const update = () => {
     if (queued || disposed) return;
     queued = true;

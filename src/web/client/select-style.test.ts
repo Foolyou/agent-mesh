@@ -84,3 +84,32 @@ test("root layout height follows the visual viewport variable", () => {
   expect(app).toContain("height: var(--mesh-vvh, 100dvh)");
   expect(fullscreenAssistant).toContain("height: var(--mesh-vvh, 100dvh)");
 });
+
+test("mobile pins the app shell to the visual viewport; desktop stays static", () => {
+  // The first `max-width: 760px` block is the app-shell layout breakpoint.
+  const firstMobile = css.indexOf("@media (max-width: 760px)");
+  const nextMedia = css.indexOf("@media", firstMobile + 1);
+  const mobile = css.slice(firstMobile, nextMedia);
+
+  // The dedicated `.app` pinning rule inside the mobile scope (the combined
+  // selector lists `html, body, #root, .app { ... }` carry width/overflow only).
+  const mobileApp =
+    (mobile.match(/(?:^|\n)\s*\.app\s*\{[^}]*\}/gm) ?? []).find((block) => /position:\s*fixed/.test(block)) ?? "";
+
+  expect(mobileApp).toContain("position: fixed");
+  expect(mobileApp).toContain("top: var(--mesh-vvtop, 0px)");
+  expect(mobileApp).toContain("left: 0");
+  expect(mobileApp).toContain("right: 0");
+  expect(mobileApp).toContain("overflow: hidden");
+  // keeps following the dynamic visual-viewport height
+  expect(mobileApp).toContain("height: var(--mesh-vvh, 100dvh)");
+
+  // Desktop base layout must NOT inherit any keyboard-pinning behavior.
+  const desktopApp = blockFor(".app");
+  expect(desktopApp).toContain("height: var(--mesh-vvh, 100dvh)");
+  expect(desktopApp).not.toContain("position: fixed");
+  expect(desktopApp).not.toContain("--mesh-vvtop");
+  const desktopRoot = blockFor("html,\nbody,\n#root");
+  expect(desktopRoot).not.toContain("position: fixed");
+  expect(desktopRoot).not.toContain("--mesh-vvtop");
+});

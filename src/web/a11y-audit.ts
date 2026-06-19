@@ -51,7 +51,7 @@ function auditTheme(name: string, p: Palette): { fails: number; advisories: stri
 }
 
 // ── static theme.css lint ─────────────────────────────────────────────────────
-const NON_COLOR_VARS = new Set(["mono", "r", "pad", "mesh-vvh"]);
+const NON_COLOR_VARS = new Set(["mono", "r", "pad", "mesh-vvh", "mesh-vvtop"]);
 const KNOWN_VARS = new Set<string>([...THEME_KEYS, ...NON_COLOR_VARS]);
 
 // Is an rgb/rgba/hsl literal effectively neutral (a shadow / scrim / white-or-black
