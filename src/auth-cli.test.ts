@@ -2,8 +2,9 @@ import { expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { encryptAuthCode, ensureKeys, generateToken, hashToken, loadKeys } from "./auth-codes";
-import { isFeishuAllowed, readDevices, readFeishuAuth, updateDevices, updateFeishuAuth } from "./auth-store";
+import { readFile } from "node:fs/promises";
+import { encryptAuthCode, ensureKeys, generateToken, hashToken, loadKeys, verifyTokenHash } from "./auth-codes";
+import { bootstrapTokenValid, devicesPath, isFeishuAllowed, readDevices, readFeishuAuth, updateDevices, updateFeishuAuth } from "./auth-store";
 import { runAuthCli } from "./auth-cli";
 
 async function tmp(): Promise<string> {
@@ -249,6 +250,62 @@ test("auth rotate-key creates a new active key and retains the old one", async (
     const keys = await loadKeys(root);
     expect(keys!.active).toBe("k2");
     expect(Object.keys(keys!.keys).sort()).toEqual(["k1", "k2"]); // old retained for decrypt overlap
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+// ── auth bootstrap ─────────────────────────────────────────────────────────────
+
+test("auth bootstrap issues a one-time token, prints it once, and stores ONLY its hash", async () => {
+  const root = await tmp();
+  try {
+    const r = await runAuthCli(root, "auth", ["bootstrap"]);
+    expect(r.exitCode).toBe(0);
+    const token = r.out[1].trim(); // line 0 = header, line 1 = the raw token
+    expect(token.length).toBeGreaterThan(20);
+    const file = await readDevices(root);
+    expect(file.bootstrap).toBeTruthy();
+    expect(file.bootstrap!.tokenHash).toBe(hashToken(token));
+    expect(verifyTokenHash(token, file.bootstrap!.tokenHash)).toBe(true);
+    expect(bootstrapTokenValid(file, token)).toBe(true);
+    // the raw token must NOT be persisted anywhere in the store file
+    const raw = await readFile(devicesPath(root), "utf8");
+    expect(raw).not.toContain(token);
+    expect(raw).toContain(file.bootstrap!.tokenHash);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("auth bootstrap --ttl sets expiresAt to roughly now + ttl; invalid ttl errors", async () => {
+  const root = await tmp();
+  try {
+    const before = Date.now();
+    const r = await runAuthCli(root, "auth", ["bootstrap", "--ttl", "30"]);
+    expect(r.exitCode).toBe(0);
+    const exp = Date.parse((await readDevices(root)).bootstrap!.expiresAt);
+    expect(exp).toBeGreaterThanOrEqual(before + 30_000);
+    expect(exp).toBeLessThan(before + 30_000 + 5_000); // ~30s window, not the 10-min default
+    for (const bad of ["0", "-5", "abc", "1.5"]) {
+      const e = await runAuthCli(root, "auth", ["bootstrap", "--ttl", bad]);
+      expect(e.exitCode).toBe(2);
+      expect(e.err.join("\n")).toContain("invalid --ttl");
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("auth bootstrap re-issue supersedes the previous token (old token no longer valid)", async () => {
+  const root = await tmp();
+  try {
+    const first = (await runAuthCli(root, "auth", ["bootstrap"])).out[1].trim();
+    const second = (await runAuthCli(root, "auth", ["bootstrap"])).out[1].trim();
+    expect(second).not.toBe(first);
+    const file = await readDevices(root);
+    expect(bootstrapTokenValid(file, second)).toBe(true);
+    expect(bootstrapTokenValid(file, first)).toBe(false); // superseded
   } finally {
     await rm(root, { recursive: true, force: true });
   }

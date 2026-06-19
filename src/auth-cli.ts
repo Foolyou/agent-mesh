@@ -14,6 +14,8 @@
 import {
   AuthCodeError,
   decryptAuthCode,
+  generateToken,
+  hashToken,
   loadKeys,
   rotateKeys,
   type KeysFile,
@@ -36,6 +38,9 @@ export interface CliResult {
 
 const ok = (...out: string[]): CliResult => ({ exitCode: 0, out, err: [] });
 const fail = (...err: string[]): CliResult => ({ exitCode: 2, out: [], err });
+
+/** Default bootstrap-token lifetime: short (10 min) — it only has to survive enrolling one device. */
+const DEFAULT_BOOTSTRAP_TTL_SEC = 600;
 
 // A decrypt target when the key store is absent: decryptAuthCode then rejects with a generic
 // AuthCodeError("invalid") rather than throwing a raw TypeError on a missing key.
@@ -217,6 +222,30 @@ export async function authRotateKey(root: string): Promise<CliResult> {
   return ok(`rotated auth encryption key; new active ${rotated.active}; retained ${Object.keys(rotated.keys).length} key(s)`);
 }
 
+/** Issue a one-time, short-TTL bootstrap token for enrolling the first remote device (design §6).
+ *  The raw token is printed to stdout ONCE; the store keeps only its hash. Re-issuing supersedes any
+ *  previous bootstrap token (the new entry has no consumedAt). Phase 4's web gate verifies/consumes it. */
+export async function authBootstrap(root: string, ttlArg?: string): Promise<CliResult> {
+  let ttl = DEFAULT_BOOTSTRAP_TTL_SEC;
+  if (ttlArg !== undefined) {
+    const n = Number(ttlArg);
+    if (!Number.isInteger(n) || n <= 0) return fail(`invalid --ttl '${ttlArg}' (expected a positive integer number of seconds)`);
+    ttl = n;
+  }
+  const token = generateToken();
+  const now = Date.now();
+  const expiresAt = new Date(now + ttl * 1000).toISOString();
+  await updateDevices(root, (f) => {
+    // hash only — the raw token never touches the store; replaces any prior (incl. consumed) token
+    f.bootstrap = { tokenHash: hashToken(token), createdAt: new Date(now).toISOString(), expiresAt };
+  });
+  return ok(
+    `bootstrap token issued (one-time, expires ${expiresAt}):`,
+    `  ${token}`,
+    "Use it once from the new device to enroll. It is stored only as a hash and shown here only once.",
+  );
+}
+
 // ── dispatcher ───────────────────────────────────────────────────────────────
 
 const USAGE: Record<string, string[]> = {
@@ -230,7 +259,7 @@ const USAGE: Record<string, string[]> = {
     "       mesh feishu approve <code>",
     "       mesh feishu revoke <channelKey> <openId>",
   ],
-  auth: ["usage: mesh auth list", "       mesh auth rotate-key"],
+  auth: ["usage: mesh auth list", "       mesh auth rotate-key", "       mesh auth bootstrap [--ttl <seconds>]"],
 };
 
 /** Parse + run `mesh <group> <action> …`. `args` are the tokens AFTER the group (i.e.
@@ -259,5 +288,9 @@ export async function runAuthCli(root: string, group: string, args: string[]): P
   // group === "auth"
   if (action === "list") return authList(root);
   if (action === "rotate-key") return authRotateKey(root);
+  if (action === "bootstrap") {
+    const { value: ttl } = takeFlag(rest, "--ttl");
+    return authBootstrap(root, ttl);
+  }
   return fail(...usage);
 }
