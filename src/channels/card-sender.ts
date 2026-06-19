@@ -106,8 +106,8 @@ export interface CardSenderOptions {
   minIntervalMs?: number;
   /** Show a small hint on a card when it is sealed by a tool-call segment break. Default true. */
   enableToolHint?: boolean;
-  /** Render the segment-break hint appended to a sealed card. Centralized so prdmgr can tune copy.
-   *  Return "" to suppress. Default {@link defaultToolHint}. */
+  /** Render the tool-call hint shown as the FIRST line of the next segment's card. Centralized so
+   *  prdmgr can tune copy. Return "" to suppress. Default {@link defaultToolHint}. */
   toolHint?: (meta?: SegmentBreak) => string;
   /** Derive the card summary (chat-list / notification text) from the card body. Centralized so it
    *  can be tuned later. Default {@link defaultCardSummary}. */
@@ -466,10 +466,17 @@ export class CardSender implements OutboundSink {
     this.resetTurn();
   }
 
-  /** Segment break while degraded: seal the current fallback message and move the anchor forward so
-   *  the next segment's text starts a fresh fallback message — same per-segment semantics as cards,
-   *  with no duplication of what was already shown. The turn keeps going (no resetTurn). */
+  /** Segment break while degraded: the boundary must split the fallback text too. The turn keeps
+   *  going (no resetTurn), with no duplication of what was already shown.
+   *  - Preferred: the text sender has its own soft commit (streamSegmentBreak). We keep forwarding
+   *    the SAME remainder string (anchor fixed) and let it manage its own per-segment offset.
+   *  - Otherwise: seal what we have (streamCommit / enqueue) and advance our anchor so the next
+   *    segment is a separate message. */
   private forwardFallbackSegmentBreak(): void {
+    if (this.fallbackStreams && typeof this.fallback.streamSegmentBreak === "function") {
+      this.fallback.streamSegmentBreak();
+      return;
+    }
     if (this.fallbackStreams) {
       this.fallback.streamCommit!();
     } else if (this.fbPending && this.fbPending.trim()) {

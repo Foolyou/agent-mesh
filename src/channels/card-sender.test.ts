@@ -14,6 +14,7 @@ import {
   type CardFinalizeResult,
 } from "./card-sender";
 import type { OutboundSink } from "./feishu-channel";
+import { LarkSender, type SendRequest, type SendResult, type UpdateRequest } from "./sender";
 
 /** CardKit transport recorder with a virtual clock so edit throttling is deterministic.
  *  `wait(ms)` advances time. Each op's impl can override the default success. */
@@ -501,6 +502,36 @@ test("finalize updates the card summary derived from the final body", async () =
   await s.whenIdle();
   expect(r.finalizes[0].summary).toBeTruthy();
   expect(r.finalizes[0].summary).toContain("Hello");
+});
+
+test("degraded fallback uses the REAL text sender's own segment break — no dup, no loss", async () => {
+  // CardKit content fails -> fall back to a real LarkSender; a tool boundary must split the text too.
+  const cr = cardRecorder({ contentImpl: () => ({ ok: false, code: 99 }) });
+  const creates: string[] = [];
+  const updates: { messageId: string; text: string }[] = [];
+  let n = 0;
+  let t = 1_000_000;
+  const lark = new LarkSender({
+    chatId: "oc_1",
+    send: async (req: SendRequest): Promise<SendResult> => { creates.push(req.text); return { ok: true, code: 0, messageId: `t${++n}` }; },
+    update: async (req: UpdateRequest): Promise<SendResult> => { updates.push({ messageId: req.messageId, text: req.text }); return { ok: true, code: 0, messageId: req.messageId }; },
+    streamMinEditIntervalMs: 0,
+    minIntervalMs: 0,
+    now: () => t,
+    wait: async (ms: number) => { t += ms; },
+  });
+  const s = new CardSender({
+    chatId: "oc_1", create: cr.create, send: cr.send, content: cr.content, finalize: cr.finalize,
+    fallback: lark, enableToolHint: false, minEditIntervalMs: 250, now: cr.now, wait: cr.wait,
+  });
+  s.streamUpdate("Hello"); await s.whenIdle();           // card1 "Hello" on the card side
+  s.streamUpdate("Hello world"); await s.whenIdle();     // content edit fails -> fall back from offset 5
+  expect(creates).toEqual([" world"]);                   // text sender shows only the unshown remainder
+  s.streamSegmentBreak(); await s.whenIdle();            // tool boundary -> text sender soft-commits
+  s.streamUpdate("Hello worldmore"); await s.whenIdle(); // remainder " worldmore"; text seg = "more"
+  s.streamCommit(); await s.whenIdle();
+  expect(creates).toEqual([" world", "more"]); // two text messages, no dup of "Hello"/" world", no loss
+  expect(updates).toEqual([]);
 });
 
 // ── lifecycle ────────────────────────────────────────────────────────────────────
