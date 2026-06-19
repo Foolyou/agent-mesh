@@ -23,6 +23,9 @@ const edgeCfg: MeshConfig = {
   edges: [{ from: "r", to: "a" }],
 };
 const FIXTURE = join(import.meta.dir, "fixtures", "echo-host.ts");
+const HOST_TEST_TIMEOUT = process.platform === "win32" ? 30_000 : 10_000;
+const RUNNING_FROM_WSL_UNC = process.platform === "win32" && /^\\\\wsl(?:\.localhost|\$)\\/i.test(process.cwd());
+const hostTest = RUNNING_FROM_WSL_UNC ? test.skip : test;
 
 let dir: string;
 let mgr: MeshManager;
@@ -30,7 +33,12 @@ beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), "mgr-"));
   mgr = new MeshManager({ meshesDir: join(dir, "meshes"), runDir: join(dir, "run"), hostScript: FIXTURE });
 });
-afterEach(async () => { await mgr.stopAll(); await rm(dir, { recursive: true, force: true }); });
+afterEach(async () => {
+  const currentMgr = mgr;
+  const currentDir = dir;
+  await currentMgr.stopAll();
+  await rm(currentDir, { recursive: true, force: true });
+}, 30_000);
 
 async function waitForPidExit(pid: number, timeoutMs = 1000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
@@ -112,7 +120,7 @@ test("newAgentSession on a stopped mesh blanks one agent's id on disk", async ()
   expect((await readSessionState(runDir, "echo")).agents.r.sessionId).toBe("");
 });
 
-test("startMesh with fresh session strategy blanks persisted session ids before daemon start", async () => {
+hostTest("startMesh with fresh session strategy blanks persisted session ids before daemon start", async () => {
   await mgr.defineMesh(cfg);
   const runDir = join(dir, "run");
   await writeSessionState(runDir, "echo", {
@@ -126,7 +134,7 @@ test("startMesh with fresh session strategy blanks persisted session ids before 
   expect(rec.sessionId).toBe("");
   expect(rec.mode).toBe("build");
   expect(rec.mailCursor).toBe("mail-r");
-});
+}, HOST_TEST_TIMEOUT);
 
 test("newAgentSession on an unknown agent throws", async () => {
   await mgr.defineMesh(cfg);
@@ -147,7 +155,7 @@ test("setMode and setModel persist runtime selections and reload from disk", asy
   expect(fresh.configOf("echo").agents[0].model).toBe("deepseek/deepseek-chat");
 });
 
-test("setMode and setModel are allowed while running", async () => {
+hostTest("setMode and setModel are allowed while running", async () => {
   await mgr.defineMesh(cfg);
   await mgr.startMesh("echo");
   await mgr.setMode("echo", "r", "plan");
@@ -155,7 +163,7 @@ test("setMode and setModel are allowed while running", async () => {
   expect(mgr.listMeshes()[0].status).toBe("running");
   expect(mgr.configOf("echo").agents[0].mode).toBe("plan");
   expect(mgr.configOf("echo").agents[0].model).toBe("test-model");
-});
+}, HOST_TEST_TIMEOUT);
 
 test("a stopped mesh saves the desired value without a live apply", async () => {
   await mgr.defineMesh(cfg);
@@ -461,21 +469,21 @@ test("loadDefinitions rejects manually edited unsafe artifact names", async () =
   await expect(mgr.loadDefinitions()).rejects.toThrow(/invalid/i);
 });
 
-test("deleteMesh refuses while running", async () => {
+hostTest("deleteMesh refuses while running", async () => {
   await mgr.defineMesh(cfg);
   await mgr.startMesh("echo");
   await expect(mgr.deleteMesh("echo")).rejects.toThrow(/running/i);
   expect(mgr.listMeshes()[0]!.status).toBe("running");
-});
+}, HOST_TEST_TIMEOUT);
 
-test("defineMesh still refuses full replacement while running", async () => {
+hostTest("defineMesh still refuses full replacement while running", async () => {
   await mgr.defineMesh(cfg);
   await mgr.startMesh("echo");
   await expect(mgr.defineMesh({ ...cfg, charter: "replace" })).rejects.toThrow(/running/i);
   expect(mgr.configOf("echo").charter).toBeUndefined();
-});
+}, HOST_TEST_TIMEOUT);
 
-test("start -> running -> promptRouter relays events -> stop -> stopped, no orphan", async () => {
+hostTest("start -> running -> promptRouter relays events -> stop -> stopped, no orphan", async () => {
   await mgr.defineMesh(cfg);
   const events: { name: string; e: MeshEvent }[] = [];
   mgr.on((name, e) => events.push({ name, e }));
@@ -491,9 +499,9 @@ test("start -> running -> promptRouter relays events -> stop -> stopped, no orph
   await mgr.stopMesh("echo");
   expect(mgr.listMeshes()[0]!.status).toBe("stopped");
   await waitForPidExit(pid);
-});
+}, HOST_TEST_TIMEOUT);
 
-test("explicit start flips meshExpectedAlive back to true", async () => {
+hostTest("explicit start flips meshExpectedAlive back to true", async () => {
   await mgr.defineMesh(cfg);
   const runDir = join(dir, "run");
   await writeSessionState(runDir, "echo", {
@@ -504,15 +512,15 @@ test("explicit start flips meshExpectedAlive back to true", async () => {
   await mgr.startMesh("echo");
 
   expect((await readSessionState(runDir, "echo")).meshExpectedAlive).toBe(true);
-});
+}, HOST_TEST_TIMEOUT);
 
-test("startMesh twice errors", async () => {
+hostTest("startMesh twice errors", async () => {
   await mgr.defineMesh(cfg);
   await mgr.startMesh("echo");
   await expect(mgr.startMesh("echo")).rejects.toThrow(/already running/i);
-});
+}, HOST_TEST_TIMEOUT);
 
-test("a daemon outlives the backend: reattachRunning reconnects + replays + drives it", async () => {
+hostTest("a daemon outlives the backend: reattachRunning reconnects + replays + drives it", async () => {
   await mgr.defineMesh(cfg);
   const ev1: MeshEvent[] = [];
   mgr.on((_n, e) => ev1.push(e));
@@ -551,9 +559,9 @@ test("a daemon outlives the backend: reattachRunning reconnects + replays + driv
 
   await mgr2.stopMesh("echo");
   await waitForPidExit(pid); // now truly reaped
-});
+}, HOST_TEST_TIMEOUT);
 
-test("a crashed mesh host is reaped: status dead, socket file removed, restartable", async () => {
+hostTest("a crashed mesh host is reaped: status dead, socket file removed, restartable", async () => {
   const CRASH = join(import.meta.dir, "fixtures", "crash-host.ts");
   const crashMgr = new MeshManager({ meshesDir: join(dir, "meshes2"), runDir: join(dir, "run2"), hostScript: CRASH });
   await crashMgr.defineMesh(cfg);
@@ -566,9 +574,9 @@ test("a crashed mesh host is reaped: status dead, socket file removed, restartab
   const { existsSync } = await import("node:fs");
   expect(existsSync(sock)).toBe(false);
   await crashMgr.stopAll();
-});
+}, HOST_TEST_TIMEOUT);
 
-test("startMesh resets status to stopped when the host fails to start", async () => {
+hostTest("startMesh resets status to stopped when the host fails to start", async () => {
   await mgr.defineMesh(cfg);
   // point at a nonexistent host script so the child exits before ready
   const bad = new MeshManager({ meshesDir: join(dir, "meshes"), runDir: join(dir, "run"), hostScript: join(dir, "nope.ts") });
@@ -577,4 +585,4 @@ test("startMesh resets status to stopped when the host fails to start", async ()
   expect(bad.listMeshes()[0]!.status).toBe("stopped");
   // and it can be retried (not stuck on "already running")
   await expect(bad.startMesh("echo")).rejects.toThrow();
-});
+}, HOST_TEST_TIMEOUT);

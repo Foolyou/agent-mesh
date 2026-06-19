@@ -1,5 +1,6 @@
 import { test, expect } from "bun:test";
 import { MAX_SNAPSHOT_TRANSCRIPT_ITEMS, WebGateway } from "./gateway";
+import { uploadPath } from "./uploads";
 import type { MeshEvent, MeshConfig } from "../acp/types";
 
 const CFG: MeshConfig = {
@@ -846,14 +847,15 @@ test("promptRouter threads images to manager without exposing private image fiel
 
 test("promptRouter ignores a client-supplied image path/bucket/url (no arbitrary file read)", async () => {
   const m = fakeManager();
-  const gw = new WebGateway(m as any, undefined, { root: "/tmp/root" });
+  const root = "/tmp/root";
+  const gw = new WebGateway(m as any, undefined, { root });
   // a malicious client tries to smuggle an absolute path + foreign bucket + url
   await gw.promptRouter("demo", "see", [
     { id: "abc.png", mimeType: "image/png", name: "x", path: "/etc/passwd", bucket: "../../etc", url: "http://evil/x" } as any,
   ]);
   const ref = m.calls[m.calls.length - 1][3][0];
   // path is reconstructed server-side from the configured root + server-chosen bucket + validated id
-  expect(ref.path).toBe("/tmp/root/uploads/demo/abc.png");
+  expect(ref.path).toBe(uploadPath(root, "demo", "abc.png"));
   expect(ref.bucket).toBe("demo");
   expect(ref.url).toBe("/api/uploads/demo/abc.png");
 });

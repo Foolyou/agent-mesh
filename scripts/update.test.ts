@@ -13,6 +13,7 @@ const ROOT = process.cwd();
 const SCRIPT = join(ROOT, "scripts", "update.sh");
 const dirs: string[] = [];
 const servers: ReturnType<typeof Bun.serve>[] = [];
+const shellTest = process.platform === "win32" ? test.skip : test;
 
 afterEach(async () => {
   for (const s of servers.splice(0)) s.stop(true);
@@ -82,7 +83,7 @@ async function runScript(env: Record<string, string>, ...args: string[]) {
 
 const exists = (p: string) => Bun.file(p).exists();
 
-test("deploy: builds, archives the old binary, swaps in the new, restarts healthy", async () => {
+shellTest("deploy: builds, archives the old binary, swaps in the new, restarts healthy", async () => {
   const h = await harness();
   await writeFile(h.bin, "OLDBIN");
   healthyServer(h.port);
@@ -95,7 +96,7 @@ test("deploy: builds, archives the old binary, swaps in the new, restarts health
   expect(out).toContain("✓ new binary live and healthy");
 });
 
-test("deploy: gate failure aborts before building — binary untouched, nothing archived", async () => {
+shellTest("deploy: gate failure aborts before building — binary untouched, nothing archived", async () => {
   const h = await harness({ MESH_UPDATE_GATE: "1", MESH_GATE_CMD: "false" });
   await writeFile(h.bin, "OLDBIN");
   healthyServer(h.port);
@@ -106,7 +107,7 @@ test("deploy: gate failure aborts before building — binary untouched, nothing 
   expect(await exists(h.backups)).toBe(false); // never archived
 });
 
-test("deploy: build failure leaves the live binary in place", async () => {
+shellTest("deploy: build failure leaves the live binary in place", async () => {
   const h = await harness({ MESH_BUILD_CMD: "exit 1" });
   await writeFile(h.bin, "OLDBIN");
 
@@ -115,7 +116,7 @@ test("deploy: build failure leaves the live binary in place", async () => {
   expect(await readFile(h.bin, "utf8")).toBe("OLDBIN");
 });
 
-test("deploy: unhealthy after restart → non-zero, NO auto-rollback (stops and reports)", async () => {
+shellTest("deploy: unhealthy after restart → non-zero, NO auto-rollback (stops and reports)", async () => {
   const h = await harness(); // no healthy server on the port → health check fails
   await writeFile(h.bin, "OLDBIN");
 
@@ -126,7 +127,7 @@ test("deploy: unhealthy after restart → non-zero, NO auto-rollback (stops and 
   expect(err).toContain("--rollback");
 });
 
-test("deploy: retention keeps only MESH_BACKUP_KEEP newest archives", async () => {
+shellTest("deploy: retention keeps only MESH_BACKUP_KEEP newest archives", async () => {
   const h = await harness({ MESH_BACKUP_KEEP: "2" });
   healthyServer(h.port);
   for (const ts of ["20260608-000001", "20260608-000002", "20260608-000003"]) {
@@ -143,7 +144,7 @@ test("deploy: retention keeps only MESH_BACKUP_KEEP newest archives", async () =
   expect(keptAll).not.toContain("mesh-20260608-000001.build-id");
 });
 
-test("rollback: restores the newest archive and restarts healthy", async () => {
+shellTest("rollback: restores the newest archive and restarts healthy", async () => {
   const h = await harness();
   await mkdir(h.backups, { recursive: true });
   await writeFile(join(h.backups, "mesh-20260608-000001"), "OLD1");
@@ -161,7 +162,7 @@ test("rollback: restores the newest archive and restarts healthy", async () => {
   expect(await exists(join(h.backups, "mesh-20260608-000002"))).toBe(true); // archive preserved
 });
 
-test("rollback: a specific timestamp restores that archive", async () => {
+shellTest("rollback: a specific timestamp restores that archive", async () => {
   const h = await harness();
   await mkdir(h.backups, { recursive: true });
   await writeFile(join(h.backups, "mesh-20260608-000001"), "OLD1");
@@ -174,7 +175,7 @@ test("rollback: a specific timestamp restores that archive", async () => {
   expect(await readFile(h.bin, "utf8")).toBe("OLD1");
 });
 
-test("rollback: with no archives errors and does not touch the binary", async () => {
+shellTest("rollback: with no archives errors and does not touch the binary", async () => {
   const h = await harness();
   await writeFile(h.bin, "CURRENT");
 
@@ -184,7 +185,7 @@ test("rollback: with no archives errors and does not touch the binary", async ()
   expect(await readFile(h.bin, "utf8")).toBe("CURRENT");
 });
 
-test("list: prints archived binaries newest-first", async () => {
+shellTest("list: prints archived binaries newest-first", async () => {
   const h = await harness();
   await mkdir(h.backups, { recursive: true });
   await writeFile(join(h.backups, "mesh-20260608-000001"), "a");

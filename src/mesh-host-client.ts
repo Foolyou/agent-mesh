@@ -260,16 +260,16 @@ export class MeshHostClient {
       const ready = new Promise<void>((res) => {
         this.readyResolve = res;
       });
-      const exitedFirst = this.child?.exited.then((code) => {
-        throw new Error(`mesh-host "${this.opts.name}" exited (code ${code}) before ready`);
-      });
-      void exitedFirst?.catch(() => {});
+      let waitingForReady = true;
+      const exitedFirst = this.child?.exited.then((code) => (waitingForReady ? { kind: "exited" as const, code } : { kind: "ignored" as const }));
       const won = await Promise.race([
-        ready.then(() => "ready" as const),
-        Bun.sleep(READY_TIMEOUT_MS).then(() => "timeout" as const),
-        ...(exitedFirst ? [exitedFirst.then(() => "exited" as const)] : []),
+        ready.then(() => ({ kind: "ready" as const })),
+        Bun.sleep(READY_TIMEOUT_MS).then(() => ({ kind: "timeout" as const })),
+        ...(exitedFirst ? [exitedFirst] : []),
       ]);
-      if (won !== "ready") throw new Error(`mesh-host "${this.opts.name}" not ready (${won})`);
+      waitingForReady = false;
+      if (won.kind === "exited") throw new Error(`mesh-host "${this.opts.name}" exited (code ${won.code}) before ready`);
+      if (won.kind !== "ready") throw new Error(`mesh-host "${this.opts.name}" not ready (${won.kind})`);
     }
   }
 

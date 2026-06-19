@@ -1,5 +1,5 @@
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { basename, extname, join, resolve } from "node:path";
+import { basename, extname, join, resolve, sep } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { PromptImageRef } from "../acp/types";
 
@@ -33,7 +33,7 @@ export function uploadPath(root: string, bucket: string, id: string): string {
   if (!/^[0-9a-f-]+\.(png|jpg|jpeg|gif|webp)$/i.test(id)) throw new Error("invalid upload id");
   const base = resolve(uploadRoot(root), bucket);
   const full = resolve(base, id);
-  if (!full.startsWith(base + "/")) throw new Error("invalid upload path");
+  if (!full.startsWith(base.endsWith(sep) ? base : base + sep)) throw new Error("invalid upload path");
   return full;
 }
 

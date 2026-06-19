@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { test, expect } from "bun:test";
 
-const css = readFileSync(new URL("./theme.css", import.meta.url), "utf8");
+const css = readFileSync(new URL("./theme.css", import.meta.url), "utf8").replace(/\r\n?/g, "\n");
 
 function blockFor(selector: string, source = css): string {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

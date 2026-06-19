@@ -18,7 +18,7 @@ test("agentEnv strips every MESH_* var but keeps the rest", () => {
     expect(Object.keys(env).some((k) => k.startsWith("MESH_"))).toBe(false);
     expect(env.MESH_SOCK).toBeUndefined();
     expect(env.MESH_CONFIG).toBeUndefined();
-    expect(env.PATH).toBeTruthy(); // normal env survives
+    expect(env.PATH ?? env.Path).toBeTruthy(); // normal env survives (Windows spells it Path)
     expect(env.AGENT_KEEPS_THIS).toBe("yes");
   } finally {
     process.env = saved;

@@ -48,7 +48,7 @@ function fakeManager() {
 
 test("SPA shell routes are served with no-store cache headers", async () => {
   const gw = new WebGateway(fakeManager() as any);
-  const server = startWebServer({ gateway: gw, port: 0 });
+  const server = startWebServer({ gateway: gw, port: 0, dev: false });
   try {
     for (const path of ["/", "/mesh/demo"]) {
       const res = await fetch(`${server.url}${path}`);

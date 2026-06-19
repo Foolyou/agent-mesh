@@ -15,37 +15,43 @@ const cfg: MeshConfig = {
   edges: [],
 };
 const FIXTURE = join(import.meta.dir, "fixtures", "echo-host.ts");
+const RUNNING_FROM_WSL_UNC = process.platform === "win32" && /^\\\\wsl(?:\.localhost|\$)\\/i.test(process.cwd());
+const hostTest = RUNNING_FROM_WSL_UNC ? test.skip : test;
 
 let dir: string;
 beforeEach(async () => { dir = await mkdtemp(join(tmpdir(), "client-")); });
 afterEach(async () => { await rm(dir, { recursive: true, force: true }); });
 const socket = (name: string) => meshSocketPath(dir, name);
 
-test("start resolves on ready; prompt relays an event; stop reaps the process", async () => {
-  const events: MeshEvent[] = [];
-  const client = new MeshHostClient({
-    name: cfg.name,
-    config: cfg,
-    socketPath: socket("echo"),
-    hostScript: FIXTURE,
-    runDir: dir,
-    onEvent: (e) => events.push(e),
-  });
+hostTest(
+  "start resolves on ready; prompt relays an event; stop reaps the process",
+  async () => {
+    const events: MeshEvent[] = [];
+    const client = new MeshHostClient({
+      name: cfg.name,
+      config: cfg,
+      socketPath: socket("echo"),
+      hostScript: FIXTURE,
+      runDir: dir,
+      onEvent: (e) => events.push(e),
+    });
 
-  await client.start(); // resolves only after {t:"ready"}
-  const pid = client.pid!;
-  expect(pid).toBeGreaterThan(0);
+    await client.start(); // resolves only after {t:"ready"}
+    const pid = client.pid!;
+    expect(pid).toBeGreaterThan(0);
 
-  client.prompt("r", "hello");
-  client.removeQueuedTurn("r", "turn-1");
-  await Bun.sleep(100);
-  expect(events.some((e) => e.kind === "log" && e.text === "echo:hello")).toBe(true);
-  expect(events.some((e) => e.kind === "log" && e.text === "removeQueuedTurn:r:turn-1")).toBe(true);
+    client.prompt("r", "hello");
+    client.removeQueuedTurn("r", "turn-1");
+    await Bun.sleep(100);
+    expect(events.some((e) => e.kind === "log" && e.text === "echo:hello")).toBe(true);
+    expect(events.some((e) => e.kind === "log" && e.text === "removeQueuedTurn:r:turn-1")).toBe(true);
 
-  await client.stop();
-  // process is gone -> signalling it throws ESRCH
-  expect(() => process.kill(pid, 0)).toThrow();
-});
+    await client.stop();
+    // process is gone -> signalling it throws ESRCH
+    expect(() => process.kill(pid, 0)).toThrow();
+  },
+  20_000,
+);
 
 test(
   "start() rejects if the host process exits before ready",
@@ -115,7 +121,8 @@ test("setMode resolves with the host ack status", async () => {
     if (frame.t === "setMode") s.write(encodeFrame({ t: "cmdResult", reqId: frame.reqId, status: "applied_by_acp" } as ChildMsg));
   });
   try {
-    await expect(client.setMode("r", "read-only")).resolves.toEqual({ status: "applied_by_acp" });
+    const result = await client.setMode("r", "read-only");
+    expect(result).toEqual({ status: "applied_by_acp" });
   } finally {
     client.disconnect();
     await daemon.close();
@@ -128,7 +135,14 @@ test("a host error result rejects the mutation waiter", async () => {
     if (frame.t === "setModel") s.write(encodeFrame({ t: "cmdResult", reqId: frame.reqId, error: "no such agent" } as ChildMsg));
   });
   try {
-    await expect(client.setModel("r", "kimi-k2")).rejects.toThrow(/no such agent/);
+    let error: unknown;
+    try {
+      await client.setModel("r", "kimi-k2");
+    } catch (err) {
+      error = err;
+    }
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toMatch(/no such agent/);
   } finally {
     client.disconnect();
     await daemon.close();
@@ -153,7 +167,14 @@ test("an in-flight mutation rejects when the socket closes", async () => {
     if (frame.t === "setMode") s.destroy(); // drop the connection before answering
   });
   try {
-    await expect(client.setMode("r", "plan")).rejects.toThrow(/connection closed/);
+    let error: unknown;
+    try {
+      await client.setMode("r", "plan");
+    } catch (err) {
+      error = err;
+    }
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toMatch(/connection closed/);
   } finally {
     client.disconnect();
     await daemon.close();
