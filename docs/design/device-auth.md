@@ -59,7 +59,7 @@ A single new store directory `<root>/auth/` (root resolved by `src/root.ts` `res
 - `<root>/auth/devices.json` — WebUI device tokens (allowlist + pending).
 - `<root>/auth/feishu.json` — Feishu `(channel, open_id)` allowlist + pending registrations.
 
-A third file holds the signing key (§2): `<root>/auth/keys.json` (`0600`).
+A third file holds the auth-code encryption key (§2): `<root>/auth/keys.json` (`0600`).
 
 Rationale for **file-backed** (not in-memory only): it matches the existing `channels/feishu.json`
 hot-reload pattern and the boards/sessions persistence, and — critically — it lets the **CLI process**
@@ -113,10 +113,11 @@ hot-reload pattern and the boards/sessions persistence, and — critically — i
     }
   },
   "pending": {
-    // keyed by the short auth-code id (maps to the full AES-256-GCM token — see §2.1/§2.3)
+    // keyed by the short auth-code id shown to the user (see §2.1/§2.3)
     "<authCodeId>": {
-      "channelKey": "feishu:cli_abc",
-      "openId": "ou_123",
+      "encryptedToken": "<base64url envelope>",  // the full AES-256-GCM token (§2.1) — the source of truth
+      "channelKey": "feishu:cli_abc",            // decoded copy, for `mesh feishu list` display only
+      "openId": "ou_123",                        //   (advisory; never trusted over the decrypted token)
       "appId": "cli_abc",
       "firstSeenAt": "2026-…Z",
       "expiresAt": "2026-…Z"
@@ -126,6 +127,13 @@ hot-reload pattern and the boards/sessions persistence, and — critically — i
 ```
 
 Notes:
+
+- **Short-id flow (recommended, §2.1 Open Q 2A):** the bot DMs a short id; this `pending` entry stores
+  the **full `encryptedToken`** under it. `mesh feishu approve <id>` looks the id up, decrypts the stored
+  token, and trusts the decrypted `(channelKey, openId, appId)` — the plaintext `channelKey/openId/appId`
+  fields here are only a convenience for `mesh feishu list` and are never authoritative.
+- **Full-token flow (stateless alternative):** the bot DMs the whole `encryptedToken`; the host decrypts
+  it directly, so a `pending` entry is **optional/advisory** (index for `list` only).
 
 - We store **token hashes**, never raw bearer tokens (so a leaked file can't impersonate). Verify by
   hashing the presented token and comparing (constant-time, `crypto.timingSafeEqual`).
@@ -182,16 +190,26 @@ iv        = randomBytes(12)                                  // 96-bit GCM IV, f
 cipher    = createCipheriv("aes-256-gcm", key /*32B, by kid*/, iv)
 ct        = cipher.update(plaintext) ++ cipher.final()
 tag       = cipher.getAuthTag()                              // 16B GCM auth tag
-authCode  = base64url( kidByte ++ iv(12) ++ tag(16) ++ ct )  // single opaque token; kid selects the key
+// Envelope: a self-describing JSON token. kid is the string key id from keys.json (e.g. "k1");
+// iv / tag / ct are base64url. The whole envelope is base64url'd into one opaque code.
+authCode  = base64url(JSON.stringify({
+  v:   1,
+  kid: "k1",                                                 // string key id — matches keys.json (§2.2)
+  iv:  base64url(iv),
+  tag: base64url(tag),
+  ct:  base64url(ct),
+}))
 ```
 
 - **Encryption + anti-forgery**: the payload is ciphertext (the user can't read or fabricate it); GCM's
   auth tag makes any bit-flip fail `decipher.final()`. A user cannot mint a valid code for another
   `(channel, open_id)` without the host key.
-- **Decode on the host** — `mesh feishu approve <code>`: base64url-decode, read `kidByte` → select the
-  key from `keys.json`, `createDecipheriv("aes-256-gcm", key, iv)`, `setAuthTag(tag)`, decrypt,
-  `JSON.parse`. Recovers `(channelKey, openId, appId)` plus `iat/exp/nonce` with **no server round-trip
-  and no DB lookup** — the token is self-describing once decrypted.
+- **Decode on the host** — `mesh feishu approve <code>`: base64url-decode the envelope, `JSON.parse` it,
+  read the `kid` field → select that key from `keys.json`, `createDecipheriv("aes-256-gcm", key, iv)`,
+  `setAuthTag(tag)`, decrypt `ct`, `JSON.parse` the plaintext. Recovers `(channelKey, openId, appId)`
+  plus `iat/exp/nonce` with **no server round-trip and no DB lookup** — the token is self-describing
+  once decrypted. (Document favors a clear envelope over a maximally-short packed byte layout;
+  base64url keeps the code text-safe for a chat message.)
 - **Validation order**: GCM tag (via `final()`) → `exp` not passed → `v` known → `nonce` not already
   consumed (replay guard; consumed nonces tracked in `feishu.json.pending`/a small seen-set with TTL).
 - **Failure behavior**:
@@ -203,27 +221,27 @@ authCode  = base64url( kidByte ++ iv(12) ++ tag(16) ++ ct )  // single opaque to
 - This is the repo's first `node:crypto` cipher use (today only `randomUUID`); `createCipheriv` is
   stdlib, no dependency.
 
-> Open Q (2A): readability/length. The base64url blob (~kid+12+16+ct ≈ 90–140 chars) is long for a chat
-> message. **Recommended**: the bot DMs a **short opaque id** (e.g. 8 base32 chars) recorded in
-> `feishu.json.pending` mapping to the full encrypted token; the operator types the short id and
-> `mesh feishu approve <id>` looks up + decrypts the stored token. (Pending entry is then required —
-> see §3.2 / §1.2; the encrypted token, not the short id, is the source of truth.) **Alternative**: DM
-> the full encrypted token (stateless — the host can decrypt it without any pending entry) and accept
-> the length. Both are secure; pick per UX. (The §1.2 `pending` index supports the short-id option;
-> with the full-token option it's optional/advisory.)
+> Open Q (2A): readability/length. The base64url envelope (JSON wrapping kid + 12B iv + 16B tag + ct,
+> ≈ 150–220 chars) is long for a chat message. **Recommended**: the bot DMs a **short opaque id** (e.g.
+> 8 base32 chars) recorded in `feishu.json.pending`, whose `encryptedToken` field holds the full envelope;
+> the operator types the short id and `mesh feishu approve <id>` looks up + decrypts the stored token.
+> (Pending entry is then required — see §3.2 / §1.2; the encrypted token, not the short id, is the source
+> of truth.) **Alternative**: DM the full envelope (stateless — the host can decrypt it without any
+> pending entry) and accept the length. Both are secure; pick per UX. (The §1.2 `pending` index supports
+> the short-id option; with the full-token option it's optional/advisory.)
 
 ### 2.2 Key source, storage, rotation
 
 - **Key**: 32 random bytes (`crypto.randomBytes(32)`) = the AES-256 key, generated lazily on first need,
   stored as `<root>/auth/keys.json` `{ version, active: "k1", keys: { k1: { secret: base64, createdAt } } }`,
-  `0600`. The token's leading `kid` byte selects which key to decrypt with.
+  `0600`. The envelope's `kid` field (the string key id, e.g. `"k1"`) selects which key to decrypt with.
 - **IV/nonce**: a fresh 96-bit (12-byte) random IV per code (GCM's recommended IV size); the in-payload
   `nonce` is an independent replay-guard id. Never reuse an IV with the same key.
 - **Why not derive from `appSecret`**: keep the auth key independent of the Feishu credential so rotating
   one doesn't invalidate the other, and so the key never leaves the host.
 - **Rotation**: `mesh auth rotate-key` adds `k2`, marks it active for new codes, keeps `k1` available for
-  **decrypting** outstanding codes until their `exp`, then drops it. The `kid` byte makes verify pick the
-  right key across the overlap window.
+  **decrypting** outstanding codes until their `exp`, then drops it. The envelope `kid` field makes decrypt
+  pick the right key across the overlap window.
 - **Alternative considered (not chosen):** an HMAC-SHA256 *signed* (cleartext) token would also be
   unforgeable and is simpler, but the payload would be operator-readable in transit and the dispatch
   asked specifically for an encryption scheme; AES-256-GCM satisfies both confidentiality and integrity.
@@ -269,7 +287,7 @@ Feishu:
   `approved`, drop the pending entry. Prints "approved ou_… on feishu:cli_… (appId …)".
 - `mesh feishu revoke <channelKey> <openId>` — set `revoked`.
 
-Optional umbrella: `mesh auth list|rotate-key` for the signing key (§2.2).
+Optional umbrella: `mesh auth list|rotate-key` for the auth-code **encryption key** (§2.2).
 
 Each command: load store → mutate → atomic write under lockfile → print result. No backend needed.
 
