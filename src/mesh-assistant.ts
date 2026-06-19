@@ -10,6 +10,7 @@ import { probeHarnesses, type HarnessProbeResult } from "./harness-probe";
 import { buildMeshAssistantBriefing } from "./mesh-assistant-briefing";
 import { createMeshControlHandlers, createMeshControlServer, type MeshControlServer } from "./mcp/mesh-control";
 import type { MeshManager } from "./mesh-manager";
+import type { AssistantGateway } from "./channels/assistant-gateway";
 
 export class MeshAssistant {
   private conn?: AcpAgentConnection;
@@ -39,6 +40,12 @@ export class MeshAssistant {
   /** Whether the Mesh Assistant has an in-flight turn. */
   get busy(): boolean {
     return this._busy;
+  }
+
+  /** Whether the Mesh Assistant has a live connection (started with a harness). Used by the
+   *  AssistantGateway to gate p2p routing. */
+  get available(): boolean {
+    return !!this.conn;
   }
 
   get harness(): HarnessId | undefined {
@@ -141,6 +148,18 @@ export class MeshAssistant {
     this.mcp = undefined;
     this.selectedHarness = undefined;
   }
+}
+
+/** Adapt a MeshAssistant to the narrow {@link AssistantGateway} the FeishuChannel consumes for p2p
+ *  DMs. `available()` is evaluated lazily so it reflects the assistant's live state even though the
+ *  gateway is created before `assistant.start()` resolves. */
+export function meshAssistantGateway(assistant: MeshAssistant): AssistantGateway {
+  return {
+    available: () => assistant.available,
+    busy: () => assistant.busy,
+    prompt: (text, images) => assistant.prompt(text, images).then(() => {}),
+    onAssistant: (listener) => assistant.on(listener),
+  };
 }
 
 export const ASSISTANT_HARNESS_FALLBACK_ORDER: HarnessId[] = ["codex", "claude", "opencode", "kimi"];

@@ -9,6 +9,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { hostname } from "node:os";
 import type { Channel, FeishuChannelConfig, FeishuChannelControl, FeishuChannelStatus, FeishuMeshBinding, FeishuMeshChatEnsureResult, FeishuProvisionJobPublic, FeishuProvisionStartRequest, MeshGateway } from "./types";
+import type { AssistantGateway } from "./assistant-gateway";
 import { feishuConfigPath, readFeishuConfig } from "./config";
 import { FeishuProvisionRegistry } from "./provision";
 import { createFeishuClient } from "./consumer";
@@ -17,6 +18,8 @@ import { defaultIdempotencyKey } from "./sender";
 export interface BuildFeishuChannelOpts {
   root: string;
   log?: (msg: string) => void;
+  /** Gateway to the central Mesh Assistant for authorized p2p DMs (device-auth Phase 5). */
+  assistant?: AssistantGateway;
 }
 
 export interface FeishuChannelControllerOptions extends BuildFeishuChannelOpts {
@@ -32,6 +35,7 @@ export class FeishuChannelController implements FeishuChannelControl {
   private readonly log: (msg: string) => void;
   private readonly watchEnabled: boolean;
   private readonly buildChannel: (mesh: MeshGateway, opts: BuildFeishuChannelOpts) => Channel | undefined;
+  private readonly assistant?: AssistantGateway;
   private readonly createChat: (cfg: FeishuChannelConfig, meshName: string) => Promise<{ chatId: string; name?: string }>;
   private readonly setTimer: (fn: () => void, ms: number) => () => void;
   private readonly provision: FeishuProvisionRegistry;
@@ -51,6 +55,7 @@ export class FeishuChannelController implements FeishuChannelControl {
     this.log = opts.log ?? ((m) => console.log(m));
     this.watchEnabled = opts.watch ?? true;
     this.buildChannel = opts.buildChannel ?? (() => undefined);
+    this.assistant = opts.assistant;
     this.createChat = opts.createChat ?? sdkCreateMeshChat;
     this.setTimer = opts.setTimer ?? ((fn, ms) => {
       const t = setTimeout(fn, ms);
@@ -162,7 +167,7 @@ export class FeishuChannelController implements FeishuChannelControl {
     }
 
     await this.stopActive();
-    const next = this.buildChannel(this.mesh, { root: this.root, log: this.log });
+    const next = this.buildChannel(this.mesh, { root: this.root, log: this.log, assistant: this.assistant });
     if (!next) {
       this.activeSignature = "";
       this.lastStatus = disabledStatus(path, "config did not build a channel");
