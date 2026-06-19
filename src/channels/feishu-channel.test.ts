@@ -163,6 +163,14 @@ function chunkContent(agent: string, content: unknown, messageId?: string): Mesh
 function idle(agent: string): MeshEvent {
   return { kind: "agent_activity", agent, activity: "idle", ts: "t" } as MeshEvent;
 }
+function toolCall(agent: string, toolCallId?: string, title?: string, sessionUpdate: "tool_call" | "tool_call_update" = "tool_call"): MeshEvent {
+  return {
+    kind: "update",
+    agent,
+    update: { sessionUpdate, ...(toolCallId ? { toolCallId } : {}), ...(title ? { title } : {}) },
+    ts: "t",
+  } as MeshEvent;
+}
 function replayStarted(agent: string): MeshEvent {
   return { kind: "replay_started", agent, ts: "t" } as MeshEvent;
 }
@@ -518,15 +526,18 @@ function streamingSink() {
   const updates: string[] = [];
   let commits = 0;
   const enqueued: string[] = [];
+  const segments: ({ toolName?: string } | undefined)[] = [];
   return {
     sink: {
       enqueue: (text: string) => enqueued.push(text),
       stop: () => {},
       streamUpdate: (t: string) => updates.push(t),
       streamCommit: () => { commits++; },
+      streamSegmentBreak: (meta?: { toolName?: string }) => segments.push(meta),
     },
     updates,
     enqueued,
+    segments,
     commits: () => commits,
   };
 }
@@ -572,4 +583,60 @@ test("streaming: disabled via config falls back to one-shot enqueue", () => {
   s.mesh.emit("feishu-poc", idle("router"));
   expect(s.updates).toEqual([]); // streaming not used
   expect(s.enqueued).toEqual(["Hi"]);
+});
+
+// ── outbound: in-turn segmentation on router tool calls ────────────────────────
+
+test("streaming: a router tool_call seals the segment; following text is a new segment", () => {
+  const s = setupStreaming();
+  s.mesh.emit("feishu-poc", chunk("router", "Before"));
+  s.mesh.emit("feishu-poc", toolCall("router", "call-1", "bash"));
+  s.mesh.emit("feishu-poc", chunk("router", " after"));
+  s.mesh.emit("feishu-poc", idle("router"));
+  expect(s.segments).toEqual([{ toolName: "bash" }]); // exactly one in-turn break
+  expect(s.commits()).toBe(1); // and one hard commit at idle (still one turn)
+});
+
+test("streaming: consecutive tool_call_update for the same call segment only once", () => {
+  const s = setupStreaming();
+  s.mesh.emit("feishu-poc", chunk("router", "x"));
+  s.mesh.emit("feishu-poc", toolCall("router", "call-1", "bash", "tool_call"));
+  s.mesh.emit("feishu-poc", toolCall("router", "call-1", undefined, "tool_call_update"));
+  s.mesh.emit("feishu-poc", toolCall("router", "call-1", undefined, "tool_call_update"));
+  expect(s.segments).toHaveLength(1);
+});
+
+test("streaming: a different tool call id segments again", () => {
+  const s = setupStreaming();
+  s.mesh.emit("feishu-poc", chunk("router", "a"));
+  s.mesh.emit("feishu-poc", toolCall("router", "call-1", "bash"));
+  s.mesh.emit("feishu-poc", chunk("router", "b"));
+  s.mesh.emit("feishu-poc", toolCall("router", "call-2", "grep"));
+  expect(s.segments).toEqual([{ toolName: "bash" }, { toolName: "grep" }]);
+});
+
+test("streaming: a late update for an earlier tool call does not re-segment it", () => {
+  const s = setupStreaming();
+  s.mesh.emit("feishu-poc", chunk("router", "x"));
+  s.mesh.emit("feishu-poc", toolCall("router", "call-1", "a", "tool_call"));
+  s.mesh.emit("feishu-poc", toolCall("router", "call-2", "b", "tool_call"));
+  s.mesh.emit("feishu-poc", toolCall("router", "call-1", undefined, "tool_call_update")); // late update for call-1
+  expect(s.segments).toEqual([{ toolName: "a" }, { toolName: "b" }]); // call-1 segmented once, not twice
+});
+
+test("streaming: tool-call de-dup resets across turns", () => {
+  const s = setupStreaming();
+  s.mesh.emit("feishu-poc", chunk("router", "a"));
+  s.mesh.emit("feishu-poc", toolCall("router", "call-1", "bash"));
+  s.mesh.emit("feishu-poc", idle("router")); // turn ends, de-dup resets
+  s.mesh.emit("feishu-poc", chunk("router", "b"));
+  s.mesh.emit("feishu-poc", toolCall("router", "call-1", "bash")); // same id, new turn
+  expect(s.segments).toHaveLength(2);
+});
+
+test("streaming disabled: a tool_call does not segment", () => {
+  const s = setupStreaming({ outbound: { minIntervalMs: 0, streaming: false } });
+  s.mesh.emit("feishu-poc", chunk("router", "x"));
+  s.mesh.emit("feishu-poc", toolCall("router", "call-1", "bash"));
+  expect(s.segments).toEqual([]);
 });

@@ -71,6 +71,9 @@ export interface FeishuChannelConfig {
     minIntervalMs: number;
     /** True streaming: edit ONE message in place as router chunks arrive (default true). */
     streaming?: boolean;
+    /** Use CardKit streaming cards as the default outbound path (default true). When false, stream
+     *  via in-place text message edits. Ignored when `streaming` is false. */
+    cardkit?: boolean;
     /** Minimum gap between in-place edits of the live message (ms). Default 1000. */
     streamMinEditIntervalMs?: number;
     /** Feishu caps a message at 20 edits; roll over to a fresh message past this. Default 18. */
