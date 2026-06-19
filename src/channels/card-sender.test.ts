@@ -64,7 +64,10 @@ function cardRecorder(opts?: {
   const wait = async (ms: number) => {
     t += ms;
   };
-  return { creates, sends, contents, finalizes, seqLog, create, send, content, finalize, now, wait };
+  const advance = (ms: number) => {
+    t += ms;
+  };
+  return { creates, sends, contents, finalizes, seqLog, create, send, content, finalize, now, wait, advance };
 }
 
 /** A fake text fallback sink (the role real LarkSender plays). */
@@ -102,7 +105,7 @@ function fakeFallback(opts?: { streaming?: boolean }) {
   };
 }
 
-function makeSender(r: ReturnType<typeof cardRecorder>, fb: ReturnType<typeof fakeFallback>, extra?: Partial<{ log: (m: string) => void; minEditIntervalMs: number; enableToolHint: boolean; maxCardBytes: number }>) {
+function makeSender(r: ReturnType<typeof cardRecorder>, fb: ReturnType<typeof fakeFallback>, extra?: Partial<{ log: (m: string) => void; minEditIntervalMs: number; enableToolHint: boolean; maxCardBytes: number; maxCardAgeMs: number }>) {
   return new CardSender({
     chatId: "oc_1",
     create: r.create,
@@ -113,6 +116,7 @@ function makeSender(r: ReturnType<typeof cardRecorder>, fb: ReturnType<typeof fa
     minEditIntervalMs: extra?.minEditIntervalMs ?? 250,
     enableToolHint: extra?.enableToolHint,
     maxCardBytes: extra?.maxCardBytes,
+    maxCardAgeMs: extra?.maxCardAgeMs,
     now: r.now,
     wait: r.wait,
     log: extra?.log,
@@ -808,6 +812,79 @@ test("size rollover keeps sequence strictly increasing across content edits and 
   s.streamCommit();
   await s.whenIdle();
   expect(r.seqLog.length).toBeGreaterThanOrEqual(3);
+  const sorted = [...r.seqLog].sort((a, b) => a - b);
+  expect(r.seqLog).toEqual(sorted);
+  expect(new Set(r.seqLog).size).toBe(r.seqLog.length);
+});
+
+// ── streaming-window timeout rollover ───────────────────────────────────────────
+
+test("timeout rollover: a long-running turn rolls onto a fresh card after the window", async () => {
+  const r = cardRecorder();
+  const fb = fakeFallback();
+  const s = makeSender(r, fb, { enableToolHint: false, minEditIntervalMs: 0, maxCardAgeMs: 1000 });
+  s.streamUpdate("hello");
+  await s.whenIdle();
+  r.advance(1500); // exceed the streaming window
+  s.streamUpdate("hello world");
+  await s.whenIdle();
+  s.streamCommit();
+  await s.whenIdle();
+  expect(r.creates.map((c) => c.text)).toEqual(["hello", " world"]);
+  expect(r.creates.map((c) => c.text).join("")).toBe("hello world"); // no loss, no dup
+  expect(r.finalizes).toHaveLength(2);
+});
+
+test("timeout rollover inside a code fence reopens the fence on the next card", async () => {
+  const r = cardRecorder();
+  const fb = fakeFallback();
+  const s = makeSender(r, fb, { enableToolHint: false, minEditIntervalMs: 0, maxCardAgeMs: 1000 });
+  s.streamUpdate("```js\ncode1");
+  await s.whenIdle();
+  r.advance(1500);
+  s.streamUpdate("```js\ncode1\ncode2");
+  await s.whenIdle();
+  s.streamCommit();
+  await s.whenIdle();
+  expect(r.creates[0].text).toBe("```js\ncode1"); // sealed as-is (no backward edit)
+  expect(r.creates[1].text.startsWith("```js")).toBe(true); // fence reopened on the continued card
+});
+
+test("timeout rollover with a pending tool hint does not lose or duplicate the hint/body", async () => {
+  const r = cardRecorder();
+  const fb = fakeFallback();
+  const s = makeSender(r, fb, { minEditIntervalMs: 0, maxCardAgeMs: 1000 }); // hints on
+  s.streamUpdate("intro");
+  await s.whenIdle();
+  s.streamSegmentBreak({ toolName: "bash" }); // arms the hint for the next card
+  await s.whenIdle();
+  s.streamUpdate("introAAAA"); // first post-tool card carries the hint
+  await s.whenIdle();
+  r.advance(1500); // that hint card ages out
+  s.streamUpdate("introAAAABBBB");
+  await s.whenIdle();
+  s.streamCommit();
+  await s.whenIdle();
+  const hint = "🔧 调用工具：bash\n\n";
+  expect(r.creates[1].text.startsWith(hint)).toBe(true); // hint shown once, on the first post-tool card
+  expect(r.creates.slice(2).some((c) => c.text.includes("🔧"))).toBe(false); // never duplicated after rollover
+  const reconstructed = r.creates.map((c) => c.text.replace(hint, "")).join("");
+  expect(reconstructed).toBe("introAAAABBBB"); // body preserved across the timeout boundary
+});
+
+test("timeout rollover keeps sequence strictly increasing", async () => {
+  const r = cardRecorder();
+  const fb = fakeFallback();
+  const s = makeSender(r, fb, { enableToolHint: false, minEditIntervalMs: 0, maxCardAgeMs: 1000 });
+  s.streamUpdate("aa");
+  await s.whenIdle();
+  s.streamUpdate("aabb"); // content edit
+  await s.whenIdle();
+  r.advance(1500);
+  s.streamUpdate("aabbcc"); // ages out -> timeout rollover
+  await s.whenIdle();
+  s.streamCommit();
+  await s.whenIdle();
   const sorted = [...r.seqLog].sort((a, b) => a - b);
   expect(r.seqLog).toEqual(sorted);
   expect(new Set(r.seqLog).size).toBe(r.seqLog.length);

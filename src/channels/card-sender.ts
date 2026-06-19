@@ -91,6 +91,8 @@ export const CARD_SEQUENCE_ERROR_CODE = 300317;
 const DEFAULT_ELEMENT_ID = "md";
 /** Feishu caps a card around 30KB; stay well under it to leave room for the JSON envelope. */
 export const DEFAULT_MAX_CARD_BYTES = 28000;
+/** Feishu closes a streaming card after ~10 minutes; roll over comfortably before that. */
+export const DEFAULT_MAX_CARD_AGE_MS = 9 * 60 * 1000;
 
 export interface CardSenderOptions {
   chatId: string;
@@ -110,6 +112,10 @@ export interface CardSenderOptions {
    *  further cards (structure-aware). Default {@link DEFAULT_MAX_CARD_BYTES} (conservatively below
    *  Feishu's ~30KB card limit, leaving room for the card envelope). */
   maxCardBytes?: number;
+  /** Max age (ms) a streaming card may stay open before it is finalized and the turn continues on a
+   *  fresh card. Feishu closes a streaming card after ~10 minutes; default {@link DEFAULT_MAX_CARD_AGE_MS}
+   *  stays safely under that. */
+  maxCardAgeMs?: number;
   /** Show a small hint on a card when it is sealed by a tool-call segment break. Default true. */
   enableToolHint?: boolean;
   /** Render the tool-call hint shown as the FIRST line of the next segment's card. Centralized so
@@ -147,6 +153,7 @@ export class CardSender implements OutboundSink {
   private readonly toolHint: (meta?: SegmentBreak) => string;
   private readonly cardSummary: (body: string) => string;
   private readonly maxCardBytes: number;
+  private readonly maxCardAgeMs: number;
   private readonly log: (msg: string) => void;
   private readonly wait: (ms: number) => Promise<void>;
   private readonly now: () => number;
@@ -173,6 +180,9 @@ export class CardSender implements OutboundSink {
   private pendingContinuation?: CardContinuation;
   /** The card being grown right now (undefined => next op creates a fresh one). */
   private live?: LiveCard;
+  /** When the live card was opened (now()); a card older than maxCardAgeMs rolls over before Feishu
+   *  closes its streaming window. */
+  private liveOpenedAt = 0;
   /** Chars already sealed into PRIOR cards of THIS turn (cross-card rollover). */
   private streamBaseOffset = 0;
   /** Monotonic sequence counter — strictly increasing across the whole sender lifetime, which is
@@ -208,6 +218,7 @@ export class CardSender implements OutboundSink {
     this.toolHint = opts.toolHint ?? defaultToolHint;
     this.cardSummary = opts.cardSummary ?? defaultCardSummary;
     this.maxCardBytes = opts.maxCardBytes ?? DEFAULT_MAX_CARD_BYTES;
+    this.maxCardAgeMs = opts.maxCardAgeMs ?? DEFAULT_MAX_CARD_AGE_MS;
     this.log = opts.log ?? (() => {});
     this.wait = opts.wait ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
     this.now = opts.now ?? (() => Date.now());
@@ -306,6 +317,12 @@ export class CardSender implements OutboundSink {
             await this.wait(waitMs);
             continue; // re-read pending so the latest text wins
           }
+          // Streaming window: before editing an aged card, finalize it and continue on a fresh one,
+          // so Feishu never closes the card's streaming window out from under us.
+          if (this.live && this.now() - this.liveOpenedAt >= this.maxCardAgeMs) {
+            await this.sealLiveAndContinue("stream_timeout_rollover");
+            continue; // re-loop; the tail opens the next card (reopening any structure)
+          }
           // Size budget: if the display would exceed the card limit, roll the head onto this card
           // and continue the tail on a fresh one (structure-aware), instead of one giant edit.
           const split = planSizeSplit(body, this.maxCardBytes, this.splitStart());
@@ -392,6 +409,7 @@ export class CardSender implements OutboundSink {
           return;
         }
         this.live = { cardId: cr.cardId, messageId: sr.messageId, sentText: body };
+        this.liveOpenedAt = this.now();
       } catch (e) {
         this.lastEditAt = this.now();
         this.log(`feishu card: create/send error: ${String(e)}; falling back to text`);
@@ -432,9 +450,7 @@ export class CardSender implements OutboundSink {
       if (shownBytes > this.maxCardBytes) {
         this.log(`feishu card: soft over-budget rollover (${shownBytes}B > ${this.maxCardBytes}B); sealing without shrinking`);
       }
-      const ctx = continuationAfter(this.live.sentText, { openFence: this.pendingContinuation?.openFence, tableHeader: this.pendingContinuation?.tableHeader });
-      await this.finalizeCurrentCard("size_rollover"); // advances by live.sentText.length; clears prefixes
-      this.pendingContinuation = ctx; // reopen any structure the sealed text left open
+      await this.sealLiveAndContinue("size_rollover");
       return;
     }
     const headDisplay = this.composeDisplay(split.headText) + split.closeFence;
@@ -455,6 +471,7 @@ export class CardSender implements OutboundSink {
           return;
         }
         this.live = { cardId: cr.cardId, messageId: sr.messageId, sentText: split.headText };
+        this.liveOpenedAt = this.now();
       } catch (e) {
         this.lastEditAt = this.now();
         this.log(`feishu card: create/send error: ${String(e)}; falling back to text`);
@@ -481,6 +498,16 @@ export class CardSender implements OutboundSink {
     }
     await this.finalizeCurrentCard("size_rollover"); // advances offset by headText.length; clears hint/continuation
     this.pendingContinuation = split.continuation; // arm the tail's reopen prefix (undefined => clean)
+  }
+
+  /** Seal the live card AS-IS (no backward edit) and continue the SAME turn on a fresh card, reopening
+   *  whatever structure the sealed text left open. Used when a card must end without a planned split
+   *  point: the monotonic-display shrink guard and the streaming-window timeout rollover. */
+  private async sealLiveAndContinue(reason: FinalizeReason): Promise<void> {
+    if (!this.live) return;
+    const ctx = continuationAfter(this.live.sentText, { openFence: this.pendingContinuation?.openFence, tableHeader: this.pendingContinuation?.tableHeader });
+    await this.finalizeCurrentCard(reason); // advances by live.sentText.length; clears hint/continuation
+    this.pendingContinuation = ctx; // reopen any fence/table the sealed text left open
   }
 
   /** Compose the displayed card content. Deterministic order: the tool-call hint (first line of a
