@@ -18,8 +18,13 @@
 // the text sender (enqueue / streamUpdate / streamCommit / stop).
 
 import * as lark from "@larksuiteoapi/node-sdk";
-import type { OutboundSink } from "./feishu-channel";
+import type { OutboundSink, SegmentBreak } from "./feishu-channel";
 import { safeUuid, defaultIdempotencyKey } from "./sender";
+
+/** Why a card is being finalized. Card finalization is unified through one path so tool-call
+ *  boundaries, size rollover, the streaming-window rollover, and the turn boundary all behave
+ *  identically w.r.t. sequence management and fallback accounting. */
+export type FinalizeReason = "segment_break" | "size_rollover" | "stream_timeout_rollover" | "turn_commit";
 
 export interface CardCreateRequest {
   /** The markdown element id the content/finalize ops will target. */
@@ -93,6 +98,11 @@ export interface CardSenderOptions {
   minEditIntervalMs?: number;
   /** Minimum gap honored at the turn boundary (finalize). Default 0. */
   minIntervalMs?: number;
+  /** Show a small hint on a card when it is sealed by a tool-call segment break. Default true. */
+  enableToolHint?: boolean;
+  /** Render the segment-break hint appended to a sealed card. Centralized so prdmgr can tune copy.
+   *  Return "" to suppress. Default {@link defaultToolHint}. */
+  toolHint?: (meta?: SegmentBreak) => string;
   log?: (msg: string) => void;
   wait?: (ms: number) => Promise<void>;
   now?: () => number;
@@ -103,7 +113,8 @@ export interface CardSenderOptions {
 interface LiveCard {
   cardId: string;
   messageId: string;
-  /** Markdown currently confirmed (create or a successful content edit) on this card. */
+  /** Turn-text body currently confirmed on this card (WITHOUT the cosmetic hint prefix). Tracked as
+   *  turn text only so offsets and fallback accounting never count the hint. */
   sentText: string;
 }
 
@@ -117,6 +128,8 @@ export class CardSender implements OutboundSink {
   private readonly elementId: string;
   private readonly minEditIntervalMs: number;
   private readonly minIntervalMs: number;
+  private readonly enableToolHint: boolean;
+  private readonly toolHint: (meta?: SegmentBreak) => string;
   private readonly log: (msg: string) => void;
   private readonly wait: (ms: number) => Promise<void>;
   private readonly now: () => number;
@@ -130,6 +143,13 @@ export class CardSender implements OutboundSink {
   private streamPending?: string;
   /** A turn boundary was requested: finalize after the latest text is shown. */
   private streamCommitting = false;
+  /** An in-turn segment boundary (tool call) was requested: seal the current card, keep the turn. */
+  private streamSegmentBreaking = false;
+  private streamBreakMeta?: SegmentBreak;
+  /** Tool-call hint shown as the FIRST line of the current segment's card (undefined => no hint, the
+   *  turn's opening segment). Cosmetic only: it prefixes the displayed content but is NOT part of the
+   *  turn text, so it never affects offsets or what the text fallback re-sends. */
+  private currentHint?: string;
   /** The card being grown right now (undefined => next op creates a fresh one). */
   private live?: LiveCard;
   /** Chars already sealed into PRIOR cards of THIS turn (cross-card rollover). */
@@ -163,6 +183,8 @@ export class CardSender implements OutboundSink {
     this.elementId = opts.elementId ?? DEFAULT_ELEMENT_ID;
     this.minEditIntervalMs = opts.minEditIntervalMs ?? 250;
     this.minIntervalMs = opts.minIntervalMs ?? 0;
+    this.enableToolHint = opts.enableToolHint ?? true;
+    this.toolHint = opts.toolHint ?? defaultToolHint;
     this.log = opts.log ?? (() => {});
     this.wait = opts.wait ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
     this.now = opts.now ?? (() => Date.now());
@@ -180,11 +202,24 @@ export class CardSender implements OutboundSink {
   /** Push the latest full accumulated turn text; the live card is edited in place. */
   streamUpdate(fullText: string): void {
     if (this.stopped) return;
+    this.streamPending = fullText; // always track latest, even in fallback mode (anchors offsets)
     if (this.fellBack) {
       this.forwardFallback(fullText);
       return;
     }
-    this.streamPending = fullText;
+    void this.driveStream();
+  }
+
+  /** In-turn boundary (tool call): seal the current card and keep the SAME turn going so the next
+   *  text opens a fresh card. A no-op when there is nothing shown yet (never leaves an empty card). */
+  streamSegmentBreak(meta?: SegmentBreak): void {
+    if (this.stopped) return;
+    if (this.fellBack) {
+      this.forwardFallbackSegmentBreak();
+      return;
+    }
+    this.streamSegmentBreaking = true;
+    this.streamBreakMeta = meta;
     void this.driveStream();
   }
 
@@ -225,38 +260,74 @@ export class CardSender implements OutboundSink {
         // CardKit gave up mid-turn: drain the rest of the turn through the text fallback.
         if (this.fellBack) {
           this.forwardFallback(this.streamPending ?? "");
+          if (this.streamSegmentBreaking) {
+            this.streamSegmentBreaking = false;
+            this.streamBreakMeta = undefined;
+            this.forwardFallbackSegmentBreak();
+          }
           if (this.streamCommitting) this.forwardFallbackCommit();
           break;
         }
 
         const full = this.streamPending ?? "";
-        const segment = full.slice(this.streamBaseOffset);
-        const liveUpToDate = this.live ? this.live.sentText === segment : segment.trim() === "";
+        const body = full.slice(this.streamBaseOffset);
+        // Lazy: an armed hint alone does NOT force a card mid-stream — it prefixes the next card that
+        // body warrants. Only at a boundary (below) is a hint-only card materialized.
+        const liveUpToDate = this.live ? this.live.sentText === body : body.trim() === "";
 
-        if (liveUpToDate) {
-          if (this.streamCommitting) {
-            if (this.live) {
-              const waitMs = this.lastEditAt + this.minIntervalMs - this.now();
-              if (waitMs > 0) {
-                await this.wait(waitMs);
-                continue;
-              }
-              await this.doFinalize(this.live);
-            }
-            this.resetTurn();
+        if (!liveUpToDate) {
+          // Throttle: coalesce mid-stream edits; on a boundary only honor the hard rate limit.
+          const minGap = this.streamCommitting || this.streamSegmentBreaking ? this.minIntervalMs : this.minEditIntervalMs;
+          const waitMs = this.lastEditAt + minGap - this.now();
+          if (waitMs > 0) {
+            await this.wait(waitMs);
+            continue; // re-read pending so the latest text wins
           }
-          break; // nothing more to do until the next streamUpdate/streamCommit
+          await this.doStreamOp(full);
+          continue; // re-loop; the op may have triggered a fallback
         }
 
-        // Throttle: coalesce mid-stream edits; on commit only honor the hard rate limit.
-        const minGap = this.streamCommitting ? this.minIntervalMs : this.minEditIntervalMs;
-        const waitMs = this.lastEditAt + minGap - this.now();
-        if (waitMs > 0) {
-          await this.wait(waitMs);
-          continue; // re-read pending so the latest text wins
+        // At a boundary with a hint armed but no body/card: materialize a hint-only card so the tool
+        // call is still surfaced, then loop to finalize it.
+        if ((this.streamSegmentBreaking || this.streamCommitting) && !this.live && this.currentHint !== undefined) {
+          const waitMs = this.lastEditAt + this.minIntervalMs - this.now();
+          if (waitMs > 0) {
+            await this.wait(waitMs);
+            continue;
+          }
+          await this.doStreamOp(full);
+          continue;
         }
 
-        await this.doStreamOp(full);
+        // The card (if any) matches the current segment. Process any pending boundary.
+        if (this.streamSegmentBreaking) {
+          if (this.live) {
+            const waitMs = this.lastEditAt + this.minIntervalMs - this.now();
+            if (waitMs > 0) {
+              await this.wait(waitMs);
+              continue;
+            }
+            await this.finalizeCurrentCard("segment_break"); // seals the just-finished segment's card
+          }
+          // Arm the hint for the NEXT segment so it shows as that card's first line.
+          this.currentHint = this.toolHintFor(this.streamBreakMeta);
+          this.streamSegmentBreaking = false;
+          this.streamBreakMeta = undefined;
+          continue; // keep the turn going; subsequent text opens a fresh card
+        }
+
+        if (this.streamCommitting) {
+          if (this.live) {
+            const waitMs = this.lastEditAt + this.minIntervalMs - this.now();
+            if (waitMs > 0) {
+              await this.wait(waitMs);
+              continue;
+            }
+            await this.finalizeCurrentCard("turn_commit");
+          }
+          this.resetTurn();
+        }
+        break; // nothing more to do until the next streamUpdate/segment break/commit
       }
     } finally {
       this.streamBusy = false;
@@ -270,26 +341,27 @@ export class CardSender implements OutboundSink {
 
   /** Perform exactly one streaming op (create+send, or a content edit) toward `full`. */
   private async doStreamOp(full: string): Promise<void> {
-    const segment = full.slice(this.streamBaseOffset);
+    const body = full.slice(this.streamBaseOffset);
 
     if (!this.live) {
-      if (!segment.trim()) return;
+      if (body.trim() === "" && this.currentHint === undefined) return; // nothing to show
+      const display = this.composeDisplay(body);
       try {
-        const cr = await this.create({ elementId: this.elementId, text: segment });
+        const cr = await this.create({ elementId: this.elementId, text: display });
         if (!cr.ok || !cr.cardId) {
           this.lastEditAt = this.now();
           this.log(`feishu card: create failed${codeInfo(cr)}; falling back to text`);
           this.giveUp();
           return;
         }
-        const sr = await this.send({ chatId: this.chatId, cardId: cr.cardId, uuid: safeUuid(this.keyOf(this.chatId, segment)) });
+        const sr = await this.send({ chatId: this.chatId, cardId: cr.cardId, uuid: safeUuid(this.keyOf(this.chatId, display)) });
         this.lastEditAt = this.now();
         if (!sr.ok || !sr.messageId) {
           this.log(`feishu card: send interactive failed${codeInfo(sr)}; falling back to text`);
           this.giveUp();
           return;
         }
-        this.live = { cardId: cr.cardId, messageId: sr.messageId, sentText: segment };
+        this.live = { cardId: cr.cardId, messageId: sr.messageId, sentText: body };
       } catch (e) {
         this.lastEditAt = this.now();
         this.log(`feishu card: create/send error: ${String(e)}; falling back to text`);
@@ -298,14 +370,14 @@ export class CardSender implements OutboundSink {
       return;
     }
 
-    if (this.live.sentText === segment) return;
+    if (this.live.sentText === body) return;
 
     try {
       const seq = this.nextSeq();
-      const r = await this.content({ cardId: this.live.cardId, elementId: this.elementId, content: segment, sequence: seq });
+      const r = await this.content({ cardId: this.live.cardId, elementId: this.elementId, content: this.composeDisplay(body), sequence: seq });
       this.lastEditAt = this.now();
       if (r.ok) {
-        this.live.sentText = segment;
+        this.live.sentText = body;
       } else {
         this.log(`feishu card: content update failed${codeInfo(r)}; falling back to text`);
         this.giveUp();
@@ -315,6 +387,33 @@ export class CardSender implements OutboundSink {
       this.log(`feishu card: content update error: ${String(e)}; falling back to text`);
       this.giveUp();
     }
+  }
+
+  /** Compose the displayed card content: the tool-call hint (if armed for this segment) as the first
+   *  line, then the body. Hint-only when there is no body yet. */
+  private composeDisplay(body: string): string {
+    if (this.currentHint === undefined) return body;
+    return body ? `${this.currentHint}\n\n${body}` : this.currentHint;
+  }
+
+  /** The hint string for a segment, or undefined when hints are disabled / empty. */
+  private toolHintFor(meta?: SegmentBreak): string | undefined {
+    if (!this.enableToolHint) return undefined;
+    const hint = this.toolHint(meta);
+    return hint ? hint : undefined;
+  }
+
+  /** Seal the live card: finalize it (streaming off), advance the turn's base offset past its
+   *  confirmed body text, clear it, and drop the consumed segment's hint. Used for every reason a
+   *  card ends mid-turn or at the turn boundary, so sequence and fallback accounting stay consistent.
+   *  The `reason` is currently informational (the seam is uniform across all of them). */
+  private async finalizeCurrentCard(_reason: FinalizeReason): Promise<void> {
+    const live = this.live;
+    if (!live) return;
+    await this.doFinalize(live);
+    this.streamBaseOffset += live.sentText.length;
+    this.live = undefined;
+    this.currentHint = undefined; // the sealed segment's hint is consumed
   }
 
   /** Finalize the live card (streaming_mode=false). The content is already shown, so a failure
@@ -355,6 +454,19 @@ export class CardSender implements OutboundSink {
     this.resetTurn();
   }
 
+  /** Segment break while degraded: seal the current fallback message and move the anchor forward so
+   *  the next segment's text starts a fresh fallback message — same per-segment semantics as cards,
+   *  with no duplication of what was already shown. The turn keeps going (no resetTurn). */
+  private forwardFallbackSegmentBreak(): void {
+    if (this.fallbackStreams) {
+      this.fallback.streamCommit!();
+    } else if (this.fbPending && this.fbPending.trim()) {
+      this.fallback.enqueue(this.fbPending);
+    }
+    this.fbPending = undefined;
+    this.fallbackOffset = (this.streamPending ?? "").length;
+  }
+
   private nextSeq(): number {
     return ++this.sequence;
   }
@@ -362,12 +474,22 @@ export class CardSender implements OutboundSink {
   private resetTurn(): void {
     this.streamPending = undefined;
     this.streamCommitting = false;
+    this.streamSegmentBreaking = false;
+    this.streamBreakMeta = undefined;
+    this.currentHint = undefined;
     this.live = undefined;
     this.streamBaseOffset = 0;
     this.fellBack = false;
     this.fallbackOffset = 0;
     this.fbPending = undefined;
   }
+}
+
+/** Default tool-call hint copy: one minimal line, tool name only — no params, input, rawOutput, or
+ *  details. Centralized so prdmgr can adjust the wording without touching the state machine. Shown
+ *  as the first line of the segment's first card. */
+export function defaultToolHint(meta?: SegmentBreak): string {
+  return meta?.toolName ? `🔧 调用工具：${meta.toolName}` : "🔧 正在调用工具";
 }
 
 function codeInfo(r: { code?: number; message?: string }): string {

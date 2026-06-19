@@ -19,6 +19,12 @@ import { BoundedDedup } from "./dedup";
 import { passesAtGate, senderAllowed, stripBotMention } from "./gating";
 import { randomUUID } from "node:crypto";
 
+/** Metadata for an in-turn segment boundary (e.g. the router invoking a tool). */
+export interface SegmentBreak {
+  /** Human-readable tool name/title to surface in the segment-break hint, if any. */
+  toolName?: string;
+}
+
 /** What the channel needs from an outbound sender (LarkSender satisfies it). */
 export interface OutboundSink {
   enqueue(text: string, key?: string): void;
@@ -26,8 +32,13 @@ export interface OutboundSink {
   /** True streaming: push the latest full accumulated turn text; the sink edits one message in
    *  place. Optional — when absent the channel falls back to one-shot flushing. */
   streamUpdate?(fullText: string): void;
-  /** Turn boundary: flush the latest text and seal the live message so the next turn is fresh. */
+  /** Turn boundary (hard commit): flush the latest text, seal the live message, and clear the whole
+   *  turn so the next turn is fresh. */
   streamCommit?(): void;
+  /** In-turn boundary (soft commit): flush the current segment's latest text and seal the live
+   *  message, but keep the SAME turn going so the next text opens a fresh message/card. Used at
+   *  router tool-call boundaries. Optional — sinks without it simply never segment. */
+  streamSegmentBreak?(meta?: SegmentBreak): void;
 }
 
 /** What the channel needs from an inbound source (LarkConsumer satisfies it). */
@@ -62,6 +73,9 @@ interface BindingRuntime {
   replaying: boolean;
   cancelDebounce?: () => void;
   startInFlight?: Promise<void>;
+  /** Last router tool-call id we segmented on; de-dups the tool_call + tool_call_update stream so a
+   *  card is sealed once per distinct tool call, not on every update. Cleared at turn boundaries. */
+  lastToolCallId?: string;
 }
 
 export class FeishuChannel implements Channel {
@@ -281,12 +295,18 @@ export class FeishuChannel implements Channel {
     if (rt.replaying) return; // never mirror historical session replay/backfill to Feishu
 
     if (e.kind === "update") {
-      const u = e.update as { sessionUpdate?: string; content?: unknown; messageId?: unknown } | undefined;
+      const u = e.update as
+        | { sessionUpdate?: string; content?: unknown; messageId?: unknown; toolCallId?: unknown; title?: unknown; kind?: unknown }
+        | undefined;
       if (u && u.sessionUpdate === "agent_message_chunk") {
         if (appendRouterChunk(rt, u)) {
           if (this.useStreaming(rt)) this.streamCurrent(rt);
           else this.scheduleFlush(rt);
         }
+        return;
+      }
+      if (u && (u.sessionUpdate === "tool_call" || u.sessionUpdate === "tool_call_update")) {
+        this.onRouterToolCall(rt, u);
       }
       return;
     }
@@ -314,6 +334,23 @@ export class FeishuChannel implements Channel {
     rt.buffer = "";
     rt.currentMessageId = undefined;
     rt.currentMessageStart = 0;
+    rt.lastToolCallId = undefined;
+  }
+
+  /** A router tool call is an in-turn boundary: seal the current card so the tool call visually
+   *  ends a segment and following text opens a fresh card. De-dup the tool_call + tool_call_update
+   *  stream so we segment once per distinct tool call, not on every update. */
+  private onRouterToolCall(rt: BindingRuntime, u: { sessionUpdate?: string; toolCallId?: unknown; title?: unknown; kind?: unknown }): void {
+    if (!this.useStreaming(rt) || typeof rt.sender.streamSegmentBreak !== "function") return;
+    const id = typeof u.toolCallId === "string" && u.toolCallId ? u.toolCallId : undefined;
+    if (id) {
+      if (rt.lastToolCallId === id) return; // same tool call -> already segmented
+      rt.lastToolCallId = id;
+    } else if (u.sessionUpdate !== "tool_call") {
+      return; // no id and only an update -> treat as a continuation, don't re-segment
+    }
+    if (rt.buffer.trim()) rt.sender.streamUpdate!(rt.buffer); // ensure the segment shows its final text
+    rt.sender.streamSegmentBreak!(toolSegmentMeta(u));
   }
 
   private clearOutboundBuffer(rt: BindingRuntime): void {
@@ -323,6 +360,7 @@ export class FeishuChannel implements Channel {
     rt.buffer = "";
     rt.currentMessageId = undefined;
     rt.currentMessageStart = 0;
+    rt.lastToolCallId = undefined;
   }
 
   private scheduleFlush(rt: BindingRuntime): void {
@@ -340,6 +378,7 @@ export class FeishuChannel implements Channel {
     rt.buffer = "";
     rt.currentMessageId = undefined;
     rt.currentMessageStart = 0;
+    rt.lastToolCallId = undefined;
     if (!text) return; // never send an empty flush
     rt.sender.enqueue(text, this.idempotencyKey(rt.binding, rt.flushSeq++, text));
   }
@@ -413,6 +452,13 @@ function appendRouterChunk(rt: BindingRuntime, update: { content?: unknown; mess
   }
   rt.buffer += text;
   return true;
+}
+
+function toolSegmentMeta(u: { title?: unknown; kind?: unknown }): SegmentBreak {
+  const name = typeof u.title === "string" && u.title.trim() ? u.title.trim()
+    : typeof u.kind === "string" && u.kind.trim() ? u.kind.trim()
+    : undefined;
+  return name ? { toolName: name } : {};
 }
 
 function feishuUserPrompt(text: string): string {

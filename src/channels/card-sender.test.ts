@@ -24,6 +24,8 @@ function cardRecorder(opts?: {
   const sends: CardSendRequest[] = [];
   const contents: CardContentRequest[] = [];
   const finalizes: CardFinalizeRequest[] = [];
+  /** Every sequenced op (content + finalize) in chronological call order. */
+  const seqLog: number[] = [];
   let cardN = 0;
   let msgN = 0;
   let cN = 0;
@@ -41,17 +43,19 @@ function cardRecorder(opts?: {
   };
   const content = async (req: CardContentRequest): Promise<CardContentResult> => {
     contents.push(req);
+    seqLog.push(req.sequence);
     return opts?.contentImpl ? opts.contentImpl(req, ++conN) : { ok: true };
   };
   const finalize = async (req: CardFinalizeRequest): Promise<CardFinalizeResult> => {
     finalizes.push(req);
+    seqLog.push(req.sequence);
     return opts?.finalizeImpl ? opts.finalizeImpl(req, ++finN) : { ok: true };
   };
   const now = () => t;
   const wait = async (ms: number) => {
     t += ms;
   };
-  return { creates, sends, contents, finalizes, create, send, content, finalize, now, wait };
+  return { creates, sends, contents, finalizes, seqLog, create, send, content, finalize, now, wait };
 }
 
 /** A fake text fallback sink (the role real LarkSender plays). */
@@ -89,7 +93,7 @@ function fakeFallback(opts?: { streaming?: boolean }) {
   };
 }
 
-function makeSender(r: ReturnType<typeof cardRecorder>, fb: ReturnType<typeof fakeFallback>, extra?: Partial<{ log: (m: string) => void; minEditIntervalMs: number }>) {
+function makeSender(r: ReturnType<typeof cardRecorder>, fb: ReturnType<typeof fakeFallback>, extra?: Partial<{ log: (m: string) => void; minEditIntervalMs: number; enableToolHint: boolean }>) {
   return new CardSender({
     chatId: "oc_1",
     create: r.create,
@@ -98,6 +102,7 @@ function makeSender(r: ReturnType<typeof cardRecorder>, fb: ReturnType<typeof fa
     finalize: r.finalize,
     fallback: fb.sink,
     minEditIntervalMs: extra?.minEditIntervalMs ?? 250,
+    enableToolHint: extra?.enableToolHint,
     now: r.now,
     wait: r.wait,
     log: extra?.log,
@@ -286,6 +291,156 @@ test("finalize failure does NOT lose or duplicate the reply (content is already 
   s.streamCommit();
   await s.whenIdle();
   expect(r.creates.map((c) => c.text)).toEqual(["Done", "Again"]);
+});
+
+// ── in-turn segmentation (tool-call boundaries) ─────────────────────────────────
+
+test("a segment break finalizes the current card and following text opens a fresh card", async () => {
+  const r = cardRecorder();
+  const fb = fakeFallback();
+  const s = makeSender(r, fb, { enableToolHint: false });
+  s.streamUpdate("Before tool");
+  await s.whenIdle();
+  s.streamSegmentBreak({ toolName: "bash" });
+  await s.whenIdle();
+  // full turn text keeps the prefix; the sink shows only the new tail on the next card
+  s.streamUpdate("Before toolAfter tool");
+  await s.whenIdle();
+  s.streamCommit();
+  await s.whenIdle();
+  expect(r.creates.map((c) => c.text)).toEqual(["Before tool", "After tool"]);
+  expect(r.finalizes.map((f) => f.cardId)).toEqual(["card1", "card2"]);
+});
+
+test("multiple tool calls in one turn produce one card per segment", async () => {
+  const r = cardRecorder();
+  const fb = fakeFallback();
+  const s = makeSender(r, fb, { enableToolHint: false });
+  s.streamUpdate("seg1");
+  await s.whenIdle();
+  s.streamSegmentBreak({ toolName: "t1" });
+  await s.whenIdle();
+  s.streamUpdate("seg1seg2");
+  await s.whenIdle();
+  s.streamSegmentBreak({ toolName: "t2" });
+  await s.whenIdle();
+  s.streamUpdate("seg1seg2seg3");
+  await s.whenIdle();
+  s.streamCommit();
+  await s.whenIdle();
+  expect(r.creates.map((c) => c.text)).toEqual(["seg1", "seg2", "seg3"]);
+  expect(r.finalizes.map((f) => f.cardId)).toEqual(["card1", "card2", "card3"]);
+});
+
+test("a tool call with no following text leaves no empty card", async () => {
+  const r = cardRecorder();
+  const fb = fakeFallback();
+  const s = makeSender(r, fb, { enableToolHint: false });
+  s.streamUpdate("only text");
+  await s.whenIdle();
+  s.streamSegmentBreak({ toolName: "t" });
+  await s.whenIdle();
+  s.streamCommit(); // turn ends with no further text
+  await s.whenIdle();
+  expect(r.creates.map((c) => c.text)).toEqual(["only text"]);
+  expect(r.finalizes).toHaveLength(1); // only the one real card was finalized
+});
+
+test("a segment break before any text creates no card", async () => {
+  const r = cardRecorder();
+  const fb = fakeFallback();
+  const s = makeSender(r, fb, { enableToolHint: false });
+  s.streamSegmentBreak({ toolName: "t" });
+  await s.whenIdle();
+  s.streamUpdate("text after");
+  await s.whenIdle();
+  s.streamCommit();
+  await s.whenIdle();
+  expect(r.creates.map((c) => c.text)).toEqual(["text after"]);
+  expect(r.finalizes).toHaveLength(1);
+});
+
+test("sequence stays strictly increasing across tool-call segments (never resets)", async () => {
+  const r = cardRecorder();
+  const fb = fakeFallback();
+  const s = makeSender(r, fb, { enableToolHint: false });
+  s.streamUpdate("a");
+  await s.whenIdle();
+  s.streamUpdate("ab");
+  await s.whenIdle();
+  s.streamSegmentBreak();
+  await s.whenIdle();
+  s.streamUpdate("abc");
+  await s.whenIdle();
+  s.streamUpdate("abcd");
+  await s.whenIdle();
+  s.streamCommit();
+  await s.whenIdle();
+  expect(r.seqLog.length).toBeGreaterThanOrEqual(4);
+  const sorted = [...r.seqLog].sort((a, b) => a - b);
+  expect(r.seqLog).toEqual(sorted); // chronological order is monotonic
+  expect(new Set(r.seqLog).size).toBe(r.seqLog.length); // strictly: no repeats
+});
+
+test("tool hint (default on) prefixes the NEXT segment's card as its first line", async () => {
+  const r = cardRecorder();
+  const fb = fakeFallback();
+  const s = makeSender(r, fb); // hint default on
+  s.streamUpdate("working");
+  await s.whenIdle();
+  s.streamSegmentBreak({ toolName: "bash" });
+  await s.whenIdle();
+  s.streamUpdate("workingafter");
+  await s.whenIdle();
+  expect(r.creates[0].text).toBe("working"); // opening segment: no hint
+  expect(r.creates[1].text).toBe("🔧 调用工具：bash\n\nafter"); // tool name only, first line
+});
+
+test("tool hint (default on): a tool call with no following text emits a hint-only card", async () => {
+  const r = cardRecorder();
+  const fb = fakeFallback();
+  const s = makeSender(r, fb); // hint default on
+  s.streamUpdate("done");
+  await s.whenIdle();
+  s.streamSegmentBreak({ toolName: "grep" });
+  await s.whenIdle();
+  s.streamCommit(); // turn ends with no body after the tool call
+  await s.whenIdle();
+  expect(r.creates.map((c) => c.text)).toEqual(["done", "🔧 调用工具：grep"]);
+  expect(r.finalizes).toHaveLength(2); // the hint-only card is finalized too
+});
+
+test("tool hint falls back to a generic line when the tool name is missing", async () => {
+  const r = cardRecorder();
+  const fb = fakeFallback();
+  const s = makeSender(r, fb);
+  s.streamUpdate("x");
+  await s.whenIdle();
+  s.streamSegmentBreak(); // no meta
+  await s.whenIdle();
+  s.streamUpdate("xy");
+  await s.whenIdle();
+  expect(r.creates[1].text).toBe("🔧 正在调用工具\n\ny");
+});
+
+test("degraded mode segments per tool call: no dup, no loss across the boundary", async () => {
+  const r = cardRecorder({ contentImpl: () => ({ ok: false, code: 99 }) });
+  const fb = fakeFallback();
+  const s = makeSender(r, fb, { enableToolHint: false });
+  s.streamUpdate("Hello"); // card1 "Hello" created
+  await s.whenIdle();
+  s.streamUpdate("Hello world"); // content edit fails -> give up, fall back from offset 5
+  await s.whenIdle();
+  expect(fb.streamUpdates).toEqual([" world"]);
+  s.streamSegmentBreak(); // in fallback: seal the text msg, anchor moves to current length
+  await s.whenIdle();
+  expect(fb.commits).toBe(1);
+  s.streamUpdate("Hello worldmore"); // only the new tail goes to a fresh fallback message
+  await s.whenIdle();
+  expect(fb.streamUpdates).toEqual([" world", "more"]);
+  s.streamCommit();
+  await s.whenIdle();
+  expect(fb.commits).toBe(2);
 });
 
 // ── lifecycle ────────────────────────────────────────────────────────────────────
