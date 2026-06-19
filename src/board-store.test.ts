@@ -21,9 +21,10 @@ function seeded(mesh: string): BoardState {
 }
 
 test("boardsDirFor + boardPath compose the <root>/boards/<mesh>.json path", () => {
-  const dir = boardsDirFor("/data/.agent-mesh");
-  expect(dir).toBe("/data/.agent-mesh/boards");
-  expect(boardPath(dir, "mesh-dev")).toBe("/data/.agent-mesh/boards/mesh-dev.json");
+  const root = join("/data", ".agent-mesh");
+  const dir = boardsDirFor(root);
+  expect(dir).toBe(join(root, "boards"));
+  expect(boardPath(dir, "mesh-dev")).toBe(join(root, "boards", "mesh-dev.json"));
 });
 
 test("read returns an empty board when no file exists", async () => {

@@ -1,4 +1,5 @@
 import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import type { AgentId, HarnessId, ThinkingEffort } from "./acp/types";
 
@@ -78,7 +79,7 @@ export async function writeSessionState(runDir: string, meshName: string, state:
   await mkdir(runDir, { recursive: true, mode: 0o700 });
   await chmod(runDir, 0o700).catch(() => {});
   const path = sessionStatePath(runDir, meshName);
-  const tmp = `${path}.${process.pid}.${Date.now()}.tmp`;
+  const tmp = `${path}.${process.pid}.${Date.now()}.${randomUUID()}.tmp`;
   const sanitized = sanitizeState(state);
   await writeFile(tmp, JSON.stringify(sanitized, null, 2), { mode: 0o600 });
   await chmod(tmp, 0o600).catch(() => {});

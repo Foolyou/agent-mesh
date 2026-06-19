@@ -1,6 +1,10 @@
 import { expect, test } from "bun:test";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startHarnessInstall, resetHarnessInstallJobsForTests } from "./harness-install";
+
+const TEST_HOME = join(tmpdir(), "mesh-home");
+const TEST_PREFIX = join(TEST_HOME, ".agent-mesh", "npm-global");
 
 function doneSpawn(calls: any[]) {
   return (argv: string[], opts: any) => {
@@ -25,10 +29,9 @@ function streamOf(text: string): ReadableStream<Uint8Array> {
 test("startHarnessInstall spawns npm install with safe argv flags and env", async () => {
   resetHarnessInstallJobsForTests();
   const calls: any[] = [];
-  const prefix = "/tmp/mesh-home/.agent-mesh/npm-global";
   const job = await startHarnessInstall("claude", {
-    prefix,
-    home: "/tmp/mesh-home",
+    prefix: TEST_PREFIX,
+    home: TEST_HOME,
     which: () => "/usr/bin/npm",
     spawn: doneSpawn(calls),
     clearProbeCache: () => {},
@@ -43,9 +46,9 @@ test("startHarnessInstall spawns npm install with safe argv flags and env", asyn
     "npm",
     "install",
     "--prefix",
-    prefix,
+    TEST_PREFIX,
     "--cache",
-    join(prefix, ".cache"),
+    join(TEST_PREFIX, ".cache"),
     "--registry",
     "https://registry.npmjs.org/",
     "--ignore-scripts",
@@ -56,7 +59,7 @@ test("startHarnessInstall spawns npm install with safe argv flags and env", asyn
   ]);
   expect(calls[0].argv.join(" ")).not.toContain("bash -c");
   expect(calls[0].opts.env.npm_config_ignore_scripts).toBe("true");
-  expect(calls[0].opts.cwd).toBe(prefix);
+  expect(calls[0].opts.cwd).toBe(TEST_PREFIX);
 });
 
 test("startHarnessInstall rejects non-npm harnesses and missing npm", async () => {
@@ -70,8 +73,8 @@ test("startHarnessInstall is idempotent for active jobs", async () => {
   const calls: any[] = [];
   let resolveExit!: (code: number) => void;
   const first = await startHarnessInstall("codex", {
-    prefix: "/tmp/mesh-home/.agent-mesh/npm-global",
-    home: "/tmp/mesh-home",
+    prefix: TEST_PREFIX,
+    home: TEST_HOME,
     which: () => "/usr/bin/npm",
     reprobe: async () => [],
     spawn: (argv, opts) => {
@@ -90,8 +93,8 @@ test("startHarnessInstall invalidates caches, reprobes, and broadcasts after suc
   resetHarnessInstallJobsForTests();
   const events: any[] = [];
   const job = await startHarnessInstall("codex", {
-    prefix: "/tmp/mesh-home/.agent-mesh/npm-global",
-    home: "/tmp/mesh-home",
+    prefix: TEST_PREFIX,
+    home: TEST_HOME,
     which: () => "/usr/bin/npm",
     spawn: doneSpawn([]),
     clearProbeCache: (id) => events.push(["clearProbe", id]),
@@ -114,8 +117,8 @@ test("startHarnessInstall broadcasts harness changes when spawn fails", async ()
   resetHarnessInstallJobsForTests();
   const events: any[] = [];
   await expect(startHarnessInstall("codex", {
-    prefix: "/tmp/mesh-home/.agent-mesh/npm-global",
-    home: "/tmp/mesh-home",
+    prefix: TEST_PREFIX,
+    home: TEST_HOME,
     which: () => "/usr/bin/npm",
     spawn: () => {
       throw new Error("spawn failed");
@@ -129,8 +132,8 @@ test("startHarnessInstall broadcasts harness changes when spawn fails", async ()
 test("startHarnessInstall records redacted stdout and stderr lines", async () => {
   resetHarnessInstallJobsForTests();
   const job = await startHarnessInstall("codex", {
-    prefix: "/tmp/mesh-home/.agent-mesh/npm-global",
-    home: "/tmp/mesh-home",
+    prefix: TEST_PREFIX,
+    home: TEST_HOME,
     which: () => "/usr/bin/npm",
     spawn: () => ({
       exited: Promise.resolve(0),
@@ -147,8 +150,8 @@ test("startHarnessInstall records redacted stdout and stderr lines", async () =>
 test("startHarnessInstall drops npm auth token-looking output lines", async () => {
   resetHarnessInstallJobsForTests();
   const job = await startHarnessInstall("codex", {
-    prefix: "/tmp/mesh-home/.agent-mesh/npm-global",
-    home: "/tmp/mesh-home",
+    prefix: TEST_PREFIX,
+    home: TEST_HOME,
     which: () => "/usr/bin/npm",
     spawn: () => ({
       exited: Promise.resolve(0),
@@ -169,8 +172,8 @@ test("startHarnessInstall drops npm auth token-looking output lines", async () =
 test("startHarnessInstall keeps node_modules log lines while dropping NODE_AUTH output", async () => {
   resetHarnessInstallJobsForTests();
   const job = await startHarnessInstall("codex", {
-    prefix: "/tmp/mesh-home/.agent-mesh/npm-global",
-    home: "/tmp/mesh-home",
+    prefix: TEST_PREFIX,
+    home: TEST_HOME,
     which: () => "/usr/bin/npm",
     spawn: () => ({
       exited: Promise.resolve(0),

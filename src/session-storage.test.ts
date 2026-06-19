@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { listLiveRecords, readRecord, writeRecord } from "./mesh-registry";
 import { clearAgentSession, clearAllAgentSessions, readSessionState, sessionStatePath, updateAgentMailCursor, updateAgentSession, writeSessionState } from "./session-storage";
 
+const POSIX_MODES = process.platform !== "win32";
+
 let dir: string;
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), "mesh-sessions-"));
@@ -29,8 +31,13 @@ test("writes sessions atomically with private run directory and file permissions
     },
   });
 
-  expect((await stat(dir)).mode & 0o777).toBe(0o700);
-  expect((await stat(sessionStatePath(dir, "dev"))).mode & 0o777).toBe(0o600);
+  if (POSIX_MODES) {
+    expect((await stat(dir)).mode & 0o777).toBe(0o700);
+    expect((await stat(sessionStatePath(dir, "dev"))).mode & 0o777).toBe(0o600);
+  } else {
+    expect(await stat(dir)).toBeTruthy();
+    expect(await stat(sessionStatePath(dir, "dev"))).toBeTruthy();
+  }
   expect(await readSessionState(dir, "dev")).toEqual({
     meshExpectedAlive: true,
     mailCursors: {}, agents: {

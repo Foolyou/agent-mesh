@@ -127,11 +127,12 @@ restart_and_verify() {
 prune_backups() {
   shopt -s nullglob
   local all=()
-  mapfile -t all < <(list_backups)
+  while IFS= read -r f; do all+=("$f"); done < <(list_backups)
   ((${#all[@]} > KEEP)) || return 0
   # newest-first, delete everything past KEEP
   local sorted i
-  mapfile -t sorted < <(printf '%s\n' "${all[@]}" | sort -r)
+  sorted=()
+  while IFS= read -r f; do sorted+=("$f"); done < <(printf '%s\n' "${all[@]}" | sort -r)
   for ((i = KEEP; i < ${#sorted[@]}; i++)); do
     echo "pruning old backup: ${sorted[i]##*/}"
     rm -f "${sorted[i]}"

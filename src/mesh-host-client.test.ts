@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import net from "node:net";
 import { MeshHostClient } from "./mesh-host-client";
+import { meshSocketPath } from "./mesh-socket";
 import { LineBuffer, encodeFrame, PROTO_VERSION, type ParentMsg, type ChildMsg } from "./protocol";
 import type { MeshConfig, MeshEvent } from "./acp/types";
 
@@ -18,14 +19,16 @@ const FIXTURE = join(import.meta.dir, "fixtures", "echo-host.ts");
 let dir: string;
 beforeEach(async () => { dir = await mkdtemp(join(tmpdir(), "client-")); });
 afterEach(async () => { await rm(dir, { recursive: true, force: true }); });
+const socket = (name: string) => meshSocketPath(dir, name);
 
 test("start resolves on ready; prompt relays an event; stop reaps the process", async () => {
   const events: MeshEvent[] = [];
   const client = new MeshHostClient({
     name: cfg.name,
     config: cfg,
-    socketPath: join(dir, "echo.sock"),
+    socketPath: socket("echo"),
     hostScript: FIXTURE,
+    runDir: dir,
     onEvent: (e) => events.push(e),
   });
 
@@ -50,8 +53,9 @@ test(
     const client = new MeshHostClient({
       name: "bad",
       config: cfg,
-      socketPath: join(dir, "bad.sock"),
+      socketPath: socket("bad"),
       hostScript: join(dir, "does-not-exist.ts"),
+      runDir: dir,
     });
     await expect(client.start()).rejects.toThrow(/before ready|exited/i);
   },
@@ -106,7 +110,7 @@ async function attachToFake(
 }
 
 test("setMode resolves with the host ack status", async () => {
-  const sock = join(dir, "ack.sock");
+  const sock = socket("ack");
   const { client, daemon } = await attachToFake(sock, (frame, s) => {
     if (frame.t === "setMode") s.write(encodeFrame({ t: "cmdResult", reqId: frame.reqId, status: "applied_by_acp" } as ChildMsg));
   });
@@ -119,7 +123,7 @@ test("setMode resolves with the host ack status", async () => {
 });
 
 test("a host error result rejects the mutation waiter", async () => {
-  const sock = join(dir, "err.sock");
+  const sock = socket("err");
   const { client, daemon } = await attachToFake(sock, (frame, s) => {
     if (frame.t === "setModel") s.write(encodeFrame({ t: "cmdResult", reqId: frame.reqId, error: "no such agent" } as ChildMsg));
   });
@@ -132,7 +136,7 @@ test("a host error result rejects the mutation waiter", async () => {
 });
 
 test("a mutation with no answer rejects on timeout (no waiter leak)", async () => {
-  const sock = join(dir, "timeout.sock");
+  const sock = socket("timeout");
   // Daemon intentionally never answers the setEffort frame.
   const { client, daemon } = await attachToFake(sock, () => {}, 80);
   try {
@@ -144,7 +148,7 @@ test("a mutation with no answer rejects on timeout (no waiter leak)", async () =
 });
 
 test("an in-flight mutation rejects when the socket closes", async () => {
-  const sock = join(dir, "close.sock");
+  const sock = socket("close");
   const { client, daemon } = await attachToFake(sock, (frame, s) => {
     if (frame.t === "setMode") s.destroy(); // drop the connection before answering
   });
@@ -157,7 +161,7 @@ test("an in-flight mutation rejects when the socket closes", async () => {
 });
 
 test("an in-flight mutation rejects when a new connection takes over", async () => {
-  const sock = join(dir, "takeover.sock");
+  const sock = socket("takeover");
   // Never answer, so the waiter is still pending when we reattach.
   const { client, daemon } = await attachToFake(sock, () => {});
   try {

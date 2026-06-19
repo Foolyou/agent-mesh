@@ -47,7 +47,7 @@ const cp = {
 };
 
 const socketPath = process.env.MESH_SOCK!;
-const runDir = dirname(socketPath);
+const runDir = process.env.MESH_RUN_DIR ?? dirname(socketPath);
 const config = JSON.parse(process.env.MESH_CONFIG ?? '{"name":"x"}') as MeshConfig;
 const daemon = new MeshHostDaemon(cp, {
   socketPath,

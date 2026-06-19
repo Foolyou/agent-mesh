@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MeshManager } from "./mesh-manager";
+import { meshSocketPath } from "./mesh-socket";
 import { readSessionState, writeSessionState } from "./session-storage";
 import type { MeshConfig, MeshEvent } from "./acp/types";
 
@@ -561,7 +562,7 @@ test("a crashed mesh host is reaped: status dead, socket file removed, restartab
   await Bun.sleep(400);
   expect(crashMgr.listMeshes()[0]!.status).toBe("dead");
   // socket file should be gone
-  const sock = join(dir, "run2", "echo.sock");
+  const sock = meshSocketPath(join(dir, "run2"), "echo");
   const { existsSync } = await import("node:fs");
   expect(existsSync(sock)).toBe(false);
   await crashMgr.stopAll();

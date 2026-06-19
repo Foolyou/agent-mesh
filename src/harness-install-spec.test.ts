@@ -1,4 +1,5 @@
 import { test, expect } from "bun:test";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { assertManagedNpmPrefix, assertSafeNpmPackageSpec, managedNpmPrefix, npmPackageSpec } from "./harness-install-spec";
 
@@ -28,9 +29,10 @@ test("assertSafeNpmPackageSpec rejects non-pinned and executable package specs",
 });
 
 test("managed npm prefix must stay under ~/.agent-mesh", () => {
-  const home = "/tmp/mesh-home";
-  expect(managedNpmPrefix(home)).toBe(join(home, ".agent-mesh", "npm-global"));
-  expect(assertManagedNpmPrefix(join(home, ".agent-mesh", "npm-global"), home)).toBe(join(home, ".agent-mesh", "npm-global"));
+  const home = join(tmpdir(), "mesh-home");
+  const prefix = join(home, ".agent-mesh", "npm-global");
+  expect(managedNpmPrefix(home)).toBe(prefix);
+  expect(assertManagedNpmPrefix(prefix, home)).toBe(prefix);
   expect(() => assertManagedNpmPrefix(join(home, ".agent-mesh-other", "npm-global"), home)).toThrow(/prefix/);
   expect(() => assertManagedNpmPrefix("/usr/local", home)).toThrow(/prefix/);
 });

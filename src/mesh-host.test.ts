@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MeshHostDaemon, type BridgeControlPlane } from "./mesh-host";
 import { MeshHostClient } from "./mesh-host-client";
+import { meshSocketPath } from "./mesh-socket";
 import { LineBuffer, encodeFrame, PROTO_VERSION } from "./protocol";
 import type { MeshConfig, MeshEvent } from "./acp/types";
 
@@ -13,6 +14,7 @@ let dir: string;
 let daemon: MeshHostDaemon | undefined;
 beforeEach(async () => { dir = await mkdtemp(join(tmpdir(), "host-")); });
 afterEach(async () => { await daemon?.stop().catch(() => {}); daemon = undefined; await rm(dir, { recursive: true, force: true }); });
+const socket = (name: string) => meshSocketPath(dir, name);
 
 function fakeCp() {
   let listener: ((e: MeshEvent) => void) | undefined;
@@ -58,7 +60,7 @@ async function connect(sock: string) {
 }
 
 test("hello → ack(running, proto, seq); prompt relays a seq'd event; commands apply; stop", async () => {
-  const sock = join(dir, "t.sock");
+  const sock = socket("t");
   const { cp, calls } = fakeCp();
   daemon = new MeshHostDaemon(cp, { socketPath: sock });
   await daemon.listen();
@@ -112,7 +114,7 @@ test("hello → ack(running, proto, seq); prompt relays a seq'd event; commands 
 });
 
 test("state-changing commands are applied in socket order", async () => {
-  const sock = join(dir, "ordered.sock");
+  const sock = socket("ordered");
   const { cp, calls } = fakeCp();
   let releaseMode!: () => void;
   (cp as any).setMode = async (target: string, modeId: string) => {
@@ -142,7 +144,7 @@ test("state-changing commands are applied in socket order", async () => {
 });
 
 test("a config mutation acks only AFTER the control-plane call settles", async () => {
-  const sock = join(dir, "ack-after.sock");
+  const sock = socket("ack-after");
   const { cp, calls } = fakeCp();
   let releaseMode!: () => void;
   (cp as any).setMode = async (target: string, modeId: string) => {
@@ -168,7 +170,7 @@ test("a config mutation acks only AFTER the control-plane call settles", async (
 });
 
 test("a board command returns a boardResult: ok, board-error-as-result, and throw-as-error", async () => {
-  const sock = join(dir, "board-rpc.sock");
+  const sock = socket("board-rpc");
   const { cp } = fakeCp();
   daemon = new MeshHostDaemon(cp, { socketPath: sock });
   await daemon.listen();
@@ -199,7 +201,7 @@ test("a board command returns a boardResult: ok, board-error-as-result, and thro
 });
 
 test("MeshHostClient.boardCommand resolves with the structured result over the socket", async () => {
-  const sock = join(dir, "board-client.sock");
+  const sock = socket("board-client");
   const { cp } = fakeCp();
   daemon = new MeshHostDaemon(cp, { socketPath: sock });
   await daemon.listen();
@@ -219,7 +221,7 @@ test("MeshHostClient.boardCommand resolves with the structured result over the s
 });
 
 test("a throwing config mutation returns an error result and the queue stays alive", async () => {
-  const sock = join(dir, "ack-error.sock");
+  const sock = socket("ack-error");
   const { cp, calls } = fakeCp();
   (cp as any).setModel = async () => { throw new Error("no such model"); };
   daemon = new MeshHostDaemon(cp, { socketPath: sock });
@@ -239,7 +241,7 @@ test("a throwing config mutation returns an error result and the queue stays ali
 });
 
 test("events emitted before connect are replayed on hello(resumeFrom)", async () => {
-  const sock = join(dir, "replay.sock");
+  const sock = socket("replay");
   const { cp, emit } = fakeCp();
   daemon = new MeshHostDaemon(cp, { socketPath: sock });
   await daemon.listen();
@@ -266,7 +268,7 @@ test("events emitted before connect are replayed on hello(resumeFrom)", async ()
 });
 
 test("hello backfills current agent state after ring replay", async () => {
-  const sock = join(dir, "snapshot.sock");
+  const sock = socket("snapshot");
   const { cp, emit } = fakeCp();
   (cp as any).snapshotEvents = () => [
     { kind: "agent_status", agent: "router", status: "ready", ts: "snap" },
@@ -303,7 +305,7 @@ test("hello backfills current agent state after ring replay", async () => {
 });
 
 test("mesh host client applies snapshot without advancing last seq", async () => {
-  const sock = join(dir, "client-snapshot.sock");
+  const sock = socket("client-snapshot");
   const { cp, emit } = fakeCp();
   (cp as any).snapshotEvents = () => [
     { kind: "agent_status", agent: "router", status: "ready", ts: "snap" },
@@ -332,7 +334,7 @@ test("mesh host client applies snapshot without advancing last seq", async () =>
 });
 
 test("a second client takes over; the first is dropped", async () => {
-  const sock = join(dir, "takeover.sock");
+  const sock = socket("takeover");
   const { cp, emit } = fakeCp();
   daemon = new MeshHostDaemon(cp, { socketPath: sock });
   await daemon.listen();

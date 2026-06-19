@@ -26,6 +26,7 @@ export interface MeshHostClientOptions {
   socketPath: string;
   hostScript?: string; // defaults to the real mesh-host
   root?: string; // data root → passed to the daemon for the mailbox + registry location
+  runDir?: string; // registry/session dir; required when socketPath is a Windows named pipe
   leaseMs?: number; // optional idle lease passed to the daemon (0 = survive indefinitely)
   debug?: boolean;
   onEvent?: (event: MeshEvent) => void;
@@ -98,6 +99,7 @@ export class MeshHostClient {
         MESH_DEBUG: this.opts.debug ? "1" : "0",
         MESH_LEASE_MS: String(this.opts.leaseMs ?? 0),
         ...(this.opts.root ? { MESH_ROOT: this.opts.root } : {}),
+        ...(this.opts.runDir ? { MESH_RUN_DIR: this.opts.runDir } : {}),
       },
       stdin: "ignore",
       stdout: this.opts.debug ? "inherit" : "ignore",

@@ -21,6 +21,7 @@ import { assertSafeArtifactName, deleteArtifactMesh } from "./web/artifacts";
 import { boardsDirFor, deleteBoard, readBoard } from "./board-store";
 import type { BoardActor, BoardCommand, BoardCommandResult, BoardDocument } from "./board";
 import { clearAgentSession, clearAllAgentSessions, setMeshExpectedAlive } from "./session-storage";
+import { isWindowsNamedPipePath, meshSocketPath } from "./mesh-socket";
 
 export type MeshStatus = "stopped" | "starting" | "running" | "dead";
 export type StartSessionStrategy = "resume" | "fresh";
@@ -168,9 +169,10 @@ export class MeshManager {
     const client = new MeshHostClient({
       name,
       config: entry.config,
-      socketPath: join(this.runDir, `${name}.sock`),
+      socketPath: meshSocketPath(this.runDir, name),
       hostScript: this.hostScript,
       root: this.root,
+      runDir: this.runDir,
       leaseMs: this.leaseMs,
       debug: this.debug,
       onEvent: (e) => this.emit(name, e),
@@ -191,7 +193,8 @@ export class MeshManager {
     // a crashed daemon leaves its registry record + unix-socket file behind; clear both
     // so the mesh is immediately restartable (a fresh daemon re-listens on the path).
     void removeRecord(this.runDir, name).catch(() => {});
-    void rm(join(this.runDir, `${name}.sock`), { force: true }).catch(() => {});
+    const socketPath = meshSocketPath(this.runDir, name);
+    if (!isWindowsNamedPipePath(socketPath)) void rm(socketPath, { force: true }).catch(() => {});
   }
 
   async startMesh(name: string, opts: StartMeshOptions = {}): Promise<void> {

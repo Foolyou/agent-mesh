@@ -2,36 +2,55 @@
 import { test, expect, beforeEach, afterEach } from "bun:test";
 import { mkdtemp, rm, writeFile, readFile, readdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
+import { spawn, type ChildProcess } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { writeRecord, readRecord, removeRecord, listLiveRecords, pidAlive, reapAllHosts } from "./mesh-registry";
 
 let dir: string;
-const spawned: number[] = [];
+const spawned: ChildProcess[] = [];
 beforeEach(async () => { dir = await mkdtemp(join(tmpdir(), "reg-")); spawned.length = 0; });
 afterEach(async () => {
-  for (const pid of spawned) try { process.kill(pid, "SIGKILL"); } catch { /* gone */ }
+  for (const child of spawned) {
+    if (child.pid) try { process.kill(child.pid, "SIGKILL"); } catch { /* gone */ }
+  }
+  await Promise.all(spawned.map((child) => waitChildExit(child, 1000)));
   await rm(dir, { recursive: true, force: true });
 });
 
 const rec = (name: string, pid: number) => ({ name, pid, socketPath: join(dir, `${name}.sock`), proto: 2, startedAt: "T" });
 
 /**
- * Spawn a real, detached long-lived stub process (reparented to init via setsid, so this
- * test process is NOT its parent — otherwise a killed child would linger as a zombie that
- * `kill(pid,0)` still reports alive). `stubborn` makes it trap+ignore SIGTERM, so only
- * SIGKILL can stop it. Returns the stub's own pid (read back from a pidfile).
+ * Spawn a real, detached long-lived stub process. `stubborn` makes it trap+ignore SIGTERM
+ * on platforms that support that signal, so only SIGKILL can stop it. Returns the stub's
+ * own pid (read back from a pidfile).
  */
 async function spawnStub(name: string, stubborn = false): Promise<number> {
   const pidfile = join(dir, `${name}.pid.tmp`);
   const trap = stubborn ? "process.on('SIGTERM',()=>{});" : "";
   const code = `require('fs').writeFileSync(${JSON.stringify(pidfile)}, String(process.pid)); ${trap} setInterval(()=>{}, 1e9);`;
-  Bun.spawn(["setsid", process.execPath, "-e", code], { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
+  const child = spawn(process.execPath, ["-e", code], { detached: true, stdio: "ignore", windowsHide: true });
+  child.unref();
   for (let i = 0; i < 250; i++) {
-    try { const s = (await readFile(pidfile, "utf8")).trim(); if (s) { const pid = Number(s); spawned.push(pid); return pid; } } catch { /* not yet */ }
+    try {
+      const s = (await readFile(pidfile, "utf8")).trim();
+      if (s) {
+        spawned.push(child);
+        return Number(s);
+      }
+    } catch { /* not yet */ }
     await Bun.sleep(20);
   }
+  if (child.pid) try { process.kill(child.pid, "SIGKILL"); } catch { /* gone */ }
   throw new Error(`stub ${name} never reported its pid`);
+}
+
+async function waitChildExit(child: ChildProcess, timeoutMs: number): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  await Promise.race([
+    new Promise<void>((resolve) => child.once("exit", () => resolve())),
+    Bun.sleep(timeoutMs).then(() => {}),
+  ]);
 }
 
 const touchSock = (name: string) => writeFile(join(dir, `${name}.sock`), "");

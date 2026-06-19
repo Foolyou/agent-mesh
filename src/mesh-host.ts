@@ -14,6 +14,7 @@ import type { BoardActor, BoardCommand, BoardCommandResult } from "./board";
 import { LineBuffer, encodeFrame, PROTO_VERSION, type MutationAckStatus, type ParentMsg, type SeqEvent } from "./protocol";
 import { writeRecord, removeRecord } from "./mesh-registry";
 import { now, type AgentConfig, type MeshConfig, type MeshEdge, type MeshEvent, type PromptImageRef } from "./acp/types";
+import { isWindowsNamedPipePath } from "./mesh-socket";
 
 /** Append one crash record to the mesh's persisted crash log. Daemon stderr is lost
  *  once the backend reattaches over the socket, so an uncaught exception / unhandled
@@ -90,7 +91,9 @@ export class MeshHostDaemon {
 
   /** Begin buffering events and listen on the socket. Resolves once listening. */
   async listen(): Promise<void> {
-    await mkdir(dirname(this.opts.socketPath), { recursive: true });
+    if (!isWindowsNamedPipePath(this.opts.socketPath)) {
+      await mkdir(dirname(this.opts.socketPath), { recursive: true });
+    }
     this.unsub = this.cp.on((event) => this.onEvent(event));
     this.server = net.createServer((sock) => this.attach(sock));
     await new Promise<void>((res, rej) => {
@@ -300,7 +303,7 @@ export async function runMeshHost(): Promise<void> {
   }
   const config = JSON.parse(configJson) as MeshConfig;
   const root = process.env.MESH_ROOT;
-  const runDir = dirname(socketPath); // sockets + registry records share ${root}/run
+  const runDir = process.env.MESH_RUN_DIR ?? (root ? join(root, "run") : dirname(socketPath)); // registry/session records share ${root}/run
   const leaseMs = Number(process.env.MESH_LEASE_MS) || 0;
 
   // Persist crashes before the process dies. These run alongside (and before) the
@@ -318,7 +321,9 @@ export async function runMeshHost(): Promise<void> {
     sessionRunDir: runDir,
   });
 
-  await rm(socketPath, { force: true }); // clear a stale socket from a prior crash
+  if (!isWindowsNamedPipePath(socketPath)) {
+    await rm(socketPath, { force: true }); // clear a stale socket from a prior crash
+  }
   const daemon = new MeshHostDaemon(cp, {
     socketPath,
     leaseMs,
