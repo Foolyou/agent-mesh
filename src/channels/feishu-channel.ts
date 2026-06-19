@@ -462,22 +462,27 @@ export class FeishuChannel implements Channel {
   private async issueAuthCode(openId: string): Promise<string> {
     const store = this.authStore!;
     const keys = await store.ensureKeys();
-    const envelope = store.encrypt(keys, { channelKey: this.channelKey, openId, appId: this.cfg.appId, ttlSeconds: this.authCodeTtlSeconds });
     const now = this.nowFn();
-    const expiresAt = new Date(now + this.authCodeTtlSeconds * 1000).toISOString();
     let shortId = "";
     await store.update((f) => {
+      // Reuse an existing pending id for this identity if one is present. The file is GC'd on read, so
+      // any entry here is unexpired — reusing keeps a just-sent short id valid across repeated
+      // messages (no new envelope minted), instead of replacing and invalidating it.
       for (const [id, p] of Object.entries(f.pending)) {
-        if (p.channelKey === this.channelKey && p.openId === openId) delete f.pending[id]; // one pending per identity
+        if (p.channelKey === this.channelKey && p.openId === openId) {
+          shortId = id;
+          return;
+        }
       }
+      // None yet: mint a fresh envelope under a collision-free short id (all inside the lock).
       shortId = this.freshShortId(f.pending);
       f.pending[shortId] = {
-        encryptedToken: envelope,
+        encryptedToken: store.encrypt(keys, { channelKey: this.channelKey, openId, appId: this.cfg.appId, ttlSeconds: this.authCodeTtlSeconds }),
         channelKey: this.channelKey,
         openId,
         appId: this.cfg.appId,
         firstSeenAt: new Date(now).toISOString(),
-        expiresAt,
+        expiresAt: new Date(now + this.authCodeTtlSeconds * 1000).toISOString(),
       };
     });
     return shortId;
@@ -953,7 +958,9 @@ function errorClass(e: unknown): string {
 }
 
 function inboundMeta(m: InboundMsg): string {
-  return `event=${m.eventId} chatType=${m.chatType} sender=${m.senderId} type=${m.messageType} mentions=${mentionIds(m) || "-"} textChars=${m.text.length}`;
+  // No `sender` (open_id): this is logged BEFORE the auth gate, and an unauthorized sender's open_id
+  // must not leak into logs (it identifies a not-yet-authorized person). Routing identifiers only.
+  return `event=${m.eventId} chatType=${m.chatType} type=${m.messageType} mentions=${mentionIds(m) || "-"} textChars=${m.text.length}`;
 }
 
 function mentionIds(m: InboundMsg): string {

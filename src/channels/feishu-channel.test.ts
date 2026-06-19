@@ -1004,6 +1004,29 @@ test("auth gate: an unauthorized (but @-addressed) sender gets a short id auth c
   expect(reply).not.toContain("cli_1");
 });
 
+test("auth gate: the unauthorized deny path never logs the sender open_id / app_id / envelope", async () => {
+  const s = await setupAuth();
+  s.push(inbound({ senderId: "ou_stranger", chatType: "group", text: "@MeshBot help" }));
+  await flushAsync();
+  const logtext = s.logs.join("\n");
+  expect(logtext).not.toContain("ou_stranger"); // sender open_id must not appear in any pre/post-gate log
+  expect(logtext).not.toContain("ENVELOPE"); // encrypted envelope never logged
+  expect(logtext).not.toContain("cli_1"); // app_id / channelKey not leaked
+});
+
+test("auth gate: repeated unauthorized messages from one sender reuse the SAME short id (don't invalidate it)", async () => {
+  const s = await setupAuth();
+  s.push(inbound({ eventId: "u1", senderId: "ou_stranger", chatType: "group", text: "@MeshBot hi" }));
+  await flushAsync();
+  s.push(inbound({ eventId: "u2", senderId: "ou_stranger", chatType: "group", text: "@MeshBot again" }));
+  await flushAsync();
+  const ids = Object.keys(s.auth.current().pending);
+  expect(ids).toHaveLength(1); // one pending entry for the identity, not replaced
+  expect(s.sent).toHaveLength(2);
+  expect(s.sent[0].text).toContain(ids[0]);
+  expect(s.sent[1].text).toContain(ids[0]); // both replies carry the same still-valid short id
+});
+
 test("auth gate: a non-@ group message from an unauthorized sender is ignored (no auth-code spam)", async () => {
   const s = await setupAuth();
   s.push(inbound({ senderId: "ou_stranger", chatType: "group", text: "just chatting" }));
