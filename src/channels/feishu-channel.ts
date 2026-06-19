@@ -73,9 +73,10 @@ interface BindingRuntime {
   replaying: boolean;
   cancelDebounce?: () => void;
   startInFlight?: Promise<void>;
-  /** Last router tool-call id we segmented on; de-dups the tool_call + tool_call_update stream so a
-   *  card is sealed once per distinct tool call, not on every update. Cleared at turn boundaries. */
-  lastToolCallId?: string;
+  /** Router tool-call ids already segmented on this turn; de-dups the tool_call + tool_call_update
+   *  stream so a card is sealed once per distinct tool call regardless of interleaving. Cleared at
+   *  turn boundaries / replay. */
+  seenToolCalls: Set<string>;
 }
 
 export class FeishuChannel implements Channel {
@@ -114,7 +115,7 @@ export class FeishuChannel implements Channel {
         continue;
       }
       if (this.byChat.has(binding.chatId) || this.byMesh.has(binding.mesh)) continue;
-      const rt: BindingRuntime = { binding, sender, routerId: "", buffer: "", currentMessageStart: 0, flushSeq: 0, replaying: false };
+      const rt: BindingRuntime = { binding, sender, routerId: "", buffer: "", currentMessageStart: 0, flushSeq: 0, replaying: false, seenToolCalls: new Set() };
       this.runtimes.push(rt);
       this.byChat.set(binding.chatId, rt);
       this.byMesh.set(binding.mesh, rt);
@@ -334,7 +335,7 @@ export class FeishuChannel implements Channel {
     rt.buffer = "";
     rt.currentMessageId = undefined;
     rt.currentMessageStart = 0;
-    rt.lastToolCallId = undefined;
+    rt.seenToolCalls.clear();
   }
 
   /** A router tool call is an in-turn boundary: seal the current card so the tool call visually
@@ -344,8 +345,8 @@ export class FeishuChannel implements Channel {
     if (!this.useStreaming(rt) || typeof rt.sender.streamSegmentBreak !== "function") return;
     const id = typeof u.toolCallId === "string" && u.toolCallId ? u.toolCallId : undefined;
     if (id) {
-      if (rt.lastToolCallId === id) return; // same tool call -> already segmented
-      rt.lastToolCallId = id;
+      if (rt.seenToolCalls.has(id)) return; // this tool call already segmented (any interleaving)
+      rt.seenToolCalls.add(id);
     } else if (u.sessionUpdate !== "tool_call") {
       return; // no id and only an update -> treat as a continuation, don't re-segment
     }
@@ -360,7 +361,7 @@ export class FeishuChannel implements Channel {
     rt.buffer = "";
     rt.currentMessageId = undefined;
     rt.currentMessageStart = 0;
-    rt.lastToolCallId = undefined;
+    rt.seenToolCalls.clear();
   }
 
   private scheduleFlush(rt: BindingRuntime): void {
@@ -378,7 +379,7 @@ export class FeishuChannel implements Channel {
     rt.buffer = "";
     rt.currentMessageId = undefined;
     rt.currentMessageStart = 0;
-    rt.lastToolCallId = undefined;
+    rt.seenToolCalls.clear();
     if (!text) return; // never send an empty flush
     rt.sender.enqueue(text, this.idempotencyKey(rt.binding, rt.flushSeq++, text));
   }

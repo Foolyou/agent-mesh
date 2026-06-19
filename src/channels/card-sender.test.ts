@@ -817,6 +817,31 @@ test("size rollover keeps sequence strictly increasing across content edits and 
   expect(new Set(r.seqLog).size).toBe(r.seqLog.length);
 });
 
+test("size rollover gives each card send a unique uuid even for identical display text", async () => {
+  const r = cardRecorder();
+  const fb = fakeFallback();
+  const s = makeSender(r, fb, { enableToolHint: false, minEditIntervalMs: 0, maxCardBytes: 6 });
+  s.streamUpdate("AAAA\n\nAAAA\n\nAAAA");
+  await s.whenIdle();
+  s.streamCommit();
+  await s.whenIdle();
+  expect(r.creates[0].text).toBe(r.creates[1].text); // first two cards display identical text
+  const uuids = r.sends.map((x) => x.uuid);
+  expect(new Set(uuids).size).toBe(uuids.length); // ...but each send uuid is unique (no Feishu dedupe)
+});
+
+test("size rollover closes a long single-line code block on its own line (not glued)", async () => {
+  const r = cardRecorder();
+  const fb = fakeFallback();
+  const s = makeSender(r, fb, { enableToolHint: false, minEditIntervalMs: 0, maxCardBytes: 14 });
+  s.streamUpdate("```py\n" + "x".repeat(20)); // a single code line longer than the budget
+  await s.whenIdle();
+  s.streamCommit();
+  await s.whenIdle();
+  for (const c of r.creates) expect(/[^\n`]```$/.test(c.text)).toBe(false); // never "...code```"
+  expect(r.creates.some((c) => c.text.startsWith("```py") && c.text.endsWith("\n```"))).toBe(true);
+});
+
 // ── streaming-window timeout rollover ───────────────────────────────────────────
 
 test("timeout rollover: a long-running turn rolls onto a fresh card after the window", async () => {

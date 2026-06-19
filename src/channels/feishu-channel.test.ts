@@ -615,6 +615,15 @@ test("streaming: a different tool call id segments again", () => {
   expect(s.segments).toEqual([{ toolName: "bash" }, { toolName: "grep" }]);
 });
 
+test("streaming: a late update for an earlier tool call does not re-segment it", () => {
+  const s = setupStreaming();
+  s.mesh.emit("feishu-poc", chunk("router", "x"));
+  s.mesh.emit("feishu-poc", toolCall("router", "call-1", "a", "tool_call"));
+  s.mesh.emit("feishu-poc", toolCall("router", "call-2", "b", "tool_call"));
+  s.mesh.emit("feishu-poc", toolCall("router", "call-1", undefined, "tool_call_update")); // late update for call-1
+  expect(s.segments).toEqual([{ toolName: "a" }, { toolName: "b" }]); // call-1 segmented once, not twice
+});
+
 test("streaming: tool-call de-dup resets across turns", () => {
   const s = setupStreaming();
   s.mesh.emit("feishu-poc", chunk("router", "a"));

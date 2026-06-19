@@ -401,7 +401,7 @@ export class CardSender implements OutboundSink {
           this.giveUp();
           return;
         }
-        const sr = await this.send({ chatId: this.chatId, cardId: cr.cardId, uuid: safeUuid(this.keyOf(this.chatId, display)) });
+        const sr = await this.send({ chatId: this.chatId, cardId: cr.cardId, uuid: cardSendUuid(cr.cardId) });
         this.lastEditAt = this.now();
         if (!sr.ok || !sr.messageId) {
           this.log(`feishu card: send interactive failed${codeInfo(sr)}; falling back to text`);
@@ -453,7 +453,7 @@ export class CardSender implements OutboundSink {
       await this.sealLiveAndContinue("size_rollover");
       return;
     }
-    const headDisplay = this.composeDisplay(split.headText) + split.closeFence;
+    const headDisplay = appendCloseFence(this.composeDisplay(split.headText), split.closeFence);
     if (!this.live) {
       try {
         const cr = await this.create({ elementId: this.elementId, text: headDisplay });
@@ -463,7 +463,7 @@ export class CardSender implements OutboundSink {
           this.giveUp();
           return;
         }
-        const sr = await this.send({ chatId: this.chatId, cardId: cr.cardId, uuid: safeUuid(this.keyOf(this.chatId, headDisplay)) });
+        const sr = await this.send({ chatId: this.chatId, cardId: cr.cardId, uuid: cardSendUuid(cr.cardId) });
         this.lastEditAt = this.now();
         if (!sr.ok || !sr.messageId) {
           this.log(`feishu card: send interactive failed${codeInfo(sr)}; falling back to text`);
@@ -513,7 +513,7 @@ export class CardSender implements OutboundSink {
     const ctx = continuationAfter(live.sentText, { openFence: this.pendingContinuation?.openFence, tableHeader: this.pendingContinuation?.tableHeader });
     if (ctx?.openFence) {
       // Close the open code block on the current card (append-only; do NOT touch live.sentText).
-      const display = `${this.composeDisplay(live.sentText)}\n${fenceMarkerOf(ctx.openFence)}`;
+      const display = appendCloseFence(this.composeDisplay(live.sentText), fenceMarkerOf(ctx.openFence));
       try {
         const seq = this.nextSeq();
         const r = await this.content({ cardId: live.cardId, elementId: this.elementId, content: display, sequence: seq, uuid: stableCardKey(live.cardId, seq) });
@@ -656,6 +656,20 @@ export function defaultToolHint(meta?: SegmentBreak): string {
 
 function codeInfo(r: { code?: number; message?: string }): string {
   return `${r.code !== undefined ? ` (code ${r.code})` : ""}${r.message ? `: ${r.message}` : ""}`;
+}
+
+/** Unique idempotency key for the ONE interactive message that sends a card. Keyed on the card id
+ *  (unique per card create), so two cards with identical display text still get distinct send uuids
+ *  and Feishu doesn't dedupe the second message as a retry. */
+function cardSendUuid(cardId: string): string {
+  return safeUuid(`${cardId}-send`);
+}
+
+/** Append a closing fence to a card's display, guaranteeing it sits on its own line (never glued to
+ *  the end of a code line, which would not close the block). No-op when there is no fence to close. */
+function appendCloseFence(display: string, closeFence: string): string {
+  if (!closeFence) return display;
+  return `${display}${display.endsWith("\n") ? "" : "\n"}${closeFence}`;
 }
 
 /** UTF-8 byte length — card budgets are bytes, not JS string units. */
