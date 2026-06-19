@@ -12,7 +12,7 @@
 //     "appSecret": "xxx",
 //     "domain": "feishu",
 //     "bindings": [
-//       { "mesh": "feishu-poc", "chatId": "oc_xxx", "name": "feishu-poc · Mesh 联调" }
+//       { "mesh": "feishu-poc", "chatId": "oc_xxx", "name": "feishu-poc@my-host" }
 //     ],
 //     "botMentionId": "ou_xxx",           // preferred @ gate for group messages
 //     "botName": "MeshBot",               // fallback @ gate / leading mention strip

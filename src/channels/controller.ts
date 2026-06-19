@@ -7,6 +7,7 @@
 import { watch, type FSWatcher } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import { hostname } from "node:os";
 import type { Channel, FeishuChannelConfig, FeishuChannelControl, FeishuChannelStatus, FeishuMeshBinding, FeishuMeshChatEnsureResult, FeishuProvisionJobPublic, FeishuProvisionStartRequest, MeshGateway } from "./types";
 import { feishuConfigPath, readFeishuConfig } from "./config";
 import { FeishuProvisionRegistry } from "./provision";
@@ -268,10 +269,22 @@ function disabledStatus(path: string, reason: string): FeishuChannelStatus {
   };
 }
 
-export function feishuMeshChatName(meshName: string): string {
-  const cleaned = meshName.trim() || "mesh";
-  return `${cleaned.slice(0, 64)} · Mesh 联调`;
+/** Feishu group name for a mesh: `<mesh>@<hostname>`. The mesh name and host each fall back to a
+ *  sensible default when empty, and the total is length-capped (host budget reserved first) so a long
+ *  hostname can't crowd out the mesh name or blow Feishu's group-name limit. `host` is injectable for
+ *  tests; production uses os.hostname(). */
+export function feishuMeshChatName(meshName: string, host: string = hostname()): string {
+  const mesh = meshName.trim() || "mesh";
+  const cleanedHost = (host ?? "").trim() || "host";
+  const cappedHost = cleanedHost.slice(0, FEISHU_CHAT_HOST_MAX);
+  const suffix = `@${cappedHost}`;
+  const meshBudget = Math.max(1, FEISHU_CHAT_NAME_MAX - suffix.length);
+  return `${mesh.slice(0, meshBudget)}${suffix}`;
 }
+
+/** Feishu caps a group name at 60 characters; reserve part of that budget for the host suffix. */
+const FEISHU_CHAT_NAME_MAX = 60;
+const FEISHU_CHAT_HOST_MAX = 30;
 
 async function sdkCreateMeshChat(cfg: FeishuChannelConfig, meshName: string): Promise<{ chatId: string; name?: string }> {
   const client = createFeishuClient(cfg);

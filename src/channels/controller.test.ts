@@ -2,7 +2,7 @@ import { test, expect } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { FeishuChannelController } from "./controller";
+import { FeishuChannelController, feishuMeshChatName } from "./controller";
 import { feishuConfigPath } from "./config";
 import type { Channel, MeshGateway } from "./types";
 import type { MeshEvent } from "../acp/types";
@@ -129,4 +129,35 @@ test("start auto-creates missing mesh groups for an already-bound bot", async ()
   } finally {
     cleanup();
   }
+});
+
+// ── feishuMeshChatName: "<mesh>@<hostname>" ─────────────────────────────────────
+
+test("feishuMeshChatName renders <mesh>@<hostname>", () => {
+  expect(feishuMeshChatName("feishu-poc", "my-host")).toBe("feishu-poc@my-host");
+});
+
+test("feishuMeshChatName falls back to 'mesh' when the mesh name is blank", () => {
+  expect(feishuMeshChatName("   ", "my-host")).toBe("mesh@my-host");
+});
+
+test("feishuMeshChatName falls back to 'host' when the hostname is empty/blank", () => {
+  expect(feishuMeshChatName("feishu-poc", "")).toBe("feishu-poc@host");
+  expect(feishuMeshChatName("feishu-poc", "   ")).toBe("feishu-poc@host");
+});
+
+test("feishuMeshChatName caps total length, reserving budget for the host suffix", () => {
+  const name = feishuMeshChatName("m".repeat(100), "h".repeat(100));
+  expect(name.length).toBeLessThanOrEqual(60);
+  expect(name.endsWith(`@${"h".repeat(30)}`)).toBe(true); // host capped at 30
+  expect(name.startsWith("m".repeat(29))).toBe(true); // mesh gets the remaining budget (60 - 31)
+  expect(name).toBe(`${"m".repeat(29)}@${"h".repeat(30)}`);
+});
+
+test("feishuMeshChatName carries no 联调 / PoC / Mesh wording", () => {
+  const name = feishuMeshChatName("feishu-poc", "my-host");
+  expect(name).not.toContain("联调");
+  expect(name).not.toContain("PoC");
+  expect(name).not.toContain("Mesh");
+  expect(name).not.toContain("·");
 });
