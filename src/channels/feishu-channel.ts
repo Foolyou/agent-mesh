@@ -346,7 +346,7 @@ export class FeishuChannel implements Channel {
     // @-gate FIRST so we only consider (and only ever auth-code) messages that actually address the
     // bot — a non-@ group message stays ignored, never triggering an authorization reply.
     if (!passesAtGate(m, cfg)) {
-      this.log(`feishu channel: inbound dropped @gate event=${m.eventId} mentions=${mentionIds(m) || "-"}`);
+      this.log(`feishu channel: inbound dropped @gate event=${m.eventId} mentionCount=${m.mentions.length}`);
       return;
     }
     // Dynamic sender gate: (feishu:<appId>, open_id) must be approved in the registry snapshot. Fail
@@ -958,13 +958,10 @@ function errorClass(e: unknown): string {
 }
 
 function inboundMeta(m: InboundMsg): string {
-  // No `sender` (open_id): this is logged BEFORE the auth gate, and an unauthorized sender's open_id
-  // must not leak into logs (it identifies a not-yet-authorized person). Routing identifiers only.
-  return `event=${m.eventId} chatType=${m.chatType} type=${m.messageType} mentions=${mentionIds(m) || "-"} textChars=${m.text.length}`;
-}
-
-function mentionIds(m: InboundMsg): string {
-  return m.mentions.map((x) => x.id || x.name || x.key).filter(Boolean).join(",");
+  // Logged BEFORE the auth gate, so it must carry NO identity that names a not-yet-authorized person:
+  // no sender open_id, and only a COUNT of mentions (raw mention ids/names can be open_id / user
+  // identity values). Routing identifiers only.
+  return `event=${m.eventId} chatType=${m.chatType} type=${m.messageType} mentionCount=${m.mentions.length} textChars=${m.text.length}`;
 }
 
 type MeshCommandKind = "help" | "status" | "start" | "stop" | "restart" | "new-session";

@@ -1004,14 +1004,38 @@ test("auth gate: an unauthorized (but @-addressed) sender gets a short id auth c
   expect(reply).not.toContain("cli_1");
 });
 
-test("auth gate: the unauthorized deny path never logs the sender open_id / app_id / envelope", async () => {
+test("auth gate: the unauthorized deny path never logs the sender open_id / mention ids / app_id / envelope", async () => {
   const s = await setupAuth();
-  s.push(inbound({ senderId: "ou_stranger", chatType: "group", text: "@MeshBot help" }));
+  s.push(inbound({
+    senderId: "ou_stranger",
+    chatType: "group",
+    text: "@MeshBot help",
+    mentions: [{ key: "_user_1", id: "ou_secret_mention", name: "SecretName" }],
+  }));
   await flushAsync();
   const logtext = s.logs.join("\n");
   expect(logtext).not.toContain("ou_stranger"); // sender open_id must not appear in any pre/post-gate log
+  expect(logtext).not.toContain("ou_secret_mention"); // raw mention id (can be an open_id) not logged
+  expect(logtext).not.toContain("SecretName"); // mention display name not logged either
   expect(logtext).not.toContain("ENVELOPE"); // encrypted envelope never logged
   expect(logtext).not.toContain("cli_1"); // app_id / channelKey not leaked
+});
+
+test("auth gate: an @-gate-dropped message logs only a mention count, never raw mention ids/names", async () => {
+  const s = await setupAuth();
+  // group message that fails the @-gate (no @MeshBot) but carries a mention to someone else
+  s.push(inbound({
+    chatType: "group",
+    text: "hey folks",
+    mentions: [{ key: "_user_1", id: "ou_secret_mention", name: "SecretName" }],
+  }));
+  await flushAsync();
+  expect(s.mesh.prompts).toHaveLength(0);
+  const logtext = s.logs.join("\n");
+  expect(logtext).toContain("dropped @gate");
+  expect(logtext).toContain("mentionCount=1"); // count only
+  expect(logtext).not.toContain("ou_secret_mention");
+  expect(logtext).not.toContain("SecretName");
 });
 
 test("auth gate: repeated unauthorized messages from one sender reuse the SAME short id (don't invalidate it)", async () => {
