@@ -83,6 +83,9 @@ interface BindingRuntime {
   streamTurnActive: boolean;
   /** A hard commit is finalizing on an async sink; next-turn events are queued until it resolves. */
   committing: boolean;
+  /** Monotonic barrier token. A clear/replay re-establishes the barrier with a new generation so a
+   *  stale whenIdle() resolution (from a superseded barrier) is ignored and never drains the queue. */
+  commitGen: number;
   /** Router events that arrived during a commit barrier, replayed in order once the sink is idle. */
   queuedEvents: MeshEvent[];
   startInFlight?: Promise<void>;
@@ -130,7 +133,7 @@ export class FeishuChannel implements Channel {
         continue;
       }
       if (this.byChat.has(binding.chatId) || this.byMesh.has(binding.mesh)) continue;
-      const rt: BindingRuntime = { binding, sender, routerId: "", buffer: "", currentMessageStart: 0, flushSeq: 0, replaying: false, streamTurnActive: false, committing: false, queuedEvents: [], seenToolCalls: new Set() };
+      const rt: BindingRuntime = { binding, sender, routerId: "", buffer: "", currentMessageStart: 0, flushSeq: 0, replaying: false, streamTurnActive: false, committing: false, commitGen: 0, queuedEvents: [], seenToolCalls: new Set() };
       this.runtimes.push(rt);
       this.byChat.set(binding.chatId, rt);
       this.byMesh.set(binding.mesh, rt);
@@ -448,17 +451,20 @@ export class FeishuChannel implements Channel {
     const whenIdle = rt.sender.whenIdle?.bind(rt.sender);
     if (!whenIdle) return;
     rt.committing = true;
-    this.tlog(rt, "commit-barrier-begin");
+    const gen = ++rt.commitGen; // supersede any earlier barrier; its resolution becomes a no-op
+    this.tlog(rt, "commit-barrier-begin", ` gen=${gen}`);
     whenIdle().then(
-      () => this.endCommitBarrier(rt),
-      () => this.endCommitBarrier(rt),
+      () => this.endCommitBarrier(rt, gen),
+      () => this.endCommitBarrier(rt, gen),
     );
   }
 
-  private endCommitBarrier(rt: BindingRuntime): void {
+  private endCommitBarrier(rt: BindingRuntime, gen: number): void {
+    if (gen !== rt.commitGen) return; // a newer barrier (e.g. from a replay clear) supersedes this one
     rt.committing = false;
-    if (!this.started) { rt.queuedEvents = []; return; } // stopped mid-commit: drop, don't send
-    this.tlog(rt, "commit-barrier-end", ` queued=${rt.queuedEvents.length}`);
+    // Stopped or replaying mid-commit, or a re-clear happened: drop the queue, never send these.
+    if (!this.started || rt.replaying) { rt.queuedEvents = []; return; }
+    this.tlog(rt, "commit-barrier-end", ` gen=${gen} queued=${rt.queuedEvents.length}`);
     const queued = rt.queuedEvents;
     rt.queuedEvents = [];
     for (const e of queued) this.dispatchRouterEvent(rt, e);
@@ -485,14 +491,20 @@ export class FeishuChannel implements Channel {
     rt.cancelDebounce = undefined;
     rt.cancelStreamFinish?.();
     rt.cancelStreamFinish = undefined;
-    if (this.useStreaming(rt)) rt.sender.streamCommit!(); // seal any live message before dropping
+    rt.queuedEvents = []; // stale pre-clear events: replay drops the turn, never replay them
+    const hadLive = this.useStreaming(rt) && rt.streamTurnActive;
+    if (hadLive) rt.sender.streamCommit!(); // seal a live message before dropping (else nothing to seal)
     rt.buffer = "";
     rt.currentMessageId = undefined;
     rt.currentMessageStart = 0;
     rt.streamTurnActive = false;
-    rt.committing = false;
-    rt.queuedEvents = [];
     rt.seenToolCalls.clear();
+    // Do NOT just clear `committing`: a prior streamFinish's commit (or the seal just issued) may
+    // still be finalizing on the async sink. Re-establish the barrier so fresh post-replay events
+    // wait for whenIdle() instead of racing the in-flight finalize; the new generation makes any
+    // earlier barrier's resolution a no-op.
+    if (rt.committing || hadLive) this.beginCommitBarrier(rt);
+    else rt.committing = false;
   }
 
   private scheduleFlush(rt: BindingRuntime): void {

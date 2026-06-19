@@ -782,3 +782,38 @@ test("fallback split: a late same-turn chunk after the fallback fires opens a fr
   s.mesh.emit("feishu-poc", idle("router"));
   expect(s.commits()).toBe(2);
 });
+
+test("async sink: replay clear during an in-flight commit keeps the barrier; post-replay chunk not raced", async () => {
+  // Reviewer shape: chunk -> idle starts the commit barrier -> replay_started/finished clear while
+  // the finalize is still in flight -> a fresh chunk must stay held until whenIdle(), not race.
+  const mesh = new FakeMesh();
+  const updates: string[] = [];
+  let commits = 0;
+  let inflight = 0;
+  let resolveIdle: (() => void) | null = null;
+  const sink = {
+    enqueue() {},
+    stop() {},
+    streamUpdate: (t: string) => { updates.push(inflight > 0 ? `RACED:${t}` : t); }, // edits during commit are racy
+    streamCommit: () => { commits++; inflight++; },
+    whenIdle: () => (inflight === 0 ? Promise.resolve() : new Promise<void>((r) => { resolveIdle = r; })),
+  };
+  const releaseCommit = () => { inflight = 0; resolveIdle?.(); resolveIdle = null; };
+  const timers = manualTimers();
+  const ch = new FeishuChannel({ mesh, config: cfg(), sender: sink, makeConsumer: () => ({ start() {}, stop() {} }), setTimer: timers.setTimer });
+  ch.start();
+
+  mesh.emit("feishu-poc", chunk("router", "one"));
+  mesh.emit("feishu-poc", idle("router")); // commit barrier begins (finalize in flight)
+  expect(commits).toBe(1);
+  mesh.emit("feishu-poc", replayStarted("router"));
+  mesh.emit("feishu-poc", replayFinished("router"));
+  mesh.emit("feishu-poc", chunk("router", "fresh")); // arrives before whenIdle() resolves
+  expect(updates.some((u) => u.startsWith("RACED:"))).toBe(false); // not raced onto the in-flight finalize
+  expect(updates.includes("fresh")).toBe(false); // held by the (re-established) barrier
+  releaseCommit();
+  await flushAsync();
+  expect(updates.at(-1)).toBe("fresh"); // delivered only after the sink went idle
+  expect(updates.some((u) => u.startsWith("RACED:"))).toBe(false);
+  expect(commits).toBe(1); // replay clears add no extra commit (nothing live to seal)
+});
