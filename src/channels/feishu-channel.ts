@@ -23,6 +23,11 @@ import { randomUUID } from "node:crypto";
 export interface OutboundSink {
   enqueue(text: string, key?: string): void;
   stop(): void;
+  /** True streaming: push the latest full accumulated turn text; the sink edits one message in
+   *  place. Optional — when absent the channel falls back to one-shot flushing. */
+  streamUpdate?(fullText: string): void;
+  /** Turn boundary: flush the latest text and seal the live message so the next turn is fresh. */
+  streamCommit?(): void;
 }
 
 /** What the channel needs from an inbound source (LarkConsumer satisfies it). */
@@ -66,6 +71,7 @@ export class FeishuChannel implements Channel {
   private readonly log: (msg: string) => void;
   private readonly setTimer: (fn: () => void, ms: number) => () => void;
   private readonly debounceMs: number;
+  private readonly streaming: boolean;
   private readonly dedup: BoundedDedup;
   private readonly idempotencyKey: (binding: FeishuMeshBinding, seq: number, text: string) => string;
   private readonly runtimes: BindingRuntime[] = [];
@@ -83,6 +89,7 @@ export class FeishuChannel implements Channel {
     this.log = opts.log ?? (() => {});
     this.setTimer = opts.setTimer ?? ((fn, ms) => { const t = setTimeout(fn, ms); return () => clearTimeout(t); });
     this.debounceMs = opts.debounceMs ?? 800;
+    this.streaming = opts.config.outbound?.streaming !== false;
     this.dedup = new BoundedDedup(opts.dedupCapacity ?? 1000);
     this.idempotencyKey = opts.idempotencyKey ?? (() => randomUUID());
     const bindings = normalizedBindings(opts.config);
@@ -276,17 +283,43 @@ export class FeishuChannel implements Channel {
     if (e.kind === "update") {
       const u = e.update as { sessionUpdate?: string; content?: unknown; messageId?: unknown } | undefined;
       if (u && u.sessionUpdate === "agent_message_chunk") {
-        if (appendRouterChunk(rt, u)) this.scheduleFlush(rt);
+        if (appendRouterChunk(rt, u)) {
+          if (this.useStreaming(rt)) this.streamCurrent(rt);
+          else this.scheduleFlush(rt);
+        }
       }
       return;
     }
-    // Router turn went idle => flush the assembled message now.
-    if (e.kind === "agent_activity" && e.activity === "idle") this.flush(rt);
+    // Router turn went idle => deliver the assembled message now.
+    if (e.kind === "agent_activity" && e.activity === "idle") {
+      if (this.useStreaming(rt)) this.streamFinish(rt);
+      else this.flush(rt);
+    }
+  }
+
+  /** Streaming is on when configured AND the bound sink can edit messages in place. */
+  private useStreaming(rt: BindingRuntime): boolean {
+    return this.streaming && typeof rt.sender.streamUpdate === "function" && typeof rt.sender.streamCommit === "function";
+  }
+
+  /** Push the current full turn text so the sink edits the live message in place. */
+  private streamCurrent(rt: BindingRuntime): void {
+    if (rt.buffer.trim()) rt.sender.streamUpdate!(rt.buffer);
+  }
+
+  /** Turn boundary: flush the final text, seal the live message, reset turn state. */
+  private streamFinish(rt: BindingRuntime): void {
+    if (rt.buffer.trim()) rt.sender.streamUpdate!(rt.buffer);
+    rt.sender.streamCommit!();
+    rt.buffer = "";
+    rt.currentMessageId = undefined;
+    rt.currentMessageStart = 0;
   }
 
   private clearOutboundBuffer(rt: BindingRuntime): void {
     rt.cancelDebounce?.();
     rt.cancelDebounce = undefined;
+    if (this.useStreaming(rt)) rt.sender.streamCommit!(); // seal any live message before dropping
     rt.buffer = "";
     rt.currentMessageId = undefined;
     rt.currentMessageStart = 0;

@@ -67,7 +67,15 @@ export interface FeishuChannelConfig {
   requireMention: boolean;
   /** open_id whitelist; only the user themself for the PoC. Empty => nothing passes. */
   allowSenders: string[];
-  outbound: { minIntervalMs: number };
+  outbound: {
+    minIntervalMs: number;
+    /** True streaming: edit ONE message in place as router chunks arrive (default true). */
+    streaming?: boolean;
+    /** Minimum gap between in-place edits of the live message (ms). Default 1000. */
+    streamMinEditIntervalMs?: number;
+    /** Feishu caps a message at 20 edits; roll over to a fresh message past this. Default 18. */
+    maxEditsPerMessage?: number;
+  };
   websocket: { handshakeTimeoutMs?: number; pingTimeout?: number };
   /** One Feishu group per mesh. Empty is valid while a bot is bound but groups are not created. */
   bindings: FeishuMeshBinding[];

@@ -36,7 +36,7 @@ export interface MeshHostClientOptions {
 }
 
 const CONNECT_TIMEOUT_MS = 8000;
-const READY_TIMEOUT_MS = 60_000;
+const READY_TIMEOUT_MS = 180_000;
 const RESPAWN_TIMEOUT_MS = 10_000;
 const MUTATION_ACK_TIMEOUT_MS = 10_000;
 

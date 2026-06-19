@@ -63,6 +63,9 @@ export function normalizeFeishuConfig(parsed: unknown): FeishuChannelConfig | un
   const minIntervalMs = typeof out.minIntervalMs === "number" && Number.isFinite(out.minIntervalMs) && out.minIntervalMs >= 0
     ? out.minIntervalMs
     : 500;
+  const streaming = out.streaming === false ? false : true;
+  const streamMinEditIntervalMs = positiveNumberOrUndefined(out.streamMinEditIntervalMs);
+  const maxEditsPerMessage = positiveNumberOrUndefined(out.maxEditsPerMessage);
   const ws = (p.websocket ?? {}) as Record<string, unknown>;
   const handshakeTimeoutMs = positiveNumberOrUndefined(ws.handshakeTimeoutMs);
   const pingTimeout = positiveNumberOrUndefined(ws.pingTimeout);
@@ -77,7 +80,12 @@ export function normalizeFeishuConfig(parsed: unknown): FeishuChannelConfig | un
     botName,
     requireMention,
     allowSenders,
-    outbound: { minIntervalMs },
+    outbound: {
+      minIntervalMs,
+      streaming,
+      ...(streamMinEditIntervalMs !== undefined ? { streamMinEditIntervalMs } : {}),
+      ...(maxEditsPerMessage !== undefined ? { maxEditsPerMessage } : {}),
+    },
     websocket: {
       ...(handshakeTimeoutMs !== undefined ? { handshakeTimeoutMs } : {}),
       ...(pingTimeout !== undefined ? { pingTimeout } : {}),

@@ -511,3 +511,65 @@ test("stop() unsubscribes, stops the consumer and sender", async () => {
   s.mesh.emit("feishu-poc", idle("router"));
   expect(s.sent).toHaveLength(0); // no longer subscribed
 });
+
+// ── outbound: true streaming (in-place edit) ───────────────────────────────────
+
+function streamingSink() {
+  const updates: string[] = [];
+  let commits = 0;
+  const enqueued: string[] = [];
+  return {
+    sink: {
+      enqueue: (text: string) => enqueued.push(text),
+      stop: () => {},
+      streamUpdate: (t: string) => updates.push(t),
+      streamCommit: () => { commits++; },
+    },
+    updates,
+    enqueued,
+    commits: () => commits,
+  };
+}
+
+function setupStreaming(over: Partial<FeishuChannelConfig> = {}) {
+  const mesh = new FakeMesh();
+  const ss = streamingSink();
+  const timers = manualTimers();
+  const ch = new FeishuChannel({
+    mesh,
+    config: cfg(over),
+    sender: ss.sink,
+    makeConsumer: () => ({ start() {}, stop() {} }),
+    setTimer: timers.setTimer,
+  });
+  ch.start();
+  return { ch, mesh, ...ss };
+}
+
+test("streaming: router chunks drive in-place edits and idle commits the turn", () => {
+  const s = setupStreaming();
+  s.mesh.emit("feishu-poc", chunk("router", "Hel"));
+  s.mesh.emit("feishu-poc", chunk("router", "lo"));
+  expect(s.updates).toEqual(["Hel", "Hello"]); // grows in place, no debounce wait
+  expect(s.commits()).toBe(0);
+  s.mesh.emit("feishu-poc", idle("router"));
+  expect(s.updates).toEqual(["Hel", "Hello", "Hello"]); // final flush
+  expect(s.commits()).toBe(1); // sealed at the turn boundary
+});
+
+test("streaming: a new turn starts a fresh message", () => {
+  const s = setupStreaming();
+  s.mesh.emit("feishu-poc", chunk("router", "one"));
+  s.mesh.emit("feishu-poc", idle("router"));
+  s.mesh.emit("feishu-poc", chunk("router", "two"));
+  s.mesh.emit("feishu-poc", idle("router"));
+  expect(s.commits()).toBe(2);
+});
+
+test("streaming: disabled via config falls back to one-shot enqueue", () => {
+  const s = setupStreaming({ outbound: { minIntervalMs: 0, streaming: false } });
+  s.mesh.emit("feishu-poc", chunk("router", "Hi"));
+  s.mesh.emit("feishu-poc", idle("router"));
+  expect(s.updates).toEqual([]); // streaming not used
+  expect(s.enqueued).toEqual(["Hi"]);
+});

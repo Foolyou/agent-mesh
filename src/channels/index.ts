@@ -9,7 +9,7 @@ import type { Channel, MeshGateway } from "./types";
 import { loadFeishuConfig } from "./config";
 import { FeishuChannel } from "./feishu-channel";
 import { createFeishuClient, LarkConsumer } from "./consumer";
-import { LarkSender, sdkSend } from "./sender";
+import { LarkSender, sdkSend, sdkUpdate } from "./sender";
 import { FeishuChannelController } from "./controller";
 
 export interface BuildFeishuChannelOpts {
@@ -24,10 +24,19 @@ export function buildFeishuChannel(mesh: MeshGateway, opts: BuildFeishuChannelOp
   if (!cfg) return undefined;
   const client = createFeishuClient(cfg);
   const send = sdkSend(client);
+  const update = sdkUpdate(client);
   const senders = new Map(
     cfg.bindings.map((binding) => [
       binding.chatId,
-      new LarkSender({ chatId: binding.chatId, send, minIntervalMs: cfg.outbound.minIntervalMs, log }),
+      new LarkSender({
+        chatId: binding.chatId,
+        send,
+        update,
+        minIntervalMs: cfg.outbound.minIntervalMs,
+        streamMinEditIntervalMs: cfg.outbound.streamMinEditIntervalMs,
+        maxEditsPerMessage: cfg.outbound.maxEditsPerMessage,
+        log,
+      }),
     ]),
   );
   return new FeishuChannel({
