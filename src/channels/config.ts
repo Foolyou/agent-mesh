@@ -12,12 +12,12 @@
 //     "appSecret": "xxx",
 //     "domain": "feishu",
 //     "bindings": [
-//       { "mesh": "feishu-poc", "chatId": "oc_xxx", "name": "feishu-poc · Mesh 联调" }
+//       { "mesh": "ops", "chatId": "oc_xxx", "name": "ops@my-host" }
 //     ],
 //     "botMentionId": "ou_xxx",           // preferred @ gate for group messages
 //     "botName": "MeshBot",               // fallback @ gate / leading mention strip
 //     "requireMention": true,             // set false only for trusted bound groups
-//     "allowSenders": ["ou_xxx"],         // your own open_id only, for the PoC
+//     "allowSenders": ["ou_xxx"],         // your own open_id only, for locked-down deployments
 //     "outbound": { "minIntervalMs": 500 }
 //   }
 
