@@ -869,13 +869,14 @@ test("inbound image: downloads, provisions refs (bucket=mesh), prompts router wi
 });
 
 test("inbound image: download failure sends a notice, does not prompt, and never leaks image_key", async () => {
-  const s = setupImage({ download: async () => { throw new Error("network boom"); } });
+  // The SDK error MESSAGE itself embeds the resource key — neither logs nor the group notice may echo it.
+  const s = setupImage({ download: async () => { throw new Error("GET /im/v1/messages/om/resources/img_secret_KEY failed 404"); } });
   s.push(imageMsg({ imageKey: "img_secret_KEY" }));
   await settle();
   expect(s.mesh.prompts).toHaveLength(0);
   expect(s.sent.some((x) => x.text.includes("下载失败"))).toBe(true);
-  expect(s.sent.map((x) => x.text).join("\n")).not.toContain("img_secret_KEY");
-  expect(s.logs.join("\n")).not.toContain("img_secret_KEY"); // logs must not leak the resource key
+  expect(s.sent.map((x) => x.text).join("\n")).not.toContain("img_secret_KEY"); // notice must not leak the key
+  expect(s.logs.join("\n")).not.toContain("img_secret_KEY"); // logs must not leak the key (no raw error text)
 });
 
 test("inbound image: missing message_id sends a notice and does not download or prompt", async () => {

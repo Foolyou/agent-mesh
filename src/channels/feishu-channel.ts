@@ -287,7 +287,9 @@ export class FeishuChannel implements Channel {
       };
       refs = await this.storeImages(this.root, rt.binding.mesh, [file]);
     } catch (e) {
-      this.log(`feishu channel: inbound image download/store failed event=${m.eventId}: ${shortError(e)}`);
+      // Safe log only: a raw SDK error message can embed the request path / file_key, so log the
+      // error CLASS (never the message) to avoid leaking the resource key.
+      this.log(`feishu channel: inbound image download/store failed event=${m.eventId} error=${errorClass(e)}`);
       rt.sender.enqueue("收到一张图片但下载失败。");
       return;
     }
@@ -686,6 +688,12 @@ function feishuUserPrompt(text: string): string {
 function shortError(e: unknown): string {
   const msg = e instanceof Error ? e.message : String(e);
   return msg.length > 200 ? `${msg.slice(0, 197)}...` : msg;
+}
+
+/** Error class only (never the message) — safe to log for image failures where the SDK error text
+ *  may embed the request path / resource key. */
+function errorClass(e: unknown): string {
+  return e instanceof Error ? e.name : typeof e;
 }
 
 function inboundMeta(m: InboundMsg): string {
