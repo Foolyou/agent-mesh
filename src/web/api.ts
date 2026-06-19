@@ -13,6 +13,7 @@ import { clearHarnessModelsCache, probeHarnessModels } from "../harness-models";
 import { HARNESSES } from "../harness";
 import { getHarnessInstallJob, HarnessInstallError, startHarnessInstall, type InstallEvent } from "../harness-install";
 import type { RespawnMode } from "../control-plane";
+import { bearerToken, coarseUserAgentClass, deviceBootstrap, deviceStart, deviceStatus, deviceVerify } from "./auth";
 
 export interface ApiResult {
   status: number;
@@ -24,6 +25,8 @@ type HarnessInstaller = typeof startHarnessInstall;
 export interface ApiRequestContext {
   headers?: Headers;
   expectedOrigin?: string;
+  /** Resolved mesh root; the device-auth store lives under `<root>/auth/`. */
+  root?: string;
   clearProbeCache?: (id?: AgentConfig["harness"]) => void;
   clearModelsCache?: (id?: AgentConfig["harness"]) => void;
 }
@@ -52,6 +55,33 @@ export async function handleApi(
   const str = (v: unknown) => (v == null ? "" : String(v));
 
   try {
+    // Device-auth endpoints (design §4.2). Pre-auth and CSRF-exempt: they carry an explicit bearer
+    // token, not an ambient cookie, so the same-origin gate doesn't apply. They authenticate the
+    // device itself, so they must run BEFORE any token/loopback gate added for the rest of /api/*.
+    if (p[0] === "auth" && p[1] === "device" && p.length === 3) {
+      if (!ctx.root) return fail(500, "auth store not configured");
+      const headers = ctx.headers;
+      if (method === "POST" && p[2] === "start") {
+        return ok(await deviceStart(ctx.root, {
+          existingToken: bearerToken(headers),
+          userAgentClass: coarseUserAgentClass(headers),
+        }));
+      }
+      if (method === "GET" && p[2] === "status") {
+        return ok({ status: await deviceStatus(ctx.root, bearerToken(headers)) });
+      }
+      if (method === "POST" && p[2] === "verify") {
+        const result = await deviceVerify(ctx.root, bearerToken(headers));
+        return result.ok ? ok({ ok: true }) : fail(401, "unauthorized");
+      }
+      // First-device bootstrap: bearer = dormant device token, body = { bootstrapToken }. Every
+      // failure mode is an undifferentiated 401 (no probing which part was wrong).
+      if (method === "POST" && p[2] === "bootstrap") {
+        const result = await deviceBootstrap(ctx.root, bearerToken(headers), str(body?.bootstrapToken));
+        return result.ok ? ok({ ok: true }) : fail(401, "unauthorized");
+      }
+    }
+
     if (isHarnessMutationRoute(method, p)) {
       const csrf = sameOriginCheck(ctx.headers, ctx.expectedOrigin);
       if (!csrf.ok) return { status: 403, body: { error: { message: "forbidden" } } };
