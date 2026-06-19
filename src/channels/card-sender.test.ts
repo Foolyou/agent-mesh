@@ -102,7 +102,7 @@ function fakeFallback(opts?: { streaming?: boolean }) {
   };
 }
 
-function makeSender(r: ReturnType<typeof cardRecorder>, fb: ReturnType<typeof fakeFallback>, extra?: Partial<{ log: (m: string) => void; minEditIntervalMs: number; enableToolHint: boolean }>) {
+function makeSender(r: ReturnType<typeof cardRecorder>, fb: ReturnType<typeof fakeFallback>, extra?: Partial<{ log: (m: string) => void; minEditIntervalMs: number; enableToolHint: boolean; maxCardBytes: number }>) {
   return new CardSender({
     chatId: "oc_1",
     create: r.create,
@@ -112,6 +112,7 @@ function makeSender(r: ReturnType<typeof cardRecorder>, fb: ReturnType<typeof fa
     fallback: fb.sink,
     minEditIntervalMs: extra?.minEditIntervalMs ?? 250,
     enableToolHint: extra?.enableToolHint,
+    maxCardBytes: extra?.maxCardBytes,
     now: r.now,
     wait: r.wait,
     log: extra?.log,
@@ -676,6 +677,98 @@ test("planSizeSplit budgets by UTF-8 bytes, not JS length (CJK/emoji)", () => {
   const r = planSizeSplit(body, 14)!;
   expect(r.headText).toBe("中文测试\n\n"); // 12 + 2 newline bytes = 14, fits; CJK not split
   expect(byteLen(r.headText)).toBe(14);
+});
+
+// ── size rollover (CardSender integration) ──────────────────────────────────────
+
+test("size rollover: long markdown rolls into multiple cards with no loss", async () => {
+  const r = cardRecorder();
+  const fb = fakeFallback();
+  const s = makeSender(r, fb, { enableToolHint: false, minEditIntervalMs: 0, maxCardBytes: 10 });
+  s.streamUpdate("aaaa\n\nbbbb\n\ncccc");
+  await s.whenIdle();
+  s.streamCommit();
+  await s.whenIdle();
+  expect(r.creates.map((c) => c.text)).toEqual(["aaaa\n\n", "bbbb\n\ncccc"]);
+  expect(r.creates.map((c) => c.text).join("")).toBe("aaaa\n\nbbbb\n\ncccc"); // no dup, no loss
+  expect(r.finalizes).toHaveLength(2);
+});
+
+test("size rollover: a code fence crossing cards closes and reopens", async () => {
+  const r = cardRecorder();
+  const fb = fakeFallback();
+  const s = makeSender(r, fb, { enableToolHint: false, minEditIntervalMs: 0, maxCardBytes: 14 });
+  s.streamUpdate("```js\nAAAA\nBBBB\nCCCC\n```");
+  await s.whenIdle();
+  s.streamCommit();
+  await s.whenIdle();
+  expect(r.creates.map((c) => c.text)).toEqual(["```js\nAAAA\n```", "```js\nBBBB\n```", "```js\nCCCC\n```"]);
+  for (const c of r.creates) expect((c.text.match(/```/g) ?? []).length % 2).toBe(0); // each card balanced
+});
+
+test("size rollover: a table crossing cards resends the header + separator", async () => {
+  const r = cardRecorder();
+  const fb = fakeFallback();
+  const s = makeSender(r, fb, { enableToolHint: false, minEditIntervalMs: 0, maxCardBytes: 45 });
+  s.streamUpdate("| H1 | H2 |\n| --- | --- |\n| a | b |\n| c | d |\n| e | f |");
+  await s.whenIdle();
+  s.streamCommit();
+  await s.whenIdle();
+  expect(r.creates).toHaveLength(2);
+  expect(r.creates[1].text.startsWith("| H1 | H2 |\n| --- | --- |\n")).toBe(true); // header resent
+  expect(r.creates[1].text).toContain("| c | d |"); // continued rows
+  expect(r.creates[0].text).not.toContain("| c | d |"); // not duplicated on the first card
+});
+
+test("size rollover composes with a tool-call segment break (orthogonal), sequence monotonic", async () => {
+  const r = cardRecorder();
+  const fb = fakeFallback();
+  const s = makeSender(r, fb, { enableToolHint: false, minEditIntervalMs: 0, maxCardBytes: 10 });
+  s.streamUpdate("aaaaaaaa");
+  await s.whenIdle();
+  s.streamSegmentBreak({ toolName: "x" }); // seals card 1 at the tool boundary
+  await s.whenIdle();
+  s.streamUpdate("aaaaaaaabbbb\n\nccccdddd"); // post-tool text rolls by size
+  await s.whenIdle();
+  s.streamCommit();
+  await s.whenIdle();
+  expect(r.creates.map((c) => c.text)).toEqual(["aaaaaaaa", "bbbb\n\n", "ccccdddd"]);
+  expect(r.creates.map((c) => c.text).join("")).toBe("aaaaaaaabbbb\n\nccccdddd"); // no loss
+  const sorted = [...r.seqLog].sort((a, b) => a - b);
+  expect(r.seqLog).toEqual(sorted);
+  expect(new Set(r.seqLog).size).toBe(r.seqLog.length);
+});
+
+test("size rollover budgets by UTF-8 bytes (CJK/emoji), never splitting a character", async () => {
+  const r = cardRecorder();
+  const fb = fakeFallback();
+  const s = makeSender(r, fb, { enableToolHint: false, minEditIntervalMs: 0, maxCardBytes: 14 });
+  const input = "中文测试\n\n日本語テスト";
+  s.streamUpdate(input);
+  await s.whenIdle();
+  s.streamCommit();
+  await s.whenIdle();
+  expect(r.creates.length).toBeGreaterThan(1);
+  expect(r.creates.map((c) => c.text).join("")).toBe(input); // no loss, no broken chars
+  for (const c of r.creates) expect(byteLen(c.text)).toBeLessThanOrEqual(14);
+});
+
+test("size rollover keeps sequence strictly increasing across content edits and rollovers", async () => {
+  const r = cardRecorder();
+  const fb = fakeFallback();
+  const s = makeSender(r, fb, { enableToolHint: false, minEditIntervalMs: 0, maxCardBytes: 10 });
+  s.streamUpdate("aa\nbb");
+  await s.whenIdle();
+  s.streamUpdate("aa\nbb\nccc");
+  await s.whenIdle();
+  s.streamUpdate("aa\nbb\nccc\nddddddd");
+  await s.whenIdle();
+  s.streamCommit();
+  await s.whenIdle();
+  expect(r.seqLog.length).toBeGreaterThanOrEqual(3);
+  const sorted = [...r.seqLog].sort((a, b) => a - b);
+  expect(r.seqLog).toEqual(sorted);
+  expect(new Set(r.seqLog).size).toBe(r.seqLog.length);
 });
 
 // ── lifecycle ────────────────────────────────────────────────────────────────────

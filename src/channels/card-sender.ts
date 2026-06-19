@@ -89,6 +89,8 @@ export type CardFinalizeFn = (req: CardFinalizeRequest) => Promise<CardFinalizeR
 export const CARD_SEQUENCE_ERROR_CODE = 300317;
 
 const DEFAULT_ELEMENT_ID = "md";
+/** Feishu caps a card around 30KB; stay well under it to leave room for the JSON envelope. */
+export const DEFAULT_MAX_CARD_BYTES = 28000;
 
 export interface CardSenderOptions {
   chatId: string;
@@ -104,6 +106,10 @@ export interface CardSenderOptions {
   minEditIntervalMs?: number;
   /** Minimum gap honored at the turn boundary (finalize). Default 0. */
   minIntervalMs?: number;
+  /** Max UTF-8 bytes for a single card's displayed content; a turn longer than this rolls onto
+   *  further cards (structure-aware). Default {@link DEFAULT_MAX_CARD_BYTES} (conservatively below
+   *  Feishu's ~30KB card limit, leaving room for the card envelope). */
+  maxCardBytes?: number;
   /** Show a small hint on a card when it is sealed by a tool-call segment break. Default true. */
   enableToolHint?: boolean;
   /** Render the tool-call hint shown as the FIRST line of the next segment's card. Centralized so
@@ -140,6 +146,7 @@ export class CardSender implements OutboundSink {
   private readonly enableToolHint: boolean;
   private readonly toolHint: (meta?: SegmentBreak) => string;
   private readonly cardSummary: (body: string) => string;
+  private readonly maxCardBytes: number;
   private readonly log: (msg: string) => void;
   private readonly wait: (ms: number) => Promise<void>;
   private readonly now: () => number;
@@ -160,6 +167,10 @@ export class CardSender implements OutboundSink {
    *  turn's opening segment). Cosmetic only: it prefixes the displayed content but is NOT part of the
    *  turn text, so it never affects offsets or what the text fallback re-sends. */
   private currentHint?: string;
+  /** Structure to reopen on the current card after a size rollover split a code block / table
+   *  mid-structure (undefined => no continuation). Its displayPrefix repairs the markdown; it is a
+   *  display-only prefix, NOT part of the turn text, so it never affects offsets or fallback. */
+  private pendingContinuation?: CardContinuation;
   /** The card being grown right now (undefined => next op creates a fresh one). */
   private live?: LiveCard;
   /** Chars already sealed into PRIOR cards of THIS turn (cross-card rollover). */
@@ -196,6 +207,7 @@ export class CardSender implements OutboundSink {
     this.enableToolHint = opts.enableToolHint ?? true;
     this.toolHint = opts.toolHint ?? defaultToolHint;
     this.cardSummary = opts.cardSummary ?? defaultCardSummary;
+    this.maxCardBytes = opts.maxCardBytes ?? DEFAULT_MAX_CARD_BYTES;
     this.log = opts.log ?? (() => {});
     this.wait = opts.wait ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
     this.now = opts.now ?? (() => Date.now());
@@ -293,6 +305,13 @@ export class CardSender implements OutboundSink {
           if (waitMs > 0) {
             await this.wait(waitMs);
             continue; // re-read pending so the latest text wins
+          }
+          // Size budget: if the display would exceed the card limit, roll the head onto this card
+          // and continue the tail on a fresh one (structure-aware), instead of one giant edit.
+          const split = planSizeSplit(body, this.maxCardBytes, this.splitStart());
+          if (split) {
+            await this.sizeRollOver(split);
+            continue; // re-loop; the tail (now full.slice(advanced offset)) opens the next card
           }
           await this.doStreamOp(full);
           continue; // re-loop; the op may have triggered a fallback
@@ -400,11 +419,74 @@ export class CardSender implements OutboundSink {
     }
   }
 
-  /** Compose the displayed card content: the tool-call hint (if armed for this segment) as the first
-   *  line, then the body. Hint-only when there is no body yet. */
+  /** Size rollover: show `headText` (+ a closing fence if a code block was cut) on the current card,
+   *  seal it via the unified finalize path, then arm the continuation so the tail opens a fresh card
+   *  that reopens the fence / resends the table header. Only `headText` (real turn body) advances the
+   *  offset; the close fence is display-only. A failed op falls back to text from the confirmed point. */
+  private async sizeRollOver(split: CardSizeSplit): Promise<void> {
+    const headDisplay = this.composeDisplay(split.headText) + split.closeFence;
+    if (!this.live) {
+      try {
+        const cr = await this.create({ elementId: this.elementId, text: headDisplay });
+        if (!cr.ok || !cr.cardId) {
+          this.lastEditAt = this.now();
+          this.log(`feishu card: create failed${codeInfo(cr)}; falling back to text`);
+          this.giveUp();
+          return;
+        }
+        const sr = await this.send({ chatId: this.chatId, cardId: cr.cardId, uuid: safeUuid(this.keyOf(this.chatId, headDisplay)) });
+        this.lastEditAt = this.now();
+        if (!sr.ok || !sr.messageId) {
+          this.log(`feishu card: send interactive failed${codeInfo(sr)}; falling back to text`);
+          this.giveUp();
+          return;
+        }
+        this.live = { cardId: cr.cardId, messageId: sr.messageId, sentText: split.headText };
+      } catch (e) {
+        this.lastEditAt = this.now();
+        this.log(`feishu card: create/send error: ${String(e)}; falling back to text`);
+        this.giveUp();
+        return;
+      }
+    } else if (this.live.sentText !== split.headText) {
+      try {
+        const seq = this.nextSeq();
+        const r = await this.content({ cardId: this.live.cardId, elementId: this.elementId, content: headDisplay, sequence: seq, uuid: stableCardKey(this.live.cardId, seq) });
+        this.lastEditAt = this.now();
+        if (!r.ok) {
+          this.log(`feishu card: content update failed${codeInfo(r)}; falling back to text`);
+          this.giveUp();
+          return;
+        }
+        this.live.sentText = split.headText;
+      } catch (e) {
+        this.lastEditAt = this.now();
+        this.log(`feishu card: content update error: ${String(e)}; falling back to text`);
+        this.giveUp();
+        return;
+      }
+    }
+    await this.finalizeCurrentCard("size_rollover"); // advances offset by headText.length; clears hint/continuation
+    this.pendingContinuation = split.continuation; // arm the tail's reopen prefix (undefined => clean)
+  }
+
+  /** Compose the displayed card content. Deterministic order: the tool-call hint (first line of a
+   *  segment's opening card) OR a size-rollover continuation prefix (reopened fence / resent table
+   *  header that repairs the markdown), then the body. Hint and continuation never co-occur on the
+   *  same card: sealing a card consumes both. Hint-only when there is no body yet. */
   private composeDisplay(body: string): string {
-    if (this.currentHint === undefined) return body;
-    return body ? `${this.currentHint}\n\n${body}` : this.currentHint;
+    if (this.currentHint !== undefined) return body ? `${this.currentHint}\n\n${body}` : this.currentHint;
+    if (this.pendingContinuation !== undefined) return this.pendingContinuation.displayPrefix + body;
+    return body;
+  }
+
+  /** The display prefix bytes the current card carries before its body — passed to planSizeSplit so
+   *  the budget accounts for the hint / continuation, and the structural carry for repair. */
+  private splitStart(): { displayPrefix: string; openFence?: string; tableHeader?: string } {
+    const displayPrefix = this.currentHint !== undefined
+      ? `${this.currentHint}\n\n`
+      : this.pendingContinuation?.displayPrefix ?? "";
+    return { displayPrefix, openFence: this.pendingContinuation?.openFence, tableHeader: this.pendingContinuation?.tableHeader };
   }
 
   /** The hint string for a segment, or undefined when hints are disabled / empty. */
@@ -424,7 +506,8 @@ export class CardSender implements OutboundSink {
     await this.doFinalize(live);
     this.streamBaseOffset += live.sentText.length;
     this.live = undefined;
-    this.currentHint = undefined; // the sealed segment's hint is consumed
+    this.currentHint = undefined; // the sealed card's hint is consumed
+    this.pendingContinuation = undefined; // and its continuation prefix
   }
 
   /** Finalize the live card (streaming_mode=false). The content is already shown, so a failure
@@ -496,6 +579,7 @@ export class CardSender implements OutboundSink {
     this.streamSegmentBreaking = false;
     this.streamBreakMeta = undefined;
     this.currentHint = undefined;
+    this.pendingContinuation = undefined;
     this.live = undefined;
     this.streamBaseOffset = 0;
     this.fellBack = false;
