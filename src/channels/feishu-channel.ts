@@ -456,9 +456,10 @@ export class FeishuChannel implements Channel {
     }
   }
 
-  /** Mint a fresh encrypted auth-code envelope for this sender, store it under a collision-free short
-   *  id (one pending per (channelKey, openId) — supersedes any prior), and return the short id. The
-   *  envelope is the source of truth; only the short id is ever shown to the user. */
+  /** Return a short auth-code id for this sender: REUSE the existing (unexpired) pending id for the
+   *  same (channelKey, openId) if one exists, otherwise mint a fresh encrypted envelope under a
+   *  collision-free short id. The envelope is the source of truth; only the short id is ever shown to
+   *  the user. */
   private async issueAuthCode(openId: string): Promise<string> {
     const store = this.authStore!;
     const keys = await store.ensureKeys();
