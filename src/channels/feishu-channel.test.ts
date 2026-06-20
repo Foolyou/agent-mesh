@@ -389,7 +389,7 @@ test("inbound: an auto-start failure is reported to the bound chat", async () =>
   await flushAsync();
   expect(s.mesh.prompts).toHaveLength(0);
   expect(s.sent).toHaveLength(1);
-  expect(s.sent[0].text).toContain("自动启动失败");
+  expect(s.sent[0].text).toContain("[FYI] Mesh auto-start failed");
 });
 
 test("command: /mesh status reports the bound mesh status without prompting the router", async () => {
@@ -398,7 +398,7 @@ test("command: /mesh status reports the bound mesh status without prompting the 
   await flushAsync();
   expect(s.mesh.prompts).toHaveLength(0);
   expect(s.sent).toHaveLength(1);
-  expect(s.sent[0].text).toContain("running");
+  expect(s.sent[0].text).toBe("[FYI] Mesh status\nmesh: feishu-poc\nstatus: running");
 });
 
 test("command: /mesh stop stops the bound mesh", async () => {
@@ -407,7 +407,7 @@ test("command: /mesh stop stops the bound mesh", async () => {
   await flushAsync();
   expect(s.mesh.stopCalls).toBe(1);
   expect(s.mesh.running).toBe(false);
-  expect(s.sent[0].text).toContain("已停止");
+  expect(s.sent[0].text).toBe("[DONE] Mesh stopped\nmesh: feishu-poc\nstatus: stopped");
 });
 
 test("command: /mesh start starts a stopped bound mesh", async () => {
@@ -417,7 +417,7 @@ test("command: /mesh start starts a stopped bound mesh", async () => {
   await flushAsync();
   expect(s.mesh.startCalls).toBe(1);
   expect(s.mesh.running).toBe(true);
-  expect(s.sent[0].text).toContain("已启动");
+  expect(s.sent[0].text).toBe("[DONE] Mesh started\nmesh: feishu-poc\nstatus: running");
 });
 
 test("command: /mesh new-session opens fresh sessions without routing the command", async () => {
@@ -426,7 +426,27 @@ test("command: /mesh new-session opens fresh sessions without routing the comman
   await flushAsync();
   expect(s.mesh.newSessionCalls).toBe(1);
   expect(s.mesh.prompts).toHaveLength(0);
-  expect(s.sent[0].text).toContain("新 session");
+  expect(s.sent[0].text).toBe("[DONE] New sessions started\nmesh: feishu-poc");
+});
+
+test("command: /mesh help and /mesh restart use the English mail-prompt copy", async () => {
+  const s = setup();
+  s.push(inbound({ text: "/mesh help" }));
+  await flushAsync();
+  expect(s.mesh.prompts).toHaveLength(0);
+  expect(s.sent[0].text).toBe([
+    "[FYI] Commands for mesh feishu-poc",
+    "/mesh status — show status",
+    "/mesh start — start the bound mesh",
+    "/mesh stop — stop the bound mesh",
+    "/mesh restart — restart the bound mesh",
+    "/mesh new-session — new session for all agents",
+  ].join("\n"));
+
+  const r = setup();
+  r.push(inbound({ text: "/mesh restart" }));
+  await flushAsync();
+  expect(r.sent[0].text).toBe("[DONE] Mesh restarted\nmesh: feishu-poc\nstatus: running");
 });
 
 // ── outbound ─────────────────────────────────────────────────────────────────
@@ -1018,7 +1038,7 @@ test("inbound image: download failure sends a notice, does not prompt, and never
   s.push(imageMsg({ imageKey: "img_secret_KEY" }));
   await settle();
   expect(s.mesh.prompts).toHaveLength(0);
-  expect(s.sent.some((x) => x.text.includes("下载失败"))).toBe(true);
+  expect(s.sent.some((x) => x.text.includes("[FYI] Image received, download failed"))).toBe(true);
   expect(s.sent.map((x) => x.text).join("\n")).not.toContain("img_secret_KEY"); // notice must not leak the key
   expect(s.logs.join("\n")).not.toContain("img_secret_KEY"); // logs must not leak the key (no raw error text)
 });
@@ -1029,7 +1049,7 @@ test("inbound image: missing message_id sends a notice and does not download or 
   await settle();
   expect(s.downloadCalls).toHaveLength(0);
   expect(s.mesh.prompts).toHaveLength(0);
-  expect(s.sent.some((x) => x.text.includes("无法处理"))).toBe(true);
+  expect(s.sent.some((x) => x.text.includes("[FYI] Image received, could not be processed"))).toBe(true);
 });
 
 test("inbound image: missing image_key sends a notice and does not download or prompt", async () => {
@@ -1038,7 +1058,7 @@ test("inbound image: missing image_key sends a notice and does not download or p
   await settle();
   expect(s.downloadCalls).toHaveLength(0);
   expect(s.mesh.prompts).toHaveLength(0);
-  expect(s.sent.some((x) => x.text.includes("无法处理"))).toBe(true);
+  expect(s.sent.some((x) => x.text.includes("[FYI] Image received, could not be processed"))).toBe(true);
 });
 
 test("inbound image: when image handling is not configured, sends a notice and does not prompt", async () => {
@@ -1046,7 +1066,7 @@ test("inbound image: when image handling is not configured, sends a notice and d
   s.push(imageMsg());
   await settle();
   expect(s.mesh.prompts).toHaveLength(0);
-  expect(s.sent.some((x) => x.text.includes("未启用图片处理"))).toBe(true);
+  expect(s.sent.some((x) => x.text.includes("[FYI] Image received, image handling is disabled"))).toBe(true);
 });
 
 // ── dynamic auth gate (Phase 3): registry-backed (channelKey, openId) ─────────
@@ -1369,14 +1389,14 @@ test("p2p: when the assistant is unavailable, reply with a notice and do not pro
   s.push(inbound({ chatType: "p2p", chatId: "p2p_me", senderId: "ou_me", text: "hi" }));
   await flushAsync();
   expect(s.assistant.prompts).toHaveLength(0);
-  expect(s.sentText("p2p_me")).toContain("助手未启用");
+  expect(s.sentText("p2p_me")).toContain("[FYI] Assistant is not enabled");
 });
 
 test("p2p: with no assistant gateway at all, reply with the notice (no crash)", async () => {
   const s = await setupP2p({}, { noAssistant: true });
   s.push(inbound({ chatType: "p2p", chatId: "p2p_me", senderId: "ou_me", text: "hi" }));
   await flushAsync();
-  expect(s.sentText("p2p_me")).toContain("助手未启用");
+  expect(s.sentText("p2p_me")).toContain("[FYI] Assistant is not enabled");
 });
 
 test("p2p: two concurrent authorized DMs serialize; each reply goes back to its own chat (no cross-talk)", async () => {
@@ -1470,7 +1490,7 @@ test("p2p: while the shared assistant is busy with another source, a DM is rejec
   s.push(inbound({ chatType: "p2p", chatId: "p2p_me", senderId: "ou_me", text: "hi" }));
   await flushAsync();
   expect(s.assistant.prompts).toHaveLength(0); // not routed
-  expect(s.sentText("p2p_me")).toContain("助手正在处理其他请求");
+  expect(s.sentText("p2p_me")).toContain("[FYI] Assistant is busy");
   // the OTHER source now emits an update — it must NOT be mirrored to the p2p chat
   s.assistant.emit(rawChunk("output for the other source"));
   await flushAsync();
@@ -1508,7 +1528,7 @@ test("p2p: a busy assistant rejects an image DM BEFORE any download/store (no wa
   expect(downloaded).toHaveLength(0); // never fetched the image
   expect(stored).toHaveLength(0); // never stored it
   expect(assistant.prompts).toHaveLength(0); // never prompted
-  expect((p2pSenders.get("p2p_img")?.sent ?? []).map((x) => x.text).join("")).toContain("助手正在处理其他请求");
+  expect((p2pSenders.get("p2p_img")?.sent ?? []).map((x) => x.text).join("")).toContain("[FYI] Assistant is busy");
   await ch.stop();
 });
 
@@ -1550,7 +1570,7 @@ test("p2p: an assistant failure during stop() does not enqueue a notice onto the
   releaseConsumerStop();
   await stopping;
   // no failure notice was enqueued after stop began
-  expect((p2pSenders.get("p2p_me")?.sent ?? []).some((x) => x.text.includes("助手处理失败"))).toBe(false);
+  expect((p2pSenders.get("p2p_me")?.sent ?? []).some((x) => x.text.includes("the assistant failed"))).toBe(false);
 });
 
 // ── C4: streaming vs non-streaming routing of the router reply (rich outbound) ──────────────────
@@ -1610,4 +1630,19 @@ test("non-streaming: a plain text sink (no sendOneShot) still uses enqueue (back
   mesh.emit("feishu-poc", chunk("router", "plain reply"));
   mesh.emit("feishu-poc", idle("router"));
   expect(calls).toEqual([{ m: "enqueue", text: "plain reply" }]);
+});
+
+// ── i18n migration guard (channel-i18n-prompts C2) ──
+// Every user-visible reply goes through `rt.sender.enqueue(...)`. After the Category-A migration, none
+// of those call sites may contain a Han character (Category-C agent prompts use promptRouter/
+// deliverPrompt/enqueueP2pTurn, and parseMeshCommand's Chinese INPUT aliases are whitelisted — neither
+// is a sender.enqueue).
+test("no user-visible sender.enqueue copy contains Chinese (Category A is fully migrated)", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const { join } = await import("node:path");
+  const src = await readFile(join(import.meta.dir, "feishu-channel.ts"), "utf8");
+  const offenders = src
+    .split("\n")
+    .filter((line) => line.includes(".sender.enqueue(") && /[一-鿿]/.test(line));
+  expect(offenders).toEqual([]);
 });
