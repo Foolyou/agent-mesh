@@ -7,6 +7,20 @@ forwarding authorized Feishu **p2p** private chats to the central **Mesh Assista
 This document is the spec the implementation tasks will follow. Where a tradeoff is genuinely open
 it is listed under **Open questions** with a recommended option rather than silently decided.
 
+> **⚠️ Phase 6 supersession (2026-06-20).** Open Q 6A (below) was validated in production and
+> answered **yes**: with the Tailscale funnel, *all* remote traffic reaches the WSL service as a
+> **loopback** socket, so loopback is **not** a trustworthy origin. Phase 6 therefore **removed
+> loopback trust entirely**. The mandatory behavior is now:
+> - An **approved device token is the only allow path** for every gated `/api/*` request and the
+>   `/ws` upgrade — including local development on the host (no loopback shortcut).
+> - The socket remote address is **diagnostic only** (gate logs / coarse origin class); it never
+>   grants access.
+> - There is **no env var or flag** that re-enables loopback trust or otherwise bypasses the token.
+>
+> Wherever the sections below describe "loopback is implicitly trusted" / "the gate is skipped for
+> `127.0.0.1`/`::1`", read that as **historical design intent, superseded by Phase 6**. The current
+> operator runbook is [`docs/device-auth-operations.md`](../device-auth-operations.md).
+
 ---
 
 ## 0. Goals & pinned decisions
@@ -45,6 +59,10 @@ exposes the server beyond loopback (Tailscale funnel, `--host`, etc. — see
 - **Loopback requests are implicitly trusted** (the operator's own machine). This is the existing
   model and the bootstrap anchor (§6).
 - **Non-loopback requests require an approved device token.**
+
+> **Superseded by Phase 6:** loopback is no longer trusted. Funnel traffic appears as loopback, so
+> the only allow path is an approved device token — for *every* request, loopback included. The
+> remote address is diagnostic only. See the Phase 6 banner at the top.
 
 ---
 
@@ -388,26 +406,33 @@ barrier, and (for CardKit) card streaming all apply unchanged — only the **eve
 The lockout risk: a freshly-exposed server with an empty allowlist where the operator is **remote**
 (no easy CLI) could lock everyone out. Layered bootstrap:
 
-1. **Loopback is implicitly authorized** (§0 trust model). The operator's browser on the host (or via
+1. ~~**Loopback is implicitly authorized** (§0 trust model). The operator's browser on the host (or via
    an SSH/loopback tunnel) reaches the app with no token. This is the primary bootstrap and matches
    today's behavior. Implementation: the device-token gate is **skipped for `127.0.0.1`/`::1`** requests
-   (detected from the socket remote address, not a spoofable header).
-2. **CLI approval** for any non-loopback device (the normal path) — the operator runs
+   (detected from the socket remote address, not a spoofable header).~~ **— REMOVED in Phase 6**
+   (Open Q 6A confirmed: funnel traffic appears as loopback, so this is not safe). There is **no**
+   loopback bootstrap; a host operator instead approves the first device via the CLI (2) or mints a
+   one-time bootstrap token (3).
+2. **CLI approval** for any device (the normal path) — the operator runs
    `mesh device approve <code>` on the host.
-3. **One-time bootstrap token** for the remote-only case: on startup, if the allowlist is empty AND the
-   server is bound non-loopback, the backend prints a single-use, short-TTL bootstrap URL/token to
-   **stdout / `<root>/backend.log`** (`service.ts`). The remote operator who can read the host log (the
-   only person who should) uses it once to approve their first device, then it's consumed. Gate behind a
-   flag (`--print-bootstrap`) so it's opt-in and never auto-exposed.
+3. **One-time bootstrap token** for the remote-only case. *(As shipped: the operator runs
+   `mesh auth bootstrap [--ttl <s>]` on the host, which prints a single-use, short-TTL token once;
+   the remote device pastes it into the unauthorized page to approve itself. The bootstrap-condition
+   below is historical — Phase 6 makes the token the only allow path regardless of bind address.)*
+   ~~on startup, if the allowlist is empty AND the server is bound non-loopback, the backend prints a
+   single-use, short-TTL bootstrap URL/token to **stdout / `<root>/backend.log`** (`service.ts`)~~. The
+   remote operator who can read the host log (the only person who should) uses it once to approve their
+   first device, then it's consumed.
 
 Feishu has no cold-lock problem: an unauthorized user simply gets the auth-code reply; the operator
 approves via CLI. The very first Feishu user is approved the same way as every other.
 
-> Open Q 6A: is loopback-implicit-trust acceptable in the deployed topology? In the prod Tailscale-funnel
-> setup ([[reference-prod-tailscale-topology]]) traffic arrives at Windows then loopback-forwards into
-> WSL, so **all** funnel traffic may appear as loopback to the WSL service — which would defeat the gate.
-> **This must be validated.** If true, loopback-trust can't be the gate in prod and we rely on (2)+(3)
-> plus binding semantics. Flagged as the top open question.
+> Open Q 6A **[RESOLVED — Phase 6]**: is loopback-implicit-trust acceptable in the deployed topology? In
+> the prod Tailscale-funnel setup ([[reference-prod-tailscale-topology]]) traffic arrives at Windows then
+> loopback-forwards into WSL, so **all** funnel traffic appears as loopback to the WSL service — which
+> defeats the gate. **Validated true.** Loopback-trust was therefore removed entirely in Phase 6: the
+> approved device token is the only allow path (no loopback bypass, no env/flag override); bootstrap now
+> relies solely on (2) CLI approval and (3) the one-time bootstrap token.
 
 ---
 
@@ -468,16 +493,19 @@ Ordered so file-range overlaps are serialized (esp. everything touching `feishu-
    sender (via store) → routes; per-`(channel,open_id)` granularity; revoke. *Serial vs phase 5
    (both edit `feishu-channel.ts`).*
 4. **WebUI device auth (A).** Endpoints in `api.ts`, remote-address plumb in `server.ts`/`api-server.ts`,
-   token gate on `/api/*` + `/ws`, client unauthorized page + boot verify + localStorage token, loopback
-   rule + bootstrap (§6). Tests: issue/poll/verify, approval flips status, revoke rejects, loopback
-   bypass, non-loopback requires token. *Overlaps `api.ts`/web only — parallel-safe with phase 3.*
+   token gate on `/api/*` + `/ws`, client unauthorized page + boot verify + localStorage token, ~~loopback
+   rule~~ + bootstrap (§6). Tests: issue/poll/verify, approval flips status, revoke rejects, ~~loopback
+   bypass,~~ non-loopback requires token. *Overlaps `api.ts`/web only — parallel-safe with phase 3.*
+   (The loopback bypass shipped here was **removed in Phase 6** — token is now the only allow path.)
 5. **p2p → Mesh Assistant (C).** `AssistantGateway` seam, `mesh-assistant.ts` exposure, `main.ts` wiring,
    p2p branch in `feishu-channel.ts` reusing outbound streaming. Tests with a fake assistant gateway:
    p2p→assistant.prompt + streamed reply mirrored; group unchanged; no-assistant notice. *Serial after
    phase 3 (shared `feishu-channel.ts`).*
-6. **Hardening / docs.** Bootstrap-token flag, key rotation command polish, operator docs, the prod
-   loopback validation (Open Q 6A) and any follow-up if loopback-trust is unusable in the funnel
-   topology.
+6. **Hardening / docs / enforcement.** Bootstrap-token flag, key rotation command polish, operator docs,
+   the prod loopback validation (Open Q 6A). **Outcome: 6A confirmed loopback-trust is unusable in the
+   funnel topology, so Phase 6 removed the loopback bypass outright** — the approved device token is the
+   only allow path for gated `/api/*` and `/ws`, the remote address is diagnostic only, and no env/flag
+   re-enables a bypass. Operator runbook: [`docs/device-auth-operations.md`](../device-auth-operations.md).
 
 Serialization summary: 1 → (2 ‖ part of 4) → 3 → 5; phase 4 (web) is independent of 3 and can run in
 parallel, but **3 and 5 must be serial** (same file). Phase 6 last.
@@ -486,9 +514,11 @@ parallel, but **3 and 5 must be serial** (same file). Phase 6 last.
 
 ## 9. Open questions (recap, each with a recommendation)
 
-- **6A (top priority):** Does the prod Tailscale-funnel→loopback topology make *all* remote traffic look
-  like loopback to the WSL service? If yes, the loopback-trust gate is unsafe in prod and §6 must lean on
-  CLI approval + bootstrap token only. **Validate before building phase 4.**
+- **6A (top priority) — [RESOLVED, Phase 6]:** Does the prod Tailscale-funnel→loopback topology make
+  *all* remote traffic look like loopback to the WSL service? **Yes (validated).** The loopback-trust
+  gate is unsafe in prod, so Phase 6 removed it: the approved device token is the only allow path
+  (no loopback bypass, no env/flag override); bootstrap leans on CLI approval + the one-time bootstrap
+  token only. 4B is likewise settled — the gate now covers everything (token-only, loopback included).
 - **2A:** Short opaque auth-code id (stateful pending lookup) vs full AES-256-GCM token in chat
   (stateless, long). *Recommend short id for UX; both secure.*
 - **4A:** Poll (2–3s `GET status`) vs long-poll/SSE. *Recommend simple poll pre-auth.*
