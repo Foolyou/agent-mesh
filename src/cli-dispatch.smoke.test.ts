@@ -155,3 +155,78 @@ test("--master-harness=bogus (equals form) on a startup path warns AND rejects",
     await rm(base, { recursive: true, force: true });
   }
 }, 30000);
+
+// ── Commit 3: channels feishu subcommand tree + deprecated top-level alias ──
+
+test("`mesh channels feishu list` is the official form — works, no deprecation warning", async () => {
+  const base = await mkdtemp(join(tmpdir(), "cli-ch-list-"));
+  try {
+    const { code, out } = await runMesh(["channels", "feishu", "list", "--root", base]);
+    expect(code).toBe(0);
+    expect(out).toContain("Pending feishu authorizations");
+    expect(out).not.toContain("deprecated");
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+}, 20000);
+
+test("`mesh feishu list` still works but prints ONE deprecation warning", async () => {
+  const base = await mkdtemp(join(tmpdir(), "cli-ch-dep-"));
+  try {
+    const { code, out } = await runMesh(["feishu", "list", "--root", base]);
+    expect(code).toBe(0);
+    expect(out).toContain("`mesh feishu …` is deprecated; use `mesh channels feishu …`");
+    expect(out).toContain("Pending feishu authorizations"); // same impl ran
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+}, 20000);
+
+test("`mesh channels feishu approve|revoke` route to the existing Feishu auth behavior", async () => {
+  const base = await mkdtemp(join(tmpdir(), "cli-ch-route-"));
+  try {
+    const approve = await runMesh(["channels", "feishu", "approve", "BADCODE", "--root", base]);
+    expect(approve.code).toBe(2);
+    expect(approve.out).toContain("no pending feishu authorization 'BADCODE'");
+    const revoke = await runMesh(["channels", "feishu", "revoke", "ck", "oid", "--root", base]);
+    expect(revoke.code).toBe(2);
+    expect(revoke.out).toContain("no approved feishu entry");
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+}, 20000);
+
+test("unknown channels provider / action → exit 2 + usage, no service", async () => {
+  const base = await mkdtemp(join(tmpdir(), "cli-ch-unk-"));
+  try {
+    const prov = await runMesh(["channels", "nope", "--root", base]);
+    expect(prov.code).toBe(2);
+    expect(prov.out).toContain("unknown channels provider 'nope'");
+    expect(prov.out).toContain("usage: mesh channels");
+    expect(prov.out).not.toContain("→ http");
+    const noProv = await runMesh(["channels", "--root", base]);
+    expect(noProv.code).toBe(2);
+    expect(noProv.out).toContain("missing channels provider");
+    const action = await runMesh(["channels", "feishu", "nope", "--root", base]);
+    expect(action.code).toBe(2);
+    expect(action.out).toContain("usage:"); // auth-cli feishu sub-usage
+    expect(action.out).not.toContain("→ http");
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+}, 20000);
+
+test("device/auth command-local flags still pass through after the channels refactor", async () => {
+  const base = await mkdtemp(join(tmpdir(), "cli-passthru-"));
+  try {
+    // --label / --ttl must reach auth-cli intact (a swallowed flag would surface a different error).
+    const dev = await runMesh(["device", "approve", "CODE", "--label", "laptop", "--root", base]);
+    expect(dev.out).toContain("no pending device code 'CODE'");
+    expect(dev.out).not.toContain("invalid --label");
+    const auth = await runMesh(["auth", "bootstrap", "--ttl", "60", "--root", base]);
+    expect(auth.code).toBe(0);
+    expect(auth.out).toContain("bootstrap token"); // --ttl 60 accepted
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+}, 20000);

@@ -102,6 +102,15 @@ test("a value global missing its value is an error", () => {
   expect(resolveCommand(["status", "--port"]).mode).toBe("error");
 });
 
+test("channels is a known command; its provider/action ride in the verbatim tail", () => {
+  expect(isKnownCommand("channels")).toBe(true);
+  expect(run(["channels", "feishu", "approve", "CODE"]).commandTail).toEqual(["feishu", "approve", "CODE"]);
+  expect(run(["channels", "feishu", "revoke", "K", "O"]).commandTail).toEqual(["feishu", "revoke", "K", "O"]);
+  expect(run(["channels", "nope"]).commandTail).toEqual(["nope"]);
+  // feishu stays a known (deprecated) top-level alias, not an "unknown command"
+  expect(isKnownCommand("feishu")).toBe(true);
+});
+
 test("an unknown command resolves (command set, but not known) — caller exits 2", () => {
   const r = run(["frobnicate"]);
   expect(r.command).toBe("frobnicate");

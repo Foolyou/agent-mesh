@@ -21,7 +21,7 @@ import { createFeishuChannelController, unavailableAssistantGateway } from "./ch
 import { runAuthCommand } from "./auth-cli";
 import { collectPsDetail, runDoctor, renderPsDetail, renderDoctor, doctorExitCode } from "./diagnostics";
 import { cliPsSources, doctorSources, diagnosticsRunDir } from "./diagnostics-sources";
-import { resolveCommand, isKnownCommand, usageLines } from "./cli-dispatch";
+import { resolveCommand, isKnownCommand, usageLines, channelsUsageLines, CHANNEL_PROVIDERS } from "./cli-dispatch";
 import { join } from "node:path";
 import * as service from "./service";
 
@@ -210,7 +210,23 @@ if (cmd === "up" || cmd === "start") {
     console.error("usage: mesh kill <name> | --all");
     process.exitCode = 2;
   }
-} else if (cmd === "device" || cmd === "feishu" || cmd === "auth") {
+} else if (cmd === "channels") {
+  // external chat channels (design §2.1): `mesh channels <provider> <action> …`. Routes to the same
+  // offline auth-cli implementation as the (deprecated) top-level alias; provider-keyed so more
+  // providers can be added without a new top-level command. Unknown/missing provider → exit 2.
+  const provider = commandTail[0];
+  if (provider && CHANNEL_PROVIDERS.has(provider)) {
+    process.exitCode = await runAuthCommand(root, provider, commandTail.slice(1));
+  } else {
+    console.error(provider ? `unknown channels provider '${provider}'` : "missing channels provider");
+    for (const line of channelsUsageLines()) console.error(line);
+    process.exitCode = 2;
+  }
+} else if (cmd === "feishu") {
+  // DEPRECATED top-level alias of `mesh channels feishu …` — one warning, then the same impl.
+  console.warn("`mesh feishu …` is deprecated; use `mesh channels feishu …`");
+  process.exitCode = await runAuthCommand(root, "feishu", commandTail);
+} else if (cmd === "device" || cmd === "auth") {
   // device/account authorization CLI (design §3): operates on <root>/auth/*.json directly, no
   // backend needed. Usage + exit codes come from runAuthCli; this is pure delegation. The command
   // tail is passed verbatim so subcommand-local flags (--label, --ttl) reach auth-cli intact.

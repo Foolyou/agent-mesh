@@ -19,11 +19,11 @@ export const GLOBAL_BOOL = new Set(["--fake", "--cold", "--no-assistant", "--no-
 const HELP_LEADING = new Set(["help", "--help", "-h"]);
 const HELP_FLAG = new Set(["--help", "-h"]);
 
-/** Commands the dispatcher recognizes (Commit 1 keeps the current surface; `channels` arrives later).
- *  `start`/`stop` remain aliases of `up`/`down`. */
+/** Commands the dispatcher recognizes. `start`/`stop` alias `up`/`down`; `feishu` is a DEPRECATED
+ *  top-level alias of `channels feishu` (kept known so it routes + warns, not "unknown command"). */
 export const KNOWN_COMMANDS = new Set([
   "up", "start", "down", "stop", "status", "restart", "logs",
-  "ps", "doctor", "kill", "device", "feishu", "auth", "backend", "web",
+  "ps", "doctor", "kill", "channels", "device", "feishu", "auth", "backend", "web",
 ]);
 
 export function isKnownCommand(command: string): boolean {
@@ -125,8 +125,8 @@ export function usageLines(): string[] {
     "  mesh doctor               system health check",
     "  mesh logs [-f]            backend log (-f: follow)",
     "  mesh kill <name> | --all  stop a / all mesh daemon(s)",
+    "  mesh channels <provider> … external chat channels; provider: feishu",
     "  mesh device …             device authorization (list | approve | revoke)",
-    "  mesh feishu …             feishu authorization (list | approve | revoke)",
     "  mesh auth …               auth keys (list | rotate-key | bootstrap)",
     "",
     "help:",
@@ -134,5 +134,19 @@ export function usageLines(): string[] {
     "",
     "global flags: --root <dir>  --port <n>  --host <addr>  --backend <url>  --fake  --cold",
     "              --no-assistant  --assistant-harness <codex|claude|opencode|kimi>",
+  ];
+}
+
+/** Channel providers the `mesh channels <provider> …` tree routes to. Feishu is the first; add more
+ *  here as they land (the dispatch + usage stay table-driven). */
+export const CHANNEL_PROVIDERS = new Set(["feishu"]);
+
+/** Usage for the `mesh channels` subcommand tree (printed on an unknown/missing provider). */
+export function channelsUsageLines(): string[] {
+  return [
+    "usage: mesh channels <provider> <action> …",
+    "  mesh channels feishu list",
+    "  mesh channels feishu approve <code>",
+    "  mesh channels feishu revoke <channelKey> <openId>",
   ];
 }
