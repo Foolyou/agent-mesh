@@ -283,6 +283,30 @@ test("imageElement builds a Feishu img element with img_key + alt (no raw ref)",
   });
 });
 
+// ── integration: the REAL jimpScaler wired into the resolver decision flow (C3 production combo) ──
+
+test("integration: real jimpScaler scales a real oversize PNG through the resolver and uploads the SCALED, in-limit bytes", async () => {
+  // a real 2320×1466 PNG (the live-failing dimension; aspect ~1.58 < 16:9 → salvageable, width > 1500)
+  const big = await makeImage(2320, 1466, 255, "image/png");
+  const uploaded: RawImage[] = [];
+  const resolver = createImageResolver({
+    mesh: "m1",
+    defaultAgent: "router",
+    readImage: async () => ({ bytes: big.bytes, contentType: "image/png", size: big.bytes.length, mtimeMs: 1 }),
+    upload: async (i) => { uploaded.push(i); return { imgKey: "img_live" }; },
+    scaler: jimpScaler(), // the REAL production scaler (not a fake)
+    limits: LIMITS,
+  });
+  expect(await resolver.resolve(boundary("artifact:wide.png"))).toEqual({ kind: "image", imgKey: "img_live" });
+  expect(uploaded).toHaveLength(1);
+  const dims = imageDims(uploaded[0]!.bytes, uploaded[0]!.contentType)!;
+  expect(dims.w).toBeLessThanOrEqual(LIMITS.maxWidth); // genuinely downscaled to fit
+  expect(dims.h).toBeLessThanOrEqual(LIMITS.maxHeight);
+  expect(uploaded[0]!.contentType).toBe("image/png"); // PNG container preserved (no JPEG conversion)
+  expect(uploaded[0]!.bytes.length).toBeLessThanOrEqual(LIMITS.maxBytes);
+  expect(uploaded[0]!.bytes.length).not.toBe(big.bytes.length); // not the original bytes
+});
+
 // ── jimpScaler adapter (real in-memory images; no disk fixtures) ──
 
 /** Build a real raster image in memory via jimp. `gradient` makes a non-trivial image so a JPEG actually
