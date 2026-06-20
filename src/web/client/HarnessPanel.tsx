@@ -5,6 +5,25 @@ import { Btn } from "./ui";
 
 const HARNESS_ORDER: HarnessId[] = ["claude", "codex", "opencode", "kimi"];
 
+// Command names for the compact dual-version line. `tool` is the underlying body CLI shown alongside
+// the ACP adapter (codex-acp · codex, claude-agent-acp · claude); opencode/kimi launch the tool
+// directly so have a single command. Mirrors src/harness.ts HARNESSES (kept local to avoid pulling
+// server harness logic into the client bundle).
+const HARNESS_COMMANDS: Record<HarnessId, { adapter: string; tool?: string }> = {
+  claude: { adapter: "claude-agent-acp", tool: "claude" },
+  codex: { adapter: "codex-acp", tool: "codex" },
+  opencode: { adapter: "opencode" },
+  kimi: { adapter: "kimi" },
+};
+
+/** Compact dual-version label, e.g. "codex-acp 1.2.3 · codex 0.141.0". Adapter version comes from
+ *  the ACP probe; the body tool is display-only. Unknown versions render as "—". */
+export function harnessVersionLine(row: HarnessProbeRow): string {
+  const cmd = HARNESS_COMMANDS[row.id];
+  const adapter = `${cmd.adapter} ${row.version ?? "—"}`;
+  return cmd.tool ? `${adapter} · ${cmd.tool} ${row.toolVersion ?? "—"}` : adapter;
+}
+
 interface InstallState {
   harness: HarnessId;
   pkgSpec: string;
@@ -116,6 +135,7 @@ export function HarnessRow({ row, onInstall, onReprobe }: { row: HarnessProbeRow
     <div className="harness-row">
       <div>
         <div className="harness-name">{row.label}</div>
+        {row.installed ? <div className="harness-versions">{harnessVersionLine(row)}</div> : null}
         <div className="harness-meta">{row.path ?? row.installHint?.docsUrl ?? "not detected on PATH"}</div>
       </div>
       <span className={`harness-badge ${status.kind}`}>{status.text}</span>

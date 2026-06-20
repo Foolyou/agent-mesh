@@ -1667,6 +1667,13 @@ body::after {
   color: var(--fg);
   font-weight: 600;
 }
+.harness-versions {
+  color: var(--fg-dim);
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 11px;
+  margin-top: 1px;
+  overflow-wrap: anywhere;
+}
 .harness-meta,
 .harness-desc {
   color: var(--fg-faint);
