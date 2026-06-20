@@ -16,6 +16,7 @@ import {
   updateDevices,
   type DevicesFile,
 } from "../auth-store";
+import { isHostBearer, verifyHostBearerFromRoot } from "../cli-host-bearer";
 
 /** Terminal/transient states the unauthorized page polls on. `unknown` = no matching record. */
 export type DeviceAuthStatus = "pending" | "approved" | "revoked" | "unknown";
@@ -83,27 +84,58 @@ export function classifyRemoteAddress(remoteAddress: string | undefined): Remote
 }
 
 export interface AuthGateOptions {
-  /** Auth store root. Undefined → no device store can be read → fail closed (deny). */
+  /** Auth store root. Undefined → no device store / key store can be read → fail closed (deny). */
   root: string | undefined;
   /** Bearer/query token presented by the caller, if any. */
   token: string | undefined;
   /** SOCKET-derived remote address (Bun `server.requestIP(req).address`); used for logging only. */
   remoteAddress: string | undefined;
+  /** Request route + method + path. Required to scope a HOST-KEY bearer to the mesh-lifecycle
+   *  endpoints (a device token ignores these — it authorizes the full API + `/ws`). Absent → a
+   *  host-key bearer can match no route and is denied (fail closed). */
+  route?: "api" | "ws";
+  method?: string;
+  path?: string;
 }
 
 export interface AuthGateResult {
   ok: boolean;
-  via: "token" | "denied";
+  /** `token` = approved device (full API + ws); `host-key` = scoped host-key bearer (lifecycle only). */
+  via: "token" | "host-key" | "denied";
   remoteClass: RemoteClass;
 }
 
-/** The authoritative gate for non-device `/api/*` and `/ws`: an approved device token is the ONLY
- *  allow path. No origin/bind exception exists — a loopback socket is never trusted (funnel proves
- *  remote traffic looks loopback). Without a root (no device store) or without a matching approved
- *  token, the request is denied. Reading the store is the only side effect; no header is consulted. */
+/** The mesh-lifecycle endpoint whitelist a HOST-KEY bearer may reach (design §B). Anything else — incl.
+ *  `/ws` and every other `/api/*` route — is off-scope and denied for a host-key bearer. */
+export function isLifecycleRoute(method: string | undefined, path: string | undefined): boolean {
+  if (!method || !path) return false;
+  const m = method.toUpperCase();
+  if (m === "GET" && /^\/api\/meshes\/?$/.test(path)) return true; // status / restart poll
+  if (m === "POST" && /^\/api\/meshes\/[^/]+\/start\/?$/.test(path)) return true; // start / restart
+  if (m === "POST" && /^\/api\/meshes\/[^/]+\/stop\/?$/.test(path)) return true; // stop / restart
+  return false;
+}
+
+/** The authoritative gate for non-device `/api/*` and `/ws`. Two allow paths, both cryptographic — there
+ *  is NO origin/bind exception (a loopback socket is never trusted; the funnel proves remote traffic
+ *  looks loopback):
+ *   1. an approved DEVICE token → full API + `/ws` (`via:"token"`); or
+ *   2. a valid HOST-KEY bearer (`mhk1.…`, proof of `keys.json` possession) → ONLY the mesh-lifecycle
+ *      routes over `/api`, never `/ws` or any other route (`via:"host-key"`). This is an additional,
+ *      strictly NARROWER accept-path, not a bypass; device-auth stays mandatory.
+ *  Without a root, or with no matching credential, the request is denied. */
 export async function authorizeRequest(o: AuthGateOptions, now: number = Date.now()): Promise<AuthGateResult> {
   const remoteClass = classifyRemoteAddress(o.remoteAddress); // diagnostic label only
   if (o.root && o.token) {
+    // A `mhk1.` token is ONLY ever a host-key bearer — verify it as one and NEVER fall back to the
+    // device path (so an off-scope or invalid host bearer can't accidentally match a device token).
+    if (isHostBearer(o.token)) {
+      const v = await verifyHostBearerFromRoot(o.root, o.token, { now: () => now });
+      if (v.ok && o.route === "api" && isLifecycleRoute(o.method, o.path)) {
+        return { ok: true, via: "host-key", remoteClass };
+      }
+      return { ok: false, via: "denied", remoteClass }; // invalid, expired, off-scope, or `/ws`
+    }
     const file = await readDevices(o.root, now);
     if (findApprovedDeviceId(file, o.token)) return { ok: true, via: "token", remoteClass };
   }

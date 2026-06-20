@@ -6,9 +6,10 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { handleApi, type ApiRequestContext } from "./api";
-import { authorizeRequest, classifyRemoteAddress, isPreAuthApiPath } from "./auth";
+import { authorizeRequest, classifyRemoteAddress, isPreAuthApiPath, isLifecycleRoute } from "./auth";
 import { readDevices, updateDevices, type DevicesFile } from "../auth-store";
 import { generateToken, hashToken } from "../auth-codes";
+import { signHostBearer } from "../cli-host-bearer";
 
 // The device routes never touch the gateway, so a bare stub is enough.
 const gw = {} as any;
@@ -259,6 +260,71 @@ test("authorizeRequest result carries no bind/loopback trust fields (only token/
     const r = await authorizeRequest({ root, token: undefined, remoteAddress: "127.0.0.1" });
     expect(["token", "denied"]).toContain(r.via);
     expect(r).not.toHaveProperty("bindExposed");
+  });
+});
+
+// ── host-key bearer gate (mesh-cli-lifecycle §A Approach 2) ──
+
+test("isLifecycleRoute whitelists ONLY GET /api/meshes and POST .../start|stop", () => {
+  expect(isLifecycleRoute("GET", "/api/meshes")).toBe(true);
+  expect(isLifecycleRoute("POST", "/api/meshes/demo/start")).toBe(true);
+  expect(isLifecycleRoute("POST", "/api/meshes/demo/stop")).toBe(true);
+  // off-whitelist
+  for (const [m, p] of [["GET", "/api/state"], ["POST", "/api/meshes/demo/agents"], ["GET", "/api/meshes/demo/config"], ["DELETE", "/api/meshes/demo"], ["POST", "/api/meshes"], ["GET", "/api/meshes/demo/start"]] as const)
+    expect(isLifecycleRoute(m, p)).toBe(false);
+  expect(isLifecycleRoute(undefined, undefined)).toBe(false);
+});
+
+test("authorizeRequest: a valid host-key bearer authorizes the lifecycle routes (via host-key)", async () => {
+  await withRoot(async (root) => {
+    const token = await signHostBearer(root);
+    for (const [method, path] of [["GET", "/api/meshes"], ["POST", "/api/meshes/demo/start"], ["POST", "/api/meshes/demo/stop"]] as const) {
+      const r = await authorizeRequest({ root, token, remoteAddress: "127.0.0.1", route: "api", method, path });
+      expect(r).toMatchObject({ ok: true, via: "host-key" });
+    }
+  });
+});
+
+test("authorizeRequest: a host-key bearer is DENIED on /ws and on any non-lifecycle /api route", async () => {
+  await withRoot(async (root) => {
+    const token = await signHostBearer(root);
+    const ws = await authorizeRequest({ root, token, remoteAddress: "127.0.0.1", route: "ws", method: "GET", path: "/ws" });
+    expect(ws).toMatchObject({ ok: false, via: "denied" });
+    for (const [method, path] of [["GET", "/api/state"], ["POST", "/api/meshes/demo/agents"], ["DELETE", "/api/meshes/demo"]] as const) {
+      const r = await authorizeRequest({ root, token, remoteAddress: "127.0.0.1", route: "api", method, path });
+      expect(r).toMatchObject({ ok: false, via: "denied" });
+    }
+  });
+});
+
+test("authorizeRequest: an expired host-key bearer is denied even on a lifecycle route", async () => {
+  await withRoot(async (root) => {
+    const past = Date.now() - 120_000;
+    const token = await signHostBearer(root, { now: () => past, ttlSeconds: 60 }); // exp = past+60s, already gone
+    const r = await authorizeRequest({ root, token, remoteAddress: "127.0.0.1", route: "api", method: "GET", path: "/api/meshes" });
+    expect(r).toMatchObject({ ok: false, via: "denied" });
+  });
+});
+
+test("authorizeRequest: a tampered host-key bearer is denied on a lifecycle route", async () => {
+  await withRoot(async (root) => {
+    const token = await signHostBearer(root);
+    const bad = token.slice(0, -2) + (token.endsWith("AA") ? "BB" : "AA"); // corrupt the mac tail
+    const r = await authorizeRequest({ root, token: bad, remoteAddress: "127.0.0.1", route: "api", method: "GET", path: "/api/meshes" });
+    expect(r).toMatchObject({ ok: false, via: "denied" });
+  });
+});
+
+test("authorizeRequest: the device-token path is unchanged — full API + ws, ignoring method/path", async () => {
+  await withRoot(async (root) => {
+    const token = generateToken();
+    await updateDevices(root, (f: DevicesFile) => {
+      f.devices["dv_x"] = { status: "approved", tokenHash: hashToken(token), createdAt: new Date().toISOString(), approvedAt: new Date().toISOString() };
+    });
+    const api = await authorizeRequest({ root, token, remoteAddress: "127.0.0.1", route: "api", method: "GET", path: "/api/state" });
+    expect(api).toMatchObject({ ok: true, via: "token" }); // a device token reaches a NON-lifecycle route
+    const ws = await authorizeRequest({ root, token, remoteAddress: "127.0.0.1", route: "ws", method: "GET", path: "/ws" });
+    expect(ws).toMatchObject({ ok: true, via: "token" }); // and /ws
   });
 });
 

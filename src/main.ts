@@ -20,6 +20,8 @@ import { runAuthCommand } from "./auth-cli";
 import { collectPsDetail, runDoctor, renderPsDetail, renderDoctor, doctorExitCode } from "./diagnostics";
 import { cliPsSources, doctorSources, diagnosticsRunDir } from "./diagnostics-sources";
 import { resolveCommand, isKnownCommand, usageLines, channelsUsageLines, CHANNEL_PROVIDERS } from "./cli-dispatch";
+import { httpMeshControlClient } from "./mesh-control-client";
+import { opStart, opStop, opRestart, opStatus, parseLifecycleTail, type OpResult, type LifecycleCommand } from "./mesh-cli-ops";
 import { join } from "node:path";
 import * as service from "./service";
 
@@ -198,14 +200,41 @@ const svcPass = () => {
   const { harness, noAssistant } = resolveAssistant();
   return [...(fake ? ["--fake"] : []), ...(noAssistant ? ["--no-assistant"] : []), ...assistantHarnessPassthrough(harness)];
 };
-if (cmd === "up" || cmd === "start") {
+// Single-mesh lifecycle ops go through the running control plane (host-key bearer). `start`/`stop`
+// are single-mesh ONLY; `restart`/`status` overload on arity (a name targets one mesh, no name is the
+// control-plane command). Print the op's out/err and adopt its exit code.
+async function runMeshOp(op: Promise<OpResult>): Promise<void> {
+  const r = await op;
+  for (const line of r.out) console.log(line);
+  for (const line of r.err) console.error(line);
+  process.exitCode = r.exitCode;
+}
+const meshClient = () => httpMeshControlClient(root, svcPort);
+
+if (cmd === "up") {
   await service.up(base, root, svcPort, { cold: svcCold, passthrough: svcPass() });
-} else if (cmd === "down" || cmd === "stop") {
+} else if (cmd === "down") {
   await service.down(root, svcPort, { cold: svcCold });
-} else if (cmd === "status") {
-  await service.status(root, svcPort);
-} else if (cmd === "restart") {
-  await service.restart(base, root, svcPort, { cold: svcCold, passthrough: svcPass() });
+} else if (cmd === "start" || cmd === "stop" || cmd === "status" || cmd === "restart") {
+  // Strict tail parse: a single bare mesh name (start also allows one `--fresh`); extra positionals or
+  // stray local flags are a usage error (exit 2), never a silent act-on-wrong-target. A no-arg
+  // `status`/`restart` is the control-plane command; `start`/`stop` are single-mesh only.
+  const plan = parseLifecycleTail(cmd as LifecycleCommand, commandTail);
+  if (plan.kind === "usage") {
+    console.error(plan.usage);
+    process.exitCode = 2;
+  } else if (plan.kind === "control-plane") {
+    if (cmd === "status") await service.status(root, svcPort);
+    else await service.restart(base, root, svcPort, { cold: svcCold, passthrough: svcPass() });
+  } else if (cmd === "start") {
+    await runMeshOp(opStart(meshClient(), plan.name, { fresh: plan.fresh }));
+  } else if (cmd === "stop") {
+    await runMeshOp(opStop(meshClient(), plan.name));
+  } else if (cmd === "status") {
+    await runMeshOp(opStatus(meshClient(), plan.name));
+  } else {
+    await runMeshOp(opRestart(meshClient(), plan.name));
+  }
 } else if (cmd === "logs") {
   await service.logs(root, { follow: tailHas("-f") || tailHas("--follow") });
 } else if (cmd === "ps") {
