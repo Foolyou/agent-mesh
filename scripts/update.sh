@@ -37,7 +37,8 @@ Environment:
   MESH_UPDATE_GATE   run tsc + bun test before building (default: 1; 0 to skip)
 
 Advanced/test hooks:
-  MESH_BUILD_CMD     build command; must write the new binary to "$OUT" (default: bun build --compile)
+  MESH_INSTALL_CMD   lockfile-backed dependency install run before gate/build (default: bun install --frozen-lockfile; set empty to skip)
+  MESH_BUILD_CMD     build command; must write the new binary to "$OUT" (default: bun run scripts/build.ts)
   MESH_RESTART_CMD   launcher whose `restart` subcommand is invoked (default: $MESH_BIN)
   MESH_HEALTH_TIMEOUT  seconds to wait for /api/state after restart (default: 25)
   MESH_NOW           archive timestamp override (default: date +%Y%m%d-%H%M%S)
@@ -78,7 +79,10 @@ BACKUP_DIR="$(expand_path "${MESH_BACKUP_DIR:-${XDG_STATE_HOME:-$HOME/.local/sta
 KEEP="${MESH_BACKUP_KEEP:-5}"
 GATE="${MESH_UPDATE_GATE:-1}"
 GATE_CMD="${MESH_GATE_CMD:-bunx tsc --noEmit && bun test}"
-BUILD_CMD="${MESH_BUILD_CMD:-bun build --compile src/main.ts --outfile \$OUT}"
+# Programmatic build (scripts/build.ts) so the Tailwind v4 plugin runs during
+# --compile — the bun build CLI ignores bunfig [serve.static].plugins, which would
+# otherwise ship the web client's `@import "tailwindcss"` unprocessed in the binary.
+BUILD_CMD="${MESH_BUILD_CMD:-bun run scripts/build.ts --outfile \$OUT}"
 RESTART_CMD="${MESH_RESTART_CMD:-$BIN}"
 HEALTH_TIMEOUT="${MESH_HEALTH_TIMEOUT:-25}"
 BASE="$(expand_path "$BASE_RAW")"
@@ -216,6 +220,19 @@ if [[ "$MODE" == "rollback" ]]; then
 fi
 
 # ── deploy mode ─────────────────────────────────────────────────────────────────
+# 0) Dependency bootstrap: install exactly per the committed lockfile so a fresh
+# checkout that pulled new package.json/bun.lock (e.g. the Tailwind v4 build plugin
+# added in Step-5 C1) builds deterministically. Frozen → fails loudly if the lock is
+# out of sync instead of silently mutating it. Both the gate (tsc/test) and the
+# build need node_modules, so this runs first and unconditionally.
+INSTALL_CMD="${MESH_INSTALL_CMD-bun install --frozen-lockfile}"
+if [[ -n "$INSTALL_CMD" ]]; then
+  echo "── dependency install (lockfile-backed) ───────────────────"
+  echo "▸ $INSTALL_CMD"
+  bash -c "$INSTALL_CMD"
+  echo "✓ dependencies installed"
+fi
+
 # 1) Pre-build gate: typecheck + unit tests. Abort before touching anything if red.
 if ((GATE)); then
   echo "── pre-build gate ─────────────────────────────────────────"

@@ -1,5 +1,8 @@
 // Entry point: mount the control console.
 import { createRoot } from "react-dom/client";
+// Tailwind v4 (layered: preflight/utilities) loads BEFORE the legacy stylesheet so
+// the UNLAYERED theme.css outranks it during the incremental migration — see tailwind.css.
+import "./tailwind.css";
 import "./theme.css";
 import { initTheme } from "./themes";
 import { installVisualViewportHeightVar } from "./viewport";

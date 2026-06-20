@@ -1,0 +1,24 @@
+/* Tailwind v4 CSS-first entry — Step 5 C1 scaffold.
+ *
+ * Preflight is ON (Tailwind's default `base` layer). Containment for the
+ * incremental migration relies on CSS CASCADE LAYERS, not on editing the legacy
+ * stylesheet:
+ *
+ *   - `@import "tailwindcss"` emits everything inside cascade layers
+ *     (`theme`, `base`[preflight], `components`, `utilities`).
+ *   - the legacy `theme.css` is UNLAYERED.
+ *   - per the cascade-layer spec, UNLAYERED rules always outrank ANY layered
+ *     rules — so legacy business views (device-auth / diagnostics / Feishu /
+ *     board / p2p / runtime) are protected from preflight + utility bleed
+ *     without touching `theme.css`.
+ *
+ * `theme.css` already declares `* { box-sizing: border-box }` and `html,body {
+ * margin: 0 }` (unlayered), so preflight's global resets are already satisfied
+ * by — and overridden by — the legacy layer, leaving existing views visually
+ * unchanged. Net-new Tailwind-built UI (Step 5 C2+) opts in by using utility
+ * classes; it sits in the layered `utilities`/`components` and reads preflight.
+ *
+ * NOT in C1: no `@theme` token mapping, no v2 runtime tokens, no component
+ * primitives — those land in later Step 5 commits.
+ */
+@import "tailwindcss";

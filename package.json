@@ -7,7 +7,7 @@
     "mesh": "bun run src/main.ts",
     "backend": "bun run src/main.ts backend",
     "web": "bun run src/main.ts web",
-    "build": "bun build --compile src/main.ts --outfile dist/mesh",
+    "build": "bun run scripts/build.ts --outfile dist/mesh",
     "e2e": "bun run src/e2e.ts",
     "test": "bun test",
     "a11y": "bun run a11y:palette && bun run a11y:e2e",
@@ -40,6 +40,8 @@
     "@types/qrcode": "^1.5.6",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
-    "playwright": "^1.60.0"
+    "bun-plugin-tailwind": "^0.1.2",
+    "playwright": "^1.60.0",
+    "tailwindcss": "^4"
   }
 }

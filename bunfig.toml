@@ -1,0 +1,7 @@
+# Bun config.
+# Tailwind v4 CSS-first integration for the web client: the bun-plugin-tailwind
+# plugin processes `@import "tailwindcss"` (and @theme/@apply) when Bun bundles the
+# HTML entry — both for the dev/runtime server (Bun.serve HTML routes in
+# src/web/server.ts) and for `bun build` of the client. See src/web/client/tailwind.css.
+[serve.static]
+plugins = ["bun-plugin-tailwind"]
