@@ -61,8 +61,11 @@ draft — IssueListRow (Dark·Slate × Signal Teal)
 - **Light·Cool** — status/accent at dark stops (700–800) read as ink; `on-accent` = white. Tightest pairs are floor families (`text-disabled`/sunken 3.24, `accent-text` ~4.6) — do **not** lighten `border-strong`/`text-muted`/accent further.
 - **Eye-care·Warm** — warm sepia, reduced blue, gentler luminance — still full AA/AAA. Status/accent at 700–800 (Ember at 800); `on-accent` = white. Best for long sessions; `accent` stays an ink, not a glow.
 
-## Artifacts
-PNG sample boards are **the next checkpoint** (not generated here, per the pass plan): three per-mode boards `v2-sample-dark-slate.png` / `v2-sample-light-cool.png` / `v2-sample-eye-care-warm.png` (each ≤~1500px, all 3 accents inside) + raw-scale/old↔new swatch boards, published to `$AGENT_MESH_ARTIFACTS` (not committed). See `05-v2-pass-plan.md`.
+## Artifacts (published to `$AGENT_MESH_ARTIFACTS`, not committed)
+Rendered via the repo's known-good chromium from the verified v2 `compose(mode,accent)` (throwaway `/tmp/v2_render.ts`); each ≤1500px wide (option B = split per mode):
+- `v2-sample-dark-slate.png` · `v2-sample-light-cool.png` · `v2-sample-eye-care-warm.png` — per-mode component sample boards (1480px), each showing all 3 accents (Signal Teal / Ember / Fleet Azure) across StatusChip · Button states · StatusListRow (incl. selected = `accent-subtle`) · IssueListRow (progress = `accent`) · Composer (send = `accent`/`on-accent`) · ApprovalCard.
+- `v2-raw-scales.png` (1480px) — the 11 raw 11-stop ramps (neutral ×3 / status ×5 / accent ×3).
+- `v2-semantic-swatches.png` (1100px) — the v2 semantic tokens × 3 modes (the "new" side of old→new; name mapping is the table in `00-tokens.md`; accent tokens vary by accent axis → see the sample boards).
 
 ## Change / review log
 - 2026-06-20 — created (Step 3 v1): components annotated to the 19-key tokens.
