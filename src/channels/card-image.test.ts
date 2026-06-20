@@ -4,11 +4,13 @@ import {
   parseArtifactRef,
   imageElement,
   imageDims,
+  jimpScaler,
   type RawImage,
   type ArtifactRef,
   type ImageLimits,
 } from "./card-image";
 import type { ImageBoundary } from "./stream-segmenter";
+import { Jimp } from "jimp";
 
 const boundary = (ref: string, alt = "pic"): ImageBoundary => ({ start: 0, end: 0, ref, alt });
 const PNG = (w: number, h: number): Uint8Array => {
@@ -174,6 +176,74 @@ test("imageElement builds a Feishu img element with img_key + alt (no raw ref)",
   expect(imageElement("img0", "img_abc", "a diagram")).toEqual({
     tag: "img", element_id: "img0", img_key: "img_abc", alt: { tag: "plain_text", content: "a diagram" },
   });
+});
+
+// ── jimpScaler adapter (real in-memory images; no disk fixtures) ──
+
+/** Build a real raster image in memory via jimp. `gradient` makes a non-trivial image so a JPEG actually
+ *  compresses differently per quality (for the quality-retry test); otherwise a flat color. */
+async function makeImage(w: number, h: number, alpha: number, mime: "image/png" | "image/jpeg", gradient = false): Promise<{ bytes: Uint8Array; contentType: string }> {
+  const img = new Jimp({ width: w, height: h });
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const o = (y * w + x) * 4;
+    img.bitmap.data[o] = gradient ? x & 255 : 200;
+    img.bitmap.data[o + 1] = gradient ? y & 255 : 80;
+    img.bitmap.data[o + 2] = gradient ? (x ^ y) & 255 : 40;
+    img.bitmap.data[o + 3] = alpha;
+  }
+  const buf = mime === "image/jpeg" ? await img.getBuffer(mime, { quality: 90 }) : await img.getBuffer(mime);
+  return { bytes: new Uint8Array(buf), contentType: mime };
+}
+const HUGE = 64 * 1024 * 1024;
+
+test("jimpScaler: wide PNG scales proportionally to fit and preserves alpha", async () => {
+  const src = await makeImage(400, 250, 128, "image/png");
+  const out = await jimpScaler()({ ...src, maxWidth: 100, maxHeight: 3000, maxBytes: HUGE });
+  expect(out).not.toBeNull();
+  expect(out!.width).toBe(100); // 400 → 100
+  expect(out!.height).toBe(62); // 250 * (100/400) = 62.5 → 62, aspect preserved
+  expect(out!.contentType).toBe("image/png"); // same container
+  const re = await Jimp.read(Buffer.from(out!.bytes)); // output is a real decodable PNG
+  expect(re.bitmap.width).toBe(100);
+  expect(re.bitmap.data[3]).toBe(128); // alpha channel survived the scale
+});
+
+test("jimpScaler: oversize JPEG stays JPEG and fits within bounds", async () => {
+  const src = await makeImage(400, 200, 255, "image/jpeg", true);
+  const out = await jimpScaler()({ ...src, maxWidth: 150, maxHeight: 3000, maxBytes: HUGE });
+  expect(out).not.toBeNull();
+  expect(out!.contentType).toBe("image/jpeg"); // JPEG stays JPEG
+  expect(out!.width).toBe(150);
+  expect(out!.height).toBe(75);
+});
+
+test("jimpScaler: JPEG over maxBytes triggers ONE quality retry that fits", async () => {
+  const src = await makeImage(256, 256, 255, "image/jpeg", true);
+  // measure this exact image's q90/q60 so the byte threshold is deterministic (gradient → q60 < q90)
+  const img = await Jimp.read(Buffer.from(src.bytes));
+  const q90 = (await img.getBuffer("image/jpeg", { quality: 90 })).length;
+  const q60 = (await img.getBuffer("image/jpeg", { quality: 60 })).length;
+  expect(q60).toBeLessThan(q90);
+  // maxWidth/Height 0 → no resize; force the retry purely on bytes with a cap between q90 and q60
+  const out = await jimpScaler()({ ...src, maxWidth: 0, maxHeight: 0, maxBytes: q90 - 1 });
+  expect(out).not.toBeNull();
+  expect(out!.bytes.length).toBeLessThanOrEqual(q90 - 1); // retry produced smaller bytes that fit
+});
+
+test("jimpScaler: PNG still over maxBytes after scaling degrades (null, no JPEG conversion)", async () => {
+  const src = await makeImage(400, 300, 255, "image/png", true);
+  const out = await jimpScaler()({ ...src, maxWidth: 100, maxHeight: 100, maxBytes: 1 }); // 1-byte cap
+  expect(out).toBeNull(); // PNG is never converted to JPEG to fit
+});
+
+test("jimpScaler: undecodable bytes return null (degrade), never throw", async () => {
+  const out = await jimpScaler()({ bytes: new Uint8Array([1, 2, 3, 4]), contentType: "image/png", maxWidth: 100, maxHeight: 100, maxBytes: HUGE });
+  expect(out).toBeNull();
+});
+
+test("jimpScaler: unsupported container (webp) returns null without decoding", async () => {
+  const out = await jimpScaler()({ bytes: new Uint8Array([1, 2, 3]), contentType: "image/webp", maxWidth: 100, maxHeight: 100, maxBytes: HUGE });
+  expect(out).toBeNull();
 });
 
 test("imageDims reads PNG / GIF / JPEG sizes", () => {

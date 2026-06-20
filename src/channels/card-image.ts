@@ -17,6 +17,7 @@
 import { Readable } from "node:stream";
 import { stat } from "node:fs/promises";
 import * as lark from "@larksuiteoapi/node-sdk";
+import { Jimp } from "jimp";
 import type { ImageBoundary } from "./stream-segmenter";
 import { resolveArtifactFile } from "../web/artifacts";
 import { AgentFileError } from "../web/agent-files";
@@ -54,6 +55,31 @@ export interface ImageLimits {
 }
 
 export const DEFAULT_IMAGE_LIMITS: ImageLimits = { maxBytes: 10 * 1024 * 1024, maxAspect: 16 / 9, maxWidth: 1500, maxHeight: 3000 };
+
+/** A proportional downscale request handed to an injectable scaler when an image is dimension-oversize but
+ *  salvageable (aspect already within range). `bytes` are the original artifact bytes; the scaler fits the
+ *  image inside (maxWidth, maxHeight) and must keep the result ≤ maxBytes. */
+export interface ScaleRequest {
+  bytes: Uint8Array;
+  contentType: string;
+  maxWidth: number;
+  maxHeight: number;
+  maxBytes: number;
+}
+
+/** A scaled image: re-encoded bytes in the SAME container, with its new dimensions. */
+export interface ScaleResult {
+  bytes: Uint8Array;
+  contentType: string;
+  width: number;
+  height: number;
+}
+
+/** Injectable downscaler (jimpScaler by default; injected for tests and to degrade cleanly when the
+ *  scaler is unavailable). Returns the scaled image, or null when it cannot produce an in-limit image
+ *  (undecodable bytes, an unsupported container, or still over maxBytes) → the resolver degrades.
+ *  MUST NOT throw and MUST NOT log the bytes (zero-leak). */
+export type ImageScaler = (req: ScaleRequest) => Promise<ScaleResult | null>;
 
 export interface ImageResolverDeps {
   /** Author agent for a bare `artifact:<file>` ref (the router that emitted the prose). */
@@ -218,6 +244,50 @@ export function sdkUploadImage(client: lark.Client): (img: RawImage) => Promise<
       return { error: "upload-error" }; // never a raw SDK/Error message (could carry a path/secret)
     }
   };
+}
+
+/** jimp-backed proportional downscaler (pure JS; bundles into `bun build --compile`, no native build, no
+ *  external binary). Decodes the image, fits it inside (maxWidth, maxHeight) preserving aspect, and
+ *  re-encodes in the SAME container: PNG keeps its alpha channel, JPEG stays JPEG (with ONE lower-quality
+ *  retry if it's still over maxBytes — PNG is never re-quantized or converted to JPEG). Returns null on
+ *  undecodable bytes, an unsupported container, or if it still can't get under maxBytes (→ the resolver
+ *  degrades). Never throws; never logs the bytes. */
+export function jimpScaler(): ImageScaler {
+  return async (req) => {
+    try {
+      const mime = encodeContainer(req.contentType);
+      if (!mime) return null; // only PNG/JPEG/GIF have a container we re-encode to
+      const img = await Jimp.read(Buffer.from(req.bytes));
+      const w = img.bitmap.width, h = img.bitmap.height;
+      const f = Math.min(
+        req.maxWidth > 0 ? req.maxWidth / w : 1,
+        req.maxHeight > 0 ? req.maxHeight / h : 1,
+        1,
+      );
+      const tw = Math.max(1, Math.floor(w * f)), th = Math.max(1, Math.floor(h * f));
+      if (tw < w || th < h) img.resize({ w: tw, h: th });
+      let bytes = await encodeImage(img, mime, 90);
+      if (mime === "image/jpeg" && bytes.length > req.maxBytes) {
+        bytes = await encodeImage(img, mime, 60); // one quality retry (JPEG only)
+      }
+      if (bytes.length > req.maxBytes) return null; // still too big → degrade (no PNG→JPEG conversion)
+      return { bytes, contentType: mime, width: img.bitmap.width, height: img.bitmap.height };
+    } catch {
+      return null; // undecodable / encode failure → degrade cleanly, no leak
+    }
+  };
+}
+
+type EncodeMime = "image/png" | "image/jpeg" | "image/gif";
+function encodeContainer(ct: string): EncodeMime | null {
+  if (ct.includes("png")) return "image/png";
+  if (ct.includes("jpeg") || ct.includes("jpg")) return "image/jpeg";
+  if (ct.includes("gif")) return "image/gif";
+  return null;
+}
+async function encodeImage(img: Awaited<ReturnType<typeof Jimp.read>>, mime: EncodeMime, quality: number): Promise<Uint8Array> {
+  const buf = mime === "image/jpeg" ? await img.getBuffer(mime, { quality }) : await img.getBuffer(mime);
+  return new Uint8Array(buf);
 }
 
 /** Build a device-auth console VIEWER URL from a base origin, or undefined when none is configured (→

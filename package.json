@@ -27,6 +27,7 @@
     "@tanstack/react-virtual": "^3.14",
     "@zed-industries/agent-client-protocol": "^0.4.5",
     "hast-util-sanitize": "5.0.2",
+    "jimp": "^1.6.1",
     "qrcode": "^1.5.4",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
