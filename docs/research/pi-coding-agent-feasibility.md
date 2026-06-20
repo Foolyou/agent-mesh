@@ -1,16 +1,31 @@
 # Pi Coding Agent → Agent Mesh: Feasibility Research
 
-Status: research only (no code change). Branch `task/pi-agent-feasibility`, based on main `4b2affa`.
+Status: research only (no code change). Round 1: branch `task/pi-agent-feasibility` (main `4b2affa`).
+Round 2 (MCP-extension re-evaluation, §10): branch `task/pi-mcp-extension-research` (main `e229b58`).
 Date: 2026-06-20. Author: team2_builder.
 
-Evidence is tagged inline:
-- **[confirmed]** — verified against official docs / repo / our source code (link or path given).
+Evidence is tagged inline (one fixed vocabulary — use exactly these four):
+- **[confirmed]** — verified against official docs / repo / our source code / a test I ran (link or path).
 - **[not found]** — looked for an official source and could not find one; stated as a gap, not a fact.
+- **[not verified]** — a claim I *could* have tested but did **not** in this spike (distinct from [not found]:
+  the source/path is known, it just wasn't exercised). Used mainly for the §10 spike's remaining gates.
 - **[inference]** — my reasoning/risk assessment, not a quoted fact.
+
+> ## ⚠️ UPDATE — Round 2 (2026-06-20, branch `task/pi-mcp-extension-research`, main `e229b58`)
+>
+> Round 1's central premise was **wrong**: it assumed "Pi cannot consume MCP servers". **Pi has mature,
+> MCP-*consuming* extensions**, and I **validated hands-on** that Pi calls a tool on an external
+> **streamable-HTTP** MCP server (our mesh transport) headlessly. **The MCP gap is NOT a blocker.**
+>
+> **Revised verdict: CONDITIONAL GO** (was NO-GO). The gating risk is no longer "can Pi reach our MCP
+> tools" (proven yes) but "can we wire pi-acp + the MCP extension together into a real mesh member that
+> actually `send_mail`/`check_mail`s" — a spike, not a wall. **See the new §10 for the re-evaluation,
+> evidence, architecture, and revised plan.** Sections 1–9 below are the round-1 record; where §1/§5 say
+> "NO-GO / blocker", read them as **superseded by §10**.
 
 ---
 
-## 1. Summary
+## 1. Summary  *(round 1 — superseded by §10)*
 
 Pi (the "Pi Coding Agent") is a **real, open-source** coding-agent CLI by Mario Zechner
 (current npm `@earendil-works/pi-coding-agent`, repo `earendil-works/pi`). It has a native headless
@@ -256,6 +271,135 @@ mechanical once 2 works. **[inference]**
 
 ---
 
+## 10. Round-2 re-evaluation: Pi's MCP extension (blocker refuted — hands-on validated)
+
+Round 1 concluded NO-GO on one premise: *"`pi-acp` has no MCP passthrough and Pi has no native MCP, so
+a Pi agent can't reach the mesh mailbox tools."* The user corrected this. **Both halves of that premise
+are wrong in the way that matters: Pi has mature, MCP-consuming extensions, and they speak our exact
+transport.** This section supersedes the §1/§5 verdict.
+
+### 10.1 Pi *can* consume MCP servers — via an extension (confirmed + validated)
+
+Pi's minimal core deliberately omits MCP, but its extension system fills it. Multiple community
+extensions make Pi an **MCP client** (consume external servers' tools — exactly what we need), not an
+MCP server:
+- **`pi-mcp-adapter`** (npm `pi-mcp-adapter`, repo `nicobailon/pi-mcp-adapter`) — **v2.10.0, 34 releases,
+  ~900★, "mature"**. Transports: **stdio + HTTP (StreamableHTTP with SSE fallback)** + Bearer/OAuth.
+  Config precedence includes `~/.config/mcp/mcp.json`, `<pi-agent-dir>/mcp.json`, project `.mcp.json`,
+  and `.pi/mcp.json`; standard `mcpServers` shape with a `url` for remote. **Works headless.** Exposes a
+  single token-efficient proxy tool `mcp` (the model calls `mcp({server,tool,…})`). **[confirmed: README]**
+- **`tickernelz/pi-mcp-tools`** (`pi install npm:@zhafron/pi-mcp-tools`) — auto-detects WebSocket /
+  **StreamableHTTP ("newest standard")** / SSE; remote `"type":"remote"` + `url`; has a **direct vs proxy**
+  tool-exposure toggle (direct → tools appear as `mcp_<server>_<tool>`). **[confirmed: README]**
+- An official MCP-extension example is tracked in the Pi repo (`earendil-works/pi#563`). **[confirmed]**
+
+The MCP a **member** Pi agent must consume is the per-agent **mesh-services** mailbox/board MCP —
+`src/mcp/mesh-services.ts` (the `this.mcp` injected at `control-plane.ts:1203`): **Streamable HTTP**
+(`WebStandardStreamableHTTPServerTransport`), per-agent URL `**/{agentId}/mcp**`, tools
+`send_mail`/`check_mail`/`board_*` (`mesh-services.ts:7,415,54`). It is **stateless, fresh-transport
+per request** by design (`mesh-services.ts:405` "must be stateless: a single stateful transport rejects
+every initialize after the [first]"). That is exactly the transport `pi-mcp-adapter` supports.
+(`src/mcp/mesh-control.ts` is a *separate*, single control MCP for the Mesh **Assistant** lifecycle —
+not the member mailbox.) **[confirmed]**
+
+### 10.2 Hands-on validation (done — evidence below)
+
+Goal per dispatch: prove "Pi can consume an MCP server's tool" with a low-risk local test. **Result:
+PASS — end-to-end, with a real model turn.**
+
+Setup (fully isolated in a temp `HOME`, real `~/.pi` untouched, all artifacts deleted after):
+1. Installed Pi: `npm i -g --prefix <tmp> @earendil-works/pi-coding-agent` → **`pi 0.79.8`** runs. **[confirmed]**
+2. Installed the MCP extension: `pi install npm:pi-mcp-adapter` → **`pi-mcp-adapter 2.10.0`** (`pi list`
+   shows it). **[confirmed]**
+3. Stood up a **minimal Streamable-HTTP MCP server** (same SDK + transport class as the real
+   `mesh-services.ts` — and, like it, **fresh transport per request**) exposing one tool `mesh_ping`
+   → returns the marker `PONG-MESH-7f3a9`.
+   `POST /mcp initialize` → **HTTP 200**. **[confirmed]**
+4. Configured `~/.config/mcp/mcp.json` = `{ "mcpServers": { "mesh": { "url": "http://127.0.0.1:<port>/mcp" } } }`.
+5. Pi noticed it had a `DEEPSEEK_API_KEY` and Pi lists DeepSeek models, so I ran a **real headless turn**
+   (`pi -p --provider deepseek --model deepseek-v4-flash "…call its mesh_ping tool … reply with EXACTLY
+   the text the tool returned …"`).
+
+**Evidence:** the turn's entire stdout was **`PONG-MESH-7f3a9`** (exit 0). That marker is unguessable and
+exists nowhere but the tool's return value, so DeepSeek (driven by Pi, headless) **must have called the
+MCP `mesh_ping` tool over streamable-HTTP and fed its result back into the answer.** A first attempt
+**failed at the MCP handshake (HTTP 500)** — but the 500 was *my toy server* reusing a stateless
+transport (an SDK constraint), **not** a Pi limitation; even then, Pi's adapter had clearly *reached and
+spoken MCP-over-HTTP* to the endpoint. After fixing the server to a per-request transport, the call
+succeeded. **[confirmed — I ran this]**
+
+This directly refutes the round-1 blocker: **Pi reaches and uses tools on a streamable-HTTP MCP server
+(our exact transport), headless.**
+
+### 10.3 Integration architecture (the key insight)
+
+The ACP adapter's "no MCP passthrough" **doesn't matter**, because **we don't need MCP to flow through
+ACP.** Pi loads its MCP extension and reads its *own* `mcp.json`. So:
+
+```
+control-plane spawns  pi-acp  (ACP/stdio bridge — start/initialize/session/prompt/stream/cancel)
+   └─ pi-acp spawns  pi --mode rpc   (with the pi-mcp-adapter extension installed in pi's config)
+        └─ pi-mcp-adapter reads <agent-cwd>/.pi/mcp.json  →  connects to the mesh MCP over HTTP
+             └─ mesh tools (send_mail / check_mail / board / control) available to the Pi model
+```
+
+The mesh already knows each agent's per-agent MCP URL (`this.mcp.urlFor(a.id)`); instead of relying on
+`session/new.mcpServers` (which `pi-acp` ignores), **the mesh writes `<agent-cwd>/.pi/mcp.json` with that
+URL** before spawn. Clean, native to Pi, no adapter fork required for the MCP half. **[inference, but
+each leg is individually confirmed]**
+
+Two residual wiring nuances (spike-level, not blockers):
+- **Proxy vs direct tools.** `pi-mcp-adapter` exposes one `mcp` proxy tool; our mesh briefing tells agents
+  to call `send_mail` etc. *directly*. Either (a) adjust the Pi member's briefing to use the `mcp({…})`
+  proxy (works — that's literally what my test did), or (b) use `tickernelz/pi-mcp-tools` **direct mode**
+  so tools surface as `mcp_mesh_send_mail`. *Recommend deciding in the spike.* **[inference]**
+- **Two pi wrappers at once.** `pi-acp` (ACP bridge) and `pi-mcp-adapter` (MCP tools) must coexist inside
+  one `pi --mode rpc` process. Plausible (both are standard pi extensions/wrappers) but **not yet
+  verified together** — my test drove `pi` directly in print mode, not through `pi-acp`. **[not verified]**
+
+### 10.4 Revised verdict, gate, plan
+
+**CONDITIONAL GO** (revises §5's NO-GO). The MCP question is answered (validated). Remaining risk is
+integration wiring + maintenance, which a focused spike resolves.
+
+**First implementation gate (must pass before any productionization):** a real **Pi *member* in a live
+mesh** can `send_mail` and `check_mail` through its mesh MCP — i.e. reproduce §10.2 but with (i) the real
+**`mesh-services` mailbox MCP URL** (`/{agentId}/mcp`), (ii) driven through `pi-acp` over ACP (not bare
+print mode), in a
+throwaway 2-agent mesh (Pi member ↔ one existing-harness agent). If that round-trips, the rest is the
+mechanical ~28-file harness add.
+
+**Revised phases (spike-first; hours, throwaway/flagged):**
+1. **Coexistence + ACP smoke.** Vendor/pin `pi-acp` + `pi-mcp-adapter`; confirm `pi-acp`-spawned
+   `pi --mode rpc` loads the MCP extension and a streamed ACP prompt round-trips. (Validates the two
+   wrappers coexist — §10.3 residual.)
+2. **GATE — mail round-trip.** Mesh writes `<cwd>/.pi/mcp.json` → real mesh MCP; Pi member sends/reads
+   mail with another agent. Decide proxy-vs-direct tool surface + the Pi member briefing here. **Go/no-go.**
+3. **Resume / respawn / kill / orphans** (cf. codex-acp orphan work); approvals policy (does `pi-acp`
+   surface ACP `request_permission`, or does Pi auto-run bash? — round-1 Open Q 8.4 still open).
+4. **Advertise + UX:** map `--model`/`--thinking` to ACP `configOptions` (likely an adapter change), add
+   Pi to the context-window table, web client harness-id plumbing.
+5. **Productionize:** full `HarnessId` addition (~28 files), install spec
+   (`@earendil-works/pi-coding-agent` + pinned `pi-acp` + `pi-mcp-adapter`), tests; decide fork/upstream.
+
+**Maintenance burden (real):** we'd pin/track **two** third-party packages — `pi-acp` (still an unofficial
+MVP, breaking-change-prone) **and** `pi-mcp-adapter` (mature but third-party). The MCP half is now low-risk
+(mature extension, our transport); the ACP-bridge half (`pi-acp`) is the fragile dependency. **[inference]**
+
+### 10.5 What is now confirmed vs still open (round 2)
+
+- **[confirmed, validated]** Pi consumes a streamable-HTTP MCP server's tool, headless (real DeepSeek turn
+  returned the tool marker).
+- **[confirmed]** Mature MCP-consuming extension exists (`pi-mcp-adapter` v2.10.0) supporting our transport
+  and project-local `.pi/mcp.json`; our mesh MCP is streamable-HTTP.
+- **[not verified]** `pi-acp` + `pi-mcp-adapter` coexisting in one process; the full ACP-driven path; the
+  real `mesh-services` mailbox MCP (vs my toy server); approvals via ACP; model/effort/window advertise through
+  `pi-acp`. These are the spike's job (gate = §10.4).
+- **[inference]** Net effort is a spike (steps 1–2) then the mechanical harness add; the dependency risk
+  shifts from "MCP" (solved) to "owning the `pi-acp` ACP bridge".
+
+---
+
 ## 9. Sources
 
 External (web):
@@ -271,6 +415,26 @@ External (web):
 - `pi-acp` fork docs (nyanshak): https://github.com/nyanshak/pi-extensions/blob/main/pi-acp/README.md
 - Pi on Zed's ACP registry: https://zed.dev/acp/agent/pi
 - ACP overview (LangChain docs): https://docs.langchain.com/oss/python/deepagents/acp
+
+Round-2 (MCP extension) external:
+- `pi-mcp-adapter` repo (nicobailon): https://github.com/nicobailon/pi-mcp-adapter — npm https://www.npmjs.com/package/pi-mcp-adapter
+- `pi-mcp-tools` repo (tickernelz): https://github.com/tickernelz/pi-mcp-tools
+- Pi official MCP-extension example issue: https://github.com/earendil-works/pi/issues/563
+- `@spences10/pi-mcp` (composable pi+MCP): https://github.com/spences10/my-pi
+- `pi-shell-acp` (ACP bridge w/ MCP config): https://github.com/junghan0611/pi-shell-acp
+
+Round-2 hands-on validation (ran locally, isolated temp HOME, artifacts deleted):
+- Installed `@earendil-works/pi-coding-agent@0.79.8` + `pi-mcp-adapter@2.10.0`; stood up a minimal
+  streamable-HTTP MCP server (`@modelcontextprotocol/sdk` `WebStandardStreamableHTTPServerTransport`,
+  per-request transport) exposing `mesh_ping`; configured `~/.config/mcp/mcp.json` with its `url`; ran
+  `pi -p --provider deepseek --model deepseek-v4-flash` → output was exactly the tool marker
+  `PONG-MESH-7f3a9` (exit 0). Confirms Pi calls a streamable-HTTP MCP tool headlessly.
+
+Round-2 internal:
+- `src/mcp/mesh-services.ts:7,405,415,54` (member mailbox/board MCP = stateless per-request
+  `WebStandardStreamableHTTPServerTransport`, per-agent `/{agentId}/mcp`, `send_mail`/`check_mail`/`board_*`, `urlFor`)
+- `src/control-plane.ts:207,1061,1203` (`this.mcp` = `MeshServicesServer`; injected URL `this.mcp.urlFor(a.id)`)
+- `src/mcp/mesh-control.ts` (separate Mesh **Assistant** control MCP — not the member mailbox)
 
 Internal (code paths read):
 - `src/harness.ts` (registry + `spawnConfigFor`)
