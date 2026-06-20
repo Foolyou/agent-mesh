@@ -62,3 +62,6 @@ None blocking for Step 1 — Step 0 docs + locked rules cover product scope. Any
 
 ## Change / review log
 - 2026-06-20 — created (Step 1 interaction design): index + 12 page docs. Awaiting prdmgr/user gate review.
+
+## Step 2 addendum (2026-06-20)
+Component vocabulary unified in Step 2 — see `../components/`. The shared-vocabulary section above (status chips, state words) is now backed by concrete component specs; per-page one-offs (mesh/agent/task/device/harness/notification rows, permission/confirm cards, panels, tabs) were unified into StatusListRow / ApprovalCard / PanelFrame / SegmentedControl and each page doc carries a "Components used (Step 2)" cross-link.

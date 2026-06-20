@@ -1,0 +1,61 @@
+# Step 2 components — 01 Primitives (atoms)
+
+Low-fi part specs. Format: purpose · variants/states · surfaces · desktop/mobile · reuse. Tokens are Step 3.
+
+## StatusChip (signature)
+- **Purpose**: at-a-glance status as `dot + icon + label` pill. The connective tissue across the app.
+- **Variants** (canonical 6, Step1 `00-index`): `ready`(ok ●) `working`(info ▶) `blocked`(bad ■) `idle`(off ○) `done`(good ✓) `attention`(warn !). Sizes: inline / compact (dot-only on dense rows). Optional count suffix.
+- **Surfaces**: shell connection, mesh rows, topology nodes, agent cards, board task status, harness status, channels, doctor findings, device status.
+- **Desktop/mobile**: same; compact (dot-only) where space is tight (mobile dense lists).
+- **Reuse**: embedded in StatusListRow, topology node, board card. Color from semantic tokens (Step 3).
+
+## Dot
+- **Purpose**: bare status dot (chip without label/icon) for ultra-dense or decorative use.
+- **Variants**: the 6 status colors. **Reuse**: inside StatusChip; standalone in tab labels.
+
+## Badge (count)
+- **Purpose**: small numeric/notification count.
+- **Variants**: number / dot-only; tones: unread(accent or info), urgent(bad).
+- **Surfaces**: 🔔 unread, pending-approval red count (topology node + overview), board task count, harness "update" indicator, channel pending count.
+- **Reuse**: overlaid on Button/icon/RouteLink/StatusListRow.
+
+## Button
+- **Purpose**: action trigger.
+- **Variants**: `primary`(accent bg) · `ghost`/secondary(line border) · `danger`(bad) · `link-style`; sizes sm/md; states default/hover/active/disabled/busy(spinner). Icon-only variant.
+- **Surfaces**: every page (Send, Start/Stop, Reload, install/update, approve, save…).
+- **Desktop/mobile**: mobile = larger tap targets, icon-only collapses to labeled where room.
+
+## ConfirmButton
+- **Purpose**: two-step confirm for destructive/irreversible actions (no native dialog).
+- **Variants**: armed/confirm states; danger tone; with confirm label text.
+- **Surfaces**: force-restart agent (runtime/harness), delete mesh, dangerous publish, revoke device/sender.
+- **Reuse**: a Button wrapper; pairs with ApprovalCard semantics.
+
+## RouteLink
+- **Purpose**: a real `<a href>` that SPA-navigates on unmodified same-origin left-click, native otherwise (open-new-tab works). Foundation of the route map (Step1 §3.2).
+- **Variants**: nav-row link, switcher segment, inline link, artifact link; active/current state.
+- **Surfaces**: left nav rows, view switcher, topbar app entries, artifact cards/links, board task links.
+- **Reuse**: wraps StatusListRow, SegmentedControl segments, AttachmentCard.
+
+## Input / Textarea / Select (dropdown)
+- **Purpose**: form fields.
+- **Variants/states**: text input, textarea (composer/charter), select/dropdown (mesh selector, harness/project/role, filters, language); default/focus/error/disabled.
+- **Surfaces**: new-mesh, settings, channels, filters, composer, mesh selector.
+- **Desktop/mobile**: native select on mobile; dropdowns become sheets where rich.
+
+## InfoIcon / Tooltip
+- **Purpose**: ⓘ revealing a description on hover/focus (declutters dense headers).
+- **Surfaces**: panel heads (topology/activity/mailbox), harness rows, settings, doctor.
+- **Reuse**: lives in ActionBar/PanelFrame head.
+
+## Skeleton
+- **Purpose**: loading placeholder (shape of forthcoming content).
+- **Variants**: line, block, row, card, table.
+- **Surfaces**: every page's `loading` state.
+
+## Spinner / ProgressBar
+- **Purpose**: indeterminate (spinner) / determinate (bar) busy feedback.
+- **Surfaces**: busy states everywhere; ProgressBar specifically for harness InstallProgress.
+
+## Change / review log
+- 2026-06-20 — created (Step 2).
