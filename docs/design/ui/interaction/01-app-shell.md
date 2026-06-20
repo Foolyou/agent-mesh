@@ -19,7 +19,7 @@ The global chrome that hosts every view: identity + connection, mesh selection, 
 ## Desktop
 ```
 ┌ topbar ───────────────────────────────────────────────────────────────────┐
-│ ◈ Mesh  ●connected │ mesh▾ dev-mesh  [运行态|看板] │ 🔔3  管理▾  设置▾        │
+│ ◈ Mesh  ●connected │ mesh: dev-mesh   [运行态|看板] │ 🔔3  管理▾  设置▾        │
 ├──────────────┬──────────────────────────────────────────┬──────────────────┤
 │ left nav     │ main stage (runtime A / board C)          │ right context    │
 │ mesh list    │ (largest; per active view)                │ (on-demand,      │
@@ -28,8 +28,9 @@ The global chrome that hosts every view: identity + connection, mesh selection, 
 │ (collapsible)│                                           │                  │
 └──────────────┴──────────────────────────────────────────┴──────────────────┘
 ```
-- Topbar left = brand + connection chip; center = mesh selector + view switcher (real `<a>`: `/mesh/<m>` vs `/mesh/<m>/board`); right = 🔔(unread count) · 管理▾(assistant/harnesses/channels/doctor) · 设置▾(theme/lang/auth/devices).
-- Left nav = mesh rows (each a real `<a href="/mesh/<m>">` with status chip), collapsible; `+ New mesh`.
+- Topbar left = brand + connection chip; center = **adaptive mesh control** + view switcher (real `<a>`: `/mesh/<m>` vs `/mesh/<m>/board`); right = 🔔(unread count) · 管理▾(assistant/harnesses/channels/doctor) · 设置▾(theme/lang/auth/devices).
+- **Mesh control is adaptive, not a permanent duplicate dropdown.** The **left nav is the primary mesh switcher** when it is visible. So: left nav **expanded** → topbar shows the current mesh as a **non-interactive label/breadcrumb** (`mesh: dev-mesh`); left nav **collapsed** (list hidden) → topbar shows a `mesh ▾` **select** as the fallback switcher. Mobile (no left nav) → topbar always keeps the `mesh ▾` select.
+- Left nav = mesh rows (each a real `<a href="/mesh/<m>">` with status chip), collapsible; `+ New mesh`. It is the canonical mesh switcher + status overview.
 - Right context collapses; content owned by the active view (doc 02/03).
 
 ## Mobile
@@ -59,3 +60,6 @@ Parts on this page map to shared components in `../components/` (reuse matrix: `
 
 ## Change / review log — Step 2 addendum
 - 2026-06-20 — Step 2 back-consistency: this page's one-off parts unified to shared components (StatusListRow / PanelFrame / SegmentedControl / ApprovalCard / Composer / EmptyState / ErrorBanner). See `../components/00-inventory.md` "Backward-consistency findings".
+
+## Change / review log — Step 6 addendum
+- 2026-06-21 — prdmgr/user revision (shell mockup ckpt): topbar mesh control is **adaptive**, with the left nav as the primary desktop mesh switcher — expanded nav → topbar mesh **label**, collapsed nav → topbar mesh **select**, mobile → always select. Replaces the earlier permanent topbar dropdown (which duplicated the left list). Realized in the `/__ui-mockup` shell mockup.

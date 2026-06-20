@@ -40,18 +40,23 @@ const MESHES: { id: string; status: Status }[] = [
 interface Sel {
   device: Device;
   view: View;
+  mesh: string;
   mode: Mode;
   accent: Accent;
 }
+
+const MESH_IDS = new Set(MESHES.map((m) => m.id));
 
 function readSel(): Sel {
   const search = typeof window !== "undefined" ? window.location.search : "";
   const p = new URLSearchParams(search);
   const m = p.get("mode");
   const a = p.get("accent");
+  const mesh = p.get("mesh");
   return {
     device: p.get("device") === "mobile" ? "mobile" : "desktop",
     view: p.get("view") === "board" ? "board" : "runtime",
+    mesh: mesh && MESH_IDS.has(mesh) ? mesh : MESHES[0].id,
     mode: MODE_SET.has(m as Mode) ? (m as Mode) : "dark-slate",
     accent: ACCENT_SET.has(a as Accent) ? (a as Accent) : "signal-teal",
   };
@@ -87,7 +92,7 @@ function StagePlaceholder({ view }: { view: View }) {
 }
 
 // ── desktop shell ────────────────────────────────────────────────────────────
-function DesktopShell({ view, setView, mesh, setMesh }: { view: View; setView: (v: View) => void; mesh: string; setMesh: (m: string) => void }) {
+function DesktopShell({ view, setView, mesh, setMesh, meshHref }: { view: View; setView: (v: View) => void; mesh: string; setMesh: (m: string) => void; meshHref: (id: string) => string }) {
   const [navCollapsed, setNavCollapsed] = useState(false);
   const [ctxCollapsed, setCtxCollapsed] = useState(false);
   return (
@@ -97,12 +102,22 @@ function DesktopShell({ view, setView, mesh, setMesh }: { view: View; setView: (
         <Brand />
         <ConnectionChip />
         <span className="mx-1 h-5 w-px bg-border" aria-hidden="true" />
-        <label className="inline-flex items-center gap-1.5 text-sm">
-          <span className="text-text-muted">mesh</span>
-          <select value={mesh} onChange={(e) => setMesh(e.target.value)} aria-label="active mesh" className="rounded-lg border border-border-strong bg-surface-sunken px-2 py-1 text-sm text-text-primary">
-            {MESHES.map((m) => <option key={m.id} value={m.id}>{m.id}</option>)}
-          </select>
-        </label>
+        {/* Adaptive mesh control: when the left nav is expanded it IS the primary mesh
+            switcher, so the topbar shows the current mesh as a non-interactive label.
+            When the nav is collapsed (list hidden), the topbar falls back to a select. */}
+        {navCollapsed ? (
+          <label data-topbar-mesh="select" className="inline-flex items-center gap-1.5 text-sm">
+            <span className="text-text-muted">mesh</span>
+            <select value={mesh} onChange={(e) => setMesh(e.target.value)} aria-label="active mesh" className="rounded-lg border border-border-strong bg-surface-sunken px-2 py-1 text-sm text-text-primary">
+              {MESHES.map((m) => <option key={m.id} value={m.id}>{m.id}</option>)}
+            </select>
+          </label>
+        ) : (
+          <span data-topbar-mesh="label" aria-label="current mesh" className="inline-flex items-center gap-1.5 text-sm">
+            <span className="text-text-muted">mesh</span>
+            <span className="font-medium text-text-primary">{mesh}</span>
+          </span>
+        )}
         <SegmentedControl
           ariaLabel="View"
           value={view}
@@ -131,8 +146,9 @@ function DesktopShell({ view, setView, mesh, setMesh }: { view: View; setView: (
             </div>
           ) : (
             <div className="flex flex-col gap-1">
+              {/* Primary mesh switcher: each row is a real link-like affordance (RouteLink <a>). */}
               {MESHES.map((m) => (
-                <StatusListRow key={m.id} status={m.status} title={m.id} href={`/__ui-mockup?view=${view}`} active={m.id === mesh} />
+                <StatusListRow key={m.id} status={m.status} title={m.id} href={meshHref(m.id)} active={m.id === mesh} />
               ))}
               <div className="mt-2"><Button variant="primary" size="sm" className="w-full">+ New mesh</Button></div>
             </div>
@@ -172,9 +188,12 @@ function MobileShell({ tab, setTab, mesh, setMesh }: { tab: MobileTab; setTab: (
         <Brand />
         <ConnectionChip compact />
         <span className="flex-1" aria-hidden="true" />
-        <select value={mesh} onChange={(e) => setMesh(e.target.value)} aria-label="active mesh" className="rounded-lg border border-border-strong bg-surface-sunken px-2 py-1 text-sm text-text-primary">
-          {MESHES.map((m) => <option key={m.id} value={m.id}>{m.id}</option>)}
-        </select>
+        {/* No left nav on mobile, so the topbar always keeps the mesh select. */}
+        <label data-topbar-mesh="select" className="inline-flex items-center">
+          <select value={mesh} onChange={(e) => setMesh(e.target.value)} aria-label="active mesh" className="rounded-lg border border-border-strong bg-surface-sunken px-2 py-1 text-sm text-text-primary">
+            {MESHES.map((m) => <option key={m.id} value={m.id}>{m.id}</option>)}
+          </select>
+        </label>
       </header>
 
       {/* active view */}
@@ -213,10 +232,19 @@ function MobileShell({ tab, setTab, mesh, setMesh }: { tab: MobileTab; setTab: (
   );
 }
 
+function selQuery(s: Sel): string {
+  const p = new URLSearchParams();
+  p.set("device", s.device);
+  p.set("view", s.view);
+  p.set("mesh", s.mesh);
+  p.set("mode", s.mode);
+  p.set("accent", s.accent);
+  return p.toString();
+}
+
 export function UiMockup() {
   const [sel, setSel] = useState<Sel>(readSel);
-  const { device, view, mode, accent } = sel;
-  const [mesh, setMesh] = useState(MESHES[0].id);
+  const { device, view, mesh, mode, accent } = sel;
   const [mobileTab, setMobileTab] = useState<MobileTab>(view === "board" ? "board" : "runtime");
 
   useEffect(() => {
@@ -231,13 +259,12 @@ export function UiMockup() {
   const nav = (next: Partial<Sel>) => {
     const merged = { ...sel, ...next };
     setSel(merged);
-    const p = new URLSearchParams();
-    p.set("device", merged.device);
-    p.set("view", merged.view);
-    p.set("mode", merged.mode);
-    p.set("accent", merged.accent);
-    window.history.replaceState({}, "", `/__ui-mockup?${p.toString()}`);
+    window.history.replaceState({}, "", `/__ui-mockup?${selQuery(merged)}`);
   };
+
+  // Real link target for a mesh row (RouteLink SPA-navigates; popstate re-reads state).
+  const meshHref = (id: string) => `/__ui-mockup?${selQuery({ ...sel, mesh: id })}`;
+  const setMesh = (m: string) => nav({ mesh: m });
 
   const setView = (v: View) => {
     nav({ view: v });
@@ -269,7 +296,7 @@ export function UiMockup() {
       <div className="flex justify-center">
         {device === "mobile"
           ? <MobileShell tab={mobileTab} setTab={(t) => { setMobileTab(t); if (t === "runtime" || t === "board") nav({ view: t }); }} mesh={mesh} setMesh={setMesh} />
-          : <DesktopShell view={view} setView={setView} mesh={mesh} setMesh={setMesh} />}
+          : <DesktopShell view={view} setView={setView} mesh={mesh} setMesh={setMesh} meshHref={meshHref} />}
       </div>
     </div>
   );

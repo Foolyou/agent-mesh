@@ -8,19 +8,23 @@ import { UiMockup } from "./UiMockup";
 
 const desktop = renderToStaticMarkup(<UiMockup />);
 
-test("desktop shell: topbar (mesh selector + view switcher + 管理/设置/通知), left nav, stage", () => {
+test("desktop shell: adaptive topbar (label while nav expanded) + view switcher + nav + stage", () => {
   expect(desktop).toContain('data-mockup="root"');
   expect(desktop).toContain('data-device="desktop"');
-  expect(desktop).toContain('aria-label="active mesh"'); // mesh selector
+  // Nav expanded by default → topbar mesh control is a non-interactive LABEL, not a select.
+  expect(desktop).toContain('data-topbar-mesh="label"');
+  expect(desktop).not.toContain('data-topbar-mesh="select"');
+  expect(desktop).not.toContain('aria-label="active mesh"'); // no topbar select while nav expanded
   expect(desktop).toContain('role="radiogroup"'); // SegmentedControl view switcher
   expect(desktop).toContain("运行态");
   expect(desktop).toContain("看板");
   expect(desktop).toContain("管理▾");
   expect(desktop).toContain("设置▾");
   expect(desktop).toContain("+ New mesh");
-  expect(desktop).toContain('aria-label="meshes"'); // left nav
+  expect(desktop).toContain('aria-label="meshes"'); // left nav (primary mesh switcher)
   expect(desktop).toContain('aria-label="context"'); // right context
   expect(desktop).toContain("dev-mesh"); // fixture mesh
+  expect(desktop).toContain('href="/__ui-mockup?'); // mesh rows are real link affordances
   expect(desktop).toContain("视图占位"); // stage placeholder
 });
 

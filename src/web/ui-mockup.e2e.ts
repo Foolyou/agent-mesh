@@ -57,6 +57,26 @@ try {
     if (await page.locator('[aria-label="meshes"]').count() !== 1) throw new Error("left nav missing");
   });
 
+  await step("adaptive topbar: nav expanded → mesh LABEL (no select); collapsed → SELECT", async () => {
+    await page.goto(`${BASE}/__ui-mockup?device=desktop`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-mockup="frame"][data-device="desktop"]', { timeout: 8000 });
+    if (await page.locator('[data-topbar-mesh="label"]').count() !== 1) throw new Error("expanded nav should show a mesh label");
+    if (await page.locator('[data-topbar-mesh="select"]').count() !== 0) throw new Error("expanded nav must NOT show a topbar select");
+    await page.getByRole("button", { name: "收起导航" }).click();
+    await sleep(120);
+    if (await page.locator('[data-topbar-mesh="select"]').count() !== 1) throw new Error("collapsed nav should show the topbar select");
+    if (await page.locator('[data-topbar-mesh="label"]').count() !== 0) throw new Error("collapsed nav must NOT show the label");
+  });
+
+  await step("left nav is the primary mesh switcher (real link rows change the active mesh)", async () => {
+    await page.goto(`${BASE}/__ui-mockup?device=desktop`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-topbar-mesh="label"]', { timeout: 8000 });
+    await page.locator('[aria-label="meshes"]').getByRole("link", { name: "alpha" }).click();
+    await sleep(120);
+    const label = (await page.locator('[data-topbar-mesh="label"]').innerText()).trim();
+    if (!label.includes("alpha")) throw new Error(`topbar label did not follow nav selection: ${label}`);
+  });
+
   await step("?device=mobile deep link renders the mobile shell + bottom tabs", async () => {
     await page.goto(`${BASE}/__ui-mockup?device=mobile`, { waitUntil: "domcontentloaded" });
     await page.waitForSelector('[data-mockup="frame"][data-device="mobile"]', { timeout: 8000 });
@@ -81,11 +101,20 @@ try {
     if ((await cssVar("--accent")) !== expected.accent) throw new Error(`--accent=${await cssVar("--accent")}`);
   });
 
-  await step("screenshot desktop · dark-slate × signal-teal", async () => {
+  await step("screenshot desktop · expanded nav (dark-slate × signal-teal)", async () => {
+    await page.goto(`${BASE}/__ui-mockup?device=desktop&view=runtime&mode=dark-slate&accent=signal-teal`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-topbar-mesh="label"]', { timeout: 8000 });
+    await sleep(150);
+    await shotFrame(`${SHOTS}/shell-desktop-expanded-dark-slate-signal-teal.png`);
+  });
+
+  await step("screenshot desktop · collapsed nav (dark-slate × signal-teal)", async () => {
     await page.goto(`${BASE}/__ui-mockup?device=desktop&view=runtime&mode=dark-slate&accent=signal-teal`, { waitUntil: "domcontentloaded" });
     await page.waitForSelector('[data-mockup="frame"][data-device="desktop"]', { timeout: 8000 });
+    await page.getByRole("button", { name: "收起导航" }).click();
+    await page.waitForSelector('[data-topbar-mesh="select"]', { timeout: 8000 });
     await sleep(150);
-    await shotFrame(`${SHOTS}/shell-desktop-dark-slate-signal-teal.png`);
+    await shotFrame(`${SHOTS}/shell-desktop-collapsed-dark-slate-signal-teal.png`);
   });
 
   await step("screenshot mobile · dark-slate × signal-teal", async () => {
@@ -93,13 +122,6 @@ try {
     await page.waitForSelector('[data-mockup="frame"][data-device="mobile"]', { timeout: 8000 });
     await sleep(150);
     await shotFrame(`${SHOTS}/shell-mobile-dark-slate-signal-teal.png`);
-  });
-
-  await step("screenshot desktop · dark-slate × ember (accent comparison)", async () => {
-    await page.goto(`${BASE}/__ui-mockup?device=desktop&view=runtime&mode=dark-slate&accent=ember`, { waitUntil: "domcontentloaded" });
-    await page.waitForSelector('[data-mockup="frame"][data-device="desktop"]', { timeout: 8000 });
-    await sleep(150);
-    await shotFrame(`${SHOTS}/shell-desktop-dark-slate-ember.png`);
   });
 
   await step("no page errors across the mockup", async () => {
