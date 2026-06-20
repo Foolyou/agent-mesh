@@ -144,7 +144,7 @@ if wanted, an in-memory, TTL-bounded `nonce`-seen set in the backend rejects a r
 | lock contention w/ backend | yes (devices.json) | none |
 | trust model | a standing (brief) credential | **proof of key possession**, no standing credential |
 
-**Recommend Approach 2.** It is *safer* — least-privilege (a lifecycle CLI never holds a full-API
+**Decision: Approach 2 (approved by prdmgr/user).** It is *safer* — least-privilege (a lifecycle CLI never holds a full-API
 credential), stateless (no `devices.json` pollution, cleanup races, or lock contention), and a hard
 cryptographic TTL — and it expresses the actual trust model (host-key possession) instead of fabricating
 a transient standing credential. Its one cost, a new accept-path in the gate, is **bounded and
@@ -153,8 +153,9 @@ testable**: verification is a self-contained pure function (prefix → kid → H
 rotated-out kid, expired, wrong scope/aud, truncated MAC, off-whitelist path), and it never weakens
 device-auth — it is an **additional, narrower** path, not a bypass, with no loopback/env exception.
 
-**Approach 1 remains the fallback** if the lead wants the absolute-minimal diff (zero auth-path change):
-it works and is simple, at the cost of a full-scope ephemeral credential + store churn.
+**Rejected alternative (Approach 1)**: the per-command device token works and is the absolute-minimal
+diff (zero auth-path change), but it was rejected for the full-scope ephemeral credential + `devices.json`
+store churn/pollution it entails. Recorded here only as the considered-and-dropped option.
 
 **Schema**: Approach 2 needs **no change to `devices.json`**; it reuses `keys.json` as-is (plus the HKDF
 sub-key derivation, which adds no stored field). Approach 1 also needs no schema change (see its TTL
@@ -256,16 +257,22 @@ and we surface that verbatim.
   `start`/`stop` without a name → exit 2, and that an off-whitelist route with a host bearer is rejected.
   Finalize this doc's “as-built” notes.
 
-If the lead instead picks Approach 1, C1 becomes `cli-token.ts` (mint/GC/cleanup) with no auth-path
-change, and the client uses a device bearer — the C2/C3 dispatch + e2e shape is identical.
+## Tests summary (as-built)
 
-## Tests summary
-
-- **cli-dispatch unit**: new arity/tail cases above (alongside the existing resolver tests).
-- **cli-token unit**: mint/cleanup/GC/concurrency/pre-flight.
-- **mesh-control-client unit**: request/headers + error classification (mocked fetch).
-- **lifecycle e2e**: full start→status→stop→restart→start-fresh against a live `--fake` backend, plus
-  the backend-down and missing-name failure paths.
+- **host-bearer unit** (`cli-host-bearer.test.ts`): round-trip + rotation-survives; adversarial
+  rejections — tampered claims / forged mac / truncated mac / expired / wrong scope / wrong aud /
+  unknown-or-rotated-out kid / future iat / malformed / absent keystore.
+- **auth gate unit** (`web/auth.test.ts`): host bearer authorizes only the lifecycle whitelist; denied
+  on `/ws` and every other `/api` route; expired/tampered denied; device-token path still full API + ws.
+- **mesh-control-client unit**: request shape + real host-bearer header + HTTP→error classification
+  (stubbed fetch).
+- **mesh-cli-ops unit**: every branch + idempotent no-ops + the restart stop→poll→start sequence/timeout
+  (fake client).
+- **cli-dispatch unit**: arity/tail (`start <name> --fresh`, `restart`/`status` with & without a name,
+  global-flag peel).
+- **lifecycle e2e** (`mesh-cli-lifecycle.e2e.test.ts`): full status→start→restart→stop→start-fresh
+  against a live `--fake` control plane through the real host-key auth path, plus backend-down (exit 5),
+  missing-name (exit 2), missing-mesh (exit 4), and no-arg `status` staying control-plane.
 
 ## As-built (landed C1–C3)
 
@@ -291,13 +298,13 @@ Notes / minor deviations:
 - No-arg `restart` is left to the cli-dispatch arity unit tests (running it would restart the shared
   test control plane); no-arg `status` (read-only) is exercised live in the e2e.
 
-## Open decisions for the lead
+## Decisions (all approved — prdmgr/user)
 
-1. **Auth approach**: **Approach 2 — host-key HMAC scoped bearer (recommended)** vs Approach 1
-   (per-command device token, minimal diff). Drives C1.
-2. **Idempotent no-ops → exit 0** (recommended) vs a distinct “state conflict” code?
-3. **`restart` as a CLI sequence** (recommended, no new endpoint) vs add `POST /meshes/:name/restart`?
-4. **Replay**: TTL-only (recommended) vs add the optional in-memory nonce-seen cache now.
-5. Exit-code numbers (4/5/6) — acceptable, or align to an existing convention you prefer?
-6. No `devices.json`/`DeviceRecord` schema change is needed for either approach; the earlier
-   `expiresAt` idea is only relevant if we ever want long-lived scoped CLI tokens (not now).
+1. **Auth**: Approach 2 — host-key HKDF→HMAC scoped bearer (`mhk1.<claims>.<mac>`, TTL 60s,
+   scope=`mesh.lifecycle`, aud=`mesh-control-plane`, lifecycle-3-route whitelist; `/ws` + other API
+   denied; device-auth unchanged).
+2. **Idempotent no-ops → exit 0** (start-on-running / stop-on-stopped).
+3. **`restart`** = CLI stop→poll→start sequence; **no new endpoint**.
+4. **Replay**: TTL-only (60s); no nonce-seen cache.
+5. **Exit codes**: 4 not-found, 5 control-plane-down (+`mesh up` hint), 6 auth, 2 usage, 1 other, 0 ok.
+6. **No `devices.json`/`DeviceRecord` schema change** (the host-key path reuses `keys.json` only).
