@@ -90,6 +90,13 @@ test("full single-mesh lifecycle against a real --fake control plane (host-key a
       expect(s0.code).toBe(0);
       expect(s0.out).toContain("demo: stopped");
 
+      // strict tail parsing (reviewer Medium): extra tokens / stray flags → usage exit 2 with NO
+      // lifecycle action — the reproduced `stop demo extra` must not stop the mesh.
+      for (const args of [["stop", "demo", "extra"], ["restart", "demo", "extra"], ["status", "demo", "extra"], ["start", "demo", "--fresh", "extra"], ["start", "demo", "--bogus"], ["status", "--bogus"], ["restart", "--bogus"]]) {
+        expect((await cli(base, port, args)).code).toBe(2);
+      }
+      expect((await cli(base, port, ["status", "demo"])).out).toContain("demo: stopped"); // untouched
+
       // start → running
       const start = await cli(base, port, ["start", "demo"]);
       expect(start.code).toBe(0);

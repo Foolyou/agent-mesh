@@ -2,7 +2,7 @@
 // MeshControlClient drives every branch: exit-code mapping, idempotent no-ops, the restart
 // stop→poll→start sequence, and its timeout — no real backend.
 import { test, expect } from "bun:test";
-import { opStart, opStop, opStatus, opRestart, EXIT } from "./mesh-cli-ops";
+import { opStart, opStop, opStatus, opRestart, parseLifecycleTail, EXIT } from "./mesh-cli-ops";
 import type { ControlOutcome, MeshControlClient, MeshLifecycleInfo } from "./mesh-control-client";
 
 const mesh = (name: string, status: string, agents: MeshLifecycleInfo["agents"] = []): MeshLifecycleInfo => ({ name, status, agents });
@@ -28,6 +28,47 @@ function fake(opts: FakeOpts = {}) {
   return { c, actions };
 }
 const ok = (...m: MeshLifecycleInfo[]): ControlOutcome<MeshLifecycleInfo[]> => ({ ok: true, data: m });
+
+// ── parseLifecycleTail (strict tail parsing — reviewer Medium: no silent act-on-wrong-target) ──
+
+test("parseLifecycleTail: a single bare name targets one mesh", () => {
+  expect(parseLifecycleTail("start", ["demo"])).toEqual({ kind: "mesh", name: "demo", fresh: false });
+  expect(parseLifecycleTail("start", ["demo", "--fresh"])).toEqual({ kind: "mesh", name: "demo", fresh: true });
+  expect(parseLifecycleTail("stop", ["demo"])).toEqual({ kind: "mesh", name: "demo", fresh: false });
+  expect(parseLifecycleTail("status", ["demo"])).toEqual({ kind: "mesh", name: "demo", fresh: false });
+  expect(parseLifecycleTail("restart", ["demo"])).toEqual({ kind: "mesh", name: "demo", fresh: false });
+});
+
+test("parseLifecycleTail: no-arg status/restart are the control-plane commands", () => {
+  expect(parseLifecycleTail("status", [])).toEqual({ kind: "control-plane" });
+  expect(parseLifecycleTail("restart", [])).toEqual({ kind: "control-plane" });
+});
+
+test("parseLifecycleTail: start/stop with no name → usage", () => {
+  expect(parseLifecycleTail("start", []).kind).toBe("usage");
+  expect(parseLifecycleTail("stop", []).kind).toBe("usage");
+});
+
+test("parseLifecycleTail: EXTRA positionals → usage (the reproduced bug: `stop demo extra`)", () => {
+  for (const cmd of ["start", "stop", "status", "restart"] as const) {
+    expect(parseLifecycleTail(cmd, ["demo", "extra"]).kind).toBe("usage");
+  }
+  expect(parseLifecycleTail("start", ["demo", "--fresh", "extra"]).kind).toBe("usage"); // start demo --fresh extra
+});
+
+test("parseLifecycleTail: unknown/duplicate/value-form local flags → usage", () => {
+  expect(parseLifecycleTail("start", ["demo", "--bogus"]).kind).toBe("usage"); // start demo --bogus
+  expect(parseLifecycleTail("start", ["demo", "--fresh", "--fresh"]).kind).toBe("usage"); // duplicate
+  expect(parseLifecycleTail("start", ["demo", "--fresh=1"]).kind).toBe("usage"); // value form not supported
+  expect(parseLifecycleTail("stop", ["demo", "--fresh"]).kind).toBe("usage"); // --fresh only valid for start
+  expect(parseLifecycleTail("status", ["demo", "--anything"]).kind).toBe("usage");
+  expect(parseLifecycleTail("restart", ["demo", "--anything"]).kind).toBe("usage");
+});
+
+test("parseLifecycleTail: status/restart with a stray flag and NO name is usage, not silent control-plane", () => {
+  expect(parseLifecycleTail("status", ["--bogus"]).kind).toBe("usage"); // status --bogus
+  expect(parseLifecycleTail("restart", ["--bogus"]).kind).toBe("usage"); // restart --bogus
+});
 
 // ── status ──
 

@@ -21,7 +21,7 @@ import { collectPsDetail, runDoctor, renderPsDetail, renderDoctor, doctorExitCod
 import { cliPsSources, doctorSources, diagnosticsRunDir } from "./diagnostics-sources";
 import { resolveCommand, isKnownCommand, usageLines, channelsUsageLines, CHANNEL_PROVIDERS } from "./cli-dispatch";
 import { httpMeshControlClient } from "./mesh-control-client";
-import { opStart, opStop, opRestart, opStatus, type OpResult } from "./mesh-cli-ops";
+import { opStart, opStop, opRestart, opStatus, parseLifecycleTail, type OpResult, type LifecycleCommand } from "./mesh-cli-ops";
 import { join } from "node:path";
 import * as service from "./service";
 
@@ -62,9 +62,6 @@ const cmd = command ?? "status-help";
 const g = (k: string): string | undefined => (typeof globals[k] === "string" ? (globals[k] as string) : undefined);
 const gb = (k: string): boolean => globals[k] === true;
 const tailHas = (f: string) => commandTail.includes(f);
-// First positional in the command tail (globals are already peeled) — the mesh NAME for the
-// single-mesh lifecycle commands. `-`-prefixed tokens are flags (e.g. `--fresh`), never the name.
-const meshName = commandTail.find((a) => !a.startsWith("-"));
 
 const fake = gb("fake");
 
@@ -218,26 +215,26 @@ if (cmd === "up") {
   await service.up(base, root, svcPort, { cold: svcCold, passthrough: svcPass() });
 } else if (cmd === "down") {
   await service.down(root, svcPort, { cold: svcCold });
-} else if (cmd === "start") {
-  if (!meshName) {
-    console.error("usage: mesh start <name> [--fresh]   (use `mesh up` to start the control plane)");
+} else if (cmd === "start" || cmd === "stop" || cmd === "status" || cmd === "restart") {
+  // Strict tail parse: a single bare mesh name (start also allows one `--fresh`); extra positionals or
+  // stray local flags are a usage error (exit 2), never a silent act-on-wrong-target. A no-arg
+  // `status`/`restart` is the control-plane command; `start`/`stop` are single-mesh only.
+  const plan = parseLifecycleTail(cmd as LifecycleCommand, commandTail);
+  if (plan.kind === "usage") {
+    console.error(plan.usage);
     process.exitCode = 2;
+  } else if (plan.kind === "control-plane") {
+    if (cmd === "status") await service.status(root, svcPort);
+    else await service.restart(base, root, svcPort, { cold: svcCold, passthrough: svcPass() });
+  } else if (cmd === "start") {
+    await runMeshOp(opStart(meshClient(), plan.name, { fresh: plan.fresh }));
+  } else if (cmd === "stop") {
+    await runMeshOp(opStop(meshClient(), plan.name));
+  } else if (cmd === "status") {
+    await runMeshOp(opStatus(meshClient(), plan.name));
   } else {
-    await runMeshOp(opStart(meshClient(), meshName, { fresh: tailHas("--fresh") }));
+    await runMeshOp(opRestart(meshClient(), plan.name));
   }
-} else if (cmd === "stop") {
-  if (!meshName) {
-    console.error("usage: mesh stop <name>   (use `mesh down` to stop the control plane)");
-    process.exitCode = 2;
-  } else {
-    await runMeshOp(opStop(meshClient(), meshName));
-  }
-} else if (cmd === "status") {
-  if (meshName) await runMeshOp(opStatus(meshClient(), meshName));
-  else await service.status(root, svcPort);
-} else if (cmd === "restart") {
-  if (meshName) await runMeshOp(opRestart(meshClient(), meshName));
-  else await service.restart(base, root, svcPort, { cold: svcCold, passthrough: svcPass() });
 } else if (cmd === "logs") {
   await service.logs(root, { follow: tailHas("-f") || tailHas("--follow") });
 } else if (cmd === "ps") {

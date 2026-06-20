@@ -14,6 +14,48 @@ export interface OpResult {
   err: string[];
 }
 
+export type LifecycleCommand = "start" | "stop" | "status" | "restart";
+
+/** The resolved intent of a lifecycle command's verbatim tail. `usage` carries the line to print on
+ *  exit 2. `control-plane` is only ever returned for a no-arg `status`/`restart`. */
+export type LifecyclePlan =
+  | { kind: "mesh"; name: string; fresh: boolean }
+  | { kind: "control-plane" }
+  | { kind: "usage"; usage: string };
+
+const USAGE: Record<LifecycleCommand, string> = {
+  start: "usage: mesh start <name> [--fresh]   (use `mesh up` to start the control plane)",
+  stop: "usage: mesh stop <name>   (use `mesh down` to stop the control plane)",
+  status: "usage: mesh status <name>   (omit <name> for control-plane status)",
+  restart: "usage: mesh restart <name>   (omit <name> to restart the control plane)",
+};
+
+/** Parse a single-mesh lifecycle command's tail STRICTLY (globals are already peeled by the resolver).
+ *  Rejects extra positionals and stray local flags with `usage` (→ exit 2) so a typo can never silently
+ *  act on the wrong target. `start` additionally allows exactly one `--fresh`; `stop`/`status`/`restart`
+ *  allow no local flags. A no-arg `status`/`restart` (empty tail) is the control-plane command; a
+ *  `status`/`restart` whose tail is non-empty but not a single bare name is a usage error (NOT a silent
+ *  fallback to the control plane). */
+export function parseLifecycleTail(cmd: LifecycleCommand, tail: string[]): LifecyclePlan {
+  const positionals = tail.filter((t) => !t.startsWith("-"));
+  const flags = tail.filter((t) => t.startsWith("-"));
+  const usage = (): LifecyclePlan => ({ kind: "usage", usage: USAGE[cmd] });
+
+  if ((cmd === "status" || cmd === "restart") && tail.length === 0) return { kind: "control-plane" };
+
+  if (positionals.length !== 1) return usage(); // need exactly one mesh name (missing or extra)
+
+  if (cmd === "start") {
+    const fresh = flags.filter((f) => f === "--fresh");
+    const other = flags.filter((f) => f !== "--fresh");
+    if (other.length > 0 || fresh.length > 1) return usage(); // only a single bare `--fresh` is allowed
+    return { kind: "mesh", name: positionals[0]!, fresh: fresh.length === 1 };
+  }
+  // stop / status / restart: no local flags permitted on the single-mesh path
+  if (flags.length > 0) return usage();
+  return { kind: "mesh", name: positionals[0]!, fresh: false };
+}
+
 const isStopped = (s: string) => s === "stopped" || s === "dead";
 const isRunning = (s: string) => s === "running" || s === "starting";
 
