@@ -267,6 +267,30 @@ change, and the client uses a device bearer — the C2/C3 dispatch + e2e shape i
 - **lifecycle e2e**: full start→status→stop→restart→start-fresh against a live `--fake` backend, plus
   the backend-down and missing-name failure paths.
 
+## As-built (landed C1–C3)
+
+Implemented exactly as specified above (Approach 2, approved decisions). Commits on
+`task/mesh-cli-lifecycle`:
+
+- **C1 `6989f2f`** — host-key bearer crypto + gate verify. `src/cli-host-bearer.ts`
+  (`signHostBearer` / pure `verifyHostBearer`, HKDF sub-key, `mhk1.<claims>.<mac>`, 60s TTL); host-key
+  branch + `isLifecycleRoute` whitelist in `src/web/auth.ts`; `route`/`method`/`path` threaded through
+  `server.ts` + `api-server.ts`. Adversarial tests in `cli-host-bearer.test.ts` + `web/auth.test.ts`.
+- **C2 `e9c5bef`** — `src/mesh-control-client.ts` (signed transport + error classification),
+  `src/mesh-cli-ops.ts` (idempotency + restart stop→poll→start + exit-code mapping), `main.ts` dispatch
+  re-wire (reclaim start/stop, restart/status arity, `--fresh`, missing-name → exit 2),
+  `cli-dispatch.ts` usage. Unit tests for ops/client/dispatch.
+- **C3** — `src/mesh-cli-lifecycle.e2e.test.ts`: spawns a real `mesh run --fake` control plane under a
+  temp root and drives the actual binary through the real host-key auth path.
+
+Notes / minor deviations:
+- The e2e exercises `start <name> --fresh` from a STOPPED mesh: the `--fake` `startMesh` throws on an
+  already-running mesh (it ignores `sessionStrategy`), so `--fresh` on a running fake mesh would surface
+  the API error (exit 1). The real backend decides fresh-restart semantics; the `{sessionStrategy:
+  "fresh"}` wire shape is asserted in the client unit test.
+- No-arg `restart` is left to the cli-dispatch arity unit tests (running it would restart the shared
+  test control plane); no-arg `status` (read-only) is exercised live in the e2e.
+
 ## Open decisions for the lead
 
 1. **Auth approach**: **Approach 2 — host-key HMAC scoped bearer (recommended)** vs Approach 1
