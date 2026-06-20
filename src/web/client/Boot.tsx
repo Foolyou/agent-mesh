@@ -1,7 +1,8 @@
 // Boot gate (design device-auth.md §4.1): before the console (and its WebSocket) loads, check
-// authorization against the REAL server gate via bootAuthorized() — so a loopback-only dev/host
-// session (no token, server-trusted) opens normally, while an unauthorized remote sees a MINIMAL
-// device-code page that polls for approval. The page never surfaces internal failure reasons.
+// authorization against the REAL server gate via bootAuthorized(). Device-auth phase 6 made an
+// approved device token the ONLY allow path (loopback is no longer trusted), so EVERY session —
+// including local dev/host — needs a token: an unauthorized device sees a MINIMAL device-code page
+// that polls for approval (or accepts a one-time bootstrap token). No internal failure reasons leak.
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { App } from "./App";
 import { bootAuthorized, runEnrollment, submitBootstrap, type DeviceAuthPhase } from "./device-auth";

@@ -2,7 +2,8 @@
 // stale running-agent prompt, respawn clearing, and self-installer guidance.
 // Run: bun run src/web/harness-ui.e2e.ts
 import { type Page } from "playwright";
-import { launchChromium, e2eEnv } from "./e2e-playwright";
+import { authedContext, authedReady, launchChromium, provisionE2eAuth } from "./e2e-playwright";
+import { rm } from "node:fs/promises";
 
 const PORT = Number(process.env.E2E_PORT) || 15082;
 const BASE = `http://localhost:${PORT}`;
@@ -24,7 +25,7 @@ async function step(name: string, fn: () => Promise<void>) {
 async function waitReady() {
   for (let i = 0; i < 80; i++) {
     try {
-      if ((await fetch(`${BASE}/api/state`)).ok) return;
+      if ((await authedReady(BASE, auth.token)).ok) return;
     } catch {}
     await sleep(250);
   }
@@ -100,16 +101,18 @@ function claudeRow() {
   return row;
 }
 
+const auth = await provisionE2eAuth();
 const server = Bun.spawn(["bun", "run", "src/main.ts", "--fake", "--port", String(PORT)], {
   stdout: "pipe",
   stderr: "pipe",
-  env: e2eEnv(),
+  env: auth.env,
 });
 const browser = await launchChromium();
 
 try {
   await waitReady();
-  const page: Page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  const ctx = await authedContext(browser, auth.token, { viewport: { width: 1440, height: 900 } });
+  const page: Page = await ctx.newPage();
   const errors: string[] = [];
   page.on("console", (m) => {
     if (m.type() === "error" && !/Failed to load resource/.test(m.text())) errors.push(m.text());
@@ -162,7 +165,12 @@ try {
   });
 
   await step("cross-origin harness install POST is rejected by CSRF guard", async () => {
-    const res = await fetch(`${BASE}/api/harnesses/claude/install`, { method: "POST", headers: { Origin: "https://evil.com" } });
+    // Authorized device (Bearer) but a cross-origin Origin → must be rejected by the CSRF guard (403),
+    // not the auth gate. Without the token the gate would 401 first and we'd never exercise CSRF.
+    const res = await fetch(`${BASE}/api/harnesses/claude/install`, {
+      method: "POST",
+      headers: { Origin: "https://evil.com", authorization: `Bearer ${auth.token}` },
+    });
     if (res.status !== 403) throw new Error(`expected 403, got ${res.status}: ${await res.text()}`);
   });
 
@@ -217,4 +225,5 @@ try {
 } finally {
   await browser.close();
   server.kill();
+  await rm(auth.meshRootBase, { recursive: true, force: true });
 }

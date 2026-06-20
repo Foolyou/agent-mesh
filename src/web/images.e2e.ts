@@ -1,6 +1,6 @@
 // Image-upload e2e over the fake server. Run: bun run src/web/images.e2e.ts
 import { type Page } from "playwright";
-import { launchChromium, e2eEnv } from "./e2e-playwright";
+import { authedContext, authedReady, e2eAuthRoot, e2eEnv, launchChromium, seedApprovedDevice } from "./e2e-playwright";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -26,7 +26,7 @@ async function step(name: string, fn: () => Promise<void>) {
 async function waitReady() {
   for (let i = 0; i < 80; i++) {
     try {
-      if ((await fetch(`${BASE}/api/state`)).ok) return;
+      if ((await authedReady(BASE, e2eToken)).ok) return;
     } catch {}
     await sleep(250);
   }
@@ -44,6 +44,9 @@ await writeFile(pngB, PNG);
 await writeFile(svg, "<svg></svg>");
 await writeFile(big, Buffer.alloc(10 * 1024 * 1024 + 1));
 
+// device-auth (P6): seed one approved token into the same root the server resolves from --root.
+const e2eToken = await seedApprovedDevice(e2eAuthRoot(root));
+
 const server = Bun.spawn(["bun", "run", "src/main.ts", "--fake", "--port", String(PORT), "--root", root], {
   stdout: "pipe",
   stderr: "pipe",
@@ -52,7 +55,8 @@ const server = Bun.spawn(["bun", "run", "src/main.ts", "--fake", "--port", Strin
 const browser = await launchChromium();
 try {
   await waitReady();
-  const page: Page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  const ctx = await authedContext(browser, e2eToken, { viewport: { width: 1440, height: 900 } });
+  const page: Page = await ctx.newPage();
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(String(e)));
   await page.goto(BASE, { waitUntil: "domcontentloaded" });
@@ -101,8 +105,10 @@ try {
     await textarea.press("Enter");
     const bubble = router.locator(".msg.user .bubble", { hasText: "see image" }).last();
     await bubble.locator(".sent-image img").waitFor({ timeout: 6000 });
+    // The thumbnail renders via AuthedImage: it fetches the upload bytes WITH the device token and
+    // swaps in a blob: object URL (the raw /api/uploads URL is never a static, un-authed src).
     const src = await bubble.locator(".sent-image img").getAttribute("src");
-    if (!src?.startsWith("/api/uploads/demo/")) throw new Error(`thumbnail src was ${src}`);
+    if (!src?.startsWith("blob:")) throw new Error(`thumbnail src was ${src}`);
     await bubble.locator(".sent-image").click();
     await page.locator(".lightbox img").waitFor({ timeout: 4000 });
     await page.locator(".lightbox-close").click();

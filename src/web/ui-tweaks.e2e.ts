@@ -1,7 +1,8 @@
 // Browser checks for the input/topology/mesh-list usability tweaks. Run:
 //   bun run src/web/ui-tweaks.e2e.ts
 import { type Page } from "playwright";
-import { launchChromium, e2eEnv } from "./e2e-playwright";
+import { authedContext, authedReady, launchChromium, provisionE2eAuth } from "./e2e-playwright";
+import { rm } from "node:fs/promises";
 
 const PORT = Number(process.env.E2E_PORT) || 7460;
 const BASE = `http://localhost:${PORT}`;
@@ -20,16 +21,18 @@ async function step(name: string, fn: () => Promise<void>) {
   }
 }
 
-const server = Bun.spawn(["bun", "run", "src/main.ts", "--fake", "--port", String(PORT)], { stdout: "pipe", stderr: "pipe", env: e2eEnv() });
+const auth = await provisionE2eAuth();
+const server = Bun.spawn(["bun", "run", "src/main.ts", "--fake", "--port", String(PORT)], { stdout: "pipe", stderr: "pipe", env: auth.env });
 const browser = await launchChromium();
 try {
   for (let i = 0; i < 80; i++) {
     try {
-      if ((await fetch(BASE + "/api/state")).ok) break;
+      if ((await authedReady(BASE, auth.token)).ok) break;
     } catch {}
     await sleep(250);
   }
-  const page: Page = await browser.newPage({ viewport: { width: 1440, height: 880 } });
+  const ctx = await authedContext(browser, auth.token, { viewport: { width: 1440, height: 880 } });
+  const page: Page = await ctx.newPage();
   const errors: string[] = [];
   page.on("console", (m) => {
     if (m.type() === "error" && !/Failed to load resource/.test(m.text())) errors.push(m.text());
@@ -189,4 +192,5 @@ try {
 } finally {
   await browser.close();
   server.kill();
+  await rm(auth.meshRootBase, { recursive: true, force: true });
 }

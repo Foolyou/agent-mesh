@@ -3,8 +3,9 @@
 // permission cards, and checks there is no horizontal overflow. Run:
 //   bun run src/web/mobile.e2e.ts
 import { type Page } from "playwright";
-import { launchChromium, e2eEnv } from "./e2e-playwright";
+import { authedContext, authedReady, launchChromium, provisionE2eAuth } from "./e2e-playwright";
 import { mkdirSync } from "node:fs";
+import { rm } from "node:fs/promises";
 
 const PORT = Number(process.env.E2E_PORT) || 7418;
 const BASE = `http://localhost:${PORT}`;
@@ -25,20 +26,22 @@ async function step(name: string, fn: () => Promise<void>) {
   }
 }
 
+// Device auth (P6): seed an approved token in an isolated root and inject it into the browser.
+const auth = await provisionE2eAuth();
 const server = Bun.spawn(["bun", "run", "src/main.ts", "--fake", "--port", String(PORT)], {
   stdout: "pipe",
   stderr: "pipe",
-  env: e2eEnv(),
+  env: auth.env,
 });
 const browser = await launchChromium();
 try {
   for (let i = 0; i < 80; i++) {
     try {
-      if ((await fetch(BASE + "/api/state")).ok) break;
+      if ((await authedReady(BASE, auth.token)).ok) break;
     } catch {}
     await sleep(250);
   }
-  const ctx = await browser.newContext({
+  const ctx = await authedContext(browser, auth.token, {
     viewport: { width: 390, height: 844 },
     isMobile: true,
     hasTouch: true,
@@ -220,4 +223,5 @@ try {
 } finally {
   await browser.close();
   server.kill();
+  await rm(auth.meshRootBase, { recursive: true, force: true });
 }

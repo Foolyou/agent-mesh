@@ -2,8 +2,9 @@
 // real DOM with Playwright (bundled chromium), and asserts every widget. Also writes
 // screenshots to /tmp/mesh-shots. Run: bun run src/web/browser.e2e.ts
 import { type Page } from "playwright";
-import { launchChromium, e2eEnv } from "./e2e-playwright";
+import { authedContext, authedReady, launchChromium, provisionE2eAuth } from "./e2e-playwright";
 import { mkdirSync } from "node:fs";
+import { rm } from "node:fs/promises";
 
 const PORT = Number(process.env.E2E_PORT) || 7413;
 const BASE = `http://localhost:${PORT}`;
@@ -84,7 +85,7 @@ async function assertMobileDetailLayout(page: Page) {
 async function waitReady() {
   for (let i = 0; i < 80; i++) {
     try {
-      const r = await fetch(`${BASE}/api/state`);
+      const r = await authedReady(BASE, auth.token);
       if (r.ok) return;
     } catch {
       /* not up yet */
@@ -94,16 +95,18 @@ async function waitReady() {
   throw new Error("server never became ready");
 }
 
+const auth = await provisionE2eAuth();
 const server = Bun.spawn(["bun", "run", "src/main.ts", "--fake", "--port", String(PORT)], {
   stdout: "pipe",
   stderr: "pipe",
-  env: e2eEnv(),
+  env: auth.env,
 });
 
 const browser = await launchChromium();
 try {
   await waitReady();
-  const page: Page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  const ctx = await authedContext(browser, auth.token, { viewport: { width: 1440, height: 900 } });
+  const page: Page = await ctx.newPage();
   const errors: string[] = [];
   // ignore HTTP-status resource logs (e.g. the deliberate 400 in the toast test —
   // the app surfaces those as toasts); keep genuine JS/React errors.
@@ -1237,4 +1240,5 @@ try {
 } finally {
   await browser.close();
   server.kill();
+  await rm(auth.meshRootBase, { recursive: true, force: true });
 }
