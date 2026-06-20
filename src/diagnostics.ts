@@ -272,11 +272,12 @@ export function backendCheck(s: BackendStatus): DoctorCheck {
   return check(id, "info", `backend not running on :${s.port}`, "start it with `mesh up` / scripts/update.sh");
 }
 
-/** Auth store readiness — PRESENCE/COUNTS ONLY (auth-store holds hashes; we never read or emit them). */
+/** Auth store readiness — PRESENCE + COUNTS ONLY. The gatherer may read the auth-store files to count
+ *  entries, but this struct carries no tokenHash, encrypted token, key id, or any raw credential. */
 export interface AuthReadiness {
   devices: { present: boolean; approved: number; pending: number };
   feishu: { present: boolean; approved: number; pending: number };
-  keys: { present: boolean; activeKid?: string };
+  keys: { present: boolean };
 }
 
 export function authChecks(a: AuthReadiness): DoctorCheck[] {
@@ -293,7 +294,7 @@ export function authChecks(a: AuthReadiness): DoctorCheck[] {
   );
   out.push(
     a.keys.present
-      ? check("auth.keys", "ok", `auth-code key store present${a.keys.activeKid ? ` (active ${a.keys.activeKid})` : ""}`)
+      ? check("auth.keys", "ok", "auth-code key store present")
       : check("auth.keys", "info", "auth-code key store not initialized (created on first authorization code)"),
   );
   return out;

@@ -144,13 +144,14 @@ test("authChecks: present=ok with counts, absent=info; never emits secrets", () 
   const a: AuthReadiness = {
     devices: { present: true, approved: 2, pending: 1 },
     feishu: { present: false, approved: 0, pending: 0 },
-    keys: { present: true, activeKid: "k1" },
+    keys: { present: true },
   };
   const m = Object.fromEntries(authChecks(a).map((c) => [c.id, c]));
   expect(m["auth.devices"]).toMatchObject({ severity: "ok", ok: true });
   expect(m["auth.devices"].detail).toBe("device auth store: 2 approved, 1 pending");
   expect(m["auth.feishu"]).toMatchObject({ severity: "info", ok: true });
-  expect(m["auth.keys"].detail).toContain("active k1");
+  expect(m["auth.keys"]).toMatchObject({ severity: "ok", ok: true });
+  expect(m["auth.keys"].detail).toBe("auth-code key store present"); // presence only — no key id
   // no token/hash/secret anywhere
   expect(authChecks(a).map((c) => c.detail).join(" ")).not.toMatch(/sha256:|secret|token/i);
 });

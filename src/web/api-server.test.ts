@@ -74,3 +74,29 @@ test("loopback-bound backend STILL requires a token (no loopback trust, even sam
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("GET /api/diagnostics/doctor reports the backend check on THIS server's real port (not 10010)", async () => {
+  const { root, token } = await approvedRoot();
+  const gw = new WebGateway(fakeManager() as any, undefined, { root });
+  const server = startApiServer(gw, { port: 0, hostname: "127.0.0.1" }); // port 0 → OS picks a random port
+  const base = `http://127.0.0.1:${server.port}`;
+  try {
+    const res = await fetch(`${base}/api/diagnostics/doctor`, { headers: { authorization: `Bearer ${token}` } });
+    expect(res.status).toBe(200);
+    const report = await res.json();
+    const backend = report.checks.find((c: any) => c.id === "service.backend");
+    expect(backend).toBeTruthy();
+    // the doctor probed the server's actual listening port (threaded via ctx.servicePort = srv.port),
+    // and a live server answering /api/state (gated 401 < 500) reads as healthy on that port.
+    expect(backend.detail).toContain(`:${server.port}`);
+    expect(backend.detail).not.toContain(":10010");
+    expect(backend.severity).toBe("ok");
+    // secret-free: the whole doctor payload never carries a credential marker
+    const blob = JSON.stringify(report);
+    expect(blob).not.toContain("sha256:");
+    expect(blob).not.toMatch(/Bearer\s/);
+  } finally {
+    server.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});

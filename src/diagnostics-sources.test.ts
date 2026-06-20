@@ -45,6 +45,21 @@ test("meshConfigChecks: no meshes dir => []", async () => {
 
 const REC = (name: string): MeshHostRecord => ({ name, pid: 123, socketPath: `/run/${name}.sock`, startedAt: "2026-06-20T00:00:00.000Z" } as MeshHostRecord);
 
+// Note: that a non-default servicePort threads through doctorSources → backendStatus → the
+// `service.backend` check (detail `:<port>`) is proven end-to-end against a LIVE server in
+// api-server.test.ts ("…reports the backend check on THIS server's real port"); a bare unit probe
+// here would block on the OS connect-timeout for a non-listening port, so the live test is the seam.
+
+test("authReadiness keys: presence only — no key id / active kid field is emitted", async () => {
+  const root = await tmpRoot();
+  try {
+    const r = await authReadiness(root);
+    expect(r.keys).toEqual({ present: false }); // exactly { present } — never an activeKid/secret
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("webPsSources: enriches a running mesh from the live snapshot (activity + normalized context %)", async () => {
   const snap: LiveSnapshot = {
     meshes: [{ name: "demo", agents: [

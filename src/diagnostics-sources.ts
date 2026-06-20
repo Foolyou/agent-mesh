@@ -6,7 +6,11 @@
 //   - harness:  harness-probe.probeHarnesses
 //   - config:   mesh-validate.validateMeshConfig (per-file, isolated) + channels readFeishuConfig
 //   - backend:  service.backendStatus (record + <500 liveness, same as `mesh up/status`)
-//   - auth:     auth-store / auth-codes READ-ONLY presence + counts (never reads/emits hashes or keys)
+//   - auth:     READ-ONLY readiness. It may deserialize the auth-store files via the existing sanitized
+//               readers to COUNT entries (those files hold tokenHash/encrypted authcodes), but it emits
+//               only counts/booleans + key-store presence — never a tokenHash, encrypted token, AES
+//               secret, key id, or any raw credential. The key store is checked by file presence only
+//               (existsSync), so no key material is ever loaded.
 //   - process:  diagnostics.collectProcLeaks (read-only registry scan)
 //   - base dir: diagnostics.probeBaseDir (real access(W_OK))
 //
@@ -26,7 +30,7 @@ import { probeHarnesses } from "./harness-probe";
 import { readFeishuConfig } from "./channels/config";
 import { backendStatus } from "./service";
 import { devicesPath, feishuAuthPath, readDevices, readFeishuAuth } from "./auth-store";
-import { authKeysPath, loadKeys } from "./auth-codes";
+import { authKeysPath } from "./auth-codes";
 import { collectProcLeaks, probeBaseDir, type AgentActivityState, type AgentDetail, type AuthReadiness, type ConfigInputs, type DoctorDeps, type HarnessProbeLike, type PsDetailDeps } from "./diagnostics";
 import type { MeshHostRecord } from "./mesh-registry";
 import type { AgentRole, HarnessId } from "./acp/types";
@@ -71,14 +75,16 @@ async function configInputs(root: string): Promise<ConfigInputs> {
   return { meshes, feishu };
 }
 
-// ── auth (read-only presence + counts; never reads/emits a hash, token, or key) ──
+// ── auth readiness (read-only) ──────────────────────────────────────────────────
+// Deserializes devices.json / feishu.json via the sanitized auth-store readers to COUNT entries —
+// those files carry tokenHash/encrypted authcodes, but we keep ONLY the counts. The key store is
+// probed by file presence (existsSync) alone, so no key material is loaded. Nothing here returns a
+// tokenHash, encrypted token, AES secret, key id, or any raw credential.
 export async function authReadiness(root: string): Promise<AuthReadiness> {
   const devPresent = existsSync(devicesPath(root));
   const dev = devPresent ? await readDevices(root) : undefined;
   const fzPresent = existsSync(feishuAuthPath(root));
   const fz = fzPresent ? await readFeishuAuth(root) : undefined;
-  const keysPresent = existsSync(authKeysPath(root));
-  const keys = keysPresent ? await loadKeys(root) : undefined;
   return {
     devices: {
       present: devPresent,
@@ -90,7 +96,7 @@ export async function authReadiness(root: string): Promise<AuthReadiness> {
       approved: fz ? Object.values(fz.allow).filter((e) => e.status === "approved").length : 0,
       pending: fz ? Object.keys(fz.pending).length : 0,
     },
-    keys: { present: keysPresent, activeKid: keys?.active }, // kid is a key id like "k1", not the secret
+    keys: { present: existsSync(authKeysPath(root)) }, // presence only — never load key material
   };
 }
 
