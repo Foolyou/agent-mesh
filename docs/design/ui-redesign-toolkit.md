@@ -10,7 +10,7 @@
 ## 0. TL;DR
 
 - **流程类 skill**（决定"怎么做"）：`superpowers:brainstorming`（重设计前必跑，锁需求/方向）→ `superpowers:writing-plans`（把方向落成可执行计划）→ `frontend-design`（审美方向、排版、避免模板感）。
-- **度量/验证工具**（已在仓库内，是本项目最强资产）：`src/web/client/contrast.ts`（WCAG 对比度数学 + 审计契约）、`a11y-audit.ts`（静态调色板审计 + theme.css lint）、`a11y.e2e.ts`（真实渲染 DOM 对比度爬虫，含移动视口）。重设计必须把这套当回归门禁用。
+- **度量/验证工具**（已在仓库内，是本项目最强资产）：`src/web/client/contrast.ts`（WCAG 对比度数学 + 4 个阈值常量）、`a11y-audit.ts`（用私有 `PAIRS` 对各主题调色板做静态对比度打表，约 76 行）、`a11y.e2e.ts`（桌面 1440×900 下逐 8 主题、对固定 `SELECTORS` 测真实渲染对比度）。重设计必须把这套当回归门禁用（移动端布局回归另见 `browser.e2e.ts`）。
 - **截图/测量**：Playwright（仓库已装 `playwright@1.60`）+ MCP `browser_*` 工具 + 仓库内 `e2e-playwright.ts` 设备鉴权脚手架。这是给重设计做"前后对比"和像素回归的现成手段。
 - **DesignSync + `/design-sync`**：可把本地组件库与 claude.ai 的 Design System 项目双向同步——若重设计要建正式设计系统/组件预览库，这是落地通道（需用户的 claude.ai 登录授权）。
 - **skill-creator**：把重设计中沉淀的可复用流程（如"截图回归 + a11y 门禁"）固化成本仓自有 skill。
@@ -51,27 +51,27 @@
 
 ### B. 仓库内度量/验证工具（本项目最强资产，重设计的回归门禁）
 
-> 这三件是本仓自研、已经过 WCAG 审计落地（见全局记忆 a11y 契约），是重设计期间防止可访问性回退的核心。运行均在私有 worktree 内 `bun run …`。
+> 这三件是本仓自研、用于在重设计期间防止可访问性回退的核心。运行均在私有 worktree 内直接 `bun run <文件>`。**以下描述以 builder 本轮实读代码为准（已核对 main `4b2affa` 的源码）。**
 
-#### B1. `src/web/client/contrast.ts` — WCAG 对比度数学引擎 + 审计契约
-- **是什么**：WCAG 2.1 对比度计算（`contrastRatio`、`relativeLuminance`、`hexToRgb`、`blend` 合成半透明、`evalPair` 评估色对）+ **`AUDIT_PAIRS`**——UI 实际绘制的所有有意义 (前景, 背景) 色对的**静态契约**，每对带阈值（AA_TEXT=4.5 / AA_LARGE=3.0 / AAA_TEXT=7.0 advisory / UI_COMPONENT=3.0）。
-- **怎么用**：被 `contrast.test.ts`（单测门禁，`bun test`）、`a11y-audit.ts`、`a11y.e2e.ts` 共同 import，是静态与动态检查的**单一事实源**。重设计新增颜色/组件时，要同步在 `AUDIT_PAIRS` 里登记新色对。
-- **在本次重设计中的作用**：任何新主题、新色 token、新组件配色，先过这里的契约 + 单测，确保不破 AA。是"换配色不踩可访问性坑"的护栏。
-- **局限**：假设 sRGB，不支持广色域（P3/Rec2020）；color-mix 只处理 `in srgb`；`contrastRatio` 本身不含 alpha，调用方须先 `blend()` 合成；advisory 行（AAA）永不 fail 门禁。
+#### B1. `src/web/client/contrast.ts` — WCAG 对比度数学/常量工具
+- **是什么**：纯 WCAG 2.1 对比度数学与阈值常量，**不含任何色对契约**。导出：常量 `AA_TEXT=4.5` / `AA_LARGE=3.0` / `AAA_TEXT=7.0` / `UI_COMPONENT=3.0`；函数 `hexToRgb`、`blend(fg,alpha,bg)`（合成半透明）、`relativeLuminance`、`contrastRatio(a,b)`、`fmtRatio`；类型 `RGB`。**没有 `AUDIT_PAIRS`、没有 `evalPair`、没有 `resolveColor`/`ColorSpec`/`PairResult`**（这些是早前调研稿的误述，已修正）。
+- **怎么用**：作为共享数学库被 `a11y-audit.ts`（`import { contrastRatio, fmtRatio, AA_TEXT, UI_COMPONENT }`）、`a11y.e2e.ts` 及 `contrast.test.ts`（单测，`bun test`）import。重设计时它提供"算两色对比度/判阈值"的底座。
+- **在本次重设计中的作用**：任何新配色用它算 WCAG 比值、对照四个阈值常量；是审计/e2e 的数学底座，但**它本身不知道 UI 画了哪些色对**（那由 B2 的私有 PAIRS 决定）。
+- **局限**：假设 sRGB，不支持广色域；`contrastRatio` 不含 alpha，调用方须先 `blend()` 合成；只是数学工具，不构成门禁——门禁逻辑在 B2/B3 与单测里。
 
-#### B2. `src/web/a11y-audit.ts` — 静态调色板审计 + theme.css lint
-- **是什么**：人类可读的可访问性审计：对每个内置主题跑全部 `AUDIT_PAIRS` 打表（比值/阈值/通过），按语义族分组；并静态 lint `theme.css`——检测未知 CSS 变量引用、:root 外的硬编码颜色字面量（= 未走 token 的颜色）。
-- **怎么用**：`bun run a11y:palette`（= `bun run src/web/a11y-audit.ts`）。输出每主题通过/失败计数 + theme.css 体检。
-- **在本次重设计中的作用**：重设计调色板/主题时的**即时反馈**——改完 token 立刻看哪对不达标、哪里漏用 token。比 e2e 快，适合迭代中频繁跑。
-- **局限**：CSS lint 是正则非完整解析，复杂选择器会误报/漏报；未检测真实渲染 DOM（那是 e2e 的活）；未并行。
+#### B2. `src/web/a11y-audit.ts` — 静态调色板审计（约 76 行）
+- **是什么**：人类可读的可访问性审计脚本（约 76 行）。文件内有一个**私有 `PAIRS: Pair[]`** 数组（本文件自己定义的"该测哪些 (前景,背景) 色对"清单，**不是 contrast.ts 导出的共享契约**），对**每个内置主题的调色板**用 `contrastRatio` 打表（比值/阈值/通过）。**不做 `theme.css` 变量 lint，也不做硬编码颜色字面量 lint**（早前调研稿误述，已删）。
+- **怎么用**：`bun run src/web/a11y-audit.ts`（**当前没有 `a11y:palette` 这个 package script**）。输出各主题色对的对比度表。
+- **在本次重设计中的作用**：重设计调色板/主题时的**即时反馈**——改完 token 立刻按 PAIRS 看哪对不达标。比 e2e 快，适合迭代中频繁跑。
+- **局限**：PAIRS 是本文件私有、手工维护的清单，新增色对要手动加进来；只算调色板数值，不检测真实渲染 DOM（那是 B3 的活）。
 
-#### B3. `src/web/a11y.e2e.ts` — 真实渲染 DOM 对比度爬虫
-- **是什么**：在 Playwright Chromium 里**逐个内置主题**渲染真实 app，爬 DOM，测每个文本节点**计算后**的颜色对其**有效背景**（向上走 DOM 合成半透明层 + 元素 opacity）的对比度；另有 DIRECTED 检查非文本元素（canvas 边框/描边）、board 标签 chip、以及**移动视口 390×844**。
-- **怎么用**：`bun run a11y:e2e`（自带 `--fake` server，默认 E2E_PORT=7490，可 `E2E_PORT=… ` 改）。`bun run a11y` 一次跑 palette + e2e。
-- **在本次重设计中的作用**：捕捉静态审计抓不到的**结构性 bug**（如反色选区里控件仍用暗色文字）。重设计大改布局/层叠后，这是"真实渲染下没破可访问性"的终验门禁；已内置移动视口，移动端重设计直接受益。
-- **局限**：只爬可见且已布局的文本节点；非文本 UI 需手动加进 DIRECTED 数组；颜色数学注入页面，页面若崩可能静默 false-green。
+#### B3. `src/web/a11y.e2e.ts` — 桌面真实渲染下的主题对比度检查（约 175 行）
+- **是什么**：在 Playwright Chromium 里**逐个内置主题**（源码 `THEMES` = phosphor/amber/ice/paper/mono/frost/sage/linen，共 **8 个**）渲染真实 app，对一组**固定的选择器清单 `SELECTORS: Check[]`** 测计算后颜色的对比度——**不是爬遍每个文本节点**。SELECTORS 聚焦 canvas/app 表面：含文本项（如 `.canvas-top .ttl`、`.canvas-window-head .agent-id/.sub`）和非文本 UI 项（如 `.canvas-window` 的 `border-top-color`、`.canvas-edge`/`.canvas-edge.active` 的 `stroke`）。**页面视口固定 1440×900（桌面）。没有 390×844 移动视口，也没有 board 标签 chip 的专门检查**（早前调研稿误述，已删）。
+- **怎么用**：`bun run src/web/a11y.e2e.ts`（自带 `--fake` server；**当前没有 `a11y:e2e`/`a11y` package script**）。
+- **在本次重设计中的作用**：捕捉静态审计算不出的**真实渲染态问题**（计算后颜色 + canvas 描边/边框）。重设计改 canvas/app 表面后，这是"真实渲染下 8 主题仍达标"的回归门禁。
+- **局限**：只测 `SELECTORS` 列出的固定表面（漏测项需手动加进 SELECTORS）；桌面单视口，**移动端可访问性不在此覆盖**；颜色数学注入页面，页面若崩可能静默 false-green。
 
-> **B 类小结**：本仓在可访问性上已有"契约 + 静态审计 + 渲染爬虫"三层防线（见全局记忆：a11y 契约已 SHIPPED）。重设计要把这套当**硬门禁**——每个布局/配色 commit 后跑 `bun run a11y`，绝不在重设计中倒退已得的 WCAG AA 全绿。
+> **B 类小结（修正后）**：本仓现有的 a11y 资产是 **WCAG 数学库（B1）+ 私有 PAIRS 静态调色板审计（B2）+ 桌面 8 主题固定选择器渲染检查（B3）+ `contrast.test.ts` 单测**。**当前没有**跨文件共享的 `AUDIT_PAIRS` 契约、没有 theme.css lint、没有移动端 a11y e2e——这些都是**后续可提的增强**（见 §3 / 开放问题），不可写成现状。重设计期间把现有这套当回归门禁：每个布局/配色 commit 后跑 `bun test` + `bun run src/web/a11y-audit.ts` + `bun run src/web/a11y.e2e.ts`，不倒退已达标项。
 
 ### C. 浏览器 / 截图 / 测量工具
 
@@ -81,8 +81,8 @@
 - **在本次重设计中的作用**：**重设计的"眼睛"**——做改前/改后对比图、多视口（桌面 1440×900 / 移动 390×844）批量截图、布局几何断言（如 `browser.e2e.ts` 里 `assertMobileDetailLayout` 已在断言移动端不横向溢出）。可作为像素回归基础。
 - **局限**：需先过 device-auth（用 `provisionE2eAuth` 解决）；fake server 的数据是脚本化 demo，覆盖不到真实多 agent/长 transcript 的极端态；截图是诊断非断言，hang 了要容错。
 
-#### C2. Playwright MCP `browser_*` 工具（本会话已连）
-- **是什么**：harness 注入的浏览器自动化 MCP：`browser_navigate / browser_take_screenshot / browser_snapshot / browser_resize / browser_click / browser_evaluate / browser_console_messages` 等。
+#### C2. Playwright MCP `browser_*` 工具（**若当前会话注入/可用**）
+- **是什么**：若当前会话注入了 Playwright MCP server，则有一组浏览器自动化工具：`browser_navigate / browser_take_screenshot / browser_snapshot / browser_resize / browser_click / browser_evaluate / browser_console_messages` 等。**这是会话态能力，非仓库长期稳定资产**——是否可用取决于该会话/harness 是否连了这个 MCP（builder 本轮的截图实际走的是 C1 脚本，未用 MCP 截图）。
 - **怎么用**：交互式驱动一个浏览器——`browser_resize` 切视口、`browser_evaluate` 注入 localStorage token 后 reload 过鉴权门、`browser_snapshot` 取无障碍树（比截图更适合让 agent 理解结构）、`browser_take_screenshot` 出图。
 - **在本次重设计中的作用**：适合**探索式**核查单个页面/交互（"这个 hover 态长啥样""这个 modal 的 tab 顺序对不对"），以及用 `browser_snapshot` 让 agent 读懂 DOM 语义结构。与 C1 的脚本化批量互补：C1 批量回归，C2 单点交互。
 - **局限**：交互式、单浏览器，不适合一次性批量多视口；过 device-auth 需手动 evaluate 注入 token（不如 C1 的 `authedContext` 干净）。
@@ -106,7 +106,7 @@
 - `shajith003/awesome-claude-skills@ui-design`（~3.2K installs，相对最高）
 - `404kidwiz/claude-supercode-skills@ui-designer`、`yunshu0909/…@ui-design`、`ckorhonen/claude-skills@ui-design` 等（均 <130 installs）。
 
-权威且已加载的（`anthropics/skills@frontend-design`、superpowers 套件）已覆盖核心需求，**无需新装外部 skill**；如确有缺口（如专门的响应式断点 skill），再按 find-skills 的质量标准（≥1K installs + 可信来源）评估。
+**builder 本轮可用/用过的** `frontend-design`（anthropics/skills）与 superpowers 套件（brainstorming/writing-plans 等）已覆盖核心需求，**无需新装外部 skill**；注意这些是**本会话注入的 skill，是否在每个会话/harness 都可用取决于其 skill 配置**，并非仓库代码资产。如确有缺口（如专门的响应式断点 skill），再按 find-skills 的质量标准（≥1K installs + 可信来源）评估。
 
 > **盘点结论**：`design-sync/DesignSync` 在**仓库代码里不存在**（Explore 全仓搜 "DesignSync/design-sync" 无结果），但作为 **harness 注入的工具 + skill** 存在（D1）。本仓真正的设计资产是 **B 类自研 a11y 三件套** + **C 类 Playwright 脚手架**——重设计应以这两类为骨架。
 
@@ -205,18 +205,18 @@
 基于阶段 0，重画 IA：助手 vs router 对话的主从关系、rail 四 tab 的重新归类、桌面三栏的主次、**全局"消息/通知中心"入口的位置与全局 vs 局部消息归类（见 §2.5，必须在本阶段一并规划，不留作 bolt-on）**。可用 `frontend-design` 找审美方向，用 DesignSync（若决定建设计系统）或纯 Markdown/线框定稿。**产出 = 线框 + IA 决策**，过 prdmgr/用户评审。
 
 **阶段 2 — 设计 token / 视觉系统**
-若调色板/字体要变：先动 `themes.ts` + `theme.css` 的 token，**每步过 `bun run a11y`**（B 类门禁），在 `AUDIT_PAIRS` 同步登记新色对。保持 WCAG AA 全绿不倒退。
+若调色板/字体要变：先动 `themes.ts`（`BUILTIN_THEMES`）+ `theme.css` 的 token，**每步过 `bun run src/web/a11y-audit.ts` + `bun run src/web/a11y.e2e.ts` + `bun test`**（现有 B 类门禁），并在 `a11y-audit.ts` 的私有 `PAIRS` 里手工补登新色对。保持 WCAG AA 全绿不倒退。（后续可考虑把 `PAIRS` 提为跨文件共享契约、加 theme.css lint——见开放问题，**当前不是现状**。）
 
 **阶段 3 — 桌面布局重构**
 按新 IA 重排三栏/分组；用 C1 Playwright 脚本出**改前/改后对比图**（1440×900），用 `browser.e2e.ts` 的几何断言守住不溢出。
 
 **阶段 4 — 移动布局重设计**
-从"折叠桌面"转向"为移动重排"；复用 `a11y.e2e.ts` 已有的 390×844 视口 + `assertMobileDetailLayout` 守护；出移动对比图。
+从"折叠桌面"转向"为移动重排"；用 `browser.e2e.ts` 的 `assertMobileDetailLayout`（移动几何断言：不横向溢出、composer 钉底）守护，出移动对比图。注意 `a11y.e2e.ts` **目前只覆盖桌面 1440×900**，移动端无对比度 e2e——重设计若要移动 a11y 门禁需**新增**（属增强，非现状）。
 
 **阶段 5 — 组件细化 + 回归固化**
 细化各组件态（hover/disabled/选区/permission 横幅等）；用 `skill-creator` 把"截图回归 + a11y 门禁"固化为本仓 skill，供日后 UI 迭代复用。
 
-**全程门禁**：每阶段 commit 后 `bun test`（含 contrast.test.ts）+ `bun run a11y`（palette + e2e）+ 多视口截图对比。
+**全程门禁**：每阶段 commit 后 `bun test`（含 contrast.test.ts）+ `bun run src/web/a11y-audit.ts` + `bun run src/web/a11y.e2e.ts` + 多视口截图对比。（如想把这三条简化成 `bun run a11y` 之类短命令，须**先在 package.json 新增对应 scripts**——当前不存在。）
 
 ### 需要 prdmgr / 用户拍板的开放问题
 
@@ -226,7 +226,7 @@
 4. **rail 四 tab（activity/mail/board/history）的归类**：维持现状、合并、还是拆到不同层级？
 5. **是否建立正式设计系统**：要不要用 DesignSync 把组件库同步到 claude.ai/design（需用户 claude.ai 授权），还是只改本仓 React 代码？
 6. **重设计范围与节奏**：是一次性整体重做，还是按 §3 阶段渐进迭代（推荐后者，风险可控、每步可验收）？
-7. **多主题约束**：4 个内置主题（Phosphor/Amber CRT/Ice/Sepia）是否全部保留并随重设计同步更新？这会放大 a11y 回归工作量。
+7. **多主题约束**：当前 `BUILTIN_THEMES` 有 **8 个**（phosphor / amber=Amber CRT / ice / paper=Paper light / mono / frost=Frost light / sage=Sage light / linen=Linen light，含 4 个 light 主题；**无 Sepia**）是否全部保留并随重设计同步更新？8 主题 × a11y 会放大回归工作量。
 8. **全局通知中心的边界（已知需求，见 §2.5）**：哪些消息归全局通知中心、哪些留在 mesh 局部 rail？哪些仍保留轻量内联横幅（如必须刷新的前端自更新）？是否需要未读计数 / 已读态 / 历史持久化？入口放顶栏全局控件区，移动端如何容纳？
 
 ---
@@ -235,7 +235,7 @@
 
 - **截图**：私有 worktree 内写一次性 TS 脚本（import `e2e-playwright.ts` 的 `provisionE2eAuth/authedContext/launchChromium`）→ 起 `bun run src/main.ts --fake --port <p>` → headless Chromium 注入设备 token → `page.screenshot()` 输出到 `$AGENT_MESH_ARTIFACTS/`；脚本用完即删，**未入库，分支只含本 .md**。
 - **实际产物**：`desktop-01-overview.png`、`desktop-03-running.png`、`desktop-04-board.png`、`mobile-01-list.png`、`mobile-02-detail.png`（桌面 1440×900，移动 390×844 + isMobile/touch）。HARNESSES/NEW modal 截图尝试因 `getByText` 选择器超时未取到（非阻塞，rail/board/对话已覆盖核心 IA）。
-- **代码盘点**：Explore 子 agent 通读 `src/web/`（contrast.ts / a11y-audit.ts / a11y.e2e.ts / e2e-playwright.ts / browser.e2e.ts / package.json scripts / client 组件树）。
-- **skill 发现**：本会话已加载 skill 列表 + `find-skills` + `npx skills find "ui design"`（外部备选，未安装）。
-- **DesignSync**：通过 ToolSearch 取得 harness 注入工具 schema 确认其为 claude.ai/design 同步工具（仓库代码内无同名实现）。
-- **未跑的 gate**：本任务为纯调研，**未运行** `bun test` / `bun run a11y` 全量门禁（无代码改动，不涉及回归）；上述命令为重设计阶段的推荐门禁，本报告未执行。
+- **代码盘点**：初稿用 Explore 子 agent 通读 `src/web/`；**reviewer 复核发现初稿对 a11y 工具有多处事实误述**（虚构 `AUDIT_PAIRS`/`evalPair`、theme.css lint、a11y.e2e 的 390×844 移动视口与 board chip、不存在的 `a11y:*` scripts）。本轮 builder 已**逐个实读源码核对修正**：`contrast.ts`（`grep` 导出符号，确认仅 4 常量 + 5 函数 + RGB 类型，无 AUDIT_PAIRS/evalPair）、`a11y-audit.ts`（76 行，私有 `PAIRS`，import `{contrastRatio,fmtRatio,AA_TEXT,UI_COMPONENT}`，无 lint）、`a11y.e2e.ts`（175 行，`THEMES` 8 个，固定 `SELECTORS`，视口 1440×900，无 390/844/board chip）、`themes.ts`（`BUILTIN_THEMES` 8 个，无 Sepia）、`browser.e2e.ts`（`assertMobileDetailLayout` 在此）、`package.json`（无 a11y scripts）。
+- **skill 发现**：本会话注入的 skill 列表 + `find-skills` + `npx skills find "ui design"`（外部备选，未安装）。
+- **DesignSync**：通过 ToolSearch 取得会话注入工具 schema，确认其为 claude.ai/design 同步工具（仓库代码内无同名实现）。
+- **未跑的 gate**：本任务为纯调研（仅改本 .md），**未运行** `bun test` / `bun run src/web/a11y-audit.ts` / `bun run src/web/a11y.e2e.ts`（无代码改动，不涉及回归）；上述命令为重设计阶段的推荐门禁，本报告未执行。
