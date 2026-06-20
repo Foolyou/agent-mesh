@@ -6,10 +6,12 @@
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { authedReady, e2eAuthRoot, seedApprovedDevice } from "./e2e-playwright";
 
 const PORT = Number(process.env.E2E_PORT) || 10020;
 const BASE = `http://localhost:${PORT}`;
 const ROOT = process.env.E2E_ROOT?.replace(/^~/, homedir()) ?? join(homedir(), ".agent-mesh-dev");
+const e2eToken = await seedApprovedDevice(e2eAuthRoot(ROOT));
 const REPO = resolve(import.meta.dir, "..", "..");
 const mesh = `new-session-e2e-${process.pid}`;
 const work = await mkdtemp(join(tmpdir(), "mesh-new-session-e2e-"));
@@ -33,17 +35,17 @@ async function step(name: string, fn: () => Promise<void>) {
 async function waitReady(): Promise<void> {
   for (let i = 0; i < 80; i++) {
     try {
-      if ((await fetch(`${BASE}/api/state`)).ok) return;
+      if ((await authedReady(BASE, e2eToken)).ok) return;
     } catch {}
     await sleep(250);
   }
   throw new Error("backend never became ready");
 }
 
-const state = async () => (await fetch(`${BASE}/api/state`)).json();
+const state = async () => (await fetch(`${BASE}/api/state`, { headers: { authorization: `Bearer ${e2eToken}` } })).json();
 const post = (p: string, body?: unknown) =>
-  fetch(`${BASE}${p}`, { method: "POST", headers: { "content-type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
-const del = (p: string) => fetch(`${BASE}${p}`, { method: "DELETE" });
+  fetch(`${BASE}${p}`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${e2eToken}` }, body: body ? JSON.stringify(body) : undefined });
+const del = (p: string) => fetch(`${BASE}${p}`, { method: "DELETE", headers: { authorization: `Bearer ${e2eToken}` } });
 const recPath = () => join(ROOT, ".agent-mesh", "run", `${mesh}.json`);
 const sessionsPath = () => join(ROOT, ".agent-mesh", "run", `${mesh}.sessions.json`);
 

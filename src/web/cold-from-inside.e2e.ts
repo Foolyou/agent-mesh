@@ -12,14 +12,16 @@
 import { mkdtemp, rm, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { authedReady, e2eAuthRoot, seedApprovedDevice } from "./e2e-playwright";
 
 const PORT = Number(process.env.E2E_PORT) || 7720;
 const BASE = `http://localhost:${PORT}`;
 const REPO = resolve(import.meta.dir, "..", "..");
 const ROOT = await mkdtemp(join(tmpdir(), "cold-inside-"));
+const e2eToken = await seedApprovedDevice(e2eAuthRoot(ROOT));
 const SELFKILL = resolve(REPO, "src", "fixtures", "selfkill-host.ts");
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
-const state = async () => (await fetch(`${BASE}/api/state`)).ok;
+const state = async () => (await authedReady(BASE, e2eToken)).ok;
 
 let pass = 0;
 const fails: string[] = [];
@@ -34,7 +36,7 @@ async function step(name: string, fn: () => Promise<void>) {
   }
 }
 const post = (p: string, body?: unknown) =>
-  fetch(`${BASE}${p}`, { method: "POST", headers: { "content-type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
+  fetch(`${BASE}${p}`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${e2eToken}` }, body: body ? JSON.stringify(body) : undefined });
 async function regPid(name: string): Promise<number | null> {
   try {
     const j = JSON.parse(await readFile(join(ROOT, ".agent-mesh", "run", `${name}.json`), "utf8"));

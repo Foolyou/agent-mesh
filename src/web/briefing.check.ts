@@ -3,16 +3,23 @@
 // member's reply (reconstructed via the real client reducer). Run:
 //   bun run src/web/briefing.check.ts
 import { emptyState, applyMsg } from "./client/store";
+import { authedReady, provisionE2eAuth } from "./e2e-playwright";
+import { rm } from "node:fs/promises";
 import type { GatewayState } from "./types";
 
 const PORT = Number(process.env.E2E_PORT) || 7416;
 const BASE = `http://localhost:${PORT}`;
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
+// Device-auth (P6): seed an approved token in an isolated root, hand it to the spawned server via
+// MESH_ROOT, and carry the Bearer on every /api/* call (+ ?token= on /ws). Loopback isn't trusted.
+const auth = await provisionE2eAuth();
+const authd = { authorization: `Bearer ${auth.token}` };
+
 async function post(path: string, body?: unknown) {
   const r = await fetch(BASE + path, {
     method: "POST",
-    headers: body ? { "content-type": "application/json" } : {},
+    headers: { ...(body ? { "content-type": "application/json" } : {}), ...authd },
     body: body ? JSON.stringify(body) : undefined,
   });
   return { status: r.status, body: await r.json().catch(() => ({})) };
@@ -21,6 +28,7 @@ async function post(path: string, body?: unknown) {
 const server = Bun.spawn(["bun", "run", "src/main.ts", "--no-assistant", "--port", String(PORT)], {
   stdout: "ignore",
   stderr: "ignore",
+  env: auth.env,
 });
 
 let state: GatewayState = emptyState();
@@ -28,7 +36,7 @@ let state: GatewayState = emptyState();
 async function main() {
   for (let i = 0; i < 80; i++) {
     try {
-      if ((await fetch(BASE + "/api/state")).ok) break;
+      if ((await authedReady(BASE, auth.token)).ok) break;
     } catch {}
     await sleep(250);
   }
@@ -48,7 +56,7 @@ async function main() {
       "Norms: keep every change minimal, always write a test, and hand results back to the router via send_mail when done.",
   });
   await post("/api/meshes/brief-demo/start", {});
-  const ws = new WebSocket(`ws://localhost:${PORT}/ws`);
+  const ws = new WebSocket(`ws://localhost:${PORT}/ws?token=${encodeURIComponent(auth.token)}`);
   ws.onmessage = (ev) => {
     try {
       state = applyMsg(state, JSON.parse(String(ev.data)));
@@ -57,7 +65,7 @@ async function main() {
 
   // wait for codex-1 ready
   for (let i = 0; i < 40; i++) {
-    const st = await (await fetch(BASE + "/api/state")).json();
+    const st = await (await fetch(BASE + "/api/state", { headers: authd })).json();
     const m = st.meshes.find((x: any) => x.name === "brief-demo");
     if (m?.agents.find((a: any) => a.id === "codex-1")?.status === "ready") break;
     await sleep(1000);
@@ -99,4 +107,5 @@ try {
   try {
     server.kill("SIGKILL");
   } catch {}
+  await rm(auth.meshRootBase, { recursive: true, force: true });
 }

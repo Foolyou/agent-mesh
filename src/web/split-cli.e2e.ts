@@ -2,8 +2,9 @@
 // (one binary, two commands) and drives the browser against the web tier — proving the
 // SPA + REST + live WS all work across the proxy boundary. Run:
 //   bun run src/web/split-cli.e2e.ts
-import { launchChromium, e2eEnv } from "./e2e-playwright";
+import { authedContext, launchChromium, provisionE2eAuth } from "./e2e-playwright";
 import { mkdirSync } from "node:fs";
+import { rm } from "node:fs/promises";
 
 const API_PORT = Number(process.env.API_PORT) || 7350;
 const WEB_PORT = Number(process.env.WEB_PORT) || 7351;
@@ -24,31 +25,33 @@ async function step(name: string, fn: () => Promise<void>) {
     console.log(`  ✗ ${name} — ${String(e?.message ?? e).split("\n")[0]}`);
   }
 }
-async function waitReady(url: string) {
+async function waitReady(url: string, token: string) {
   for (let i = 0; i < 80; i++) {
     try {
-      if ((await fetch(url)).ok) return true;
+      if ((await fetch(url, { headers: { authorization: `Bearer ${token}` } })).ok) return true;
     } catch {}
     await sleep(250);
   }
   return false;
 }
 
+const auth = await provisionE2eAuth();
+
 // two separate processes from the one binary
 const backend = Bun.spawn(["bun", "run", "src/main.ts", "backend", "--fake", "--port", String(API_PORT)], {
   stdout: "pipe",
   stderr: "pipe",
-  env: e2eEnv(),
+  env: auth.env,
 });
 const web = Bun.spawn(
   ["bun", "run", "src/main.ts", "web", "--port", String(WEB_PORT), "--backend", `http://localhost:${API_PORT}`],
-  { stdout: "pipe", stderr: "pipe" },
+  { stdout: "pipe", stderr: "pipe", env: auth.env },
 );
 
 const browser = await launchChromium();
 try {
-  const backOk = await waitReady(`http://localhost:${API_PORT}/api/state`);
-  const webOk = await waitReady(`${WEB}/api/state`);
+  const backOk = await waitReady(`http://localhost:${API_PORT}/api/state`, auth.token);
+  const webOk = await waitReady(`${WEB}/api/state`, auth.token);
   console.log(`backend ready: ${backOk} · web ready: ${webOk}`);
 
   await step("backend has no SPA; web serves it", async () => {
@@ -58,7 +61,8 @@ try {
     if (!(w.headers.get("content-type") ?? "").includes("text/html")) throw new Error("web / not html");
   });
 
-  const page = await browser.newPage({ viewport: { width: 1440, height: 860 } });
+  const ctx = await authedContext(browser, auth.token, { viewport: { width: 1440, height: 860 } });
+  const page = await ctx.newPage();
   const errors: string[] = [];
   page.on("console", (m) => {
     if (m.type() === "error" && !/Failed to load resource/.test(m.text())) errors.push(m.text());
@@ -98,4 +102,5 @@ try {
   await browser.close();
   backend.kill();
   web.kill();
+  await rm(auth.meshRootBase, { recursive: true, force: true });
 }
