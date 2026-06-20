@@ -287,7 +287,30 @@ bun run build
 ```
 
 The compiled binary serves the embedded SPA and re-execs itself as each per-mesh
-host. The same binary also supports service commands:
+host. For the local operator install path, `scripts/update.sh` verifies the
+current source, builds a compiled binary, and installs it as `~/.local/bin/mesh`
+with rollback backups under `~/.local/state/mesh/backups`.
+
+Platform updater entrypoints:
+
+```bash
+# Linux
+scripts/update.sh
+
+# macOS
+scripts/update-macos.sh
+```
+
+```powershell
+# Windows PowerShell
+powershell -ExecutionPolicy Bypass -File scripts\update.ps1
+```
+
+On Windows, the updater installs `mesh.exe` to
+`%LOCALAPPDATA%\Programs\agent-mesh\bin` by default and warns if that directory
+is not on `PATH`.
+
+The same binary also supports service commands:
 
 ```bash
 mesh up

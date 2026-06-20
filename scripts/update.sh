@@ -1,17 +1,18 @@
 #!/usr/bin/env bash
-# Update (deploy) or roll back the production agent-mesh binary.
+# Update (deploy) or roll back the user-local agent-mesh binary.
 #
-#   scripts/update.sh                 build latest source → archive the old binary →
-#                                     swap in the new one → restart the service with it
+#   scripts/update.sh                 verify latest source → build a self-contained binary →
+#                                     install it as ~/.local/bin/mesh → restart with it
 #   scripts/update.sh --rollback      restore the newest archived binary and restart
-#   scripts/update.sh --rollback TS   restore a specific archived binary (dist/backups/mesh-TS)
+#   scripts/update.sh --rollback TS   restore a specific archived binary (mesh-TS)
 #   scripts/update.sh --list          list archived binaries (newest first)
 #
 # Deploy runs a pre-build GATE (bunx tsc --noEmit && bun test); if it fails, nothing is
-# built or touched — exactly the breakage that ships when verification is skipped. The old
-# binary is archived (timestamped) before the swap so a rollback can always go back. If the
-# new binary is not healthy after restart, the script STOPS and reports (it does NOT auto-
-# roll back) — run `scripts/update.sh --rollback` to restore the previous binary.
+# built or touched. The default install target is the normal user command directory
+# (~/.local/bin/mesh), so a shell with ~/.local/bin on PATH can call `mesh` directly. The
+# old binary is archived (timestamped) before the swap so a rollback can always go back.
+# If the new binary is not healthy after restart, the script STOPS and reports (it does
+# NOT auto-roll back) — run `scripts/update.sh --rollback` to restore the previous binary.
 #
 # Restarting is safe: running mesh daemons survive and the new backend reattaches to them
 # (hot restart). Pass --cold to also reap the daemons (full restart) — see `mesh restart`.
@@ -29,8 +30,9 @@ Usage:
 Environment:
   MESH_WORK_ROOT     base dir to update (default: ~); data lives in <base>/.agent-mesh
   MESH_WORK_PORT     backend port to restart (default: 10010)
-  MESH_BIN           live binary path (default: ./dist/mesh)
-  MESH_BACKUP_DIR    archive dir for old binaries (default: ./dist/backups)
+  MESH_BIN_DIR       local command dir (default: $XDG_BIN_HOME or ~/.local/bin)
+  MESH_BIN           live binary path (default: $MESH_BIN_DIR/mesh)
+  MESH_BACKUP_DIR    archive dir for old binaries (default: $XDG_STATE_HOME/mesh/backups or ~/.local/state/mesh/backups)
   MESH_BACKUP_KEEP   how many archived binaries to keep (default: 5)
   MESH_UPDATE_GATE   run tsc + bun test before building (default: 1; 0 to skip)
 
@@ -42,19 +44,7 @@ Advanced/test hooks:
 EOF
 }
 
-# ── config ──────────────────────────────────────────────────────────────────────
-PORT="${MESH_WORK_PORT:-10010}"
-BASE_RAW="${MESH_WORK_ROOT:-$HOME}"
-BIN="${MESH_BIN:-./dist/mesh}"
-BACKUP_DIR="${MESH_BACKUP_DIR:-./dist/backups}"
-KEEP="${MESH_BACKUP_KEEP:-5}"
-GATE="${MESH_UPDATE_GATE:-1}"
-GATE_CMD="${MESH_GATE_CMD:-bunx tsc --noEmit && bun test}"
-BUILD_CMD="${MESH_BUILD_CMD:-bun build --compile src/main.ts --outfile \$OUT}"
-RESTART_CMD="${MESH_RESTART_CMD:-$BIN}"
-HEALTH_TIMEOUT="${MESH_HEALTH_TIMEOUT:-25}"
-
-expand_root() {
+expand_path() {
   local p="$1"
   case "$p" in
     "~") printf '%s\n' "$HOME" ;;
@@ -63,7 +53,43 @@ expand_root() {
     *) printf '%s/%s\n' "$PWD" "$p" ;;
   esac
 }
-BASE="$(expand_root "$BASE_RAW")"
+
+path_contains_dir() {
+  local needle="$1"
+  local entry expanded
+  local -a entries
+  IFS=: read -ra entries <<<"${PATH:-}"
+  for entry in "${entries[@]}"; do
+    [[ -n "$entry" ]] || entry="."
+    expanded="$(expand_path "$entry")"
+    [[ "$expanded" == "$needle" ]] && return 0
+  done
+  return 1
+}
+
+# ── config ──────────────────────────────────────────────────────────────────────
+PORT="${MESH_WORK_PORT:-10010}"
+BASE_RAW="${MESH_WORK_ROOT:-$HOME}"
+BIN_DIR_RAW="${MESH_BIN_DIR:-${XDG_BIN_HOME:-$HOME/.local/bin}}"
+BIN_DIR="$(expand_path "$BIN_DIR_RAW")"
+BIN="$(expand_path "${MESH_BIN:-$BIN_DIR/mesh}")"
+BIN_DIR="$(dirname "$BIN")"
+BACKUP_DIR="$(expand_path "${MESH_BACKUP_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/mesh/backups}")"
+KEEP="${MESH_BACKUP_KEEP:-5}"
+GATE="${MESH_UPDATE_GATE:-1}"
+GATE_CMD="${MESH_GATE_CMD:-bunx tsc --noEmit && bun test}"
+BUILD_CMD="${MESH_BUILD_CMD:-bun build --compile src/main.ts --outfile \$OUT}"
+RESTART_CMD="${MESH_RESTART_CMD:-$BIN}"
+HEALTH_TIMEOUT="${MESH_HEALTH_TIMEOUT:-25}"
+BASE="$(expand_path "$BASE_RAW")"
+OUT=""
+
+cleanup() {
+  if [[ -n "${OUT:-}" && -e "$OUT" ]]; then
+    rm -f "$OUT"
+  fi
+}
+trap cleanup EXIT
 
 # ── arg parsing ─────────────────────────────────────────────────────────────────
 MODE="deploy"
@@ -92,11 +118,25 @@ list_backups() {
 
 wait_healthy() {
   local end=$((SECONDS + HEALTH_TIMEOUT))
+  local code
   while ((SECONDS < end)); do
-    if curl -fsS "http://127.0.0.1:$PORT/api/state" >/dev/null 2>&1; then return 0; fi
+    code="$(curl -sS -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/api/state" 2>/dev/null || true)"
+    if [[ "$code" =~ ^[1-4][0-9][0-9]$ ]]; then return 0; fi
     sleep 0.25
   done
   return 1
+}
+
+report_installed() {
+  local action="$1"
+  echo "$action → $BIN"
+  if [[ "${BIN##*/}" == "mesh" ]]; then
+    if path_contains_dir "$BIN_DIR"; then
+      echo "mesh is available on PATH as: mesh"
+    else
+      echo "warning: $BIN_DIR is not on PATH; add it before calling 'mesh' directly" >&2
+    fi
+  fi
 }
 
 do_restart() {
@@ -162,7 +202,7 @@ if [[ "$MODE" == "rollback" ]]; then
     [[ -n "$target" ]] || { echo "no archived binary to roll back to (dir: $BACKUP_DIR)" >&2; exit 1; }
   fi
   echo "rolling back: installing ${target##*/} → $BIN"
-  mkdir -p "$(dirname "$BIN")"
+  mkdir -p "$BIN_DIR"
   cp -f "$target" "$BIN"
   if [[ -f "$target.build-id" ]]; then
     cp -f "$target.build-id" "$BIN.build-id"
@@ -170,6 +210,7 @@ if [[ "$MODE" == "rollback" ]]; then
     rm -f "$BIN.build-id"
   fi
   chmod +x "$BIN"
+  report_installed "restored binary"
   restart_and_verify "rollback (${target##*/})"
   exit $?
 fi
@@ -183,16 +224,17 @@ if ((GATE)); then
   echo "✓ gate passed"
 fi
 
-# 2) Build the new binary to a temp path so a failed build never disturbs the live one.
+# 2) Build the new binary to a same-directory staging path so a failed build never
+# disturbs the live command, and the final rename stays atomic.
 OUT="$BIN.new"
-mkdir -p "$(dirname "$BIN")" "$BACKUP_DIR"
+mkdir -p "$BIN_DIR" "$BACKUP_DIR"
 rm -f "$OUT"
 echo "── building new binary → $OUT ───────────────────────────"
 OUT="$OUT" bash -c "$BUILD_CMD"
 [[ -s "$OUT" ]] || { echo "build did not produce a non-empty binary at $OUT" >&2; exit 1; }
 chmod +x "$OUT"
 
-# 3) Archive the current binary (timestamped), then atomically swap the new one in.
+# 3) Archive the current binary (timestamped), then atomically install the new one.
 TS="${MESH_NOW:-$(date +%Y%m%d-%H%M%S)}"
 BUILD_ID="${MESH_BUILD_ID:-$TS}"
 if [[ -f "$BIN" ]]; then
@@ -200,12 +242,13 @@ if [[ -f "$BIN" ]]; then
   # guard against same-second collisions so an archive is never overwritten
   if [[ -e "$archive" ]]; then n=2; while [[ -e "$archive.$n" ]]; do n=$((n + 1)); done; archive="$archive.$n"; fi
   echo "archiving current binary → ${archive#./}"
-  mv "$BIN" "$archive"
-  if [[ -f "$BIN.build-id" ]]; then mv "$BIN.build-id" "$archive.build-id"; fi
+  cp -p "$BIN" "$archive"
+  if [[ -f "$BIN.build-id" ]]; then cp -p "$BIN.build-id" "$archive.build-id"; fi
 fi
-mv "$OUT" "$BIN"
+mv -f "$OUT" "$BIN"
 printf '%s\n' "$BUILD_ID" > "$BIN.build-id"
 chmod +x "$BIN"
+report_installed "installed new binary"
 prune_backups
 
 # 4) Restart the service with the new binary and verify it is healthy.

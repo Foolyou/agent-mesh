@@ -31,7 +31,33 @@ This checklist covers macOS and Windows runtime verification for the cross-platf
    ./dist/mesh down --port 10010
    ```
 
-5. Start a mesh, spawn at least one agent, stop it, and confirm the agent process tree is reaped:
+5. Verify the platform updater entrypoint:
+
+   Linux:
+
+   ```bash
+   scripts/update.sh
+   command -v mesh
+   mesh status --port 10010
+   ```
+
+   macOS:
+
+   ```bash
+   scripts/update-macos.sh
+   command -v mesh
+   mesh status --port 10010
+   ```
+
+   Windows PowerShell:
+
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File scripts\update.ps1
+   Get-Command mesh
+   mesh status --port 10010
+   ```
+
+6. Start a mesh, spawn at least one agent, stop it, and confirm the agent process tree is reaped:
 
    ```bash
    ./dist/mesh

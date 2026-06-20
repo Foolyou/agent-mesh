@@ -96,6 +96,37 @@ shellTest("deploy: builds, archives the old binary, swaps in the new, restarts h
   expect(out).toContain("✓ new binary live and healthy");
 });
 
+shellTest("deploy: default target installs mesh into the user-local bin directory", async () => {
+  const home = await tmp("mesh-home-");
+  const base = join(home, "work-root");
+  await mkdir(base, { recursive: true });
+  const port = await freePort();
+  healthyServer(port);
+  const binDir = join(home, ".local", "bin");
+  const bin = join(binDir, "mesh");
+
+  const { code, out } = await runScript({
+    HOME: home,
+    XDG_BIN_HOME: "",
+    XDG_STATE_HOME: "",
+    MESH_BIN: "",
+    MESH_BIN_DIR: "",
+    MESH_BACKUP_DIR: "",
+    MESH_WORK_ROOT: base,
+    MESH_WORK_PORT: String(port),
+    MESH_UPDATE_GATE: "0",
+    MESH_RESTART_CMD: ":",
+    MESH_HEALTH_TIMEOUT: "3",
+    MESH_BUILD_CMD: 'printf NEWBIN > "$OUT"',
+    PATH: `${binDir}:${process.env.PATH ?? ""}`,
+  });
+
+  expect(code).toBe(0);
+  expect(await readFile(bin, "utf8")).toBe("NEWBIN");
+  expect(await readFile(`${bin}.build-id`, "utf8")).toMatch(/\d{8}-\d{6}\n/);
+  expect(out).toContain("mesh is available on PATH as: mesh");
+});
+
 shellTest("deploy: gate failure aborts before building — binary untouched, nothing archived", async () => {
   const h = await harness({ MESH_UPDATE_GATE: "1", MESH_GATE_CMD: "false" });
   await writeFile(h.bin, "OLDBIN");
