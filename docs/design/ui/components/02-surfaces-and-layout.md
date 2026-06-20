@@ -1,8 +1,8 @@
 # Step 2 components — 02 Surfaces & layout
 
 ## PanelFrame (Card)
-- **Purpose**: the universal surface unit — a framed region (head + body) on `bg-raise` with `line` border + radius. Every "panel"/"card"/"pane" in Step 1 is this.
-- **Variants**: with/without head; head has title + ActionBar; nested (bg-inset for code wells); flush vs padded; collapsible (right-context).
+- **Purpose**: the universal surface unit — a framed region (head + body) on `surface-raised` with `border` + radius. Every "panel"/"card"/"pane" in Step 1 is this.
+- **Variants**: with/without head; head has title + ActionBar; nested (`surface-sunken` for code wells); flush vs padded; collapsible (right-context).
 - **Surfaces**: all pages (left nav, main stage panels, right context, app surfaces, settings groups, modals' body).
 - **Desktop/mobile**: same frame; mobile = full-width, less nesting.
 - **Step-1 fix**: Step 1 used "panel"/"card"/"pane" interchangeably → all now = PanelFrame.
@@ -42,3 +42,4 @@
 ## Change / review log
 - 2026-06-20 — created (Step 2). PanelFrame + SegmentedControl unifications back-applied to Step 1 (logged there).
 - 2026-06-20 — Step 4 cross-review: board issue detail clarified as a routable page (`/board/issue/<N>`), not a drawer; "task detail" wording → "issue detail".
+- 2026-06-20 — Step 4 re-review (v2 tokens): PanelFrame surfaces/border → `surface-raised`/`surface-sunken`/`border` (v2 semantic). See `../04-cross-review.md`.

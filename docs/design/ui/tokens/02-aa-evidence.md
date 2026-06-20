@@ -1,68 +1,143 @@
-# Step 3 — WCAG AA evidence
+# Step 3 token v2 — contrast evidence (all 9 combinations)
 
-All ratios below are computed with the **repo's own contrast contract** — not a separate calculator — so the Step 3 palettes are judged by exactly the pairs the real UI paints and the thresholds the gate enforces.
+**v2 (supersedes v1).** Full per-pair contrast evidence for the two-layer token system (`01-palettes.md`), computed for all **9 `compose(mode, accent)` combinations** using the repo's own contrast math — so the palettes are judged by the same arithmetic the shipped gate uses.
 
 ## Method
-- Source of truth: `src/web/client/contrast.ts` — `AUDIT_PAIRS` (the enumerated (fg,bg) pairs the UI actually renders, incl. `color-mix` status tints resolved via `resolveColor`/`blend`), `evalPair` (ratio + per-family threshold), `FAMILY_THRESHOLD`, `contrastRatio`.
-- Thresholds (WCAG 2.1): text/status-text/selection/syntax/tinted-text = **AA 4.5**; status-dot/focus/border = **non-text 3.0**; `disabled` = hard **3.0** usability floor (prdmgr requirement; WCAG technically exempts disabled).
-- Each of the 9 palettes (mode base + accent) is run through **all 47 pairs**. A palette "passes" iff every non-advisory pair ≥ its threshold. (0 pairs are advisory in the current contract, so all 47 are hard gates.)
-- Reproduce: a throwaway generator at `/tmp/step3_evidence.ts` (NOT committed) imports the contract from the worktree and emits the tables below:
+- **Math source (read-only):** `src/web/client/contrast.ts` — `contrastRatio` (WCAG 2.1 relative-luminance ratio) and `blend` (alpha compositing for translucent tints). Imported read-only by a throwaway generator; **no `src/web` / `contrast.ts` / build change in this pass.**
+- **Composition:** `compose(mode, accent)` resolves the background semantic map (mode) + the accent ramp at its per-mode stop into concrete hex (per `01-palettes.md`), then every pair is evaluated for all 9 combinations.
+- **v2 upgraded thresholds** (vs the v1 contract):
+  - `text-primary` → **AAA 7.0** (was AA 4.5) — ⬆ upgrade.
+  - `text-secondary` → AA 4.5 **+ ≥5.5 soft target** (new soft goal).
+  - `focus-ring` → **4.5** (was 3.0) — ⬆ stronger non-text.
+  - `border-strong` → **4.5** — ★ new family (stronger-than-AA non-text edge).
+  - `border` (hairline) → **report-only** (was a 3.0 gate) — relaxed for purely decorative dividers.
+  - `surface-step` (raised/sunken vs surface) → **report-only** (new, decision 2).
+  - `on-accent`, `accent-subtle-text` → AA 4.5 — ★ new pairs.
+  - Everything else (`text-muted`, `text-disabled` floor, `status-text`, `tinted-text`, `status-dot`, `syntax`, `selection`, `accent-text`) → **unchanged** vs v1.
+- **Reproduce:**
   ```
-  bun /tmp/step3_evidence.ts        # full evidence
-  bun /tmp/step3_tokens.ts          # pass/fail summary + accent ratios
+  bun /tmp/v2_tokens.ts        # pass/fail per combo + soft-target + tight pairs + this report (after @@@REPORT@@@)
   ```
-  (When these palettes land as `BUILTIN_THEMES` in Step 5, the existing `bun run src/web/a11y-audit.ts` + `contrast.test.ts` gate them with no test changes — they already enumerate `AUDIT_PAIRS`.)
+  (Throwaway script; imports the repo contract. When v2 lands in Step 5, `contrast.ts` gains `compose()` + the split families and `a11y-audit.ts`/`contrast.test.ts` iterate the 9 — see `04-token-system-revision-proposal.md` §3f.)
 
 ## Result
-**All 9 palettes pass every non-advisory pair (47/47 each, 0 failures).**
+**All 9 combinations pass every hard (non-report-only) pair.** `text-secondary` meets the ≥5.5 soft target in all 9. `border` (hairline) and `surface-step` are report-only and listed for transparency.
 
-### Full-contract roll-up
-| mode | accent | pairs | fails |
-|---|---|---|---|
-| Dark·Slate | Teal | 47 | 0 |
-| Dark·Slate | Ember | 47 | 0 |
-| Dark·Slate | Azure | 47 | 0 |
-| Light·Cool | Teal | 47 | 0 |
-| Light·Cool | Ember | 47 | 0 |
-| Light·Cool | Azure | 47 | 0 |
-| Eye-care·Warm | Teal | 47 | 0 |
-| Eye-care·Warm | Ember | 47 | 0 |
-| Eye-care·Warm | Azure | 47 | 0 |
+### Per-combination roll-up
+| combination | hard pairs | fails |
+|---|---|---|
+| Dark·Slate × Signal Teal | all | 0 |
+| Dark·Slate × Ember | all | 0 |
+| Dark·Slate × Fleet Azure | all | 0 |
+| Light·Cool × Signal Teal | all | 0 |
+| Light·Cool × Ember | all | 0 |
+| Light·Cool × Fleet Azure | all | 0 |
+| Eye-care·Warm × Signal Teal | all | 0 |
+| Eye-care·Warm × Ember | all | 0 |
+| Eye-care·Warm × Fleet Azure | all | 0 |
 
-### Per-family worst-case ratio (non-advisory pairs), per base mode
-Each cell = the **lowest** ratio among all pairs of that family in the mode (accent handled separately below). All ≥ the threshold in ().
+## Per-pair evidence
+Legend for **vs v1**: ⬆ = upgraded to a stronger threshold · ★ = new pair/family · ＋soft = new soft target · ↓ = relaxed to report-only · = = unchanged from v1.
 
-| family (need) | Dark·Slate | Light·Cool | Eye-care·Warm |
-|---|---|---|---|
-| text (4.5) | 7.63 | 4.53 | 4.99 |
-| selection (4.5) | 16.02 | 13.73 | 12.95 |
-| status-text (4.5) | 5.16 | 4.83 | 5.03 |
-| tinted-text (4.5) | 5.15 | 4.59 | 4.60 |
-| status-dot (3.0) | 5.07 | 4.52 | 4.18 |
-| syntax (4.5) | 5.77 | 4.83 | 5.03 |
-| focus (3.0) | 6.85 | 5.74 | 5.56 |
-| border (3.0) | 4.64 | 3.59 | 3.51 |
-| disabled (3.0) | 7.63 | 4.53 | 4.99 |
+### Background-axis pairs (accent-independent — 3 columns = the 3 modes)
+| pair | family | threshold | vs v1 | Dark·Slate | Light·Cool | Eye-care·Warm |
+|---|---|---|---|---|---|---|
+| text-primary / surface | text-primary | AAA 7.0 | ⬆ AA→AAA | 16.2 | 15.75 | 12.95 |
+| text-primary / raised | text-primary | AAA 7.0 | ⬆ AA→AAA | 13.87 | 16.95 | 14.24 |
+| text-primary / sunken | text-primary | AAA 7.0 | ⬆ AA→AAA | 17.18 | 14.22 | 11.85 |
+| text-secondary / surface | text | AA 4.5 (+5.5 soft) | ＋soft 5.5 | 11.66 | 8.31 | 8.61 |
+| text-secondary / raised | text | AA 4.5 (+5.5 soft) | ＋soft 5.5 | 9.98 | 8.94 | 9.47 |
+| text-secondary / sunken | text | AA 4.5 (+5.5 soft) | ＋soft 5.5 | 12.36 | 7.5 | 7.88 |
+| text-muted / surface | text | AA 4.5 | = AA | 8.34 | 5.24 | 5.45 |
+| text-muted / raised | text | AA 4.5 | = AA | 7.14 | 5.64 | 6 |
+| text-muted / sunken | text | AA 4.5 | = AA | 8.84 | 4.73 | 4.99 |
+| text-disabled / surface | disabled | 3.0 floor | = floor | 5.48 | 3.59 | 3.51 |
+| text-disabled / raised | disabled | 3.0 floor | = floor | 4.69 | 3.87 | 3.86 |
+| text-disabled / sunken | disabled | 3.0 floor | = floor | 5.81 | 3.24 | 3.22 |
+| status-text:success / surface | status-text | AA 4.5 | = AA | 10.85 | 6.39 | 5.96 |
+| status-text:success / raised | status-text | AA 4.5 | = AA | 9.29 | 6.87 | 6.55 |
+| status-text:warning / surface | status-text | AA 4.5 | = AA | 11.32 | 6.35 | 5.93 |
+| status-text:warning / raised | status-text | AA 4.5 | = AA | 9.69 | 6.84 | 6.52 |
+| status-text:danger / surface | status-text | AA 4.5 | = AA | 6.83 | 7.44 | 6.95 |
+| status-text:danger / raised | status-text | AA 4.5 | = AA | 5.85 | 8.01 | 7.64 |
+| status-text:info / surface | status-text | AA 4.5 | = AA | 7.43 | 7.81 | 7.29 |
+| status-text:info / raised | status-text | AA 4.5 | = AA | 6.37 | 8.41 | 8.02 |
+| status-text:link / surface | status-text | AA 4.5 | = AA | 7.43 | 7.81 | 7.29 |
+| status-text:link / raised | status-text | AA 4.5 | = AA | 6.37 | 8.41 | 8.02 |
+| status-text:idle / surface | status-text | AA 4.5 | = AA | 7.44 | 6.77 | 6.32 |
+| status-text:idle / raised | status-text | AA 4.5 | = AA | 6.37 | 7.29 | 6.95 |
+| tinted:danger (legacy ad-hoc 12% over sunken — superseded by named `danger-subtle`) | tinted-text | AA 4.5 | = AA | 6.37 | 5.46 | 5.2 |
+| tinted:warning (legacy ad-hoc 10% over sunken — superseded by named `warning-subtle`) | tinted-text | AA 4.5 | = AA | 10.38 | 4.95 | 4.71 |
+| status-dot:success / surface | status-dot | 3.0 | = AA(non-text) | 10.85 | 6.39 | 5.96 |
+| status-dot:warning / surface | status-dot | 3.0 | = AA(non-text) | 11.32 | 6.35 | 5.93 |
+| status-dot:danger / surface | status-dot | 3.0 | = AA(non-text) | 6.83 | 7.44 | 6.95 |
+| status-dot:info / surface | status-dot | 3.0 | = AA(non-text) | 7.43 | 7.81 | 7.29 |
+| status-dot:idle / surface | status-dot | 3.0 | = AA(non-text) | 7.44 | 6.77 | 6.32 |
+| syntax:keyword / sunken | syntax | AA 4.5 | = AA | 7.88 | 7.05 | 6.67 |
+| syntax:string / sunken | syntax | AA 4.5 | = AA | 11.5 | 5.77 | 5.45 |
+| syntax:comment / sunken | syntax | AA 4.5 | = AA | 8.84 | 4.73 | 4.99 |
+| focus-ring / surface | focus | UI 4.5 | ⬆ 3.0→4.5 | 7.43 | 7.81 | 7.29 |
+| focus-ring / raised | focus | UI 4.5 | ⬆ 3.0→4.5 | 6.37 | 8.41 | 8.02 |
+| focus-ring / sunken | focus | UI 4.5 | ⬆ 3.0→4.5 | 7.88 | 7.05 | 6.67 |
+| border-strong / surface | border-strong | UI 4.5 | ★ NEW stronger | 8.34 | 5.24 | 5.45 |
+| border-strong / raised | border-strong | UI 4.5 | ★ NEW stronger | 7.14 | 5.64 | 6 |
+| border (hairline) / surface | border | report-only | ↓ now report-only | 1.5 | 1.38 | 1.29 |
+| border (hairline) / raised | border | report-only | ↓ now report-only | 1.29 | 1.48 | 1.42 |
 
-(The tightest margins are `border` on light modes — `line-bright` at 3.51–3.59 vs the 3.0 non-text floor — and `tinted-text` at ~4.6 vs 4.5; both clear AA with headroom but should not be lightened further.)
+### Accent-axis pairs (9 columns = mode×accent)
+| pair (family, threshold, vs v1) | Dark·teal | Dark·ember | Dark·azure | Light·teal | Light·ember | Light·azure | Eye·teal | Eye·ember | Eye·azure |
+|---|---|---|---|---|---|---|---|---|---|
+| accent-text / surface (status-text, AA 4.5, = AA) | 10.15 | 8.35 | 8.82 | 4.9 | 4.64 | 5.32 | 4.57 | 6.11 | 4.96 |
+| accent-text / raised (status-text, AA 4.5, = AA) | 8.69 | 7.15 | 7.55 | 5.28 | 4.99 | 5.72 | 5.03 | 6.72 | 5.45 |
+| on-accent (text-on-fill, AA 4.5, ★ NEW) | 10.57 | 8.7 | 9.19 | 5.47 | 5.18 | 5.93 | 5.47 | 7.31 | 5.93 |
+| accent-subtle-text (tinted-text, AA 4.5, ★ NEW) | 13.25 | 13.54 | 13.38 | 14.03 | 13.79 | 13.84 | 11.57 | 11.43 | 11.39 |
+| selection (selection, AA 4.5, = AA) | 13.25 | 13.54 | 13.38 | 14.03 | 13.79 | 13.84 | 11.57 | 11.43 | 11.39 |
 
-### Accent token — AA as text on base & raised surfaces
-Accent varies per mode×accent; each is AA 4.5 as a label on `bg` and `bg-raise`.
-
-| mode | accent | hex | on bg | on bg-raise | AA |
+### Status subtle + on-status pairs (★ NEW, mode-driven, **accent-independent** — 3 columns)
+`on-*` = filled-status foreground (AA 4.5, resolved per mode by measured contrast — Dark = near-black on bright stop-400 fills, Light/Eye-care = white on dark stop-800 fills). `*-subtle` = `blend(status-500, 14%, surface)` named token; checked carrying its own status-text and `text-primary`. These 8 tokens are invariant across the accent axis (same in all 9 combos).
+| pair | family | threshold | Dark·Slate | Light·Cool | Eye-care·Warm |
 |---|---|---|---|---|---|
-| Dark·Slate | Teal | `#2dd4bf` | 10.17 | 9.29 | ✅ |
-| Dark·Slate | Ember | `#fb923c` | 8.36 | 7.64 | ✅ |
-| Dark·Slate | Azure | `#7cc4ff` | 10.09 | 9.22 | ✅ |
-| Light·Cool | Teal | `#0f766e` | 4.90 | 5.28 | ✅ |
-| Light·Cool | Ember | `#b8460a` | 4.80 | 5.17 | ✅ |
-| Light·Cool | Azure | `#0369a1` | 5.32 | 5.72 | ✅ |
-| Eye-care·Warm | Teal | `#0f6f5c` | 5.09 | 5.60 | ✅ |
-| Eye-care·Warm | Ember | `#b04708` | 4.68 | 5.15 | ✅ |
-| Eye-care·Warm | Azure | `#1f5f8f` | 5.68 | 6.24 | ✅ |
+| on-success over success fill | on-fill | AA 4.5 | 11.30 | 7.13 | 7.13 |
+| on-warning over warning fill | on-fill | AA 4.5 | 11.79 | 7.09 | 7.09 |
+| on-danger over danger fill | on-fill | AA 4.5 | 7.12 | 8.31 | 8.31 |
+| on-info over info fill | on-fill | AA 4.5 | 7.74 | 8.72 | 8.72 |
+| success-text on success-subtle | tinted-text | AA 4.5 | 8.75 | 5.75 | 5.39 |
+| warning-text on warning-subtle | tinted-text | AA 4.5 | 9.04 | 5.77 | 5.43 |
+| danger-text on danger-subtle | tinted-text | AA 4.5 | 6.00 | 6.27 | 5.89 |
+| info-text on info-subtle | tinted-text | AA 4.5 | 6.35 | 6.72 | 6.27 |
+| text-primary on *-subtle (min) | tinted-text | AA 4.5 | 12.94 | 13.26 | 10.97 |
 
-## What the contract covers (so "AA" is meaningful, not cherry-picked)
-The 47 pairs/palette include: primary/secondary/tertiary text on all 3 surfaces; status hues (ok/warn/bad/info/link) as **readable text** on all 3 surfaces; status hues on their **own translucent tints** (bad/warn `color-mix` panels); status hues as **dots/borders** (non-text); syntax tokens on the code surface; the **focus ring** on all 3 surfaces; the **accent "thinking" label** on base + raised; control **borders** (`line-bright`); the **inverted selection** pair; the **hover-wash** secondary text; and **disabled** control text on all 3 surfaces. This is the same enumeration the shipped a11y gate uses, so a green here = a green in `contrast.test.ts`.
+`on-*` resolved values: Dark `#0b0b0b` (all four) · Light/Eye-care `#ffffff` (all four). Reproduce: `bun /tmp/v2_status.ts`.
+
+### surface-step (report-only, decision 2 — not gated)
+Elevation is intentionally subtle on near-monochrome surfaces; reinforced by `border` + (future) shadow. Reported, not gated.
+| step | Dark·Slate | Light·Cool | Eye-care·Warm |
+|---|---|---|---|
+| raised / surface | 1.17 | 1.08 | 1.1 |
+| sunken / surface | 1.06 | 1.11 | 1.09 |
+
+## Upgraded-pair summary (what changed vs v1)
+- **⬆ AAA:** `text-primary` on all 3 surfaces, all 3 modes — now ≥11.85 (AAA 7.0 cleared with large headroom).
+- **⬆ stronger non-text:** `focus-ring` 3.0→4.5 (now ≥6.37 everywhere).
+- **★ new family:** `border-strong` 4.5 (≥5.24 everywhere) — the visible interactive edge.
+- **★ new accent pairs:** `on-accent` (≥5.18) and `accent-subtle-text` (≥11.39).
+- **＋soft:** `text-secondary` ≥5.5 soft target met in all 9 (min 7.5).
+- **↓ relaxed:** `border` hairline now report-only (1.29–1.5) — purely decorative dividers no longer forced to 3.0.
+- **= unchanged AA:** `text-muted`, `text-disabled` floor, `status-text`, `tinted-text`, `status-dot`, `syntax`, `selection`, `accent-text`.
+
+## Tightest passing pairs (≥ need, low margin — do not push further)
+| pair | combo(s) | ratio | need |
+|---|---|---|---|
+| text-disabled / sunken | Eye-care (all accents) | 3.22 | 3.0 |
+| text-disabled / sunken | Light (all accents) | 3.24 | 3.0 |
+| text-disabled / surface | Eye-care | 3.51 | 3.0 |
+| accent-text / surface | Eye-care × Teal | 4.57 | 4.5 |
+| accent-text / surface | Light × Ember | 4.64 | 4.5 |
+| tinted:warning | Eye-care | 4.71 | 4.5 |
+| text-muted / sunken · syntax:comment | Light | 4.73 | 4.5 |
+
+(Report-only `border` hairline is below 3.0 by design and is not a tight *pass* — it is a relaxed, ungated decorative divider.)
 
 ## Change / review log
-- 2026-06-20 — created (Step 3): evidence generated from the repo pair contract; all 9 palettes 47/47. Tightest margins (light-mode border ~3.5, tinted-text ~4.6) noted as do-not-lighten.
+- 2026-06-20 — **v2 (supersedes v1)**: full per-pair contrast evidence for all 9 `compose(mode,accent)` combinations via the repo contrast math; every pair tagged with family + upgrade-vs-v1 (AAA / stronger / new / report-only / unchanged). All 9 pass hard gates; text-secondary ≥5.5 soft met everywhere; surface-step + hairline border reported (not gated). v1 evidence preserved in git history.
+- 2026-06-20 — **v2.1 status tokens**: added the status `on-*` (over fill) + `*-subtle` (status-text + text-primary) evidence, 3 modes, marked accent-independent. All ≥4.5 (on-* ≥7.0). Reproduce `bun /tmp/v2_status.ts`.

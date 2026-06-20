@@ -9,7 +9,7 @@ Detail docs: `01-primitives.md` · `02-surfaces-and-layout.md` · `03-lists-and-
 While inventorying, these cross-page one-offs in Step 1 were unified into shared components; **Step 1 docs were back-edited first** to reference the unified part (see each component's "Step-1 fix" + the Step 1 docs' change logs):
 1. **StatusListRow** — Step 1 described mesh rows, mobile agent cards, board task rows, harness rows, device rows, channel sender/binding rows, notification items as separate things. They are one component (leading status chip + title + meta + trailing actions) with variants. → unified.
 2. **ApprovalCard** — runtime "permission approve/deny card", assistant "confirm card", channels "sender approve/revoke" all share one inline approve/deny pattern. → unified.
-3. **PanelFrame (Card)** — "panel" / "card" / "right-context pane" / each app surface's container are one surface frame (head + body, bg-raise + line). → unified.
+3. **PanelFrame (Card)** — "panel" / "card" / "right-context pane" / each app surface's container are one surface frame (head + body, `surface-raised` + `border`). → unified.
 4. **SegmentedControl** — view switcher `[运行态|看板]`, board `[list|kanban]`, conversation agent tabs, RailLogs seg-tabs are one segmented/tab control. → unified.
 5. **EmptyState / ErrorBanner / Skeleton** — every page's empty/loading/error states are three shared feedback components, not per-page bespoke. → unified.
 6. **StatusChip** — already canonical in Step 1 `00-index`; confirmed every status surface uses the same 6-value set.
@@ -78,3 +78,4 @@ GitHub *Milestones* was a **maturity benchmark, not a feature request**. Correct
 ## Change / review log — Board addendum
 - 2026-06-20 — Step 2 board deepening: added `06-board.md`; Step 1 `03-board-view.md` deepened first; inventory + matrix extended.
 - 2026-06-20 — Step 2 correction: milestones removed (benchmark, not feature); EpicGroupHeader added as the grouping/aggregation part; back-applied to `03-board-view.md` + `06-board.md`.
+- 2026-06-20 — Step 4 re-review (v2 tokens): PanelFrame unification note → `surface-raised`/`border` (v2 semantic). See `../04-cross-review.md`.
