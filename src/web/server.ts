@@ -75,8 +75,9 @@ export function startWebServer(opts: WebServerOptions = {}): WebServerHandle {
     port: 0,
     hostname: "127.0.0.1",
     development: dev ? { hmr: true, console: false } : false,
-    // `/__ui-preview` is a temporary Step-5 design preview; the public server gates access below.
-    routes: { "/": index, "/mesh/*": index, "/__ui-preview": index },
+    // `/__ui-preview` (C8 gallery) + `/__ui-mockup` (Step 6 page mockups) are temporary
+    // design routes; the public server gates access below (MESH_UI_PREVIEW=1).
+    routes: { "/": index, "/mesh/*": index, "/__ui-preview": index, "/__ui-mockup": index },
     fetch() {
       return new Response("not found", { status: 404 });
     },
@@ -133,7 +134,7 @@ export function startWebServer(opts: WebServerOptions = {}): WebServerHandle {
         });
       }
 
-      if (url.pathname.startsWith("/__ui-preview") && !uiPreviewEnabled) {
+      if ((url.pathname.startsWith("/__ui-preview") || url.pathname.startsWith("/__ui-mockup")) && !uiPreviewEnabled) {
         return new Response("not found", { status: 404 });
       }
       const resp = await fetch(assetOrigin + url.pathname + url.search).catch(() => null);
