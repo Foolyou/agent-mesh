@@ -5,7 +5,7 @@ Input: Step 0 ground rules (ui-redesign.md + ui-redesign-tailwind.md), Step 1 in
 
 > **Fidelity & scope.** Step 3 is design-doc/artifact level: token values + themed component drafts + AA evidence. **No `src/web` functional code is changed.** The only code touched is a throwaway evidence/board generator under `/tmp` (not in the repo) that imports the repo's real contrast contract to compute ratios — see `02-aa-evidence.md`.
 
-> **⚠ Revision in flight (2026-06-20).** prdmgr/user requested a Step-3 token-system rework (two-layer semantic tokens + raw scales, stronger/AAA contrast, expanded 50→900 scales). The **proposal draft** is `04-token-system-revision-proposal.md` — it supersedes the model below **once approved**. Docs `00`–`03` here remain the **v1 (approved)** Step-3 design until the revision's full pass is applied; treat them as current-but-pending-rework.
+> **⚠ Revision in flight (2026-06-20).** prdmgr/user requested a Step-3 token-system rework: two-layer semantic tokens + raw scales (11-stop 50→950), stronger/AAA contrast, and **two orthogonal runtime axes — background mode (3) × accent (3) = 9 live, a11y-gated combinations** (accent is NOT a pick-one slot). The **proposal draft** is `04-token-system-revision-proposal.md` — it supersedes the model below **once approved**. Docs `00`–`03` here remain the **v1 (approved)** Step-3 design until the revision's full pass is applied; treat them as current-but-pending-rework.
 
 Docs in this area:
 - `00-tokens.md` — this index: token model, role catalogue, mode×accent matrix, Tailwind mapping, custom-palette model. *(v1)*
