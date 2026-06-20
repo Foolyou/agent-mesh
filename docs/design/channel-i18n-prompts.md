@@ -1,8 +1,8 @@
 # channel-i18n-prompts — channel i18n framework + English mail-prompt copy
 
-Status: **spec (revised: Category C promoted to first-class)** · branch `task/channel-i18n-prompts` ·
-base `b7a7593` · C1 i18n core landed `3b47da3`; C2 Category-A migration exists `1d8147e` (pending spec
-sign-off).
+Status: **implemented (C1–C3), rebased onto main `7571c9a`** · branch `task/channel-i18n-prompts` ·
+original base `b7a7593` (line numbers in the inventory tables are from there; the migration plan records
+the as-built state). team3 `feishu-tool-display` has landed on `7571c9a` and owns Category B.
 
 Three converted surfaces: (1) a real channel i18n framework (default `en`, extensible bundles, `{n}`
 interpolation, global-default locale + reserved config/per-binding switch); (2) **Category A** — Feishu
@@ -23,8 +23,10 @@ Grep approach (run against `src/channels`, excluding `*.test.ts`):
 
 Findings: **all** user-visible outbound copy is Chinese and lives in **two files only** —
 `feishu-channel.ts` and `card-sender.ts`. `controller.ts`/`provision.ts`/`index.ts` emit no user-visible
-replies (infra/logs only). `gating.ts` returns booleans, not copy. **team3's `toolDisplayStrings` does
-NOT exist on `b7a7593` yet** — `defaultToolHint` is still inline Chinese.
+replies (infra/logs only). `gating.ts` returns booleans, not copy. team3's `feishu-tool-display`
+(`toolDisplayStrings` / `toolDisplayCopy()`) has since landed on main `7571c9a` and owns all
+tool-annotation copy — this task never touches it. (The line numbers in the tables below are from the
+pre-rebase base `b7a7593`; the as-built section records the rebased state.)
 
 ## Inventory (generated system copy vs mirrored content)
 
@@ -54,12 +56,12 @@ NOT exist on `b7a7593` yet** — `defaultToolHint` is still inline Chinese.
 | `feishu.cmd.help` | :1158-1166 (`meshCommandHelp`) | `mesh "{mesh}" 可用命令：` + 5 lines | mesh |
 | `card.fallbackTitle` | card-sender.ts:1052 | `Agent 回复` | — |
 
-### B. Tool annotation — **team3 `feishu-tool-display` owns this** (absorb, don't duplicate)
+### B. Tool annotation — **team3-owned (landed on `7571c9a`)** — out of our scope
 
-| key | file:line | current (zh) | interpolation |
-|---|---|---|---|
-| `tool.hintNamed` | card-sender.ts:815 | `🔧 调用工具：{toolName}` | toolName |
-| `tool.hint` | card-sender.ts:815 | `🔧 正在调用工具` | — |
+team3's `feishu-tool-display` has landed on main `7571c9a`: tool-annotation copy lives in its own
+`toolDisplayStrings` / `toolDisplayCopy()` (in `feishu-channel.ts`), with `defaultToolHint` still its
+tunable hook in `card-sender.ts`. Our i18n bundle deliberately defines **no `tool.*` keys** — there is no
+duplicate ownership. We never touch this surface.
 
 ### C. channel→agent injected prompt scaffolding — **FIRST-CLASS, in scope, approved to convert**
 
@@ -106,9 +108,9 @@ converted.
 
 - **Placement**: `src/channels/i18n/` — `index.ts` (the `t()` + registry + locale state) and `en.ts`
   (the default bundle). Add `zh.ts` etc. later by registering in `bundles`.
-- **Bundle**: a flat `Record<string, string>` keyed by the namespaced keys above (`feishu.*`, `tool.*`,
-  `card.*`). Multi-line copy (help, auth) is a single `"line\nline"` string. Flat keys keep lookup and
-  the missing-key test trivial.
+- **Bundle**: a flat `Record<string, string>` keyed by the namespaced keys above (`feishu.*`, `card.*` —
+  no `tool.*`; tool copy is team3-owned). Multi-line copy (help, auth) is a single `"line\nline"` string.
+  Flat keys keep lookup and the missing-key test trivial.
 - **Interpolation**: `{name}` tokens replaced from a params object —
   `tpl.replace(/\{(\w+)\}/g, (_, k) => params?.[k] ?? "")`. Supports the `{n}` form the goal names.
   Unknown token → empty string (never throws). (Backslash-escape `\{` reserved if ever needed; not now.)
@@ -223,41 +225,36 @@ instructions: Reply to the user directly. Your reply is sent verbatim to this Fe
 user_message: [the user sent an image]
 ```
 
-## Team3 coordination (`feishu-tool-display` → `toolDisplayStrings`)
+## Team3 coordination (`feishu-tool-display`) — RESOLVED (rebased onto `7571c9a`)
 
-team3 is centralizing tool-annotation strings as default-English `toolDisplayStrings`. To avoid two
-sources of truth for the same copy:
-- **Sequencing (team3 lands first, assumed)**: our framework does NOT redefine the tool strings. After
-  team3 lands, our migration *references* `toolDisplayStrings` for the `tool.*` surface — either the
-  i18n `tool.hint`/`tool.hintNamed` keys re-export team3's constants, or `defaultToolHint` is already
-  team3's and we leave it (already English, already centralized) and simply ensure it's reachable via
-  `t()` if a locale ever needs to override it.
-- **Conflict file**: both tasks touch `card-sender.ts` (`defaultToolHint`). Strategy: we rebase onto the
-  main that includes team3; we OWN Category A (general channel copy) and DROP Category B from our bundle,
-  pointing at team3's constants. Our PR's `card-sender.ts` delta is then only `card.fallbackTitle`
-  (`Agent 回复` → `Agent reply`), minimizing overlap.
-- **If team3 has NOT landed when we implement**: we add a temporary `tool.*` bundle entry (English) plus a
-  migration note to fold it into `toolDisplayStrings` when team3 lands; team3's becomes the canonical
-  home (no permanent duplication).
+team3's `feishu-tool-display` has **landed** on main `7571c9a`: `toolDisplayStrings` /
+`toolDisplayCopy()` (in `feishu-channel.ts`) is the canonical, default-English home for tool-annotation
+copy; `defaultToolHint` remains its tunable hook in `card-sender.ts`. This task was rebased onto that
+main with **zero conflicts**. Outcome:
+- Our i18n bundle defines **no `tool.*` keys** (the earlier temporary placeholders were dropped — they
+  were never referenced) → no duplicate ownership; Category B is entirely team3's.
+- C3 leaves all tool-annotation code untouched. Our only `card-sender.ts` delta vs `7571c9a` is the
+  `t` import + `card.fallbackTitle` (`Agent 回复` → `Agent reply`) — `defaultToolHint` /
+  `toolDisplayStrings` / seal+rollover logic are unchanged.
 
 ## Migration plan (per-commit STOP) — current reality
 
-- **C1 — i18n core** ✅ DONE at `3b47da3` (kept). `src/channels/i18n/{index.ts,en.ts}` +
-  `t`/`setLocale`/registry + unit tests. (The `en.ts` already carries Category A + `feishu.prompt.*`
-  placeholders + `tool.*` placeholders; C3 revises the `feishu.prompt.*` wording to the structured style.)
-- **C2 — migrate feishu-channel.ts Category A** ⚠️ ALREADY EXISTS at `1d8147e`, but **NOT to be
-  considered approved until after this spec review**. Routes command replies / image-error / lifecycle /
-  assistant notices / `authCodeReply` / `meshCommandHelp` through `t()`; keeps Chinese input aliases;
-  English mail-prompt snapshots + a no-leftover-Chinese guard on `.sender.enqueue(`. Stays on the branch
-  pending sign-off (final scope confirms Category A is in scope, so the direction is usable).
-- **C3 — Category C + card fallback + team3 tool integration**:
+- **C1 — i18n core** ✅ DONE. `src/channels/i18n/{index.ts,en.ts}` + `t`/`setLocale`/registry + unit
+  tests. The `en.ts` bundle holds Category A + `feishu.prompt.*` + `card.fallbackTitle` keys only — **no
+  `tool.*`** (tool copy is team3's `toolDisplayStrings`).
+- **C2 — migrate feishu-channel.ts Category A** ✅ DONE. Routes command replies / image-error /
+  lifecycle / assistant notices / `authCodeReply` / `meshCommandHelp` through `t()`; keeps Chinese input
+  aliases; English mail-prompt snapshots + a no-leftover-Chinese guard on `.sender.enqueue(`.
+- **C3 — Category C + card fallback** ✅ DONE (then rebased onto `7571c9a`; the rebase auto-merged with
+  zero conflicts and a follow-up commit dropped the now-unused temporary `tool.*` keys):
   1. Convert the channel→agent frames — `feishuUserPrompt` (`feishu.prompt.group`) and
      `feishuAssistantPrompt` (`feishu.prompt.p2p`) — to the `[REQ]` mail-format frame, and the
      image-only payload (`feishu.prompt.image`) to `[the user sent an image]`. Update the C1 `en.ts`
      `feishu.prompt.*` entries to match. The mirrored `{text}` is untouched.
-  2. `card.fallbackTitle` → `Agent reply` (card-sender.ts).
-  3. team3 `toolDisplayStrings` absorption: reference team3's constants for `tool.*` if landed; else keep
-     the temp `tool.*` + migration note. Emoji stays team3-owned.
+  2. `card.fallbackTitle` → `Agent reply` (card-sender.ts) — the ONLY tool-area file we touch, and only
+     this empty-summary fallback line.
+  3. Tool annotation (Category B): **left untouched** — team3's `toolDisplayStrings` /
+     `toolDisplayCopy()` / `defaultToolHint` own it (landed on `7571c9a`). Our bundle has no `tool.*`.
 
 ## Tests
 
