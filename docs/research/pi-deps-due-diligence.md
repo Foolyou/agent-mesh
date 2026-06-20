@@ -3,7 +3,7 @@
 > Slug `pi-deps-due-diligence`，分支 `task/pi-deps-due-diligence`。**纯研究/审计，未改 src，未加 package.json/lockfile 依赖，未在仓库安装任何包。**
 > **Phase A（不拉码）**：社区信誉、版本、维护者、已知安全公告、供应链红旗。**Phase B（已放行，本次完成）**：`npm pack`（仅下载 tarball，**绝不 install、绝不跑安装脚本**）+ `git clone` tag + tarball↔repo provenance + 全传递依赖树 + 安装脚本/危险模式静态扫描；终裁见 **§5 Phase B + §6 终裁**。**Phase B 深审仅 `pi-acp` + `pi-mcp-adapter`**（prdmgr 决定跳过 `@zhafron/pi-mcp-tools` 拉码，保留 NO-GO）。
 > **取码/扫描全部在仓库外的隔离 scratch `/tmp/pi-audit`（独立 `HOME`、独立 npm cache、`npm_config_ignore_scripts=true`）完成**；仓库 worktree 内只写本文档。审计后 scratch 已清理。
-> 数据采集时间：**2026-06-21**（npm/GitHub/OSV 当日快照；下载量为 2026-06-13~06-19 周）。基线 main：任务指定 `633c2c1`；实际从当前 main `f1c6391` 新建分支（docs-only，基线 commit 不影响审计内容，prdmgr 已接受）。
+> 数据采集时间：**2026-06-21**（npm/GitHub/OSV/npm-audit 当日快照；下载量为 2026-06-13~06-19 周）。**本任务 docs-only research，与代码基线无耦合**：分支 `task/pi-deps-due-diligence` 从当时 main `f1c6391` 新建，基线 commit **不影响审计内容**（prdmgr 已接受该基线）。审计对象版本以 npm 上的 `pi-acp@0.0.31` / `pi-mcp-adapter@2.10.0` 为准，与本仓基线无关。
 
 ## 审核对象与范围
 | 包 | 角色 | 重点 |
@@ -29,12 +29,12 @@
 | deprecated | 否 | 否 | 否 |
 | 安装脚本（install hook） | **无**（仅 prepack/prepublishOnly，发布侧） | **无**（仅 test 脚本） | `prepare: husky`（dev 钩子，registry 消费安装不触发） |
 | npm provenance | publishConfig **声明 provenance:true**，但 registry attestations 端点查无（待 B 复核） | 未声明，attestations 查无 | 未声明 |
-| OSV / GHSA 公告 | **无** | **无** | **无** |
+| 安全公告（OSV/GHSA + npm audit） | **0**（OSV `{}`；`npm audit --omit=dev` 0 漏洞） | **0**（OSV `{}`；`npm audit --omit=dev` 0 漏洞） | **0**（OSV `{}`；未拉码，npm audit 未跑） |
 | 关键运行依赖 | `@agentclientprotocol/sdk`(官方 ACP SDK 新 scope) + `zod` | `@earendil-works/pi-ai`+`pi-tui`(Pi 内部)、`@modelcontextprotocol/sdk`(官方)、`open`(开浏览器)、`recheck`、`typebox`、`zod` | `@modelcontextprotocol/sdk`、`@sinclair/typebox` |
 | 官方性 | **社区第三方**（Pi 官方 ACP 支持仍在 discussion #175/#4444） | **社区第三方** Pi 扩展 | 社区第三方 |
 | **Phase A 初判** | **CAUTION**（可控前提下倾向 GO） | **CAUTION**（倾向 GO） | **NO-GO 倾向** |
 
-**一句话**：`pi-acp` 与 `pi-mcp-adapter` 都活跃、有真实采用、无已知 CVE、MIT。**Phase B 后的终裁（见 §6）**：`pi-acp` = **GO（pin + 监控）**——传递依赖仅 3 个、零安装脚本、零原生码、provenance 强（repo tag==gitHead）；`pi-mcp-adapter` = **CAUTION→条件 GO（必须沙箱化安装）**——运行期安全卫生良好，但 **217 个传递依赖含安装脚本（koffi 原生 FFI、protobufjs postinstall）+ recheck JAR/二进制**，必须 `--ignore-scripts`/剥离 postinstall/出口允许列表后才接入；`@zhafron/pi-mcp-tools` = **NO-GO**（已否，未拉码）。
+**一句话**：`pi-acp` 与 `pi-mcp-adapter` 都活跃、有真实采用、无已知 CVE、MIT。**Phase B 后的终裁（见 §6）**：`pi-acp` = **GO（pin + 监控）**——传递依赖仅 3 个、零安装脚本、零原生码、provenance 强（repo tag==gitHead）；`pi-mcp-adapter` = **CAUTION→条件 GO（必须沙箱化安装）**——运行期安全卫生良好，但 **~212 个传递依赖（审计时快照）含安装脚本（koffi@2.16.2 原生 FFI、protobufjs@7.6.4 postinstall）+ recheck@4.5.0 JAR/二进制**，必须 `--ignore-scripts`/剥离 postinstall/锁审过 lockfile/出口允许列表后才接入；`@zhafron/pi-mcp-tools` = **NO-GO**（已否，未拉码）。
 
 ---
 
@@ -157,21 +157,32 @@
   - **MCP server 启动**：`npx-resolver.ts` 用 `spawn("npm",["exec","--yes","--package",<packageSpec>, …])`（数组参数、非 shell → 无 shell 注入），`<packageSpec>` 来自 **mcp.json 的 server 定义** → **按 mcp.json 运行任意 npm 包**（MCP 适配器的本质能力，信任根=mcp.json）。
   - **mcp.json 来源/优先级（注意）**：`cli.js` 从多处读取——`<Pi agent dir>/mcp.json`、`~/.config/mcp/mcp.json`、`./.mcp.json`、`./.pi/mcp.json`，**并导入 `~/.cursor/mcp.json`、`~/.claude/mcp.json`、`~/.claude/claude_desktop_config.json`**。即会**拾取 Cursor/Claude 既有 MCP 配置（含其 server 命令与 env/token）** → 配置攻击面扩大；接入时需明确我们投喂哪个 mcp.json、是否禁用对 .cursor/.claude 的导入，避免误拾凭据/server。
   - **日志/泄密**：`console.*` 日志输出 server 名、错误对象、OAuth **authorize URL**（pre-token，含 client_id/state，非 secret）；**未发现**直接打印 access_token/Bearer/client_secret 的明文。残留：错误对象 `{ error }` 可能间接夹带敏感串，建议接入时收敛日志级别。
-- **依赖树（大）**：传递依赖 **217 个**（`@earendil-works/pi-ai`+`pi-tui` 拉入多 LLM provider 生态 → `@google/genai`、`protobufjs` 等；`@modelcontextprotocol/sdk`+`ext-apps`；`open`；`recheck`；`typebox`；`zod`）。
-- **安装脚本（直接 0，传递 3 个 🚩）**：直接包 scripts 仅 test。**传递依赖含安装脚本**：
-  - 🚩🚩 **`koffi`** — `install: node src/cnoke/cnoke.js -P . -D src/koffi --prebuild`：**原生 FFI 库 + 安装期 native 构建/取预编译**。FFI=可调任意原生代码；安装钩子会编译/下载二进制。**最高供应链关注点。**
-  - 🚩 **`protobufjs`** — `postinstall: node scripts/postinstall`（知名包，但仍是 postinstall）。
-  - 🟡 **`@google/genai`** — `preinstall: echo 'preinstall: no-op'`（Google GenAI SDK，no-op preinstall，无害但记一笔）。
+- **依赖树（大；审计时快照，非最终上线锁定）**：传递依赖 **212 个**（npm audit/lockfile 口径；`npm install` 报 `added 209`、node_modules 原始 package.json 计数 237——口径差异与完整快照见 **§附录 A3**）。来源：`@earendil-works/pi-ai`+`pi-tui` 拉入多 LLM provider 生态（`@google/genai`、`protobufjs` 等）+ `@modelcontextprotocol/sdk`+`ext-apps` + `open` + `recheck` + `typebox` + `zod`。**注意：此为本次一次解析快照，最终上线必须以审过的 lockfile 为准（见 §6 缓解 + §附录 A3 必做项）。**
+- **安装脚本（直接 0，传递 3 个 🚩）**：直接包 scripts 仅 test。**传递依赖含安装脚本（精确版本）**：
+  - 🚩🚩 **`koffi@2.16.2`** — `install: node src/cnoke/cnoke.js -P . -D src/koffi --prebuild`：**原生 FFI 库 + 安装期 native 构建/取预编译**。FFI=可调任意原生代码；安装钩子会编译/下载二进制。**最高供应链关注点。**
+  - 🚩 **`protobufjs@7.6.4`** — `postinstall: node scripts/postinstall`（知名包，但仍是 postinstall）。
+  - 🟡 **`@google/genai@1.52.0`** — `preinstall: echo 'preinstall: no-op'`（Google GenAI SDK，no-op preinstall，无害但记一笔）。
   - prepare 钩子 12 个（dev-only，registry 消费安装不触发）。
-  - 🟡 **`recheck`**（ReDoS 检测器）`optionalDependencies` 拉 **`recheck-jar`(JAR/JVM) + recheck-{linux-x64,macos-arm64,macos-x64,windows-x64}` 平台二进制** → 又一处**预编译二进制/JVM**面。
-  - 🟡 `depd` 等 deprecated 传递依赖（legacy，低风险）。
-- **小结**：**运行期代码本体卫生良好**（loopback、consent、0600 token、不执行工具返回、无 TLS 降级）；**风险主要在供应链体量与安装期**——217 依赖 + `koffi`(原生 FFI install) + `protobufjs`(postinstall) + `recheck` 二进制/JAR。普通 `npm install` 会执行这些钩子并落地原生码。
+  - 🟡 **`recheck@4.5.0`**（ReDoS 检测器）`optionalDependencies` 拉 **`recheck-jar`(JAR/JVM) + recheck-{linux-x64,macos-arm64,macos-x64,windows-x64}@4.5.0** 平台二进制 → 又一处**预编译二进制/JVM**面。
+  - 🟡 deprecated 传递依赖：**`node-domexception@1.0.0`**（"use native DOMException"，legacy，低风险）。
+- **小结**：**运行期代码本体卫生良好**（loopback、consent、0600 token、不执行工具返回、无 TLS 降级）；**风险主要在供应链体量与安装期**——~212 依赖 + `koffi`(原生 FFI install) + `protobufjs`(postinstall) + `recheck` 二进制/JAR。普通 `npm install` 会执行这些钩子并落地原生码。
 
 ### 5.3 传递依赖安全扫描边界（按 prdmgr 要求单列）
-对 `pi-mcp-adapter` 的 217 个传递依赖，本次**只做"会装进环境/会跑"的供应链+危险模式扫描，不做功能深审**：
-- ✅ 已扫：全树 install/preinstall/postinstall/prepare 钩子（上列 koffi/protobufjs/@google/genai + 12 prepare）；原生/二进制面（koffi、recheck-jar/平台二进制）；deprecated 标记（depd 等）。
+对 `pi-mcp-adapter` 的传递依赖（审计时快照 **212** 个 resolved，口径见 §附录 A3），本次**只做"会装进环境/会跑"的供应链+危险模式扫描，不做功能深审**：
+- ✅ 已扫：全树 install/preinstall/postinstall/prepare 钩子（koffi@2.16.2 `install` / protobufjs@7.6.4 `postinstall` / @google/genai@1.52.0 `preinstall`(no-op) + 12 prepare）；原生/二进制面（koffi FFI、recheck-jar/平台二进制）；deprecated（node-domexception@1.0.0）。
 - ❌ 未做（边界外）：逐个传递依赖的功能正确性、`@earendil-works/pi-ai`/`pi-tui` 等 Pi 内部库的功能深审（用户已定不审 Pi 主体）；每个 provider SDK（@google/genai 等）的运行行为。
 - ⚠️ 含义：接入 pi-mcp-adapter = 把上述原生码/安装钩子带进环境。**强烈建议安装期 `--ignore-scripts` + 显式审过的 lockfile 锁定，并评估 koffi/recheck 原生件是否真的运行所需**（若 MCP-UI / ReDoS 检查可关，可砍掉对应依赖面）。
+
+### 5.4 安全公告覆盖口径（CVE / OSV / GHSA / npm audit / Snyk / deprecated）
+| 来源 | pi-acp@0.0.31 | pi-mcp-adapter@2.10.0 | 口径/方法 |
+|---|---|---|---|
+| **OSV.dev**（含 CVE） | `{}` 无 | `{}` 无 | `POST api.osv.dev/v1/query`，对**直接包名**查询；OSV 聚合 CVE。 |
+| **GitHub Advisory (GHSA)** | 无 | 无 | **经 OSV 覆盖**——OSV.dev 已纳入 GHSA 源；本次未另跑独立 GHSA UI 查询，以 OSV 的 GHSA 覆盖为口径。 |
+| **npm audit** | **0 漏洞** | **0 漏洞** | 隔离 scratch 内 `npm audit --omit=dev --json`，**审整棵 resolved 树**（pi-acp metadata.dependencies.total=3、pi-mcp-adapter=212），`vulnerabilities` 各级 info/low/moderate/high/critical 全 0。与 reviewer 复验一致。 |
+| **Snyk** | **未跑** | **未跑** | 无 Snyk token/CLI，未跑；以 OSV+npm audit 双口径替代（二者均覆盖已公开 npm 公告）。**列为可选补充**（如有 Snyk 账户可再跑一遍交叉验证）。 |
+| **deprecated** | npm metadata **无** deprecated | 直接包 **无**；传递依赖 **node-domexception@1.0.0** 标 deprecated（"use native DOMException"，legacy 低风险）；lockfile deprecated 条目=1 | `npm view <pkg> deprecated`（直接包）+ lockfile `packages[*].deprecated` 遍历（传递）。 |
+
+**小结**：两个候选包在 **OSV + npm audit 双口径下均 0 已知漏洞**；GHSA 经 OSV 覆盖；Snyk 未跑（已说明替代口径）；deprecated 仅一个低风险传递依赖（node-domexception）。
 
 ---
 
@@ -180,18 +191,18 @@
 | 包 | **裁决** | 推荐 pin | 关键依据 |
 |---|---|---|---|
 | `pi-acp` | **GO**（pin + 监控） | `pi-acp@0.0.31`（repo `svkozak/pi-acp`，commit `9e857dcc`） | 攻击面极窄、3 依赖、0 安装脚本、0 原生码、provenance 强（tag==gitHead）；仅余 bundle↔source 与 attestation 待核 + 单人/pre-1.0 |
-| `pi-mcp-adapter` | **CAUTION → 条件 GO**（**必须沙箱化安装**） | `pi-mcp-adapter@2.10.0`（repo `nicobailon/pi-mcp-adapter`） | 运行期卫生良好；但 217 依赖 + koffi 原生 FFI install + protobufjs postinstall + recheck JAR/二进制 → 安装期供应链风险高 |
+| `pi-mcp-adapter` | **CAUTION → 条件 GO**（**必须沙箱化安装**） | `pi-mcp-adapter@2.10.0`（repo `nicobailon/pi-mcp-adapter`） | 运行期卫生良好；但 ~212 依赖（审计快照）+ koffi@2.16.2 原生 FFI install + protobufjs@7.6.4 postinstall + recheck@4.5.0 JAR/二进制 → 安装期供应链风险高 |
 | `@zhafron/pi-mcp-tools` | **NO-GO**（已否，未拉码） | — | 停更 4 月、11 dl/wk、单人；备选已排除 |
 
 **pi-acp 缓解**：① pin 精确版本+commit；② 接入前 `npm audit signatures` / npm 网页核 provenance 徽章，补 bundle↔attestation 这一缺口；③ 可选 vendor/fork-pin 防上游 0.0.x 漂移；④ 关掉其 `npm view … version` 的联网更新检查（如可配）；⑤ 留意 ACP SDK scope（新 `@agentclientprotocol/sdk` vs 本仓旧 `@zed-industries/...@0.4.5`）。
 
 **pi-mcp-adapter 缓解（接入前置条件）**：
-1. **安装期 `--ignore-scripts`**（CI/部署都加），用**审过的 lockfile** 锁定 217 依赖；koffi/recheck 的原生件按需手动放行，不让其在宿主自动 build。
+1. **安装期 `--ignore-scripts`**（CI/部署都加），用**审过的 lockfile** 锁定全部传递依赖（上线前必须固化 lockfile/SBOM，见 §附录 A3 必做项）；koffi/recheck 的原生件按需手动放行，不让其在宿主自动 build。
 2. **剥离/审 postinstall**：koffi(install)、protobufjs(postinstall) 单独评估；能不引入就砍（评估 MCP-UI ext-apps、ReDoS recheck 是否运行所需）。
 3. **沙箱运行**：在受限子进程/容器跑（本仓既有 per-mesh 进程隔离可复用），**出口网络允许列表**（仅放行需要的 MCP server 域 + OAuth 端点）。
 4. **配置面收敛**：明确只投喂我们生成的 mcp.json，**禁用其对 `~/.cursor`/`~/.claude` 配置的导入**（避免误拾外部 server/凭据）；mcp.json 是信任根，谁能写它就能让它 `npm exec` 任意包。
 5. **token/日志**：沿用其 0600 落盘；接入时收敛 `console.*` 日志级别，避免错误对象夹带敏感串。
-6. 可选 vendor/fork-pin，去掉不需要的 provider/UI 依赖面以缩小 217 棵树。
+6. 可选 vendor/fork-pin，去掉不需要的 provider/UI 依赖面以缩小这棵 ~212 节点的树。
 
 **总体建议**：
 - **pi-acp**：作为 ACP 桥**可接入**（与现有 codex-acp/claude-agent-acp host 同构），先补 provenance 核验 + 解决 ACP SDK scope，pin 后用。
@@ -217,13 +228,38 @@
 - **安全取码（仅下载 tarball，不 install，不跑脚本）**：`npm pack pi-acp@0.0.31`、`npm pack pi-mcp-adapter@2.10.0` → `sha256sum *.tgz` → `tar xzf` 解包到 scratch。
 - **取仓库（provenance）**：`git clone --depth 1 --branch v0.0.31 https://github.com/svkozak/pi-acp.git`；`git clone --depth 1 --branch v2.10.0 https://github.com/nicobailon/pi-mcp-adapter.git`。
 - **provenance 比对**：pi-acp `git rev-parse HEAD` == package.json `gitHead`；pi-mcp-adapter 逐 `.ts` `diff 发布物↔仓库`（0 不同）。
-- **传递依赖树（仅静态展开，`--ignore-scripts`，scratch 内，不在仓库）**：`npm install --ignore-scripts --no-audit --no-fund <pkg>@<ver>`（pi-acp 树=3 包、pi-mcp-adapter 树=217 包）。
-- **安装脚本全树扫描**：Python 遍历 `node_modules/**/package.json` 的 `scripts.{pre,,post}install/prepare`（发现 koffi.install / protobufjs.postinstall / @google/genai.preinstall(no-op) + 12 prepare）。
+- **传递依赖树（仅静态展开，`--ignore-scripts`，scratch 内，不在仓库）**：`npm install --ignore-scripts --no-audit --no-fund <pkg>@<ver>`（计数口径见 §附录 A3）。
+- **安装脚本全树扫描**：Python 遍历 `node_modules/**/package.json` 的 `scripts.{pre,,post}install/prepare`（发现 koffi@2.16.2.install / protobufjs@7.6.4.postinstall / @google/genai@1.52.0.preinstall(no-op) + 12 prepare）。
 - **危险模式静态扫描**：`grep -nE` over `*.ts/*.js`（排除 `.map`/bundle）扫 `eval|new Function`、`child_process/exec/spawn/open`、`http/https/net/tls/ws/fetch/axios`、`open(`、`process.env|Bearer|token|secret|credential`、TLS `rejectUnauthorized/NODE_TLS/insecure`、server `listen/127.0.0.1/localhost/0.0.0.0`。
+- **安全公告**：`POST api.osv.dev/v1/query`（OSV，含 GHSA）+ `npm audit --omit=dev --json`（整树）+ `npm view <pkg> deprecated` + lockfile deprecated 遍历。详见 §5.4。
 - **未做动态执行**：未运行任何包/二进制（静态足以裁决）；如需功能性动态校验，建议隔离 HOME + `--ignore-scripts` 容器内单独做。
 
+## 附录 A3：审计时 resolved 依赖树快照（可复验，**非最终上线锁定**）
+> ⚠️ **本次未保留完整 lockfile/SBOM 入仓**（scratch 已清理）。下列为审计时的快照证据 + 复现命令；**上线前必须**在隔离环境重新生成并**审过、固化 lockfile/SBOM**（见 §6 缓解 1），以审过的 lockfile 为最终依据，不得以本快照作为最终上线证明。
+
+**生成命令（隔离 scratch，`HOME`/`npm cache` 独立，`npm_config_ignore_scripts=true`，npm 11.14.1）**：
+```
+mkdir -p /tmp/<scratch>/<pkg> && cd /tmp/<scratch>/<pkg>
+echo '{"dependencies":{"<pkg>":"<ver>"}}' > package.json
+npm install --ignore-scripts --no-audit --no-fund     # 展树，不跑脚本
+npm audit --omit=dev --json                            # 漏洞
+# 计数：npm 'added N' / lockfile packages[node_modules/*] / find node_modules -name package.json | wc -l
+```
+
+**计数口径（同一棵树三种口径，故"数量"会变——以 npm audit/lockfile total 为准）**：
+| 包 | `npm install` added | lockfile resolved (`packages[node_modules/*]`) / `npm audit dependencies.total` | `find node_modules -name package.json` 原始计数 |
+|---|---|---|---|
+| pi-acp@0.0.31 | 3 | **3** | 3 |
+| pi-mcp-adapter@2.10.0 | 209 | **212** | 237 |
+
+**pi-mcp-adapter 关键 exact 版本（审计时 resolved）**：`pi-mcp-adapter@2.10.0`、`@modelcontextprotocol/sdk@1.29.0`、`@modelcontextprotocol/ext-apps@1.7.4`、`@earendil-works/pi-ai@0.74.2`、`@earendil-works/pi-tui@0.74.2`、`open@10.2.0`、`recheck@4.5.0`、`koffi@2.16.2`、`protobufjs@7.6.4`、`@google/genai@1.52.0`、`typebox@1.2.18`、`zod@4.4.3`。
+**安装钩子（exact）**：`koffi@2.16.2` install、`protobufjs@7.6.4` postinstall、`@google/genai@1.52.0` preinstall(no-op)；+ 12 个 prepare(dev-only)。**deprecated**：`node-domexception@1.0.0`。
+**tarball sha256（审计下载的发布物，可复验）**：pi-acp-0.0.31.tgz=`1fea2f687a082a23501199f93959e9c38a089b1f6ea7cc21620219e3fa2f6491`；pi-mcp-adapter-2.10.0.tgz=`3cfddb28423df70bee127b39e3e9456d908df1cf11e590f7a94020a9f9c8ac85`（可与 npm `dist.integrity` 交叉核：pi-acp `sha512-LZm1EUV/...`、pi-mcp-adapter `sha512-fSCLimNbR71/...`）。
+**上线前必做（lockfile/SBOM）**：① 在隔离环境重生成并审 `package-lock.json`（或 SBOM），固化 exact 版本树；② diff 本快照 vs 上线 lockfile 确认无漂移；③ 以审过 lockfile 锁定 + `--ignore-scripts` 部署。
+
 ## 附录 B：Phase B 完成度 / 未跑 gate / 安全铁律声明
-- **Phase B 已完成**：pi-acp+pi-mcp-adapter 的 npm pack、git clone、tarball↔repo provenance、全传递依赖树、安装脚本全树扫描、危险模式静态扫描、pi-mcp-adapter 的 TLS/绑定/mcp.json 来源/Bearer-token 落盘/日志/是否执行工具返回/`open` consent 均已覆盖。
+- **Phase B 已完成**：pi-acp+pi-mcp-adapter 的 npm pack、git clone、tarball↔repo provenance、全传递依赖树（含计数口径快照 §A3）、安装脚本全树扫描、危险模式静态扫描、**安全公告覆盖（OSV/GHSA + npm audit 双口径 0 漏洞，§5.4）**、pi-mcp-adapter 的 TLS/绑定/mcp.json 来源/Bearer-token 落盘/日志/是否执行工具返回/`open` consent 均已覆盖。
+- **reviewer 返工补正（2026-06-21）**：①依赖计数口径化（added 209 / lockfile+audit 212 / 原始文件 237）+ exact 版本 + tarball sha256，并明确"非最终上线锁定、上线须固化审过 lockfile"（§A3）；②advisory 覆盖补 npm audit(0/0)、Snyk 未跑(说明替代口径)、GHSA 经 OSV 覆盖、deprecated(node-domexception)（§5.4）；③移除顶部基线 `633c2c1` 串线表述，改为 docs-only 不影响审计。补正在隔离 scratch `/tmp/pi-audit2` 复跑生成、用后已清理。
 - **刻意未做**：动态执行/功能性运行校验（静态已足够裁决；列为可选后续，须隔离 HOME+`--ignore-scripts`）；@zhafron 拉码（prdmgr 已定跳过）；Pi 内部库（pi-ai/pi-tui）功能深审（边界外）。
 - **接入前待核（写进 §6 缓解）**：pi-acp 的 bundle↔source/attestation 核验（`npm audit signatures`/npm 网页徽章）；ACP SDK scope 对齐。
 - **未跑的 gate**：纯研究文档、无代码改动，**未运行** tsc/测试（不涉回归）。
