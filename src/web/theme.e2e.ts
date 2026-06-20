@@ -42,18 +42,31 @@ try {
   });
   page.on("pageerror", (e) => errors.push(String(e)));
   const bg = () => page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--bg").trim());
+  const cssVar = (n: string) => page.evaluate((name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim(), n);
 
   await page.goto(BASE, { waitUntil: "domcontentloaded" });
   await page.waitForSelector(".theme-sel", { timeout: 8000 });
 
-  await step("default theme is phosphor", async () => {
-    if ((await bg()) !== "#0a0b0d") throw new Error(`bg=${await bg()}`);
+  // Step-5 C2: the default runtime theme is now the v2 composition
+  // Dark·Slate × Signal Teal. The legacy --bg is derived from --surface, and the
+  // v2 semantic vars are applied too (compose(mode,accent) → :root).
+  await step("default theme is v2 Dark·Slate × Signal Teal", async () => {
+    const b = await bg();
+    if (b !== "#0e1117") throw new Error(`bg=${b}`);
+    const surface = await cssVar("--surface");
+    const accent = await cssVar("--accent");
+    if (surface !== "#0e1117") throw new Error(`surface=${surface}`);
+    if (accent !== "#2dd4bf") throw new Error(`accent=${accent}`);
   });
 
   await step("switching to Paper applies a light background", async () => {
     await page.selectOption(".theme-sel", "paper");
     await sleep(150);
     if ((await bg()) !== "#f4f2ec") throw new Error(`bg=${await bg()}`);
+    // C2: applyPalette must sync the v2 semantic layer too — --surface tracks the
+    // legacy --bg (was stale teal-default before the C2 fix).
+    const surface = await cssVar("--surface");
+    if (surface !== "#f4f2ec") throw new Error(`--surface not synced to Paper: ${surface}`);
     await page.locator('.mrow:has-text("demo")').first().click().catch(() => {});
     await sleep(400);
     await page.screenshot({ path: `${SHOTS}/theme-paper.png` });

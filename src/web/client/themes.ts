@@ -1,3 +1,5 @@
+import { blend, hexToRgb, contrastRatio } from "./contrast";
+
 // Theme system. Everything visual runs on CSS custom properties, so a "theme" is
 // just a palette of values for those properties. Built-in presets + a user custom
 // palette are applied by setting the vars on :root; the choice persists in
@@ -292,6 +294,18 @@ export function migratePalette(v: unknown): Palette | null {
 export function applyPalette(p: Palette): void {
   const root = document.documentElement;
   for (const k of THEME_KEYS) root.style.setProperty(`--${k}`, p[k]);
+  // Keep the v2 semantic layer (Step 5 C2) in sync: applying a v1 preset / custom
+  // palette through the existing ThemePicker must also refresh `--surface`,
+  // `--accent`, `--on-*`, etc. — otherwise semantic-token components (later steps)
+  // would keep the previous composition's values, producing a mixed theme.
+  // Derive from a SANITIZED palette: the custom-theme editor live-previews on every
+  // keystroke (partial values like "#12"), so feed migratePalette() — never raw p —
+  // into v1PaletteToSemantic so hexToRgb can't throw and crash the editor. The legacy
+  // raw inputs are still written above (browser ignores an invalid CSS var); a later
+  // valid keystroke re-runs this and refreshes the semantic layer.
+  // (v1PaletteToSemantic / SEMANTIC_KEYS are defined below; referenced at call time.)
+  const s = v1PaletteToSemantic(migratePalette(p) ?? BUILTIN_THEMES[0].palette);
+  for (const k of SEMANTIC_KEYS) root.style.setProperty(`--${k}`, s[k]);
 }
 
 export function themeByName(name: string): Theme {
@@ -341,7 +355,187 @@ export function saveActive(name: string): void {
   }
 }
 
-/** Apply the persisted theme (call once, before first paint). */
+// ════════════════════════════════════════════════════════════════════════════
+// v2 token system (Step 5 C2) — two-layer, orthogonal mode × accent runtime.
+// Source of truth: docs/design/ui/tokens/{00,01,02}.md. COEXISTS with the v1
+// 19-key model above: applyComposition() writes the v2 semantic vars AND derives
+// the legacy 19 vars, so the (un-migrated) theme.css keeps rendering under the v2
+// default. C3 owns the contrast-threshold / a11y-gate upgrade; this commit lands
+// only the runtime + storage + migration shim (no component primitives).
+// ════════════════════════════════════════════════════════════════════════════
+
+export const MODES = ["dark-slate", "light-cool", "eye-care-warm"] as const;
+export type Mode = (typeof MODES)[number];
+export const ACCENTS = ["signal-teal", "ember", "fleet-azure"] as const;
+export type Accent = (typeof ACCENTS)[number];
+export const DEFAULT_MODE: Mode = "dark-slate";
+export const DEFAULT_ACCENT: Accent = "signal-teal";
+
+// Raw 11-stop scales (50→950) — components MUST NOT reference these directly
+// (Tailwind lint-discourages `raw-*`); semantic tokens below alias into them.
+type Ramp = Record<number, string>;
+const RAW: Record<string, Ramp> = {
+  slate: { 50: "#e9eef4", 100: "#d9e0e8", 200: "#c4ccd6", 300: "#a4adba", 400: "#828b97", 500: "#5f6772", 600: "#444c56", 700: "#2d343d", 800: "#1b212a", 900: "#0e1117", 950: "#06080c" },
+  cool: { 50: "#f9fbfd", 100: "#eef3f8", 200: "#e0e8f1", 300: "#c4d2e2", 400: "#93a8bf", 500: "#6c8199", 600: "#51677e", 700: "#36495c", 800: "#233547", 900: "#15222f", 950: "#0e1a26" },
+  warm: { 50: "#fbf5e6", 100: "#f3ead6", 200: "#ece0c8", 300: "#ddcfb0", 400: "#c2ad84", 500: "#8a7a55", 600: "#6a5c41", 700: "#4a3f2c", 800: "#382f1f", 900: "#2b2317", 950: "#1c160d" },
+  green: { 50: "#f0fdf4", 100: "#dcfce7", 200: "#bbf7d0", 300: "#86efac", 400: "#4ade80", 500: "#22c55e", 600: "#16a34a", 700: "#15803d", 800: "#166534", 900: "#14532d", 950: "#052e16" },
+  amber: { 50: "#fffbeb", 100: "#fef3c7", 200: "#fde68a", 300: "#fcd34d", 400: "#fbbf24", 500: "#f59e0b", 600: "#d97706", 700: "#b45309", 800: "#92400e", 900: "#78350f", 950: "#451a03" },
+  red: { 50: "#fef2f2", 100: "#fee2e2", 200: "#fecaca", 300: "#fca5a5", 400: "#f87171", 500: "#ef4444", 600: "#dc2626", 700: "#b91c1c", 800: "#991b1b", 900: "#7f1d1d", 950: "#450a0a" },
+  blue: { 50: "#eff6ff", 100: "#dbeafe", 200: "#bfdbfe", 300: "#93c5fd", 400: "#60a5fa", 500: "#3b82f6", 600: "#2563eb", 700: "#1d4ed8", 800: "#1e40af", 900: "#1e3a8a", 950: "#172554" },
+  gray: { 50: "#f9fafb", 100: "#f3f4f6", 200: "#e5e7eb", 300: "#d1d5db", 400: "#9ca3af", 500: "#6b7280", 600: "#4b5563", 700: "#374151", 800: "#1f2937", 900: "#111827", 950: "#030712" },
+  "signal-teal": { 50: "#f0fdfa", 100: "#ccfbf1", 200: "#99f6e4", 300: "#5eead4", 400: "#2dd4bf", 500: "#14b8a6", 600: "#0d9488", 700: "#0f766e", 800: "#115e59", 900: "#134e4a", 950: "#042f2e" },
+  ember: { 50: "#fff7ed", 100: "#ffedd5", 200: "#fed7aa", 300: "#fdba74", 400: "#fb923c", 500: "#f97316", 600: "#ea580c", 700: "#c2410c", 800: "#9a3412", 900: "#7c2d12", 950: "#431407" },
+  "fleet-azure": { 50: "#f0f9ff", 100: "#e0f2fe", 200: "#bae6fd", 300: "#7dd3fc", 400: "#38bdf8", 500: "#0ea5e9", 600: "#0284c7", 700: "#0369a1", 800: "#075985", 900: "#0c4a6e", 950: "#082f49" },
+};
+
+interface ModeSpec {
+  neutral: string;
+  dark: boolean;
+  surface: number; raised: number; sunken: number; border: number; borderStrong: number;
+  textPrimary: number; textSecondary: number; textMuted: number; textDisabled: number;
+  statusStop: number; warnStop: number; accentStop: number;
+}
+// Per-mode semantic stop map (docs/design/ui/tokens/01-palettes.md, Layer B).
+const MODE_SPEC: Record<Mode, ModeSpec> = {
+  "dark-slate": { neutral: "slate", dark: true, surface: 900, raised: 800, sunken: 950, border: 700, borderStrong: 300, textPrimary: 50, textSecondary: 200, textMuted: 300, textDisabled: 400, statusStop: 400, warnStop: 400, accentStop: 400 },
+  "light-cool": { neutral: "cool", dark: false, surface: 100, raised: 50, sunken: 200, border: 300, borderStrong: 600, textPrimary: 950, textSecondary: 700, textMuted: 600, textDisabled: 500, statusStop: 800, warnStop: 800, accentStop: 700 },
+  "eye-care-warm": { neutral: "warm", dark: false, surface: 100, raised: 50, sunken: 200, border: 300, borderStrong: 600, textPrimary: 900, textSecondary: 700, textMuted: 600, textDisabled: 500, statusStop: 800, warnStop: 800, accentStop: 700 },
+};
+// Per-(mode,accent) accent-stop override so all 9 combinations clear contrast
+// (decision 4): Eye-care × Ember needs the darker 800 on the cream field.
+const ACCENT_STOP_OVERRIDE: Partial<Record<Mode, Partial<Record<Accent, number>>>> = {
+  "eye-care-warm": { ember: 800 },
+};
+
+// Component-facing semantic tokens. Components use ONLY these (never RAW).
+export const SEMANTIC_KEYS = [
+  "surface", "surface-raised", "surface-sunken", "surface-overlay",
+  "border", "border-strong",
+  "text-primary", "text-secondary", "text-muted", "text-disabled",
+  "success", "warning", "danger", "info", "link", "idle",
+  "success-subtle", "warning-subtle", "danger-subtle", "info-subtle",
+  "on-success", "on-warning", "on-danger", "on-info",
+  "accent", "accent-hover", "accent-active", "accent-subtle", "on-accent",
+  "hover", "active", "selected", "text-on-selected", "focus-ring", "disabled",
+  "syntax-keyword", "syntax-string", "syntax-comment",
+] as const;
+export type SemanticVar = (typeof SEMANTIC_KEYS)[number];
+export type SemanticPalette = Record<SemanticVar, string>;
+
+const rgbToHex = (o: { r: number; g: number; b: number }) =>
+  "#" + [o.r, o.g, o.b].map((x) => Math.max(0, Math.min(255, x)).toString(16).padStart(2, "0")).join("");
+/** Foreground for a filled status/accent surface — black or white by measured
+ *  contrast (NOT assumed white; bright fills take near-black). */
+const onPick = (fill: string): string => (contrastRatio(fill, "#ffffff") >= contrastRatio(fill, "#0b0b0b") ? "#ffffff" : "#0b0b0b");
+
+/** Resolve one of the 9 built-in (mode × accent) combinations to a full semantic palette. */
+export function compose(mode: Mode, accent: Accent): SemanticPalette {
+  const m = MODE_SPEC[mode];
+  const n = m.neutral;
+  const c = (ramp: string, stop: number) => RAW[ramp][stop];
+  const surface = c(n, m.surface), raised = c(n, m.raised), sunken = c(n, m.sunken);
+  const accentStop = ACCENT_STOP_OVERRIDE[mode]?.[accent] ?? m.accentStop;
+  const acc = c(accent, accentStop);
+  const subtle = (ramp: string) => rgbToHex(blend(hexToRgb(c(ramp, 500)), 0.14, hexToRgb(surface)));
+  const wash = (pct: number) => rgbToHex(blend(hexToRgb(c(n, m.textPrimary)), pct, hexToRgb(surface)));
+  const success = c("green", m.statusStop), warning = c("amber", m.warnStop), danger = c("red", m.statusStop), info = c("blue", m.statusStop);
+  return {
+    surface, "surface-raised": raised, "surface-sunken": sunken, "surface-overlay": wash(0.55),
+    border: c(n, m.border), "border-strong": c(n, m.borderStrong),
+    "text-primary": c(n, m.textPrimary), "text-secondary": c(n, m.textSecondary), "text-muted": c(n, m.textMuted), "text-disabled": c(n, m.textDisabled),
+    success, warning, danger, info, link: info, idle: c("gray", m.dark ? 400 : 600),
+    "success-subtle": subtle("green"), "warning-subtle": subtle("amber"), "danger-subtle": subtle("red"), "info-subtle": subtle("blue"),
+    "on-success": onPick(success), "on-warning": onPick(warning), "on-danger": onPick(danger), "on-info": onPick(info),
+    accent: acc, "accent-hover": c(accent, accentStop - 100), "accent-active": c(accent, Math.min(accentStop + 100, 950)),
+    "accent-subtle": subtle(accent), "on-accent": onPick(acc),
+    hover: wash(0.05), active: wash(0.09), selected: subtle(accent), "text-on-selected": c(n, m.textPrimary),
+    "focus-ring": info, disabled: surface,
+    "syntax-keyword": info, "syntax-string": success, "syntax-comment": c(n, m.textMuted),
+  };
+}
+
+// Legacy 19-key var ← semantic var, so un-migrated theme.css renders under v2.
+// sel-bg/sel-fg keep the v1 inverted-selection look (fg-as-bg / bg-as-fg).
+const V1_FROM_SEMANTIC: Record<ThemeVar, SemanticVar> = {
+  bg: "surface", "bg-raise": "surface-raised", "bg-inset": "surface-sunken",
+  line: "border", "line-bright": "border-strong",
+  fg: "text-primary", "fg-dim": "text-secondary", "fg-faint": "text-muted",
+  ok: "success", warn: "warning", bad: "danger", off: "idle", info: "info", link: "link", good: "success",
+  accent: "accent", focus: "focus-ring", "sel-bg": "text-primary", "sel-fg": "surface",
+};
+
+/** Write a semantic palette to :root — both the v2 vars and the derived legacy
+ *  19 vars (so theme.css works during the incremental migration). */
+export function applyComposition(c: SemanticPalette): void {
+  const root = document.documentElement;
+  for (const k of SEMANTIC_KEYS) root.style.setProperty(`--${k}`, c[k]);
+  for (const k of THEME_KEYS) root.style.setProperty(`--${k}`, c[V1_FROM_SEMANTIC[k]]);
+}
+
+/** v1 19-key → v2 semantic migration/fallback shim. Best-effort derivation so a
+ *  stored v1 custom palette still renders under v2: status `*-subtle`/`on-*` and
+ *  the interaction washes are derived from the v1 values (no raw ramp available).
+ *  The 19-key input should already be sanitized via migratePalette() (which seeds
+ *  a missing link from info + backfills missing keys). */
+export function v1PaletteToSemantic(p: Palette): SemanticPalette {
+  const surface = p.bg;
+  const subtle = (hex: string) => rgbToHex(blend(hexToRgb(hex), 0.14, hexToRgb(surface)));
+  const wash = (pct: number) => rgbToHex(blend(hexToRgb(p.fg), pct, hexToRgb(surface)));
+  return {
+    surface, "surface-raised": p["bg-raise"], "surface-sunken": p["bg-inset"], "surface-overlay": wash(0.55),
+    border: p.line, "border-strong": p["line-bright"],
+    "text-primary": p.fg, "text-secondary": p["fg-dim"], "text-muted": p["fg-faint"], "text-disabled": p["fg-faint"],
+    success: p.ok, warning: p.warn, danger: p.bad, info: p.info, link: p.link, idle: p.off,
+    "success-subtle": subtle(p.ok), "warning-subtle": subtle(p.warn), "danger-subtle": subtle(p.bad), "info-subtle": subtle(p.info),
+    "on-success": onPick(p.ok), "on-warning": onPick(p.warn), "on-danger": onPick(p.bad), "on-info": onPick(p.info),
+    accent: p.accent, "accent-hover": p.accent, "accent-active": p.accent, "accent-subtle": subtle(p.accent), "on-accent": onPick(p.accent),
+    hover: wash(0.05), active: wash(0.09), selected: subtle(p.accent), "text-on-selected": p.fg,
+    "focus-ring": p.focus, disabled: surface,
+    "syntax-keyword": p.info, "syntax-string": p.good, "syntax-comment": p["fg-faint"],
+  };
+}
+
+// Two independent, runtime-switchable persisted choices (orthogonal axes).
+const MODE_KEY = "mesh.theme.mode";
+const ACCENT_KEY = "mesh.theme.accent";
+
+export function loadThemeSelection(): { mode: Mode; accent: Accent } {
+  let mode: Mode = DEFAULT_MODE;
+  let accent: Accent = DEFAULT_ACCENT;
+  try {
+    const m = localStorage.getItem(MODE_KEY);
+    if (m && (MODES as readonly string[]).includes(m)) mode = m as Mode;
+    const a = localStorage.getItem(ACCENT_KEY);
+    if (a && (ACCENTS as readonly string[]).includes(a)) accent = a as Accent;
+  } catch {
+    /* unavailable */
+  }
+  return { mode, accent };
+}
+export function saveMode(m: Mode): void {
+  try { localStorage.setItem(MODE_KEY, m); } catch { /* unavailable */ }
+}
+export function saveAccent(a: Accent): void {
+  try { localStorage.setItem(ACCENT_KEY, a); } catch { /* unavailable */ }
+}
+
+/** Apply the persisted theme (call once, before first paint).
+ *  An explicit v1 selection ("mesh.theme" = a built-in name, or "custom") is
+ *  honored first — this preserves returning users' legacy choice and keeps the
+ *  existing ThemePicker + a11y theme-switch (which set "mesh.theme") working. A
+ *  fresh / non-legacy state falls through to the v2 composition, default
+ *  Dark·Slate × Signal Teal. (The mode/accent ThemePicker UI is a later commit.) */
 export function initTheme(): void {
-  applyPalette(loadActive().palette);
+  let legacy: string | null = null;
+  try { legacy = localStorage.getItem(ACTIVE_KEY); } catch { /* unavailable */ }
+  if (legacy === "custom") {
+    applyPalette(loadCustomPalette()); // writes faithful legacy vars + synced semantic layer
+    return;
+  }
+  if (legacy && BUILTIN_THEMES.some((t) => t.name === legacy)) {
+    applyPalette(themeByName(legacy).palette);
+    return;
+  }
+  const { mode, accent } = loadThemeSelection();
+  applyComposition(compose(mode, accent));
 }
