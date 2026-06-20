@@ -62,7 +62,7 @@ export function startWebServer(opts: WebServerOptions = {}): WebServerHandle {
     const token = route === "ws"
       ? url.searchParams.get("token") ?? bearerToken(req.headers) ?? undefined
       : bearerToken(req.headers) ?? undefined;
-    const result = await authorizeRequest({ root: authRoot, token, remoteAddress });
+    const result = await authorizeRequest({ root: authRoot, token, remoteAddress, route, method: req.method, path: url.pathname });
     const key = `${remoteAddress}|${result.via}|${route}`;
     if (!result.ok || !loggedGate.has(key)) {
       if (loggedGate.size < 1000) loggedGate.add(key);
