@@ -79,11 +79,15 @@
 
 ### 3.1 数据流（A）
 1. **Channel 拥有 mode→字符串映射 + 计数**：`BindingRuntime` 新增每轮工具状态（见 §4）。`onRouterToolCall` 去重后更新状态，composeAnnotation→交给 sender。
-2. **Sender 渲染**：`CardSender` 新增 `toolAnnotation?: string`（cosmetic，**不计入** `streamBaseOffset/live.sentText`），在 `composeDisplay` 里作为 body 的**尾部块**追加：
+2. **Sender 渲染**：`CardSender` 新增 `toolAnnotation?: string`（cosmetic，**不计入** `streamBaseOffset/live.sentText/continuation 扫描**），在 `composeDisplay` 里作为 body 的**尾部块**追加——但**必须先把 body 当前未闭合的结构（code fence）显示性地闭合**，再渲染注解（详见 §3.5）：
    ```
-   composeDisplay(body) = [continuation prefix] + body + (toolAnnotation ? "\n\n" + toolAnnotation : "")
+   composeDisplay(body) =
+     [continuation prefix] + body
+     + (toolAnnotation ? structuralClose(body) + "\n\n" + toolAnnotation : "")
+   // structuralClose(body) = body 末尾若有未闭合 fence 则补一行 fence marker（display-only，
+   //                          不写回 sentText）；table 无需 close；无开放结构则为空。
    ```
-   （`currentHint` 仍是首行；二者不同时出现——见 §5 R5，工具路径不再用 currentHint。）
+   （`currentHint` 仍是首行 prefix；二者不同时出现——见 §6 表 R5，工具路径不再用 currentHint。`structuralClose` 复用 `continuationAfter(body).openFence` + `fenceMarkerOf` 推导，与现有 `appendCloseFence` 的 display-only 语义一致，`card-sender.ts:670-687`。）
 3. **in-place 更新**：注解变化时驱动一次 `cardElement.content` push（同卡，seq 递增）→ 飞书**不通知**。
 4. **新增 sink 方法** `OutboundSink.streamToolAnnotation?(text: string | undefined)`：channel 调它把"当前轮工具注解字符串"推给 sender；`undefined`/`off` 不调或清空。`LarkSender`（文本兜底）实现为 no-op（降级文本不显示工具——见 §5 R3 限制）。
 
@@ -95,8 +99,33 @@
 ### 3.3 为何不用方案 B（channel 把注解拼进 `streamUpdate` 文本）
 方案 B（`streamUpdate(rt.buffer + "\n\n" + 注解)`，零 sender 改动）问题：注解会被当成 turn-text 计入偏移/rollover/兜底；`streamUpdate` 语义是"全量单调 turn 文本"，prose 在工具后继续增长会排到注解之后→**顺序错乱**；变化的尾缀可能触发"绝不回退到更短显示"的单调守护（`card-sender.ts:605-615`）→ 误 rollover。**仅 collapsed（纯计数尾注、无顺序）勉强可用，inline 不行。** 故推荐 A。
 
-### 3.4 多卡轮的注解归属
-一轮 prose 超长会 size/age rollover 成多卡。注解随**当前 live 卡**走，rollover 时像 `pendingContinuation` 一样带到续卡（`card-sender.ts:660/689`）；已封的前序卡保留封卡时的注解快照（collapsed 即当时计数）。属可接受的次要选择（见 §5 R2）。
+### 3.4 多卡轮的注解归属（size/age rollover）
+一轮 prose 超长会 size/age rollover 成多卡。**注解只跟随当前 live（尾）卡**：
+- **因 size/timeout/segment rollover 被封的"头卡"不带注解**——头卡的 display 用 **body-only** 组合（纯 prose + 现有结构修复 `closeFence`/continuation），注解推迟到续卡。这样：(a) 头卡 size 预算只按 body 算（不受注解影响）；(b) 注解不会在多张卡上重复。
+- 注解在续卡上随 body 一起重新组合渲染；turn 提交（finalize）时落在最后一张 live 卡上。
+- 实现要点：seal 路径（`sizeRollOver` `card-sender.ts:604-661`、`sealLiveAndContinue` 663-690、`finalizeCurrentCard` 722-730 用于 segment/image 边界）组合头卡显示时**走 body-only compose**（不加注解后缀）；只有"非 seal 的常规 live 编辑"和"turn 提交的最后一张卡"才加注解。详见 §3.5。
+
+### 3.5 工具注解与 Markdown 结构修复 / size budget 的交互（reviewer 返工，核心）
+
+> 现有 CardSender 是 **prefix + body** 模型：`planSizeSplit(body, maxCardBytes, splitStart())` 只按 `displayPrefix + body` 预算（`card-sender.ts:908-916`，`prefixBytes + byteLen(body) <= budget`）；`splitStart()` 只给 `displayPrefix/openFence/tableHeader`（704-709）；`composeDisplay` 只处理 prefix（696-700）；fence 的 close/reopen 修复都围绕 prefix + body。直接在 body 后**裸追加 suffix** 会引入三个 bug，必须在 spec 钉死规避：
+
+**问题 1 — 注解字节未进 size 预算 → 可能超 `maxCardBytes` → card update 失败/fallback。**
+**修法**：把注解（含其 `structuralClose` + `"\n\n"` 分隔）的字节纳入 size 预算。推荐**接口方向**（reviewer 建议）：把 display 组合从 *prefix-only* 泛化为 **prefix + body + suffix**，并同步扩展 size planner：
+- 给 `planSizeSplit` 增加 `suffixBytes`（或 `displaySuffix: string`）参数，在预算里与 `prefixBytes` 一同扣减：`prefixBytes + byteLen(body) + suffixBytes <= budgetBytes`，line-boundary 命中判定（977 行）同样加上 `suffixBytes`。
+- `splitStart()` 增加 `suffixBytes`（= `byteLen(structuralClose(body) + "\n\n" + toolAnnotation)`，注解缺省为 0），供 planner 预算。
+- **等效最小改法**（备选，无签名变更）：调用处传入 `planSizeSplit(body, maxCardBytes - suffixDisplayBytes, splitStart())` 做等效预算扣减。推荐前者（显式 suffix 参数，语义清晰、便于测试）。
+- 结果：临近 `maxCardBytes` 时**先 size split**（注解推迟到续卡，见 §3.4），注解永不把当前卡推过预算。
+
+**问题 2 — body 处于未闭合 code fence 时，裸 suffix 会渲染进代码块；`appendCloseFence(composeDisplay(...))` 还会把 closing fence 放到注解之后。**
+**修法**：注解**必须在所有开放结构之外渲染**。`composeDisplay` 当注解存在时，先 `structuralClose(body)`（body 末尾未闭合 fence → 补一行 fence marker，display-only、不动 `sentText`；table 无需 close），再空行 + 注解（见 §3.1 公式）。同时**修正 seal 路径的组合顺序**：现有 `appendCloseFence(this.composeDisplay(headText/sentText), closeFence)`（`card-sender.ts:616/676`）在头卡上调用——因头卡走 **body-only compose（§3.4，不含注解）**，`appendCloseFence` 仍只作用于 body 的 close，顺序不变、无回归。注解只出现在不需要 `appendCloseFence` 外层 close 的 live/最终卡上，且其 `structuralClose` 已自带 body 的结构闭合。
+
+**问题 3 — open fence 的 live 显示：临时 close fence + 渲染注解，且不得改变 `sentText/offset`。**
+**修法（落实 reviewer 第 4 点）**：
+- live 卡 body 末尾在 fence 内时，注解前的 `structuralClose(body)` 临时补 close fence——**纯 display，`live.sentText` 仍是裸 body**（与 `sealLiveAndContinue` 的 close-fence "append-only、never touch sentText" 同构，`card-sender.ts:675-686`）。
+- **同一卡内继续同一 body 无需 reopen**：每次 `content` 编辑都全量重算 `composeDisplay(newBody)`，display-only 的 close 每次重新推导，body 增长后自然覆盖；reopen 只发生在**跨卡 rollover**，由现有 body 的 `pendingContinuation` 机制负责（`card-sender.ts:660/689`），**注解不参与 continuation reopen**。
+- **单调显示守护不破**（`card-sender.ts:605-615`：绝不把 live 卡改写成更短）：body 单调增长 + 注解单调增长（计数升 / 名单增），故 `composeDisplay` 单调增长。唯一边界——body 自己补上闭合 ``` 那一刻 display-only close 消失：因 body 至少增加了 ``` 的字节，净显示仍 ≥ 之前，守护不触发（列入 §8 测试 13 边界）。
+
+**不变式补充**：注解是纯 cosmetic 后缀，**永不进入** `live.sentText`、`streamBaseOffset`、`continuationAfter` 扫描、`planSizeSplit` 的 `body` 实参（只进它的 *budget*）。turn-text 偏移/fallback/replay 会计全部只看裸 body。
 
 ---
 
@@ -189,15 +218,28 @@ onRouterToolCall(rt, u):
 11. **INV-1（finalize-fallback 与"开新消息"解耦）三档一致**：对 collapsed / inline / off **各跑一遍** `prose, tool_call,（无 idle）`，断言：(a) 工具调用期间 sender 的 `streamSegmentBreak` **零调用**、`create/send`（新消息）**不因工具递增**；(b) 假时钟过 `streamCommitDebounceMs` 后 turn **确实 finalize**（`streamFinish` 触发、`streamTurnActive` 复位）；(c) 下一轮首 chunk 开新卡、不与上一轮 concat。即"工具 → 不开新消息 + 仍触发当前 turn finalize"对三档恒成立。用 spy 直接断言 `streamSegmentBreak` 调用数 === 0 以钉死解耦。
 12. **INV-2（off 仍消费事件、只抑制 UI）**：off 下注入 `tool_call(id=A) + tool_call_update(id=A) + tool_call(id=B),（无 idle）`，断言：(a) **无任何 `🔧` 注解 / 无额外 `create/send`**（UI 抑制）；(b) `seenToolCalls` 确实记录了 A、B（去重生效——可通过"再来一个 id=A 的 update 不改变任何状态"间接断言）；(c) 兜底 fire 后 turn **正常 finalize**（收尾判断未被 off 吞掉）。即 off ≠ 丢弃事件。
 
+**专门守护注解与结构修复 / size budget 交互（§3.5，reviewer 返工）：**
+
+13. **未闭合 code fence 时注解在代码块外**：collapsed/inline，body = 以未闭合 ` ``` ` 结尾的片段（如 `"前言\n```js\nconst a=1"`）+ `tool_call`。断言渲染的 card content：(a) 注解 `🔧 …` **不在** code block 内——注解前出现一行闭合 ` ``` `（`structuralClose`）；(b) `live.sentText` 仍是裸 body（不含 close fence/注解），`streamBaseOffset` 不被注解/close 改动；(c) 边界：body 随后自己补上闭合 ` ``` ` 时，显示仍单调不变短（不触发 shrink 守护/误 rollover）。
+14. **临近 `maxCardBytes` 时注解不超预算/不 fallback**：构造 body 使 `prefixBytes + byteLen(body) + 注解显示字节` 略超 `maxCardBytes`。断言：(a) 发生 **size split**（头卡 body-only、不含注解），注解落到续卡；(b) 任何单张 card 的 display 字节 **≤ `maxCardBytes`**；(c) **不触发 `giveUp()`/文本 fallback**（content op 全 `ok`）。对照：去掉注解预算的实现会让该 case 超预算——用注解字节占满边界来区分。
+15. **size/timeout rollover 带注解不丢、不重复、不破 continuation**：长 body（含一段跨卡 code fence）+ 工具 + 触发 size rollover（和单独一例 `maxCardAgeMs` timeout rollover）。断言：(a) 注解只出现在**最后一张 live/最终卡**，前序被封头卡**不含注解**（不重复）；(b) turn finalize 后注解**存在且正确**（不丢）；(c) 跨卡 fence 的 `closeFence`/`reopen`（`pendingContinuation`）仍正确，注解未污染 continuation（reopen 前缀不含注解）。
+
 ---
 
 ## 9. 实现步骤（建议顺序，逐步可测）
 
 1. **config**：`types.ts` 加 `toolDisplay`；`config.ts` 解析+默认 collapsed；`config.test.ts` 补"缺省/非法→collapsed、三值透传"。
 2. **channel**：`FeishuChannel` 读 `toolDisplay`；`BindingRuntime` 加 `toolCount/toolNames` 并在三处 reset 点清；按 §4 重写 `onRouterToolCall`（去 segment-break、加注解）；保留 `scheduleStreamFinish`。
-3. **sender**：`OutboundSink` 加 `streamToolAnnotation?`；`CardSender` 加 `toolAnnotation` 状态、`composeDisplay` 尾部块、up-to-date 判定纳入注解（`live.sentText===body && live.sentAnnotation===toolAnnotation` 才算最新）、泛化"仅注解卡"materialize、rollover 带注解、`resetTurn` 清；`LarkSender` 实现 no-op `streamToolAnnotation`。
-4. **tests**：§8 全部；复跑 `bun test src/channels`。
-5. **docs**：本 spec 落库；`feishu-rich-outbound.md` 加一句交叉引用（可选）。
+3. **sender（含 §3.5 结构/预算交互）**：
+   - `OutboundSink` 加 `streamToolAnnotation?`；`CardSender` 加 `toolAnnotation` 状态、`resetTurn` 清。
+   - `composeDisplay` 泛化为 **prefix + body + (structuralClose(body) + 注解)**（§3.1 公式）；新增 `structuralClose(body)`（复用 `continuationAfter(body).openFence` + `fenceMarkerOf`，display-only）。
+   - **up-to-date 判定纳入注解**：`live.sentText===body && live.sentAnnotation===toolAnnotation` 才算最新。
+   - **size 预算纳入注解**：`planSizeSplit` 增加 `suffixBytes`（或 `displaySuffix`）参数并在预算+命中判定里扣减；`splitStart()` 返回 `suffixBytes`（注解的 `structuralClose+"\n\n"+annotation` 字节，缺省 0）。备选：调用处 `maxCardBytes - suffixDisplayBytes` 等效扣减。
+   - **seal 路径 body-only**：`sizeRollOver`/`sealLiveAndContinue`/`finalizeCurrentCard`（segment/image 边界）封头卡时走 body-only compose（不含注解），注解推迟到续卡（§3.4）。
+   - **仅注解卡 materialize**：泛化 `card-sender.ts:420-430` 的 `!live && currentHint!==undefined` 路径覆盖 `toolAnnotation!==undefined`（纯工具收尾轮，§5）。
+   - `LarkSender` 实现 no-op `streamToolAnnotation`（R3）。
+4. **tests**：§8 全部（含结构/预算 13-15）；复跑 `bun test src/channels`。
+5. **docs**：本 spec 落库；`feishu-rich-outbound.md` 加一句交叉引用（已加）。
 
 > 顺序保证每步独立可验证；config/sender/channel 改动文件不重叠于其他在飞 task（仅 `src/channels/*` + 本 doc）。
 
@@ -206,7 +248,7 @@ onRouterToolCall(rt, u):
 ## 10. 风险点 / 需 prdmgr·用户拍板的开放问题
 
 - **R1 注解位置与顺序**：建议"单条尾部块、不与 prose 交错排序"（契合 collapsed 折叠摘要 / inline 名单的产品意图）。是否需要把工具显示在 prose **之前**或做分隔线？请拍板。
-- **R2 多卡轮注解归属**：建议随当前 live 卡、rollover 带走、已封卡留快照。可接受？
+- **R2 多卡轮注解归属**（已细化，见 §3.4/§3.5）：建议**只跟随当前 live/尾卡**，被封头卡 body-only 不带注解（避免重复、头卡按 body 预算）。可接受？
 - **R3 文本兜底（CardKit 失败降级）**：建议 `LarkSender.streamToolAnnotation` no-op（降级纯文本不显示工具）。还是要在兜底文本里也补一行计数？
 - **R4 off 的纯工具轮安静收尾**：用户会看到"只调了工具的那轮"无任何输出——这正是 off 语义，确认可接受？
 - **R5 休眠的 segment-break/`currentHint`/`toolHint`/`enableToolHint`**：建议本次**保留不删**（更小 diff、可逆）。是否要顺手清理为后续单独任务？
@@ -220,7 +262,7 @@ onRouterToolCall(rt, u):
 - `docs/design/feishu-rich-outbound.md`（现状 §1.1-1.6、locked decisions、§4 segment 模型）。
 - `src/channels/feishu-channel.ts`（全量重点：`OutboundSink` 38-59、`BindingRuntime` 119-146、`onMeshEvent`/`dispatchRouterEvent` 713-788、`useStreaming` 791、`streamCurrent/finalizeTurn` 795-807、`scheduleStreamFinish/streamFinish` 809-844、`beginCommitBarrier/endCommitBarrier` 846-871、`onRouterToolCall` 873-887、`clearOutboundBuffer/scheduleFlush/flush` 889-929、`toolSegmentMeta` 1103-1107）。
 - `src/channels/sender.ts`（LarkSender 全量：`streamSegmentBreak` 157、`driveStream/doStreamOp/rollOver/pump`）。
-- `src/channels/card-sender.ts`（CardSender 全量重点：seams/常量 29-134、状态 198-244、`streamUpdate/streamSegmentBreak/sendOneShot/streamCommit/whenIdle` 279-332、`driveStream` 349-470、`bodyOf` 473、`emitImageCard/replaceImage/doStreamOp/sizeRollOver/sealLiveAndContinue` 481-690、`composeDisplay/splitStart/toolHintFor/finalizeCurrentCard/doFinalize` 692-734、构造默认 246-269、`defaultToolHint` 815）。
+- `src/channels/card-sender.ts`（CardSender 全量重点：seams/常量 29-134、状态 198-244、`streamUpdate/streamSegmentBreak/sendOneShot/streamCommit/whenIdle` 279-332、`driveStream` 349-470、`bodyOf` 473、`emitImageCard/replaceImage/doStreamOp/sizeRollOver/sealLiveAndContinue` 481-690、`composeDisplay/splitStart/toolHintFor/finalizeCurrentCard/doFinalize` 692-734、构造默认 246-269、`defaultToolHint` 815；**本轮返工补读**：`appendCloseFence` 839-842、`byteLen` 845、`CardContinuation/CardSizeSplit` 863-879、`fenceMarkerOf` 882、`planSizeSplit` 908-1003（预算 `prefixBytes+byteLen(body)<=budget`，无 suffix）、`continuationAfter` 1008+）。
 - `src/channels/types.ts`（`FeishuChannelConfig.outbound` 67-107）。
 - `src/channels/config.ts`（解析/默认 58-101）。
 - `src/channels/index.ts`（sink 选用 79-98、`cardSenderOptions` 104-135）。
