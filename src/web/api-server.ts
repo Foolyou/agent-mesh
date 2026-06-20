@@ -60,7 +60,7 @@ export function startApiServer(gw: WebGateway, opts: ApiServerOptions = {}): Ser
         const hasBody = req.method !== "GET" && req.method !== "HEAD";
         const body = hasBody ? await requestBody(req) : undefined;
         const expectedOrigin = `http://${req.headers.get("host") ?? url.host}`;
-        const r = await handleApi(gw, req.method, url.pathname, body, url.searchParams, undefined, undefined, undefined, { headers: req.headers, expectedOrigin, root: authRoot, remoteAddress });
+        const r = await handleApi(gw, req.method, url.pathname, body, url.searchParams, undefined, undefined, undefined, { headers: req.headers, expectedOrigin, root: authRoot, remoteAddress, servicePort: srv.port });
         if (r.body instanceof Response) return r.body;
         return Response.json(r.body, { status: r.status });
       }

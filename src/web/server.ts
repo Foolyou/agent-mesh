@@ -110,7 +110,9 @@ export function startWebServer(opts: WebServerOptions = {}): WebServerHandle {
         if (gw || isPreAuthApiPath(url.pathname)) {
           const body = hasBody ? await requestBody(req) : undefined;
           const expectedOrigin = `http://${req.headers.get("host") ?? url.host}`;
-          const r = await handleApi(gw ?? proxyDeviceGw, req.method, url.pathname, body, url.searchParams, undefined, undefined, undefined, { headers: req.headers, expectedOrigin, root: authRoot, remoteAddress });
+          // In gateway mode THIS server serves /api, so the doctor backend check probes its real
+          // listening port (srv.port), not a hardcoded default. Proxy-mode device routes don't use it.
+          const r = await handleApi(gw ?? proxyDeviceGw, req.method, url.pathname, body, url.searchParams, undefined, undefined, undefined, { headers: req.headers, expectedOrigin, root: authRoot, remoteAddress, servicePort: srv.port });
           if (r.body instanceof Response) return r.body;
           return Response.json(r.body, { status: r.status });
         }

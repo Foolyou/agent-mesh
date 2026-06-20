@@ -100,6 +100,8 @@ function store(state: GatewayState): Store {
     cancelFeishuProvision: async () => ({ id: "job", state: "cancelled", createdAt: T, updatedAt: T }),
     syncFeishuMeshChats: async () => [],
     ensureFeishuMeshChat: async (mesh) => ({ mesh, ok: true, created: false }),
+    fetchDoctor: async () => ({ checks: [], summary: { total: 0, ok: 0, warnings: 0, errors: 0, worst: "ok" } }),
+    fetchPsDetail: async () => ({ running: [], leaks: [] }),
   };
 }
 

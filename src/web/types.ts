@@ -8,6 +8,10 @@ import type { BoardDocument } from "../board";
 export type { BoardDocument };
 import type { FeishuChannelStatus, FeishuMeshChatEnsureResult, FeishuProvisionJobPublic, FeishuProvisionStartRequest } from "../channels";
 export type { FeishuChannelStatus, FeishuMeshChatEnsureResult, FeishuProvisionJobPublic, FeishuProvisionStartRequest };
+// System diagnostics (mesh-ps-doctor). Type-only re-export so the client bundle shares the exact
+// shared model without pulling diagnostics' node:fs runtime into the browser build.
+import type { AgentDetail, DoctorCheck, DoctorReport, MeshProcDetail, ProcLeak, PsDetail, Severity } from "../diagnostics";
+export type { AgentDetail, DoctorCheck, DoctorReport, MeshProcDetail, ProcLeak, PsDetail, Severity };
 export type { SessionMode };
 export type { SessionModel };
 export type { PromptImageRef };

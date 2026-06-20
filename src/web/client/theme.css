@@ -1808,6 +1808,191 @@ body::after {
   color: var(--fg-faint);
 }
 
+/* ── system health / processes (mesh-ps-doctor) ─────────────────────────── */
+.system-modal {
+  width: min(760px, 94vw);
+}
+.system-modal .mhead .spacer {
+  flex: 1;
+}
+.system-error {
+  border: 1px solid color-mix(in srgb, var(--bad) 55%, var(--line));
+  color: var(--bad);
+  padding: 8px 10px;
+  font-size: 12px;
+}
+.system-empty,
+.system-agents-empty {
+  color: var(--fg-faint);
+  font-size: 12px;
+}
+.system-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.system-section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 4px;
+}
+.system-section-title {
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  font-size: 11px;
+  color: var(--fg-dim);
+}
+.system-summary {
+  font-size: 11px;
+  color: var(--fg-dim);
+}
+.system-checks {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.system-check,
+.system-leak {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  border: 1px solid var(--line);
+  background: var(--bg-inset);
+  padding: 7px 9px;
+}
+.system-check-body,
+.system-leak-body {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+.system-check-id,
+.system-leak-name {
+  color: var(--fg);
+  font-weight: 600;
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 12px;
+}
+.system-check-detail {
+  color: var(--fg-dim);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.system-check-fix {
+  color: var(--fg-faint);
+  font-size: 11px;
+  flex-basis: 100%;
+}
+.sev-mark {
+  font-weight: 700;
+  line-height: 1.2;
+}
+.sev-tag {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  border: 1px solid var(--line-bright);
+  padding: 0 5px;
+  color: var(--fg-dim);
+}
+/* Severity colour is an ENHANCEMENT — the sev-tag/word text carries the meaning without colour. */
+.sev-ok,
+.sev-mark.sev-ok {
+  color: var(--ok);
+}
+.sev-info,
+.sev-mark.sev-info {
+  color: var(--fg-dim);
+}
+.sev-warning,
+.sev-mark.sev-warning {
+  color: var(--warn);
+}
+.sev-error,
+.sev-mark.sev-error {
+  color: var(--bad);
+}
+.system-check.sev-warning {
+  border-color: color-mix(in srgb, var(--warn) 45%, var(--line));
+}
+.system-check.sev-error,
+.system-leak {
+  border-color: color-mix(in srgb, var(--warn) 45%, var(--line));
+}
+.system-check.sev-error {
+  border-color: color-mix(in srgb, var(--bad) 50%, var(--line));
+}
+.system-mesh {
+  border: 1px solid var(--line);
+  background: var(--bg-inset);
+  padding: 8px 9px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.system-mesh-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.system-mesh-name {
+  color: var(--fg);
+  font-weight: 600;
+}
+.system-mesh-meta {
+  color: var(--fg-dim);
+  font-size: 11px;
+  font-family: var(--mono, ui-monospace, monospace);
+}
+.system-mesh-sock {
+  color: var(--fg-faint);
+  font-size: 11px;
+  font-family: var(--mono, ui-monospace, monospace);
+  overflow-wrap: anywhere;
+}
+.system-agents {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 2px;
+}
+.system-agent {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 12px;
+}
+.system-agent-id {
+  color: var(--fg);
+  font-family: var(--mono, ui-monospace, monospace);
+}
+.system-agent-tag {
+  font-size: 10px;
+  color: var(--fg-faint);
+  border: 1px solid var(--line);
+  padding: 0 5px;
+}
+.system-agent-activity {
+  font-size: 11px;
+  color: var(--fg-dim);
+}
+.system-agent-activity.act-working {
+  color: var(--accent);
+}
+.system-agent-activity.act-idle {
+  color: var(--fg-faint);
+}
+.system-agent-ctx {
+  font-size: 11px;
+  color: var(--fg-dim);
+}
+
 /* ── Feishu settings ─────────────────────────────────────────────────── */
 .feishu-modal {
   width: min(840px, 94vw);

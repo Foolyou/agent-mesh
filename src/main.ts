@@ -19,6 +19,8 @@ import { uploadRoot } from "./web/uploads";
 import { assistantCliDeprecationWarnings, assistantHarnessPassthrough, noAssistantSelected, parseAssistantHarness } from "./cli-options";
 import { createFeishuChannelController, unavailableAssistantGateway } from "./channels";
 import { runAuthCommand } from "./auth-cli";
+import { collectPsDetail, runDoctor, renderPsDetail, renderDoctor, doctorExitCode } from "./diagnostics";
+import { cliPsSources, doctorSources, diagnosticsRunDir } from "./diagnostics-sources";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import * as service from "./service";
@@ -128,11 +130,23 @@ if (cmd === "up" || cmd === "start") {
 } else if (cmd === "logs") {
   await service.logs(root, { follow: has("-f") || has("--follow") });
 } else if (cmd === "ps") {
-  // list running mesh daemons (survivors of any prior backend) from the registry
-  const mgr = new MeshManager({ root });
-  const running = await mgr.listRunning();
-  if (!running.length) console.log("no running meshes");
-  else for (const r of running) console.log(`${r.name}\tpid ${r.pid}\t${r.socketPath}`);
+  if (has("-v") || has("--verbose")) {
+    // verbose: shared diagnostics — running meshes + (static) agents + orphans/leaks. Read-only; does
+    // NOT connect to any mesh-host socket (that would kick the live backend off its own mesh).
+    const ps = await collectPsDetail(diagnosticsRunDir(root), cliPsSources(root));
+    for (const line of renderPsDetail(ps)) console.log(line);
+  } else {
+    // default `mesh ps` — unchanged minimal output: running mesh daemons from the registry.
+    const mgr = new MeshManager({ root });
+    const running = await mgr.listRunning();
+    if (!running.length) console.log("no running meshes");
+    else for (const r of running) console.log(`${r.name}\tpid ${r.pid}\t${r.socketPath}`);
+  }
+} else if (cmd === "doctor") {
+  // system health check — shared diagnostics, rendered. Non-zero exit only on an error (warnings pass).
+  const report = await runDoctor(doctorSources(root, svcPort));
+  for (const line of renderDoctor(report)) console.log(line);
+  process.exitCode = doctorExitCode(report);
 } else if (cmd === "kill") {
   const target = process.argv[3];
   const mgr = new MeshManager({ root });

@@ -3,7 +3,7 @@
 // the client. createStore() owns the socket + REST command helpers; useStore wires it
 // into React via useSyncExternalStore.
 import { useSyncExternalStore } from "react";
-import type { AgentConfig, GatewayState, ServerMsg, PerMeshState, TranscriptItem, ConvRef, MeshConfig, MeshEdge, PromptImageRef, StartSessionStrategy, HarnessProbeRow, HarnessId, HarnessInstallEvent, RespawnMode, TranscriptSnapshot, AgentStatus, MutationApplyResult, BoardDocument, FeishuChannelStatus, FeishuMeshChatEnsureResult, FeishuProvisionJobPublic, FeishuProvisionStartRequest } from "../types";
+import type { AgentConfig, GatewayState, ServerMsg, PerMeshState, TranscriptItem, ConvRef, MeshConfig, MeshEdge, PromptImageRef, StartSessionStrategy, HarnessProbeRow, HarnessId, HarnessInstallEvent, RespawnMode, TranscriptSnapshot, AgentStatus, MutationApplyResult, BoardDocument, FeishuChannelStatus, FeishuMeshChatEnsureResult, FeishuProvisionJobPublic, FeishuProvisionStartRequest, DoctorReport, PsDetail } from "../types";
 import type { BoardCommand } from "../../board";
 import { authHeaders, getDeviceToken, wsUrlWithToken } from "./device-auth";
 
@@ -222,6 +222,10 @@ export interface Store {
   cancelFeishuProvision(id: string): Promise<FeishuProvisionJobPublic>;
   syncFeishuMeshChats(): Promise<FeishuMeshChatEnsureResult[]>;
   ensureFeishuMeshChat(mesh: string): Promise<FeishuMeshChatEnsureResult>;
+  /** System health check (doctor) — structured, already secret-free. Device-auth gated server-side. */
+  fetchDoctor(): Promise<DoctorReport>;
+  /** Running meshes + agents + orphan/leak detail (ps -v), live-enriched from the gateway. */
+  fetchPsDetail(): Promise<PsDetail>;
 }
 
 export function createStore(): Store {
@@ -649,6 +653,8 @@ export function createStore(): Store {
     cancelFeishuProvision: (id) => guard(post(`/api/channels/feishu/provision/${enc(id)}/cancel`), "cancel Feishu bind"),
     syncFeishuMeshChats: () => guard(post("/api/channels/feishu/sync"), "sync Feishu groups"),
     ensureFeishuMeshChat: (mesh) => guard(post(`/api/channels/feishu/meshes/${enc(mesh)}/group`), `create Feishu group ${mesh}`),
+    fetchDoctor: () => guard(send("GET", "/api/diagnostics/doctor"), "system health check"),
+    fetchPsDetail: () => guard(send("GET", "/api/diagnostics/ps"), "process detail"),
   };
 }
 
