@@ -2,7 +2,8 @@
 // Run:
 //   bun run src/web/confirm-buttons.e2e.ts
 import { type Page } from "playwright";
-import { launchChromium, e2eEnv } from "./e2e-playwright";
+import { authedContext, authedReady, launchChromium, provisionE2eAuth } from "./e2e-playwright";
+import { rm } from "node:fs/promises";
 
 const PORT = Number(process.env.E2E_PORT) || 7462;
 const BASE = `http://localhost:${PORT}`;
@@ -28,22 +29,24 @@ async function expectNoCallsAfterClick(page: Page, selector: string, count: () =
   if (count() !== before) throw new Error(`${selector} called API on first click`);
 }
 
+const auth = await provisionE2eAuth();
 const server = Bun.spawn(["bun", "run", "src/main.ts", "--fake", "--port", String(PORT)], {
   stdout: "pipe",
   stderr: "pipe",
-  env: e2eEnv(),
+  env: auth.env,
 });
 const browser = await launchChromium();
 
 try {
   for (let i = 0; i < 80; i++) {
     try {
-      if ((await fetch(BASE + "/api/state")).ok) break;
+      if ((await authedReady(BASE, auth.token)).ok) break;
     } catch {}
     await sleep(250);
   }
 
-  const page: Page = await browser.newPage({ viewport: { width: 1440, height: 880 } });
+  const ctx = await authedContext(browser, auth.token, { viewport: { width: 1440, height: 880 } });
+  const page: Page = await ctx.newPage();
   let reloadCalls = 0;
   let stopCalls = 0;
 
@@ -108,4 +111,5 @@ try {
 } finally {
   await browser.close();
   server.kill();
+  await rm(auth.meshRootBase, { recursive: true, force: true });
 }

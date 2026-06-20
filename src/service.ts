@@ -40,11 +40,15 @@ async function writeRec(root: string, rec: BackendRec): Promise<void> {
 }
 const removeRec = (root: string) => rm(recPath(root), { force: true }).catch(() => {});
 
-/** Backend answers /api/state within a short timeout. */
+/** The backend HTTP service is RESPONDING within a short timeout. Liveness, not authorization:
+ *  under mandatory device auth (device-auth phase 6) an unauthenticated `/api/state` probe gets 401,
+ *  which still proves the server is up — so any response with status < 500 counts as alive. Only a
+ *  5xx, a network error, or a timeout counts as unhealthy. No token is sent: this is a local liveness
+ *  probe (used by `mesh up/status/restart` and scripts/update.sh), not a data read. */
 async function healthy(port: number): Promise<boolean> {
   try {
     const res = await fetch(`http://127.0.0.1:${port}/api/state`, { signal: AbortSignal.timeout(2500) });
-    return res.ok;
+    return res.status < 500;
   } catch {
     return false;
   }

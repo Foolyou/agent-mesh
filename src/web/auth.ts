@@ -53,12 +53,18 @@ function newDeviceId(): string {
   return `dv_${randomUUID().replace(/-/g, "")}`;
 }
 
-// ── request gate (design §6 trust model) ─────────────────────────────────────
+// ── request gate (design §6 trust model — UNCONDITIONAL device-token enforcement) ─────────────
+//
+// Production funnel testing proved that remote traffic arrives at the WSL service as a SOCKET
+// loopback address (Windows forwards the funnel into a loopback port), so a loopback socket address
+// is NOT a trustworthy origin signal. The earlier loopback-implicit-trust bypass is therefore
+// removed entirely (device-auth phase 6): the ONLY way to pass the gate is an approved device token.
+// There is no bind-based exception and no override env/flag — the user chose unconditional enforcement.
 
 export type RemoteClass = "loopback" | "remote";
 
-/** Normalize a socket address for loopback comparison: lowercase, strip an IPv6 zone id and
- *  brackets, and unwrap an IPv4-mapped IPv6 (`::ffff:127.0.0.1`). */
+/** Normalize a socket address: lowercase, strip an IPv6 zone id and brackets, and unwrap an
+ *  IPv4-mapped IPv6 (`::ffff:127.0.0.1`). */
 function normalizeAddr(addr: string): string {
   let a = addr.trim().toLowerCase().replace(/%.*$/, "");
   if (a.startsWith("[") && a.endsWith("]")) a = a.slice(1, -1);
@@ -66,9 +72,8 @@ function normalizeAddr(addr: string): string {
   return a;
 }
 
-/** Classify a SOCKET-DERIVED remote address (never a header). Unknown/empty → `remote` (fail safe):
- *  an address we cannot read must never be granted loopback trust. Covers 127.0.0.0/8, ::1, and
- *  IPv4-mapped loopback. */
+/** Classify a SOCKET-DERIVED remote address for DIAGNOSTIC logging only (it no longer affects the
+ *  decision — see the note above). Covers 127.0.0.0/8, ::1, and IPv4-mapped loopback. */
 export function classifyRemoteAddress(remoteAddress: string | undefined): RemoteClass {
   if (!remoteAddress || typeof remoteAddress !== "string") return "remote";
   const a = normalizeAddr(remoteAddress);
@@ -77,58 +82,32 @@ export function classifyRemoteAddress(remoteAddress: string | undefined): Remote
   return "remote";
 }
 
-/** Is the server BIND hostname loopback-only (the dev default, where implicit loopback trust is
- *  safe)? `undefined` → true, matching the server's own `?? "127.0.0.1"` default. A wildcard /
- *  LAN / tailnet bind (`0.0.0.0`, `::`, an IP, a hostname) is exposed → false. */
-export function isLoopbackBind(hostname: string | undefined): boolean {
-  if (hostname == null || hostname === "") return true;
-  const h = normalizeAddr(hostname);
-  return h === "localhost" || h === "::1" || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(h);
-}
-
-/** Coarse, non-PII origin class recorded on a pending device for the operator's `mesh device list`. */
-export function remoteHintFor(remoteClass: RemoteClass, bindExposed: boolean): string {
-  if (remoteClass === "remote") return "remote";
-  return bindExposed ? "exposed-loopback" : "loopback";
-}
-
 export interface AuthGateOptions {
-  /** Auth store root; undefined disables the token path (loopback-only gate). */
+  /** Auth store root. Undefined → no device store can be read → fail closed (deny). */
   root: string | undefined;
   /** Bearer/query token presented by the caller, if any. */
   token: string | undefined;
-  /** SOCKET-derived remote address (Bun `server.requestIP(req).address`); NEVER a header value. */
+  /** SOCKET-derived remote address (Bun `server.requestIP(req).address`); used for logging only. */
   remoteAddress: string | undefined;
-  /** The server's bind hostname. */
-  bindHostname: string | undefined;
-  /** Escape hatch: trust loopback even on an exposed bind. Default false. */
-  trustLoopbackWhenExposed?: boolean;
 }
 
 export interface AuthGateResult {
   ok: boolean;
-  via: "token" | "loopback" | "denied";
+  via: "token" | "denied";
   remoteClass: RemoteClass;
-  bindExposed: boolean;
 }
 
-/** The authoritative gate for non-device `/api/*` and `/ws`. Approved device token wins regardless
- *  of origin; otherwise implicit loopback trust is granted ONLY when the remote is loopback AND the
- *  bind is loopback-only (or the explicit exposed-loopback override is on). Everything else is denied.
- *  Pure (apart from reading the device store) and header-free, so a spoofed `X-Forwarded-*` can never
- *  change the decision — the caller passes a socket-derived address. */
+/** The authoritative gate for non-device `/api/*` and `/ws`: an approved device token is the ONLY
+ *  allow path. No origin/bind exception exists — a loopback socket is never trusted (funnel proves
+ *  remote traffic looks loopback). Without a root (no device store) or without a matching approved
+ *  token, the request is denied. Reading the store is the only side effect; no header is consulted. */
 export async function authorizeRequest(o: AuthGateOptions, now: number = Date.now()): Promise<AuthGateResult> {
-  const remoteClass = classifyRemoteAddress(o.remoteAddress);
-  const bindExposed = !isLoopbackBind(o.bindHostname);
-
+  const remoteClass = classifyRemoteAddress(o.remoteAddress); // diagnostic label only
   if (o.root && o.token) {
     const file = await readDevices(o.root, now);
-    if (findApprovedDeviceId(file, o.token)) return { ok: true, via: "token", remoteClass, bindExposed };
+    if (findApprovedDeviceId(file, o.token)) return { ok: true, via: "token", remoteClass };
   }
-  if (remoteClass === "loopback" && (!bindExposed || o.trustLoopbackWhenExposed === true)) {
-    return { ok: true, via: "loopback", remoteClass, bindExposed };
-  }
-  return { ok: false, via: "denied", remoteClass, bindExposed };
+  return { ok: false, via: "denied", remoteClass };
 }
 
 /** True for the pre-auth device-auth endpoints, which must bypass the gate (they authenticate the
@@ -146,8 +125,7 @@ export function gateLogLine(
   remoteAddress: string | undefined,
   bindHostname: string | undefined,
 ): string {
-  const bind = `${bindHostname ?? "127.0.0.1"}(${r.bindExposed ? "exposed" : "loopback"})`;
-  return `[auth] ${r.ok ? "allow" : "DENY"} ${route} via=${r.via} remote=${remoteAddress ?? "?"}(${r.remoteClass}) bind=${bind}`;
+  return `[auth] ${r.ok ? "allow" : "DENY"} ${route} via=${r.via} remote=${remoteAddress ?? "?"}(${r.remoteClass}) bind=${bindHostname ?? "127.0.0.1"}`;
 }
 
 // Crockford-ish base32 without ambiguous glyphs (no I/L/O/U, no 0/1) — a short code a human reads

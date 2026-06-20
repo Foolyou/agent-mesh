@@ -60,13 +60,15 @@ test("backend on an exposed bind requires a token; loopback is not implicitly tr
   }
 });
 
-test("loopback-bound backend implicitly trusts loopback (the same-host proxy hop)", async () => {
-  const { root } = await approvedRoot();
+test("loopback-bound backend STILL requires a token (no loopback trust, even same-host)", async () => {
+  const { root, token } = await approvedRoot();
   const gw = new WebGateway(fakeManager() as any, undefined, { root });
   const server = startApiServer(gw, { port: 0, hostname: "127.0.0.1" });
   const base = `http://127.0.0.1:${server.port}`;
   try {
-    expect((await fetch(`${base}/api/state`)).status).toBe(200);
+    expect((await fetch(`${base}/api/state`)).status).toBe(401); // no token → denied
+    expect((await fetch(`${base}/api/state`, { headers: { authorization: `Bearer ${token}` } })).status).toBe(200);
+    expect((await fetch(`${base}/api/auth/device/start`, { method: "POST" })).status).toBe(200); // pre-auth
   } finally {
     server.stop();
     await rm(root, { recursive: true, force: true });

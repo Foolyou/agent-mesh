@@ -1,5 +1,6 @@
 // Artifact-channel e2e over the fake server. Run: bun run src/web/artifacts.e2e.ts
 import { chromium, type Page } from "playwright";
+import { authedContext, authedReady, e2eAuthRoot, seedApprovedDevice } from "./e2e-playwright";
 import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -25,7 +26,7 @@ async function step(name: string, fn: () => Promise<void>) {
 async function waitReady() {
   for (let i = 0; i < 80; i++) {
     try {
-      if ((await fetch(`${BASE}/api/state`)).ok) return;
+      if ((await authedReady(BASE, e2eToken)).ok) return;
     } catch {}
     await sleep(250);
   }
@@ -35,7 +36,7 @@ async function waitReady() {
 async function post(path: string, body?: unknown) {
   const res = await fetch(`${BASE}${path}`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", authorization: `Bearer ${e2eToken}` },
     body: JSON.stringify(body ?? {}),
   });
   if (!res.ok) throw new Error(`${path} -> ${res.status}: ${await res.text()}`);
@@ -43,7 +44,7 @@ async function post(path: string, body?: unknown) {
 }
 
 async function del(path: string) {
-  const res = await fetch(`${BASE}${path}`, { method: "DELETE" });
+  const res = await fetch(`${BASE}${path}`, { method: "DELETE", headers: { authorization: `Bearer ${e2eToken}` } });
   if (!res.ok) throw new Error(`${path} -> ${res.status}: ${await res.text()}`);
 }
 
@@ -69,6 +70,9 @@ await writeFile(join(codexDir, "report.md"), "# Artifact report\n");
 await writeFile(join(builderDir, "x.png"), PNG);
 await writeFile(join(codexDir, "bad.svg"), "<svg></svg>");
 await symlink(join(codexDir, "report.md"), join(codexDir, "linked.md"));
+
+// device-auth (P6): seed one approved token into the same root the server resolves from --root.
+const e2eToken = await seedApprovedDevice(e2eAuthRoot(baseRoot));
 
 const server = Bun.spawn(["bun", "run", "src/main.ts", "--fake", "--port", String(PORT), "--root", baseRoot], {
   stdout: "pipe",
@@ -96,7 +100,8 @@ try {
   });
   await sleep(700);
 
-  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  const ctx = await authedContext(browser, e2eToken, { viewport: { width: 1440, height: 900 } });
+  const page = await ctx.newPage();
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(String(e)));
   page.on("console", (m) => {
@@ -107,9 +112,12 @@ try {
   await step("agent artifact image and document link render with mesh-scoped URLs", async () => {
     await openAgent(page, "codex-1");
     const bubble = page.locator(".msg.agent .bubble", { hasText: "Artifacts:" }).last();
-    const img = bubble.locator('img[src="/api/meshes/artifact-demo/agents/codex-1/artifacts/diagram.png"]');
+    // Markdown `![diagram](artifact:…)` renders via AuthedImage: it fetches the mesh-scoped artifact
+    // bytes WITH the device token and swaps in a blob: object URL (no raw /api src in the DOM).
+    const img = bubble.locator('img[alt="diagram"]');
     await img.waitFor({ state: "attached", timeout: 8000 });
     await waitForLoadedImage(img);
+    if (!(await img.getAttribute("src"))?.startsWith("blob:")) throw new Error("artifact image not authorized-loaded as a blob URL");
     const doc = bubble.locator('a[href="/mesh/artifact-demo/agent/codex-1/artifact/report.md"]');
     await doc.waitFor({ timeout: 8000 });
     await doc.click({ force: true });
@@ -120,17 +128,18 @@ try {
   await step("explicit artifact owner renders from another agent directory", async () => {
     await openAgent(page, "lead");
     const bubble = page.locator(".msg.agent .bubble", { hasText: "Forwarded:" }).last();
-    const img = bubble.locator('img[src="/api/meshes/artifact-demo/agents/builder/artifacts/x.png"]');
+    const img = bubble.locator('img[alt="builder"]');
     await img.waitFor({ state: "attached", timeout: 8000 });
     await waitForLoadedImage(img);
+    if (!(await img.getAttribute("src"))?.startsWith("blob:")) throw new Error("forwarded artifact image not authorized-loaded as a blob URL");
   });
 
   await step("negative artifact requests and user-authored artifact refs are rejected", async () => {
-    const traversal = await fetch(`${BASE}/api/meshes/artifact-demo/agents/codex-1/artifacts/..%2Foutside.md`);
+    const traversal = await fetch(`${BASE}/api/meshes/artifact-demo/agents/codex-1/artifacts/..%2Foutside.md`, { headers: { authorization: `Bearer ${e2eToken}` } });
     if (traversal.status !== 400) throw new Error(`traversal status ${traversal.status}`);
-    const linked = await fetch(`${BASE}/api/meshes/artifact-demo/agents/codex-1/artifacts/linked.md`);
+    const linked = await fetch(`${BASE}/api/meshes/artifact-demo/agents/codex-1/artifacts/linked.md`, { headers: { authorization: `Bearer ${e2eToken}` } });
     if (linked.status !== 400) throw new Error(`symlink status ${linked.status}`);
-    const svg = await fetch(`${BASE}/api/meshes/artifact-demo/agents/codex-1/artifacts/bad.svg`);
+    const svg = await fetch(`${BASE}/api/meshes/artifact-demo/agents/codex-1/artifacts/bad.svg`, { headers: { authorization: `Bearer ${e2eToken}` } });
     if (svg.status !== 404) throw new Error(`svg status ${svg.status}`);
 
     await post("/api/meshes/artifact-demo/agents/lead/prompt", {
@@ -145,7 +154,7 @@ try {
   await step("delete mesh removes artifact directory and route returns 404", async () => {
     await post("/api/meshes/artifact-demo/stop");
     await del("/api/meshes/artifact-demo");
-    const res = await fetch(`${BASE}/api/meshes/artifact-demo/agents/codex-1/artifacts/diagram.png`);
+    const res = await fetch(`${BASE}/api/meshes/artifact-demo/agents/codex-1/artifacts/diagram.png`, { headers: { authorization: `Bearer ${e2eToken}` } });
     if (res.status !== 404) throw new Error(`deleted artifact status ${res.status}`);
     try {
       await mkdir(codexDir);

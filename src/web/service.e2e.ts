@@ -5,10 +5,12 @@
 import { mkdtemp, rm, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { e2eAuthRoot, seedApprovedDevice } from "./e2e-playwright";
 
 const PORT = Number(process.env.E2E_PORT) || 7770;
 const BASE = await mkdtemp(join(tmpdir(), "svc-e2e-"));
 const ROOT = join(BASE, ".agent-mesh");
+const e2eToken = await seedApprovedDevice(e2eAuthRoot(BASE));
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 let pass = 0;
@@ -40,7 +42,7 @@ async function mesh(...args: string[]): Promise<{ code: number; out: string }> {
 const SVC = ["--fake", "--no-assistant"];
 const healthy = async () => {
   try {
-    return (await fetch(`http://127.0.0.1:${PORT}/api/state`, { signal: AbortSignal.timeout(2000) })).ok;
+    return (await fetch(`http://127.0.0.1:${PORT}/api/state`, { signal: AbortSignal.timeout(2000), headers: { authorization: `Bearer ${e2eToken}` } })).ok;
   } catch {
     return false;
   }

@@ -9,9 +9,6 @@ import type { WebGateway } from "./gateway";
 export interface ApiServerOptions {
   port?: number;
   hostname?: string;
-  /** Escape hatch (design §6 rule 5): trust loopback even on an exposed bind. Defaults to the
-   *  `MESH_TRUST_LOOPBACK_WHEN_EXPOSED=1` env var (off); an explicit option wins for tests. */
-  trustLoopbackWhenExposed?: boolean;
 }
 export interface ServerHandle {
   port: number;
@@ -27,8 +24,8 @@ export function startApiServer(gw: WebGateway, opts: ApiServerOptions = {}): Ser
   // Default to loopback so the REST API + WS fan-out are never exposed on all interfaces.
   const hostname = opts.hostname ?? "127.0.0.1";
   const authRoot = gw.authRoot();
-  const trustLoopbackWhenExposed = opts.trustLoopbackWhenExposed ?? process.env.MESH_TRUST_LOOPBACK_WHEN_EXPOSED === "1";
-  // Log every deny + the first allow per (remote, via, route); never logs a token (design §6).
+  // Log every deny + the first allow per (remote, via, route); includes remote/bind for diagnosis,
+  // never a token. An approved device token is the only allow path (no loopback bypass).
   const loggedGate = new Set<string>();
   async function gate(req: Request, srv: Bun.Server<WsData>, url: URL, route: "api" | "ws"): Promise<boolean> {
     const remoteAddress = srv.requestIP(req)?.address; // socket-derived; never a header
@@ -36,7 +33,7 @@ export function startApiServer(gw: WebGateway, opts: ApiServerOptions = {}): Ser
     const token = route === "ws"
       ? url.searchParams.get("token") ?? bearerToken(req.headers) ?? undefined
       : bearerToken(req.headers) ?? undefined;
-    const result = await authorizeRequest({ root: authRoot, token, remoteAddress, bindHostname: hostname, trustLoopbackWhenExposed });
+    const result = await authorizeRequest({ root: authRoot, token, remoteAddress });
     const key = `${remoteAddress}|${result.via}|${route}`;
     if (!result.ok || !loggedGate.has(key)) {
       if (loggedGate.size < 1000) loggedGate.add(key);
@@ -63,7 +60,7 @@ export function startApiServer(gw: WebGateway, opts: ApiServerOptions = {}): Ser
         const hasBody = req.method !== "GET" && req.method !== "HEAD";
         const body = hasBody ? await requestBody(req) : undefined;
         const expectedOrigin = `http://${req.headers.get("host") ?? url.host}`;
-        const r = await handleApi(gw, req.method, url.pathname, body, url.searchParams, undefined, undefined, undefined, { headers: req.headers, expectedOrigin, root: authRoot, remoteAddress, bindHostname: hostname });
+        const r = await handleApi(gw, req.method, url.pathname, body, url.searchParams, undefined, undefined, undefined, { headers: req.headers, expectedOrigin, root: authRoot, remoteAddress });
         if (r.body instanceof Response) return r.body;
         return Response.json(r.body, { status: r.status });
       }

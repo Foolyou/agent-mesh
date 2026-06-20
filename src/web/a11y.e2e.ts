@@ -15,7 +15,8 @@
 // Theme list is DERIVED from BUILTIN_THEMES so a new theme is covered automatically.
 // Run: bun run src/web/a11y.e2e.ts  (alias: bun run a11y:e2e)
 import { type Page } from "playwright";
-import { launchChromium, e2eEnv } from "./e2e-playwright";
+import { authedContext, authedReady, launchChromium, provisionE2eAuth } from "./e2e-playwright";
+import { rm } from "node:fs/promises";
 import { UI_COMPONENT, AA_TEXT, AA_LARGE } from "./client/contrast";
 import { BUILTIN_THEMES } from "./client/themes";
 
@@ -152,16 +153,18 @@ async function installColorMath(page: Page) {
   await page.evaluate(`window.__a11y = (function(){ ${COLOR_MATH} return { parse, over, lum, ratio, effBg }; })();`);
 }
 
-const server = Bun.spawn(["bun", "run", "src/main.ts", "--fake", "--port", String(PORT)], { stdout: "pipe", stderr: "pipe", env: e2eEnv() });
+const auth = await provisionE2eAuth();
+const server = Bun.spawn(["bun", "run", "src/main.ts", "--fake", "--port", String(PORT)], { stdout: "pipe", stderr: "pipe", env: auth.env });
 const browser = await launchChromium();
 try {
   for (let i = 0; i < 80; i++) {
     try {
-      if ((await fetch(BASE + "/api/state")).ok) break;
+      if ((await authedReady(BASE, auth.token)).ok) break;
     } catch {}
     await sleep(250);
   }
-  const page: Page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  const ctx = await authedContext(browser, auth.token, { viewport: { width: 1440, height: 900 } });
+  const page: Page = await ctx.newPage();
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(String(e)));
   await page.goto(BASE, { waitUntil: "domcontentloaded" });
@@ -218,9 +221,9 @@ try {
   // AA. Seed two chips via REST (a LIGHT palette color → black foreground, and a DARK one → white)
   // then open the board so the crawler measures the chip text against its custom background.
   await step("label chips meet WCAG AA in the board view (light + dark palette colors)", async () => {
-    const getBoard = async () => (await fetch(`${BASE}/api/meshes/demo/board`)).json();
+    const getBoard = async () => (await fetch(`${BASE}/api/meshes/demo/board`, { headers: { authorization: `Bearer ${auth.token}` } })).json();
     const post = (command: unknown, ebr: number) =>
-      fetch(`${BASE}/api/meshes/demo/board`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ command, expectedBoardRevision: ebr }) });
+      fetch(`${BASE}/api/meshes/demo/board`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${auth.token}` }, body: JSON.stringify({ command, expectedBoardRevision: ebr }) });
     let b = await getBoard();
     if (!(b.labels ?? []).some((l: { name: string }) => l.name === "bug")) {
       await post({ type: "create_label", name: "bug", color: "#fde68a" }, b.revision); // light → black fg
@@ -285,4 +288,5 @@ try {
 } finally {
   await browser.close();
   server.kill();
+  await rm(auth.meshRootBase, { recursive: true, force: true });
 }

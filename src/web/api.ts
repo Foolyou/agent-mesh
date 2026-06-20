@@ -21,8 +21,6 @@ import {
   deviceStart,
   deviceStatus,
   deviceVerify,
-  isLoopbackBind,
-  remoteHintFor,
 } from "./auth";
 
 export interface ApiResult {
@@ -39,8 +37,6 @@ export interface ApiRequestContext {
   root?: string;
   /** SOCKET-derived remote address (Bun `server.requestIP`); only a coarse origin class is recorded. */
   remoteAddress?: string;
-  /** The server's bind hostname, for the coarse origin class. */
-  bindHostname?: string;
   clearProbeCache?: (id?: AgentConfig["harness"]) => void;
   clearModelsCache?: (id?: AgentConfig["harness"]) => void;
 }
@@ -76,11 +72,12 @@ export async function handleApi(
       if (!ctx.root) return fail(500, "auth store not configured");
       const headers = ctx.headers;
       if (method === "POST" && p[2] === "start") {
-        const remoteHint = remoteHintFor(classifyRemoteAddress(ctx.remoteAddress), !isLoopbackBind(ctx.bindHostname));
+        // Coarse, non-PII origin class for `mesh device list` (loopback/remote). It is advisory only —
+        // loopback is no longer a trust signal, so this never affects authorization.
         return ok(await deviceStart(ctx.root, {
           existingToken: bearerToken(headers),
           userAgentClass: coarseUserAgentClass(headers),
-          remoteHint,
+          remoteHint: classifyRemoteAddress(ctx.remoteAddress),
         }));
       }
       if (method === "GET" && p[2] === "status") {

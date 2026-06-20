@@ -6,8 +6,9 @@
 // Bounded and tolerant: real agents depend on local logins, so if they don't reach
 // "ready" within the window it reports that and tears down cleanly. Run:
 //   bun run src/web/real.e2e.ts
-import { launchChromium } from "./e2e-playwright";
+import { authedContext, authedReady, launchChromium, provisionE2eAuth } from "./e2e-playwright";
 import { mkdirSync } from "node:fs";
+import { rm } from "node:fs/promises";
 
 const PORT = Number(process.env.E2E_PORT) || 7414;
 const BASE = `http://localhost:${PORT}`;
@@ -32,21 +33,26 @@ const MESH = {
   ],
 };
 
+const auth = await provisionE2eAuth();
+
 async function post(path: string, body?: unknown) {
   const r = await fetch(BASE + path, {
     method: "POST",
-    headers: body ? { "content-type": "application/json" } : {},
+    headers: body
+      ? { "content-type": "application/json", authorization: `Bearer ${auth.token}` }
+      : { authorization: `Bearer ${auth.token}` },
     body: body ? JSON.stringify(body) : undefined,
   });
   return { status: r.status, body: await r.json().catch(() => ({})) };
 }
 async function getState(): Promise<any> {
-  return (await fetch(BASE + "/api/state")).json();
+  return (await fetch(BASE + "/api/state", { headers: { authorization: `Bearer ${auth.token}` } })).json();
 }
 
 const server = Bun.spawn(["bun", "run", "src/main.ts", "--no-assistant", "--port", String(PORT)], {
   stdout: "inherit",
   stderr: "inherit",
+  env: auth.env,
 });
 
 const tally: Record<string, number> = {};
@@ -57,7 +63,7 @@ async function main() {
   // wait for server
   for (let i = 0; i < 80; i++) {
     try {
-      if ((await fetch(BASE + "/api/state")).ok) break;
+      if ((await authedReady(BASE, auth.token)).ok) break;
     } catch {}
     await sleep(250);
   }
@@ -68,7 +74,7 @@ async function main() {
   console.log("starting mesh:", (await post("/api/meshes/webtest/start", {})).status);
 
   // observe the WS stream (same one the browser uses)
-  const ws = new WebSocket(`ws://localhost:${PORT}/ws`);
+  const ws = new WebSocket(`ws://localhost:${PORT}/ws?token=${encodeURIComponent(auth.token)}`);
   ws.onopen = () => (wsOpen = true);
   ws.onmessage = (ev) => {
     let m: any;
@@ -110,7 +116,8 @@ async function main() {
   // screenshot the live console
   const browser = await launchChromium();
   try {
-    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    const ctx = await authedContext(browser, auth.token, { viewport: { width: 1440, height: 900 } });
+    const page = await ctx.newPage();
     await page.goto(BASE, { waitUntil: "domcontentloaded" });
     await page.locator('.mrow:has-text("webtest")').click().catch(() => {});
     await sleep(1500);
@@ -158,4 +165,5 @@ try {
   try {
     server.kill("SIGKILL");
   } catch {}
+  await rm(auth.meshRootBase, { recursive: true, force: true });
 }

@@ -10,7 +10,8 @@
 // and is asserted independently.
 // Run: bun run src/web/board.e2e.ts
 import { type Page } from "playwright";
-import { launchChromium, e2eEnv } from "./e2e-playwright";
+import { authedContext, authedReady, launchChromium, provisionE2eAuth } from "./e2e-playwright";
+import { rm } from "node:fs/promises";
 
 const PORT = Number(process.env.E2E_PORT) || 7561;
 const BASE = `http://localhost:${PORT}`;
@@ -29,16 +30,18 @@ async function step(name: string, fn: () => Promise<void>) {
   }
 }
 
-const server = Bun.spawn(["bun", "run", "src/main.ts", "--fake", "--port", String(PORT)], { stdout: "pipe", stderr: "pipe", env: e2eEnv() });
+const auth = await provisionE2eAuth();
+const server = Bun.spawn(["bun", "run", "src/main.ts", "--fake", "--port", String(PORT)], { stdout: "pipe", stderr: "pipe", env: auth.env });
 const browser = await launchChromium();
 try {
   for (let i = 0; i < 80; i++) {
     try {
-      if ((await fetch(BASE + "/api/state")).ok) break;
+      if ((await authedReady(BASE, auth.token)).ok) break;
     } catch {}
     await sleep(250);
   }
-  const page: Page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  const ctx = await authedContext(browser, auth.token, { viewport: { width: 1440, height: 900 } });
+  const page: Page = await ctx.newPage();
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(String(e)));
   page.on("console", (m) => { if (m.type() === "error" && !/Failed to load resource/.test(m.text())) errors.push(m.text()); });
@@ -51,8 +54,8 @@ try {
   };
   const issueRow = (id: number) => page.locator(`.drail .board-issue:has(.board-tid:has-text("#${id}"))`);
   const postBoard = (command: unknown, ebr: number) =>
-    fetch(`${BASE}/api/meshes/demo/board`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ command, expectedBoardRevision: ebr }) });
-  const getBoard = async () => (await fetch(`${BASE}/api/meshes/demo/board`)).json();
+    fetch(`${BASE}/api/meshes/demo/board`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${auth.token}` }, body: JSON.stringify({ command, expectedBoardRevision: ebr }) });
+  const getBoard = async () => (await fetch(`${BASE}/api/meshes/demo/board`, { headers: { authorization: `Bearer ${auth.token}` } })).json();
 
   await step("start mesh → board tab shows the list workspace", async () => {
     await page.locator('.detail-head .btn:has-text("start mesh")').click();
@@ -132,18 +135,18 @@ try {
     await page.locator(".drail .board-manage-labels").click();
     await page.getByPlaceholder("label name").fill("bug");
     await page.locator('.drail .board-label-manager .board-back:has-text("label")').first().click(); // "+ label"
-    await page.waitForFunction(async () => {
-      const b = await (await fetch("/api/meshes/demo/board")).json();
+    await page.waitForFunction(async (tok) => {
+      const b = await (await fetch("/api/meshes/demo/board", { headers: { authorization: `Bearer ${tok}` } })).json();
       return (b.labels ?? []).some((l: { name: string }) => l.name === "bug");
-    }, { timeout: 6000 });
+    }, auth.token, { timeout: 6000 });
     // attach via the detail toggle (gated label editor)
     await issueRow(1).click();
     await page.waitForSelector(".drail .board-detail", { timeout: 6000 });
     await page.locator('.drail .board-label-pick .label-toggle:has-text("bug")').click();
-    await page.waitForFunction(async () => {
-      const b = await (await fetch("/api/meshes/demo/board")).json();
+    await page.waitForFunction(async (tok) => {
+      const b = await (await fetch("/api/meshes/demo/board", { headers: { authorization: `Bearer ${tok}` } })).json();
       return (b.tasks.find((t: { id: number }) => t.id === 1)?.labelIds ?? []).length === 1;
-    }, { timeout: 6000 });
+    }, auth.token, { timeout: 6000 });
     await page.locator(".drail .board-back").first().click();
     await page.waitForSelector('.drail .board-issue:has(.board-tid:has-text("#1")) .label-chip:has-text("bug")', { timeout: 6000 });
   });
@@ -200,10 +203,10 @@ try {
       return true;
     });
     if (!moved) throw new Error("could not locate drag source/target nodes");
-    await page.waitForFunction(async () => {
-      const b = await (await fetch("/api/meshes/demo/board")).json();
+    await page.waitForFunction(async (tok) => {
+      const b = await (await fetch("/api/meshes/demo/board", { headers: { authorization: `Bearer ${tok}` } })).json();
       return b.tasks.find((t: { id: number }) => t.id === 1)?.status === "todo";
-    }, { timeout: 6000 });
+    }, auth.token, { timeout: 6000 });
     await page.waitForSelector('.drail .board-col:has(.board-col-head .pill.st-todo) .board-card:has(.board-tid:has-text("#1"))', { timeout: 6000 });
   });
 
@@ -255,12 +258,12 @@ try {
     if (!(await page.locator('.drail .board-close-confirm button:has-text("done")').count())) throw new Error("done close option missing");
     if (!(await page.locator('.drail .board-close-confirm button:text-is("cancelled")').count())) throw new Error("cancelled close option missing");
     await page.locator('.drail .board-close-confirm button:has-text("done")').click();
-    await page.waitForFunction(async () => (await (await fetch("/api/meshes/demo/board")).json()).tasks.find((t: { id: number }) => t.id === 2)?.status === "done", { timeout: 6000 });
+    await page.waitForFunction(async (tok) => (await (await fetch("/api/meshes/demo/board", { headers: { authorization: `Bearer ${tok}` } })).json()).tasks.find((t: { id: number }) => t.id === 2)?.status === "done", auth.token, { timeout: 6000 });
 
     // terminal task → reopen button; click → in_progress.
     await page.waitForSelector(".drail .board-detail .board-reopen", { timeout: 6000 });
     await page.locator(".drail .board-detail .board-reopen").click();
-    await page.waitForFunction(async () => (await (await fetch("/api/meshes/demo/board")).json()).tasks.find((t: { id: number }) => t.id === 2)?.status === "in_progress", { timeout: 6000 });
+    await page.waitForFunction(async (tok) => (await (await fetch("/api/meshes/demo/board", { headers: { authorization: `Bearer ${tok}` } })).json()).tasks.find((t: { id: number }) => t.id === 2)?.status === "in_progress", auth.token, { timeout: 6000 });
 
     // after reopened, the SAME slug/thread review_requested re-fires → in_review again (the P5 cycle fix).
     b = await getBoard();
@@ -335,4 +338,5 @@ try {
 } finally {
   await browser.close();
   server.kill();
+  await rm(auth.meshRootBase, { recursive: true, force: true });
 }

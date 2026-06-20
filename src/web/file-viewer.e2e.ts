@@ -1,6 +1,6 @@
 // File viewer e2e over the fake server. Run: bun run src/web/file-viewer.e2e.ts
 import { type Page } from "playwright";
-import { launchChromium, e2eEnv } from "./e2e-playwright";
+import { authedContext, authedReady, launchChromium, provisionE2eAuth } from "./e2e-playwright";
 import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -26,7 +26,7 @@ async function step(name: string, fn: () => Promise<void>) {
 async function waitReady() {
   for (let i = 0; i < 80; i++) {
     try {
-      if ((await fetch(`${BASE}/api/state`)).ok) return;
+      if ((await authedReady(BASE, auth.token)).ok) return;
     } catch {}
     await sleep(250);
   }
@@ -36,7 +36,7 @@ async function waitReady() {
 async function post(path: string, body: unknown) {
   const res = await fetch(`${BASE}${path}`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", authorization: `Bearer ${auth.token}` },
     body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error(`${path} -> ${res.status}: ${await res.text()}`);
@@ -59,10 +59,11 @@ await writeFile(join(work, "server.ts"), "export const answer = 42;\n// generate
 await writeFile(join(work, "secret.exe"), "classified");
 await symlink(join(work, "server.ts"), join(work, "linked.ts"));
 
+const auth = await provisionE2eAuth();
 const server = Bun.spawn(["bun", "run", "src/main.ts", "--fake", "--port", String(PORT)], {
   stdout: "pipe",
   stderr: "pipe",
-  env: e2eEnv(),
+  env: auth.env,
 });
 const browser = await launchChromium();
 
@@ -82,7 +83,8 @@ try {
   });
   await sleep(700);
 
-  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  const ctx = await authedContext(browser, auth.token, { viewport: { width: 1440, height: 900 } });
+  const page = await ctx.newPage();
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(String(e)));
   page.on("console", (m) => {
@@ -92,12 +94,17 @@ try {
   await step("desktop: transcript links open Markdown, code, and 404 viewer; inline image renders", async () => {
     await openFilesConversation(page);
     const agentBubble = page.locator(".msg.agent .bubble", { hasText: "Links:" }).last();
-    await agentBubble.locator('img[src="/api/agents/codex-1/files/diagram.png"]').waitFor({ timeout: 8000 });
+    // The inline markdown image renders via AuthedImage: it fetches the artifact bytes WITH the
+    // device token and swaps in a blob: object URL (the raw /api URL is never a static src).
+    const inlineImg = agentBubble.locator('img[alt="diagram"]');
+    await inlineImg.waitFor({ timeout: 8000 });
+    const inlineSrc = await inlineImg.getAttribute("src");
+    if (!inlineSrc?.startsWith("blob:")) throw new Error(`inline image not authorized-loaded (src=${inlineSrc})`);
 
     await agentBubble.locator('a[href="/mesh/files/agent/codex-1/file/report.md"]').click();
     await page.waitForSelector(".file-viewer-path", { timeout: 8000 });
     await page.waitForSelector('.file-viewer-body h1:has-text("Report")', { timeout: 8000 });
-    await page.waitForSelector('.file-viewer-body img[src="/api/agents/codex-1/files/diagram.png"]', { timeout: 8000 });
+    await page.waitForSelector('.file-viewer-body img[alt="diagram"]', { timeout: 8000 });
     await page.locator(".file-viewer-back").click();
     await page.waitForSelector(".conv-panel", { timeout: 8000 });
 
@@ -121,7 +128,7 @@ try {
     if (scrollWidth > 375) throw new Error(`page scrollWidth ${scrollWidth} > 375`);
     const box = await page.locator(".file-viewer-back").boundingBox();
     if (!box || box.width < 44 || box.height < 44) throw new Error(`bad back target ${JSON.stringify(box)}`);
-    await page.waitForSelector('.file-viewer-body img[src="/api/agents/codex-1/files/diagram.png"]', { timeout: 8000 });
+    await page.waitForSelector('.file-viewer-body img[alt="diagram"]', { timeout: 8000 });
   });
 
   await step("mobile: long Markdown scrolls inside the file viewer body", async () => {
@@ -141,11 +148,11 @@ try {
   });
 
   await step("negative API requests map traversal, non-whitelist, and symlink correctly", async () => {
-    const traversal = await fetch(`${BASE}/api/agents/codex-1/files/..%2F..%2Fetc%2Fpasswd`);
+    const traversal = await fetch(`${BASE}/api/agents/codex-1/files/..%2F..%2Fetc%2Fpasswd`, { headers: { authorization: `Bearer ${auth.token}` } });
     if (traversal.status !== 400) throw new Error(`traversal status ${traversal.status}`);
-    const exe = await fetch(`${BASE}/api/agents/codex-1/files/secret.exe`);
+    const exe = await fetch(`${BASE}/api/agents/codex-1/files/secret.exe`, { headers: { authorization: `Bearer ${auth.token}` } });
     if (exe.status !== 404) throw new Error(`secret.exe status ${exe.status}`);
-    const link = await fetch(`${BASE}/api/agents/codex-1/files/linked.ts`);
+    const link = await fetch(`${BASE}/api/agents/codex-1/files/linked.ts`, { headers: { authorization: `Bearer ${auth.token}` } });
     if (link.status !== 400) throw new Error(`symlink status ${link.status}`);
   });
 
@@ -164,4 +171,5 @@ try {
   await browser.close();
   server.kill();
   await rm(work, { recursive: true, force: true });
+  await rm(auth.meshRootBase, { recursive: true, force: true });
 }

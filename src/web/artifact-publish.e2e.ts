@@ -9,11 +9,12 @@ import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { type Browser, type Page } from "playwright";
-import { launchChromium } from "./e2e-playwright";
+import { authedContext, authedReady, e2eAuthRoot, launchChromium, seedApprovedDevice } from "./e2e-playwright";
 
 const PORT = Number(process.env.E2E_PORT) || 10026;
 const BASE = `http://localhost:${PORT}`;
 const ROOT = process.env.E2E_ROOT?.replace(/^~/, homedir()) ?? join(homedir(), ".agent-mesh-dev");
+const e2eToken = await seedApprovedDevice(e2eAuthRoot(ROOT));
 const REPO = resolve(import.meta.dir, "..", "..");
 const mesh = `artifact-e2e-${process.pid}`;
 const work = await mkdtemp(join(tmpdir(), "mesh-artifact-e2e-"));
@@ -38,22 +39,22 @@ async function step(name: string, fn: () => Promise<void>) {
 async function waitReady(): Promise<void> {
   for (let i = 0; i < 80; i++) {
     try {
-      if ((await fetch(`${BASE}/api/state`)).ok) return;
+      if ((await authedReady(BASE, e2eToken)).ok) return;
     } catch {}
     await sleep(250);
   }
   throw new Error("backend never became ready");
 }
 
-const state = async () => (await fetch(`${BASE}/api/state`)).json();
+const state = async () => (await fetch(`${BASE}/api/state`, { headers: { authorization: `Bearer ${e2eToken}` } })).json();
 const post = (p: string, body?: unknown) =>
-  fetch(`${BASE}${p}`, { method: "POST", headers: { "content-type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
-const del = (p: string) => fetch(`${BASE}${p}`, { method: "DELETE" });
+  fetch(`${BASE}${p}`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${e2eToken}` }, body: body ? JSON.stringify(body) : undefined });
+const del = (p: string) => fetch(`${BASE}${p}`, { method: "DELETE", headers: { authorization: `Bearer ${e2eToken}` } });
 
 // /api/state ships the lazy-stripped snapshot (transcript items omitted); read the real
 // transcript through the backfill endpoint the client uses for lazy load.
 async function transcriptItems(): Promise<any[]> {
-  const res = await fetch(`${BASE}/api/meshes/${mesh}/agents/r/transcript?limit=500`);
+  const res = await fetch(`${BASE}/api/meshes/${mesh}/agents/r/transcript?limit=500`, { headers: { authorization: `Bearer ${e2eToken}` } });
   if (!res.ok) return [];
   const body = await res.json();
   return body?.items ?? [];
@@ -89,7 +90,8 @@ const backend = Bun.spawn(["bun", "run", "src/main.ts", "--no-assistant", "--por
 try {
   await waitReady();
   browser = await launchChromium();
-  page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  const ctx = await authedContext(browser, e2eToken, { viewport: { width: 1440, height: 900 } });
+  page = await ctx.newPage();
   const config = { name: mesh, agents: [{ id: "r", harness: "codex", project: ".", role: "router" }], edges: [] };
 
   await step("define + start mesh", async () => {
@@ -105,7 +107,7 @@ try {
     if (card.agent !== "r") throw new Error(`owner not derived from agent: ${card.agent}`);
     if (card.contentType !== "image/png") throw new Error(`bad content type: ${card.contentType}`);
     if (card.caption !== "the chart") throw new Error(`bad caption: ${card.caption}`);
-    const res = await fetch(`${BASE}/api/meshes/${mesh}/agents/r/artifacts/chart.png`);
+    const res = await fetch(`${BASE}/api/meshes/${mesh}/agents/r/artifacts/chart.png`, { headers: { authorization: `Bearer ${e2eToken}` } });
     if (res.status !== 200) throw new Error(`artifact api status ${res.status}`);
     if (!(res.headers.get("content-type") ?? "").includes("image/png")) throw new Error("artifact api wrong content type");
   });
@@ -156,7 +158,7 @@ try {
     await post(`/api/meshes/${mesh}/stop`);
     await del(`/api/meshes/${mesh}`);
     await sleep(400);
-    const res = await fetch(`${BASE}/api/meshes/${mesh}/agents/r/artifacts/chart.png`);
+    const res = await fetch(`${BASE}/api/meshes/${mesh}/agents/r/artifacts/chart.png`, { headers: { authorization: `Bearer ${e2eToken}` } });
     if (res.status === 200) throw new Error("artifact still served after mesh deletion");
   });
 

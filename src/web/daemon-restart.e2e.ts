@@ -6,10 +6,12 @@
 import { mkdtemp, rm, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { authedReady, e2eAuthRoot, seedApprovedDevice } from "./e2e-playwright";
 
 const PORT = Number(process.env.E2E_PORT) || 7560;
 const BASE = `http://localhost:${PORT}`;
 const ROOT = await mkdtemp(join(tmpdir(), "daemon-e2e-"));
+const e2eToken = await seedApprovedDevice(e2eAuthRoot(ROOT));
 const FIXTURE = resolve(import.meta.dir, "..", "fixtures", "echo-host.ts");
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -36,15 +38,15 @@ function spawnBackend() {
 async function waitReady() {
   for (let i = 0; i < 80; i++) {
     try {
-      if ((await fetch(`${BASE}/api/state`)).ok) return true;
+      if ((await authedReady(BASE, e2eToken)).ok) return true;
     } catch {}
     await sleep(250);
   }
   return false;
 }
-const state = async () => (await fetch(`${BASE}/api/state`)).json();
+const state = async () => (await fetch(`${BASE}/api/state`, { headers: { authorization: `Bearer ${e2eToken}` } })).json();
 const post = (p: string, body?: unknown) =>
-  fetch(`${BASE}${p}`, { method: "POST", headers: { "content-type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
+  fetch(`${BASE}${p}`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${e2eToken}` }, body: body ? JSON.stringify(body) : undefined });
 
 const ECHO = { name: "echo", agents: [{ id: "r", harness: "claude", project: "test_mesh_0", role: "router" }], edges: [] };
 

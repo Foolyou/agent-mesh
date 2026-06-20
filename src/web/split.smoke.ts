@@ -6,6 +6,8 @@
 import { WebGateway } from "./gateway";
 import { startApiServer } from "./api-server";
 import { startWebServer } from "./server";
+import { provisionE2eAuth } from "./e2e-playwright";
+import { rm } from "node:fs/promises";
 import type { MeshEvent, MeshConfig } from "../acp/types";
 
 const CFG: MeshConfig = {
@@ -52,8 +54,15 @@ function assert(cond: unknown, msg: string) {
   if (!cond) throw new Error(`SPLIT SMOKE FAIL: ${msg}`);
 }
 
+// Device-auth (P6): seed an approved token in an isolated root. The backend gateway gets that root
+// directly; the in-process proxy web tier resolves its auth root via resolveRoot(), so we point
+// MESH_ROOT at the same base. Every /api/* call carries the Bearer (loopback is no longer trusted).
+const auth = await provisionE2eAuth();
+const authd = { authorization: `Bearer ${auth.token}` };
+const prevMeshRoot = process.env.MESH_ROOT;
+process.env.MESH_ROOT = auth.meshRootBase;
 const mgr = fakeManager();
-const gw = new WebGateway(mgr as any);
+const gw = new WebGateway(mgr as any, undefined, { root: auth.authRoot });
 const backend = startApiServer(gw, { port: 0 });
 const web = startWebServer({ port: 0, backendUrl: backend.url });
 
@@ -61,7 +70,7 @@ try {
   assert(web.mode === "proxy", "web server is in proxy mode");
 
   // backend serves the API directly
-  const direct = await fetch(`${backend.url}/api/state`);
+  const direct = await fetch(`${backend.url}/api/state`, { headers: authd });
   assert(direct.status === 200, "backend /api/state 200");
   assert((await direct.json()).meshes[0].name === "demo", "backend snapshot has demo");
 
@@ -74,18 +83,18 @@ try {
   assert(html.status === 200 && (html.headers.get("content-type") ?? "").includes("text/html"), "web serves SPA html");
 
   // web proxies GET /api/state to the backend
-  const proxied = await fetch(`${web.url}/api/state`);
+  const proxied = await fetch(`${web.url}/api/state`, { headers: authd });
   assert(proxied.status === 200, "web proxies /api/state");
   assert((await proxied.json()).meshes[0].name === "demo", "proxied snapshot has demo");
 
   // web proxies a POST (command) to the backend
-  const started = await fetch(`${web.url}/api/meshes/demo/start`, { method: "POST" });
+  const started = await fetch(`${web.url}/api/meshes/demo/start`, { method: "POST", headers: authd });
   assert(started.status === 200, "web proxies POST start");
   assert(mgr.calls.some((c) => c[0] === "start"), "backend received the proxied start command");
 
   // web proxies the WebSocket: a browser socket gets the backend snapshot
   const firstFrame = await new Promise<any>((res, rej) => {
-    const ws = new WebSocket(`ws://localhost:${web.port}/ws`);
+    const ws = new WebSocket(`ws://localhost:${web.port}/ws?token=${encodeURIComponent(auth.token)}`);
     const timer = setTimeout(() => rej(new Error("ws timeout")), 4000);
     ws.onmessage = (ev) => {
       clearTimeout(timer);
@@ -109,4 +118,7 @@ try {
 } finally {
   web.stop();
   backend.stop();
+  if (prevMeshRoot === undefined) delete process.env.MESH_ROOT;
+  else process.env.MESH_ROOT = prevMeshRoot;
+  await rm(auth.meshRootBase, { recursive: true, force: true });
 }

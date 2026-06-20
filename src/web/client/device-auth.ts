@@ -52,12 +52,10 @@ export interface DeviceStartInfo {
 type FetchFn = typeof fetch;
 const DEFAULT_POLL_MS = 2500;
 
-/** Boot gate: probe a REAL gated endpoint (`GET /api/state`) so the client honours the SAME server
- *  gate as everything else — it sends the bearer token if we have one (the approved-device path) and
- *  still succeeds with no token when the server grants loopback-only implicit trust (the dev / host
- *  bootstrap path). 200 → authorized; 401 / network error → show the unauthorized page. This
- *  deliberately does NOT rely on `POST /api/auth/device/verify`, which only knows about device
- *  tokens and would wrongly reject an authorized loopback session that has no token. */
+/** Boot gate: probe a REAL gated endpoint (`GET /api/state`) with the bearer token so the client
+ *  honours the SAME server gate as every other request. Device-auth phase 6 makes an approved device
+ *  token the ONLY allow path (loopback is no longer trusted), so this succeeds only when we hold an
+ *  approved token. 200 → authorized; 401 / network error → show the unauthorized page. */
 export async function bootAuthorized(fetchFn: FetchFn = fetch): Promise<boolean> {
   try {
     const res = await fetchFn("/api/state", { headers: authHeaders() });

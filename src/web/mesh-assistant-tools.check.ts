@@ -1,22 +1,30 @@
 // Manual verification that the Mesh Assistant can now DELETE and MODIFY meshes by
 // natural language (new delete_mesh / get_mesh / update_mesh tools). Boots a combined
 // server with a real Mesh Assistant, then drives it. Run: bun run src/web/mesh-assistant-tools.check.ts
+import { provisionE2eAuth } from "./e2e-playwright";
+import { rm } from "node:fs/promises";
+
 const PORT = Number(process.env.E2E_PORT) || 7360;
 const BASE = `http://localhost:${PORT}`;
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
+// Device-auth (P6): seed an approved token in an isolated root, hand it to the spawned server via
+// MESH_ROOT, and carry the Bearer on every /api/* call. Loopback is no longer trusted.
+const auth = await provisionE2eAuth();
+const authd = { authorization: `Bearer ${auth.token}` };
+
 async function api(method: string, path: string, body?: unknown) {
   const r = await fetch(BASE + path, {
     method,
-    headers: body ? { "content-type": "application/json" } : {},
+    headers: { ...(body ? { "content-type": "application/json" } : {}), ...authd },
     body: body ? JSON.stringify(body) : undefined,
   });
   return { status: r.status, body: await r.json().catch(() => ({})) };
 }
-const state = () => fetch(BASE + "/api/state").then((r) => r.json());
+const state = () => fetch(BASE + "/api/state", { headers: authd }).then((r) => r.json());
 const meshNames = async () => (await state()).meshes.map((m: any) => m.name);
 
-const server = Bun.spawn(["bun", "run", "src/main.ts", "--port", String(PORT)], { stdout: "ignore", stderr: "ignore" });
+const server = Bun.spawn(["bun", "run", "src/main.ts", "--port", String(PORT)], { stdout: "ignore", stderr: "ignore", env: auth.env });
 
 async function waitAssistantReady() {
   for (let i = 0; i < 120; i++) {
@@ -33,7 +41,7 @@ async function waitAssistantReady() {
 async function main() {
   for (let i = 0; i < 80; i++) {
     try {
-      if ((await fetch(BASE + "/api/state")).ok) break;
+      if ((await fetch(BASE + "/api/state", { headers: authd })).ok) break;
     } catch {}
     await sleep(250);
   }
@@ -89,4 +97,5 @@ try {
   try {
     server.kill("SIGKILL");
   } catch {}
+  await rm(auth.meshRootBase, { recursive: true, force: true });
 }
