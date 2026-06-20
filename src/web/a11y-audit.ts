@@ -12,8 +12,8 @@
 // AAA (7:1) targets are reported as advisory only.
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { BUILTIN_THEMES, THEME_KEYS, type Palette } from "./client/themes";
-import { AUDIT_PAIRS, evalPair, fmtRatio, AAA_TEXT, type Family } from "./client/contrast";
+import { BUILTIN_THEMES, THEME_KEYS, MODES, ACCENTS, compose, type Palette } from "./client/themes";
+import { AUDIT_PAIRS, evalPair, fmtRatio, AAA_TEXT, V2_AUDIT_PAIRS, evalV2Pair, type Family } from "./client/contrast";
 
 const FAMILY_ORDER: Family[] = [
   "text",
@@ -101,6 +101,27 @@ for (const t of BUILTIN_THEMES) {
   if (advisories.length) allAdvisories.push(`${t.label}: ${advisories.length} AAA stretch pairs`);
 }
 
+// ── v2 token gate: all 9 mode × accent compositions ──────────────────────────
+console.log(`\n${"━".repeat(74)}\n  v2 TOKENS — 9 mode×accent compositions (Dark·Slate / Light·Cool / Eye-care·Warm × Signal Teal / Ember / Fleet Azure)`);
+let v2Total = 0;
+const v2SoftMiss: string[] = [];
+for (const mode of MODES) {
+  for (const accent of ACCENTS) {
+    const sp = compose(mode, accent);
+    const rows = V2_AUDIT_PAIRS.map((p) => evalV2Pair(p, sp));
+    const fails = rows.filter((r) => !r.pass);
+    v2Total += fails.length;
+    for (const r of rows) if (r.softPass === false && r.pass) v2SoftMiss.push(`${mode}×${accent} ${r.id} ${fmtRatio(r.ratio)}<${r.soft}`);
+    console.log(
+      `  ${fails.length ? "✗" : "✓"} ${mode} × ${accent}` +
+        (fails.length ? ` — ${fails.length} FAIL: ${fails.map((f) => `${f.id} ${fmtRatio(f.ratio)}<${f.need}`).join(", ")}` : ` — all ${rows.length} pairs pass`),
+    );
+  }
+}
+if (v2SoftMiss.length) console.log(`  · soft-target (text-secondary ≥5.5) misses (report-only): ${v2SoftMiss.join(" | ")}`);
+else console.log("  · text-secondary ≥5.5 soft target met in all 9 combinations");
+total += v2Total;
+
 console.log(`\n${"━".repeat(74)}\n  STATIC theme.css LINT`);
 const { unknownVars, literals } = lintThemeCss();
 if (unknownVars.length) {
@@ -124,5 +145,5 @@ if (total) {
   console.log(`  ✗ ${total} contrast/lint failures across ${BUILTIN_THEMES.length} themes`);
   process.exitCode = 1;
 } else {
-  console.log(`  ✓ all ${BUILTIN_THEMES.length} themes pass WCAG AA (text) + non-text (UI) contrast; theme.css clean`);
+  console.log(`  ✓ all ${BUILTIN_THEMES.length} legacy themes + 9 v2 mode×accent compositions pass WCAG (v2 primary text AAA, focus/border-strong ≥4.5); theme.css clean`);
 }

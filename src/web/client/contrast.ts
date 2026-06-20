@@ -65,7 +65,7 @@ export const fmtRatio = (r: number) => Math.round(r * 100) / 100;
 // ColorSpec resolver covers tokens and tints alike.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import type { Palette, ThemeVar } from "./themes";
+import type { Palette, ThemeVar, SemanticVar, SemanticPalette } from "./themes";
 
 /** A color the CSS resolves to: a raw token, or a color-mix of a token over a base. */
 export type ColorSpec =
@@ -197,3 +197,128 @@ function buildPairs(): AuditPair[] {
 }
 
 export const AUDIT_PAIRS: AuditPair[] = buildPairs();
+
+// ════════════════════════════════════════════════════════════════════════════
+// v2 contrast contract (Step 5 C3) — gates the two-layer semantic token model
+// across all 9 mode×accent compositions (themes.ts `compose()`). COEXISTS with
+// the v1 contract above (which still gates the 8 legacy BUILTIN_THEMES during the
+// migration). A composed SemanticPalette already resolves `*-subtle` / `on-*` to
+// concrete tokens, so v2 pairs are direct (fg token vs bg token) — no ColorSpec /
+// color-mix. Source of truth: docs/design/ui/tokens/02-aa-evidence.md.
+// ════════════════════════════════════════════════════════════════════════════
+
+/** Stronger-than-AA non-text threshold (focus ring + interactive control border). */
+export const UI_STRONG = 4.5;
+
+export type V2Family =
+  | "text-aaa" // primary body text — AAA 7.0
+  | "text" // secondary / muted text — AA 4.5 (secondary also carries a soft 5.5 target)
+  | "disabled" // disabled text — 3.0 floor
+  | "status-text" // status / link / accent hue as readable words — AA 4.5
+  | "status-dot" // status hue as dot / edge — non-text 3.0
+  | "tinted-text" // text on a *-subtle / accent-subtle tint — AA 4.5
+  | "syntax" // syntax token on the code surface — AA 4.5
+  | "focus" // focus ring — UI_STRONG 4.5
+  | "border-strong" // interactive control edge — UI_STRONG 4.5
+  | "on-fill" // foreground on a filled status / accent surface — AA 4.5
+  | "selection" // text on the selected fill — AA 4.5
+  | "border" // hairline divider — report-only
+  | "surface-step"; // surface elevation separation — report-only
+
+export const V2_FAMILY_THRESHOLD: Record<V2Family, number> = {
+  "text-aaa": AAA_TEXT,
+  text: AA_TEXT,
+  disabled: UI_COMPONENT,
+  "status-text": AA_TEXT,
+  "status-dot": UI_COMPONENT,
+  "tinted-text": AA_TEXT,
+  syntax: AA_TEXT,
+  focus: UI_STRONG,
+  "border-strong": UI_STRONG,
+  "on-fill": AA_TEXT,
+  selection: AA_TEXT,
+  border: UI_COMPONENT, // advisory (report-only)
+  "surface-step": 1.2, // advisory (report-only) house target
+};
+
+export interface V2Pair {
+  id: string;
+  family: V2Family;
+  fg: SemanticVar;
+  bg: SemanticVar;
+  /** report-only: reported, never fails the gate (hairline border, surface-step). */
+  advisory?: boolean;
+  /** soft target (reported, never fails) — e.g. text-secondary ≥5.5. */
+  soft?: number;
+}
+export interface V2PairResult extends V2Pair {
+  ratio: number;
+  need: number;
+  pass: boolean;
+  softPass?: boolean;
+}
+
+/** Evaluate one v2 pair against a composed semantic palette. `pass` is always
+ *  true for advisory pairs; `softPass` reports the soft target without gating. */
+export function evalV2Pair(pair: V2Pair, p: SemanticPalette): V2PairResult {
+  const ratio = contrastRatio(hexToRgb(p[pair.fg]), hexToRgb(p[pair.bg]));
+  const need = V2_FAMILY_THRESHOLD[pair.family];
+  return {
+    ...pair,
+    ratio,
+    need,
+    pass: pair.advisory ? true : ratio >= need,
+    softPass: pair.soft === undefined ? undefined : ratio >= pair.soft,
+  };
+}
+
+const V2_SURFACES: SemanticVar[] = ["surface", "surface-raised", "surface-sunken"];
+
+/** The v2 pair contract — what compose(mode,accent) must satisfy. Shared by the
+ *  audit (a11y-audit.ts) and the gate test (contrast-v2.test.ts). */
+function buildV2Pairs(): V2Pair[] {
+  const pairs: V2Pair[] = [];
+  // 1. Text hierarchy: primary → AAA, secondary (soft 5.5) + muted → AA, disabled → 3.0.
+  for (const bg of V2_SURFACES) pairs.push({ id: `text-primary/${bg}`, family: "text-aaa", fg: "text-primary", bg });
+  for (const bg of V2_SURFACES) pairs.push({ id: `text-secondary/${bg}`, family: "text", fg: "text-secondary", bg, soft: 5.5 });
+  for (const bg of V2_SURFACES) pairs.push({ id: `text-muted/${bg}`, family: "text", fg: "text-muted", bg });
+  for (const bg of V2_SURFACES) pairs.push({ id: `text-disabled/${bg}`, family: "disabled", fg: "text-disabled", bg });
+  // 2. Status / link / idle / accent as readable text on surface + raised — AA.
+  const textHues: SemanticVar[] = ["success", "warning", "danger", "info", "link", "idle", "accent"];
+  for (const role of textHues)
+    for (const bg of ["surface", "surface-raised"] as SemanticVar[])
+      pairs.push({ id: `text:${role}/${bg}`, family: "status-text", fg: role, bg });
+  // 3. Status text on its own *-subtle tint + text on the accent-subtle tint — AA.
+  pairs.push({ id: "tinted:success", family: "tinted-text", fg: "success", bg: "success-subtle" });
+  pairs.push({ id: "tinted:warning", family: "tinted-text", fg: "warning", bg: "warning-subtle" });
+  pairs.push({ id: "tinted:danger", family: "tinted-text", fg: "danger", bg: "danger-subtle" });
+  pairs.push({ id: "tinted:info", family: "tinted-text", fg: "info", bg: "info-subtle" });
+  pairs.push({ id: "tinted:accent-subtle", family: "tinted-text", fg: "text-primary", bg: "accent-subtle" });
+  // 4. Status / accent as dots / edges (non-text) on base.
+  for (const role of ["success", "warning", "danger", "info", "idle"] as SemanticVar[])
+    pairs.push({ id: `dot:${role}`, family: "status-dot", fg: role, bg: "surface" });
+  // 5. on-* foreground over the filled status / accent surfaces — AA.
+  pairs.push({ id: "on-success", family: "on-fill", fg: "on-success", bg: "success" });
+  pairs.push({ id: "on-warning", family: "on-fill", fg: "on-warning", bg: "warning" });
+  pairs.push({ id: "on-danger", family: "on-fill", fg: "on-danger", bg: "danger" });
+  pairs.push({ id: "on-info", family: "on-fill", fg: "on-info", bg: "info" });
+  pairs.push({ id: "on-accent", family: "on-fill", fg: "on-accent", bg: "accent" });
+  // 6. Syntax tokens on the code (sunken) surface — AA.
+  for (const k of ["syntax-keyword", "syntax-string", "syntax-comment"] as SemanticVar[])
+    pairs.push({ id: k, family: "syntax", fg: k, bg: "surface-sunken" });
+  // 7. Focus ring (UI_STRONG) on every surface.
+  for (const bg of V2_SURFACES) pairs.push({ id: `focus/${bg}`, family: "focus", fg: "focus-ring", bg });
+  // 8. Strong interactive border (UI_STRONG) on surface + raised.
+  for (const bg of ["surface", "surface-raised"] as SemanticVar[])
+    pairs.push({ id: `border-strong/${bg}`, family: "border-strong", fg: "border-strong", bg });
+  // 9. Selected fill carries text — AA.
+  pairs.push({ id: "selection", family: "selection", fg: "text-on-selected", bg: "selected" });
+  // 10. report-only: hairline divider + surface elevation steps.
+  for (const bg of ["surface", "surface-raised"] as SemanticVar[])
+    pairs.push({ id: `border/${bg}`, family: "border", fg: "border", bg, advisory: true });
+  pairs.push({ id: "surface-step:raised", family: "surface-step", fg: "surface-raised", bg: "surface", advisory: true });
+  pairs.push({ id: "surface-step:sunken", family: "surface-step", fg: "surface-sunken", bg: "surface", advisory: true });
+  return pairs;
+}
+
+export const V2_AUDIT_PAIRS: V2Pair[] = buildV2Pairs();
