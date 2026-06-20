@@ -12,11 +12,11 @@ initTheme(); // apply the persisted theme before first paint (no flash)
 installVisualViewportHeightVar({ window, target: document.documentElement });
 
 const root = document.getElementById("root");
-// Isolated design preview (Step 5, pre-C5): /__ui-preview mounts a standalone token
-// preview INSTEAD of the console when the server explicitly exposes that route
+// Isolated design gallery (Step 5 C8): /__ui-preview mounts the v2 component gallery
+// INSTEAD of the console when the server explicitly exposes that route
 // (MESH_UI_PREVIEW=1). It never opens the WS / store / device-auth, so it cannot
 // disrupt business flows. Dynamically imported so it's only loaded on that route.
-// Remove this branch + UiPreview.tsx + the server route when C5 lands.
+// Remove this branch + UiPreview.tsx + the server route to retire the gallery.
 if (root) {
   if (window.location.pathname.startsWith("/__ui-preview")) {
     import("./UiPreview").then(({ UiPreview }) => createRoot(root).render(<UiPreview />));
