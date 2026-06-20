@@ -12,4 +12,4 @@ cd "$(dirname "$0")/.."
 BASE="${MESH_DEV_ROOT:-$HOME/mesh-dev}"        # base dir; data lives in <base>/.agent-mesh
 PORT="${MESH_DEV_PORT:-10020}"
 echo "dev agent-mesh → http://localhost:$PORT  (root $BASE/.agent-mesh, from source)"
-exec bun run src/main.ts --port "$PORT" --root "$BASE"
+exec bun run src/main.ts run --port "$PORT" --root "$BASE"

@@ -23,7 +23,8 @@ async function runMesh(args: string[], env: Record<string, string> = {}): Promis
 test("mesh help → exit 0, prints usage, starts no server", async () => {
   const { code, out } = await runMesh(["help"]);
   expect(code).toBe(0);
-  expect(out).toContain("usage: mesh");
+  expect(out).toContain("usage:");
+  expect(out).toContain("mesh <command> [args] [flags]");
   expect(out).not.toContain("→ http"); // server-boot banner ("…console → http://…") never printed
 }, 20000);
 
@@ -31,7 +32,8 @@ test("mesh --help and mesh -h → exit 0 + usage", async () => {
   for (const flag of ["--help", "-h"]) {
     const { code, out } = await runMesh([flag]);
     expect(code).toBe(0);
-    expect(out).toContain("usage: mesh");
+    expect(out).toContain("usage:");
+    expect(out).toContain("mesh <command> [args] [flags]");
     expect(out).not.toContain("→ http"); // server-boot banner ("…console → http://…") never printed
   }
 }, 20000);
@@ -40,7 +42,8 @@ test("mesh <unknown command> → exit 2 + usage, starts no server", async () => 
   const { code, out } = await runMesh(["frobnicate"]);
   expect(code).toBe(2);
   expect(out).toContain("unknown command 'frobnicate'");
-  expect(out).toContain("usage: mesh");
+  expect(out).toContain("usage:");
+  expect(out).toContain("mesh <command> [args] [flags]");
   expect(out).not.toContain("→ http"); // server-boot banner ("…console → http://…") never printed
 }, 20000);
 
@@ -49,6 +52,21 @@ test("mesh --bogus (unknown leading flag) → exit 2 + usage, starts no server",
   expect(code).toBe(2);
   expect(out).toContain("unknown option --bogus");
   expect(out).not.toContain("→ http"); // server-boot banner ("…console → http://…") never printed
+}, 20000);
+
+test("bare mesh prints status + usage and starts no server", async () => {
+  const base = await mkdtemp(join(tmpdir(), "cli-bare-"));
+  try {
+    const { code, out } = await runMesh(["--root", base, "--port", "1"]);
+    expect(code).toBe(0);
+    expect(out).toContain(`service : ${join(base, ".agent-mesh")}`);
+    expect(out).toContain("control : DOWN");
+    expect(out).toContain("usage:");
+    expect(out).toContain("mesh run");
+    expect(out).not.toContain("→ http");
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
 }, 20000);
 
 test("--root in =, pre-command, and post-command forms all resolve the SAME storage root", async () => {
@@ -90,8 +108,8 @@ test("read-only commands do NOT validate the assistant harness (bogus env never 
 test("a startup path STILL rejects an invalid assistant harness, before booting anything", async () => {
   const base = await mkdtemp(join(tmpdir(), "cli-asst-boot-"));
   try {
-    const { code, out } = await runMesh(["backend", "--assistant-harness", "bogus", "--port", "1", "--root", base]);
-    expect(code).not.toBe(0); // parse throws before startApiServer
+    const { code, out } = await runMesh(["run", "--assistant-harness", "bogus", "--port", "1", "--root", base]);
+    expect(code).not.toBe(0); // parse throws before startWebServer
     expect(out).toContain("invalid assistant harness");
     expect(out).not.toContain("→ http"); // no server banner
   } finally {
@@ -122,7 +140,7 @@ test("deprecated assistant flag warnings print on a startup path but NOT on read
 test("startup rejects --assistant-harness=bogus (equals form), before booting anything", async () => {
   const base = await mkdtemp(join(tmpdir(), "cli-asst-eq-"));
   try {
-    const { code, out } = await runMesh(["backend", "--assistant-harness=bogus", "--port", "1", "--root", base]);
+    const { code, out } = await runMesh(["run", "--assistant-harness=bogus", "--port", "1", "--root", base]);
     expect(code).not.toBe(0);
     expect(out).toContain("invalid assistant harness");
     expect(out).not.toContain("→ http");
@@ -156,7 +174,7 @@ test("--master-harness=bogus (equals form) on a startup path warns AND rejects",
   }
 }, 30000);
 
-// ── Commit 3: channels feishu subcommand tree + deprecated top-level alias ──
+// ── channels feishu subcommand tree ──
 
 test("`mesh channels feishu list` is the official form — works, no deprecation warning", async () => {
   const base = await mkdtemp(join(tmpdir(), "cli-ch-list-"));
@@ -170,13 +188,16 @@ test("`mesh channels feishu list` is the official form — works, no deprecation
   }
 }, 20000);
 
-test("`mesh feishu list` still works but prints ONE deprecation warning", async () => {
-  const base = await mkdtemp(join(tmpdir(), "cli-ch-dep-"));
+test("removed top-level and split commands are unknown", async () => {
+  const base = await mkdtemp(join(tmpdir(), "cli-removed-"));
   try {
-    const { code, out } = await runMesh(["feishu", "list", "--root", base]);
-    expect(code).toBe(0);
-    expect(out).toContain("`mesh feishu …` is deprecated; use `mesh channels feishu …`");
-    expect(out).toContain("Pending feishu authorizations"); // same impl ran
+    for (const cmd of ["feishu", "backend", "web"]) {
+      const { code, out } = await runMesh([cmd, "--root", base]);
+      expect(code).toBe(2);
+      expect(out).toContain(`unknown command '${cmd}'`);
+      expect(out).toContain("usage:");
+      expect(out).not.toContain("→ http");
+    }
   } finally {
     await rm(base, { recursive: true, force: true });
   }
@@ -231,14 +252,13 @@ test("device/auth command-local flags still pass through after the channels refa
   }
 }, 20000);
 
-// ── Commit 4: control-plane wording clarifiers (output only; substrings the e2e needs are preserved) ──
+// ── control-plane wording ──
 
 test("status/down name the combined control plane and explain daemon retention", async () => {
   const base = await mkdtemp(join(tmpdir(), "cli-word-"));
   try {
     const status = await runMesh(["status", "--root", base, "--port", "1"]); // dead port → DOWN
-    expect(status.out).toContain("backend : DOWN"); // substring preserved for service.e2e
-    expect(status.out).toContain("combined web+API control plane");
+    expect(status.out).toContain("control : DOWN");
     const down = await runMesh(["down", "--root", base, "--port", "1"]); // nothing running
     expect(down.code).toBe(0);
     expect(down.out).toContain("mesh daemons left running (use --cold to reap them)");

@@ -1044,7 +1044,7 @@ function authCodeReply(shortId: string): string {
     "你尚未获授权使用本群的 mesh。",
     "请把下面的授权码发给管理员，由其在宿主机控制台批准：",
     `  ${shortId}`,
-    "（管理员执行：mesh feishu approve <授权码>）",
+    "（管理员执行：mesh channels feishu approve <授权码>）",
   ].join("\n");
 }
 

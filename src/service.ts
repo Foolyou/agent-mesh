@@ -1,9 +1,9 @@
 // src/service.ts
-// Backend service management, built into the binary: run/stop/inspect the backend as a
+// Control-plane service management, built into the binary: run/stop/inspect the service as a
 // background process under a root, with up/down/status/restart/logs. State lives in
 // <root>/backend.json ({pid,port,startedAt}) + <root>/backend.log. `root` is the resolved
 // storage dir (<base>/.agent-mesh); `base` is what we pass back as --root so a re-spawned
-// backend resolves to the same root.
+// service resolves to the same root.
 import { join, resolve } from "node:path";
 import { openSync, existsSync } from "node:fs";
 import { readFile, writeFile, rm, mkdir } from "node:fs/promises";
@@ -40,7 +40,7 @@ async function writeRec(root: string, rec: BackendRec): Promise<void> {
 }
 const removeRec = (root: string) => rm(recPath(root), { force: true }).catch(() => {});
 
-/** The backend HTTP service is RESPONDING within a short timeout. Liveness, not authorization:
+/** The HTTP service is RESPONDING within a short timeout. Liveness, not authorization:
  *  under mandatory device auth (device-auth phase 6) an unauthenticated `/api/state` probe gets 401,
  *  which still proves the server is up — so any response with status < 500 counts as alive. Only a
  *  5xx, a network error, or a timeout counts as unhealthy. No token is sent: this is a local liveness
@@ -53,14 +53,14 @@ async function healthy(port: number): Promise<boolean> {
     return false;
   }
 }
-/** The live backend pid for this root: the recorded pid if alive, else the port listener. */
+/** The live control-plane pid for this root: the recorded pid if alive, else the port listener. */
 async function backendPid(root: string, port?: number): Promise<number | undefined> {
   const rec = await readRec(root);
   if (rec && pidAlive(rec.pid)) return rec.pid;
   return port !== undefined ? (findPidOnPort(port) ?? undefined) : undefined;
 }
 
-/** Read-only backend status for diagnostics: whether a `backend.json` record exists, the live pid
+/** Read-only service status for diagnostics: whether a `backend.json` record exists, the live pid
  *  (recorded-if-alive else port listener), and a <500 liveness probe. Reuses the same record reader +
  *  `healthy` probe as `mesh up/status` — no separate logic. */
 export async function backendStatus(root: string, port: number): Promise<{ recordPresent: boolean; pid?: number; port: number; healthy: boolean }> {
@@ -68,7 +68,7 @@ export async function backendStatus(root: string, port: number): Promise<{ recor
   return { recordPresent: !!rec, pid: await backendPid(root, port), port, healthy: await healthy(port) };
 }
 
-/** Strip the mesh-host control env so a re-spawned backend can't misfire as a host. */
+/** Strip the mesh-host control env so a re-spawned control plane can't misfire as a host. */
 function cleanEnv(): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) if (v !== undefined && !k.startsWith("MESH_")) out[k] = v;
@@ -91,11 +91,11 @@ async function waitGone(pid: number, ms: number): Promise<void> {
 
 export interface UpOpts {
   cold?: boolean;
-  /** extra flags to forward to the spawned backend (e.g. --fake, --no-assistant) */
+  /** extra flags to forward to the spawned control plane (e.g. --fake, --no-assistant) */
   passthrough?: string[];
 }
 
-/** Background-start the backend (idempotent). `--cold` reaps stale daemons first. */
+/** Background-start the control plane (idempotent). `--cold` reaps stale daemons first. */
 export async function up(base: string, root: string, port: number, opts: UpOpts = {}): Promise<void> {
   // One backend per ROOT: if a recorded backend for this root is alive, don't start another
   // (even on a different port — they'd share the same registry/meshes and corrupt state).
@@ -111,11 +111,11 @@ export async function up(base: string, root: string, port: number, opts: UpOpts 
   if (opts.cold) await reapDaemons(root);
   await mkdir(root, { recursive: true });
   const fd = openSync(logPath(root), "a");
-  // Fully daemonize: `detached` puts the backend in its OWN session (setsid), so killing
+  // Fully daemonize: `detached` puts the control plane in its OWN session (setsid), so killing
   // the launching shell/session can't take it down with us — what you want from a service.
   // (Bun's `detached` keeps child.pid as the real process; we just don't await its exit.)
-  // It also ignores SIGHUP. No subcommand → combined SPA + API + WS, like production.
-  const child = Bun.spawn(selfCmd(...(opts.passthrough ?? []), "--port", String(port), "--root", base), {
+  // It also ignores SIGHUP. `run` is the combined SPA + API + WS process.
+  const child = Bun.spawn(selfCmd("run", ...(opts.passthrough ?? []), "--port", String(port), "--root", base), {
     cwd: process.cwd(),
     env: cleanEnv(),
     stdin: "ignore",
@@ -128,20 +128,20 @@ export async function up(base: string, root: string, port: number, opts: UpOpts 
   while (Date.now() < deadline) {
     if (await healthy(port)) {
       await writeRec(root, { pid: child.pid, port, startedAt: new Date().toISOString() });
-      console.log(`backend up → http://localhost:${port}  (combined web+API control plane; pid ${child.pid}, root ${root})`);
+      console.log(`control plane up → http://localhost:${port}  (pid ${child.pid}, root ${root})`);
       return;
     }
     await Bun.sleep(250);
   }
-  console.error(`backend did not become healthy on ${port} — see ${logPath(root)}`);
+  console.error(`control plane did not become healthy on ${port} — see ${logPath(root)}`);
   process.exitCode = 1;
 }
 
-/** Stop the backend (hot: leave mesh daemons; --cold: also reap them). */
+/** Stop the control plane (hot: leave mesh daemons; --cold: also reap them). */
 export async function down(root: string, port: number, opts: { cold?: boolean } = {}): Promise<void> {
   const pid = await backendPid(root, port);
   if (pid) {
-    console.log(`stopping backend pid ${pid}`);
+    console.log(`stopping control-plane pid ${pid}`);
     try {
       process.kill(pid, "SIGTERM");
     } catch {
@@ -156,7 +156,7 @@ export async function down(root: string, port: number, opts: { cold?: boolean } 
       }
     }
   } else {
-    console.log("backend not running");
+    console.log("control plane not running");
   }
   await removeRec(root);
   if (opts.cold) {
@@ -169,22 +169,21 @@ export async function down(root: string, port: number, opts: { cold?: boolean } 
   }
 }
 
-/** Print control-plane up/down + port + running meshes. The `backend :` line names the combined
- *  web+API control-plane process (the same one `mesh up`/`restart` start). */
+/** Print control-plane up/down + port + running meshes. */
 export async function status(root: string, port: number): Promise<void> {
   console.log(`service : ${root}`);
   console.log(`port    : ${port}`);
   const pid = await backendPid(root, port);
-  if (await healthy(port)) console.log(`backend : UP (pid ${pid ?? "?"})  — combined web+API control plane`);
-  else if (pid) console.log(`backend : starting/unhealthy (pid ${pid})`);
-  else console.log("backend : DOWN  (combined web+API control plane not running)");
+  if (await healthy(port)) console.log(`control : UP (pid ${pid ?? "?"})`);
+  else if (pid) console.log(`control : starting/unhealthy (pid ${pid})`);
+  else console.log("control : DOWN");
   const running = await listLiveRecords(runDir(root));
   console.log("meshes  :");
   if (running.length) for (const r of running) console.log(`  ${r.name}\tpid ${r.pid}`);
   else console.log("  (none running)");
 }
 
-/** Restart the backend. Hot keeps the mesh daemons. A COLD restart reaps the daemons —
+/** Restart the control plane. Hot keeps the mesh daemons. A COLD restart reaps the daemons —
  *  if invoked from inside a mesh that would kill this very process, so cold dispatches a
  *  DETACHED worker (own session) that survives the reap and finishes the restart. */
 export async function restart(base: string, root: string, port: number, opts: UpOpts = {}): Promise<void> {

@@ -69,7 +69,7 @@ export interface FeishuAllowEntry {
 
 export interface FeishuPending {
   encryptedToken: string; // the full AES-256-GCM envelope — the source of truth
-  channelKey: string; // decoded copy, for `mesh feishu list` display (advisory)
+  channelKey: string; // decoded copy, for `mesh channels feishu list` display (advisory)
   openId: string;
   appId: string;
   firstSeenAt: string;

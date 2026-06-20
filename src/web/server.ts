@@ -3,7 +3,8 @@
 //   - gateway mode  ({ gateway })    — combined single process: handle /api + /ws in
 //                                       process from the WebGateway. (default `mesh`)
 //   - proxy mode    ({ backendUrl }) — reverse-proxy /api + /ws to a separate backend
-//                                       process (`mesh web` → `mesh backend`).
+//                                       process. The public CLI now exposes only combined `mesh run`;
+//                                       proxy mode remains for direct tests/embedding.
 // Same browser origin either way; the SPA is identical and never knows the difference.
 import index from "./client/index.html";
 import { handleApi } from "./api";

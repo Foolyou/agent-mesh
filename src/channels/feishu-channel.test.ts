@@ -995,7 +995,7 @@ test("auth gate: an unauthorized (but @-addressed) sender gets a short id auth c
   const shortId = ids[0];
   const reply = s.sent[0].text;
   expect(reply).toContain(shortId); // shows the short id
-  expect(reply).toContain("mesh feishu approve"); // and how to approve
+  expect(reply).toContain("mesh channels feishu approve"); // and how to approve
   // the encrypted envelope is the pending's source of truth, and must NEVER appear in the reply
   const pending = s.auth.current().pending[shortId];
   expect(pending.encryptedToken).toContain("ENVELOPE(feishu:cli_1|ou_stranger|cli_1)");
@@ -1254,7 +1254,7 @@ test("p2p: an unauthorized DM gets a short auth code and never reaches the assis
   const ids = Object.keys(s.auth.current().pending);
   expect(ids).toHaveLength(1);
   expect(reply).toContain(ids[0]); // short id shown
-  expect(reply).toContain("mesh feishu approve");
+  expect(reply).toContain("mesh channels feishu approve");
   expect(reply).not.toContain("ENVELOPE");
 });
 

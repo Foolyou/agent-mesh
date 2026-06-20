@@ -197,7 +197,7 @@ async function activeStream(page: Page): Promise<Locator> {
 }
 
 const auth = await provisionE2eAuth();
-const server = Bun.spawn(["bun", "run", "src/main.ts", "--fake", "--port", String(PORT)], {
+const server = Bun.spawn(["bun", "run", "src/main.ts", "run", "--fake", "--port", String(PORT)], {
   stdout: "pipe",
   stderr: "pipe",
   env: auth.env,

@@ -1,6 +1,6 @@
-// Headless backend: serves ONLY the REST API (/api/*) and the WebSocket fan-out
-// (/ws) from an in-process WebGateway. No frontend — the web tier (web-server.ts /
-// `mesh web`) serves the SPA and reverse-proxies here. This is the stateful engine:
+// Headless API server for direct tests/embedding: serves ONLY the REST API (/api/*) and the
+// WebSocket fan-out (/ws) from an in-process WebGateway. The public CLI exposes the combined
+// `mesh run` control plane rather than separate backend/web commands. This is the stateful engine:
 // it owns the WebGateway, which owns MeshManager + the mesh-host subprocesses.
 import { handleApi } from "./api";
 import { authorizeRequest, bearerToken, gateLogLine, isPreAuthApiPath } from "./auth";
@@ -64,7 +64,7 @@ export function startApiServer(gw: WebGateway, opts: ApiServerOptions = {}): Ser
         if (r.body instanceof Response) return r.body;
         return Response.json(r.body, { status: r.status });
       }
-      return new Response("mesh backend — REST at /api/*, WebSocket at /ws", { status: 404 });
+      return new Response("mesh API — REST at /api/*, WebSocket at /ws", { status: 404 });
     },
     websocket: {
       open(ws) {

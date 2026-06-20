@@ -58,13 +58,13 @@ const recPid = async () => {
 try {
   await step("status before start → DOWN", async () => {
     const { out } = await mesh("status");
-    if (!/backend\s*:\s*DOWN/.test(out)) throw new Error(`not DOWN: ${out}`);
+    if (!/control\s*:\s*DOWN/.test(out)) throw new Error(`not DOWN: ${out}`);
   });
 
   let pid1 = 0;
-  await step("up → background backend becomes healthy + record written", async () => {
+  await step("up → background control plane becomes healthy + record written", async () => {
     const { out } = await mesh("up", ...SVC);
-    if (!/backend up/.test(out)) throw new Error(`no 'backend up': ${out}`);
+    if (!/control plane up/.test(out)) throw new Error(`no 'control plane up': ${out}`);
     if (!(await healthy())) throw new Error("not healthy after up");
     pid1 = (await recPid()) ?? 0;
     if (!pid1 || !(() => { try { process.kill(pid1, 0); return true; } catch { return false; } })()) throw new Error(`bad record pid ${pid1}`);
@@ -72,7 +72,7 @@ try {
 
   await step("status → UP with the recorded pid", async () => {
     const { out } = await mesh("status");
-    if (!new RegExp(`backend\\s*:\\s*UP \\(pid ${pid1}\\)`).test(out)) throw new Error(`status wrong: ${out}`);
+    if (!new RegExp(`control\\s*:\\s*UP \\(pid ${pid1}\\)`).test(out)) throw new Error(`status wrong: ${out}`);
   });
 
   await step("up again → idempotent (already running)", async () => {
@@ -80,16 +80,16 @@ try {
     if (!/already running/.test(out)) throw new Error(`not idempotent: ${out}`);
   });
 
-  await step("restart (hot) → a NEW healthy backend", async () => {
+  await step("restart (hot) → a NEW healthy control plane", async () => {
     const { out } = await mesh("restart", ...SVC);
-    if (!/backend up/.test(out)) throw new Error(`restart didn't come up: ${out}`);
+    if (!/control plane up/.test(out)) throw new Error(`restart didn't come up: ${out}`);
     await sleep(300);
     if (!(await healthy())) throw new Error("not healthy after restart");
     const pid2 = await recPid();
     if (!pid2 || pid2 === pid1) throw new Error(`restart kept the same pid (${pid2})`);
   });
 
-  await step("down → backend stopped, record removed", async () => {
+  await step("down → control plane stopped, record removed", async () => {
     await mesh("down");
     await sleep(500);
     if (await healthy()) throw new Error("still healthy after down");

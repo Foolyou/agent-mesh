@@ -52,7 +52,7 @@ same console.
 
 ```bash
 bun install
-bun run mesh
+bun run mesh:run
 ```
 
 Open the printed URL, usually:
@@ -64,22 +64,16 @@ http://localhost:7317
 Agents use your existing local logins for their harnesses, such as Codex,
 Claude, opencode, or Kimi.
 
-For a self-contained demo with no real agent logins:
-
-```bash
-bun run mesh --fake
-```
-
 Common options:
 
 | Command | Purpose |
 |---|---|
-| `bun run mesh` | Run the combined web console and backend. |
-| `bun run mesh --fake` | Run a scripted demo with fake agents. |
-| `bun run mesh --no-assistant` | Skip the natural-language Mesh Assistant. |
-| `bun run mesh --assistant-harness claude` | Choose the Mesh Assistant harness. Supported: `codex`, `claude`, `opencode`, `kimi`. |
-| `bun run mesh --port 8080` | Serve the console on another port. |
-| `bun run mesh --root ~/work/mesh` | Store mesh data under another base directory. |
+| `bun run mesh` | Print service status and usage; starts nothing. |
+| `bun run mesh:run` | Run the combined web console and API in the foreground. |
+| `bun run mesh:run --no-assistant` | Skip the natural-language Mesh Assistant. |
+| `bun run mesh:run --assistant-harness claude` | Choose the Mesh Assistant harness. Supported: `codex`, `claude`, `opencode`, `kimi`. |
+| `bun run mesh:run --port 8080` | Serve the console on another port. |
+| `bun run mesh:run --root ~/work/mesh` | Store mesh data under another base directory. |
 
 The default data root is `~/.agent-mesh`. Passing `--root <dir>` stores data in
 `<dir>/.agent-mesh`.
@@ -263,21 +257,12 @@ system is ACP-based.
 ### Combined Console
 
 ```bash
-bun run mesh
+bun run mesh:run
 ```
 
-This starts the backend and web console in one process.
-
-### Split Backend and Web Tier
-
-```bash
-bun run backend
-bun run web
-```
-
-The backend owns `MeshManager` and mesh-host subprocesses. The web tier serves
-the React app and reverse-proxies `/api` and `/ws` to the backend. This is useful
-when restarting the UI should not disturb the backend.
+This starts the web console and API in one foreground process. Use `mesh run`
+from the installed binary. If no port is supplied, `mesh run` chooses a free
+port above 12345.
 
 ### Single Binary
 
@@ -311,9 +296,9 @@ On Windows, the updater installs `mesh.exe` to
 is not on `PATH`.
 
 The same binary also runs the control plane as a background service. `mesh up`/`restart` start the
-**combined web+API control plane** (SPA + REST + WS in one process), not just a headless backend —
-use `mesh backend` for headless REST+WS only. A hot `mesh down` stops the control plane but **leaves
-the mesh daemons running** (so the next `mesh up` reattaches to them); `--cold` also reaps the daemons.
+**combined web+API control plane** (SPA + REST + WS in one process). A hot `mesh down` stops the
+control plane but **leaves the mesh daemons running** (so the next `mesh up` reattaches to them);
+`--cold` also reaps the daemons.
 
 ```bash
 mesh up                 # start the combined web+API control plane in the background
@@ -325,9 +310,9 @@ mesh down --cold        # stop the control plane and reap the mesh daemons
 ```
 
 Other commands: `mesh help` (usage), `mesh ps [-v]` / `mesh doctor` (read-only diagnostics),
-`mesh channels feishu list|approve|revoke` (external chat channels; `mesh feishu …` is a deprecated
-alias), `mesh device …` / `mesh auth …` (device + key authorization). Global flags (`--root`,
-`--port`, …) work before or after the command.
+`mesh channels feishu list|approve|revoke` (external chat channels), `mesh device …` /
+`mesh auth …` (device + key authorization). Global flags (`--root`, `--port`, …) work before
+or after the command.
 
 ## Verification
 
@@ -342,10 +327,9 @@ Useful targeted checks:
 ```bash
 bun run src/web/server.smoke.ts       # combined HTTP + WS + bundler smoke
 bun run src/web/split.smoke.ts        # split backend/web reverse proxy
-bun run src/web/browser.e2e.ts        # browser e2e over --fake
+bun run src/web/browser.e2e.ts        # browser e2e
 bun run src/web/mobile.e2e.ts         # mobile layout e2e
 bun run src/web/theme.e2e.ts          # theme switching and custom palette
-bun run src/web/split-cli.e2e.ts      # real split CLI processes
 bun run e2e                           # headless MeshManager PoC verification
 ```
 

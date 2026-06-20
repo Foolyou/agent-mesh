@@ -24,7 +24,7 @@ async function api(method: string, path: string, body?: unknown) {
 const state = () => fetch(BASE + "/api/state", { headers: authd }).then((r) => r.json());
 const meshNames = async () => (await state()).meshes.map((m: any) => m.name);
 
-const server = Bun.spawn(["bun", "run", "src/main.ts", "--port", String(PORT)], { stdout: "ignore", stderr: "ignore", env: auth.env });
+const server = Bun.spawn(["bun", "run", "src/main.ts", "run", "--port", String(PORT)], { stdout: "ignore", stderr: "ignore", env: auth.env });
 
 async function waitAssistantReady() {
   for (let i = 0; i < 120; i++) {

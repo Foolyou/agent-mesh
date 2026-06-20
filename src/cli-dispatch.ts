@@ -1,9 +1,9 @@
 // src/cli-dispatch.ts — bounded top-level command resolver for the `mesh` binary.
 //
-// Design: docs/design/mesh-cli-dispatch.md §2.2–§2.3. The dispatcher must (a) start the combined
-// console only for the bare `mesh`, (b) print usage + exit 0 for help, (c) exit 2 (never boot a
-// service) for an unknown command or an unknown leading flag, and (d) accept global flags BOTH before
-// and after the command WITHOUT swallowing command-local flags (`--label`, `--ttl`, `-v`, `-f`, …).
+// Design: docs/design/mesh-cli-dispatch.md §2.2–§2.3. The dispatcher must (a) keep bare `mesh`
+// read-only, (b) print usage + exit 0 for help, (c) exit 2 (never boot a service) for an unknown
+// command or an unknown leading flag, and (d) accept global flags BOTH before and after the command
+// WITHOUT swallowing command-local flags (`--label`, `--ttl`, `-v`, `-f`, …).
 //
 // We deliberately do NOT use src/args.ts::parseArgs here: it greedily consumes `--flag <next>`
 // (args.ts:30-37), so a boolean global eats the command (`--fake status` → fake="status") and
@@ -12,18 +12,17 @@
 // command tail verbatim — peeling only KNOWN globals from it.
 
 /** Global options that take a value (arity 1). Also accept the `--k=v` form. */
-export const GLOBAL_VALUE = new Set(["--root", "--port", "--host", "--backend", "--assistant-harness", "--master-harness"]);
+export const GLOBAL_VALUE = new Set(["--root", "--port", "--host", "--assistant-harness", "--master-harness"]);
 /** Boolean global options (arity 0). */
 export const GLOBAL_BOOL = new Set(["--fake", "--cold", "--no-assistant", "--no-mesh-assistant", "--no-master"]);
 /** Tokens that request help anywhere (bare `help` only counts as the leading command token). */
 const HELP_LEADING = new Set(["help", "--help", "-h"]);
 const HELP_FLAG = new Set(["--help", "-h"]);
 
-/** Commands the dispatcher recognizes. `start`/`stop` alias `up`/`down`; `feishu` is a DEPRECATED
- *  top-level alias of `channels feishu` (kept known so it routes + warns, not "unknown command"). */
+/** Commands the dispatcher recognizes. `start`/`stop` alias `up`/`down`. */
 export const KNOWN_COMMANDS = new Set([
-  "up", "start", "down", "stop", "status", "restart", "logs",
-  "ps", "doctor", "kill", "channels", "device", "feishu", "auth", "backend", "web",
+  "run", "up", "start", "down", "stop", "status", "restart", "logs",
+  "ps", "doctor", "kill", "channels", "device", "auth",
 ]);
 
 export function isKnownCommand(command: string): boolean {
@@ -109,31 +108,53 @@ export function usageLines(): string[] {
   return [
     "agent-mesh — multi-agent control plane",
     "",
-    "usage: mesh [global flags] <command> [args]",
-    "",
-    "launch:",
-    "  mesh                      start the combined web console (SPA + API + WS)",
-    "  mesh up | start           background-start the control plane (combined web+API)",
-    "  mesh down | stop          stop it (mesh daemons stay running; --cold reaps them)",
-    "  mesh restart              restart it (hot; --cold also reaps mesh daemons)",
-    "  mesh backend              headless REST + WS only",
-    "  mesh web --backend <url>  SPA + reverse-proxy to a backend",
-    "",
-    "read-only / config:",
-    "  mesh status               control plane up/down + running meshes",
-    "  mesh ps [-v]              running mesh daemons (-v: detailed)",
-    "  mesh doctor               system health check",
-    "  mesh logs [-f]            backend log (-f: follow)",
-    "  mesh kill <name> | --all  stop a / all mesh daemon(s)",
-    "  mesh channels <provider> … external chat channels; provider: feishu",
-    "  mesh device …             device authorization (list | approve | revoke)",
-    "  mesh auth …               auth keys (list | rotate-key | bootstrap)",
-    "",
-    "help:",
+    "usage:",
+    "  mesh <command> [args] [flags]",
     "  mesh help | --help | -h",
     "",
-    "global flags: --root <dir>  --port <n>  --host <addr>  --backend <url>  --fake  --cold",
-    "              --no-assistant  --assistant-harness <codex|claude|opencode|kimi>",
+    "foreground:",
+    "  mesh run                         run the combined web console in the foreground",
+    "  mesh run --port <n>              run on a specific port",
+    "  mesh run --no-assistant          skip the Mesh Assistant",
+    "",
+    "service:",
+    "  mesh up | start                  background-start the combined control plane",
+    "  mesh down | stop                 stop the control plane; mesh daemons keep running",
+    "  mesh restart                     restart the control plane; mesh daemons keep running",
+    "  mesh status                      show service state, port, and running meshes",
+    "  mesh logs [-f]                   show or follow the control-plane log",
+    "",
+    "mesh daemons:",
+    "  mesh ps [-v]                     list running mesh daemons",
+    "  mesh kill <name> | --all         stop one or all mesh daemons",
+    "",
+    "channels:",
+    "  mesh channels feishu list",
+    "  mesh channels feishu approve <code>",
+    "  mesh channels feishu revoke <channelKey> <openId>",
+    "",
+    "authorization:",
+    "  mesh device list",
+    "  mesh device approve <code> [--label <name>]",
+    "  mesh device revoke <deviceId|label>",
+    "  mesh auth list",
+    "  mesh auth rotate-key",
+    "  mesh auth bootstrap [--ttl <seconds>]",
+    "",
+    "flags:",
+    "  --root <dir>                     base dir; data lives in <dir>/.agent-mesh",
+    "  --port <n>                       port for run/up/status/restart/down/logs",
+    "  --host <addr>                    bind address for started web console",
+    "  --cold                           with up/down/restart: reap mesh daemons too",
+    "  --no-assistant                   startup paths skip the Mesh Assistant",
+    "  --assistant-harness <id>         codex | claude | opencode | kimi",
+    "",
+    "defaults:",
+    "  mesh                             print status, then this help; starts nothing",
+    "  mesh run                         auto-selects a free port > 12345",
+    "  mesh up                          uses port 10010 unless --port is supplied",
+    "  --host                           defaults to 127.0.0.1",
+    "  --root                           defaults to ~",
   ];
 }
 

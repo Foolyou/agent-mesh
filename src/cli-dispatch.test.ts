@@ -79,10 +79,10 @@ test("--key=value form is supported for value globals", () => {
 test("assistant globals are captured (incl. = form) so startup validation can see them", () => {
   // The bug: parseAssistantHarness used indexOf and missed `--assistant-harness=bogus`. The resolver
   // captures it into globals, and resolveAssistant() now reads from globals — so the = form is validated.
-  expect(run(["backend", "--assistant-harness=bogus"]).globals["assistant-harness"]).toBe("bogus");
-  expect(run(["--assistant-harness", "codex", "backend"]).globals["assistant-harness"]).toBe("codex");
+  expect(run(["run", "--assistant-harness=bogus"]).globals["assistant-harness"]).toBe("bogus");
+  expect(run(["--assistant-harness", "codex", "run"]).globals["assistant-harness"]).toBe("codex");
   expect(run(["up", "--master-harness=zzz"]).globals["master-harness"]).toBe("zzz");
-  expect(run(["backend", "--no-assistant"]).globals["no-assistant"]).toBe(true);
+  expect(run(["run", "--no-assistant"]).globals["no-assistant"]).toBe(true);
 });
 
 test("help tokens resolve to help mode (leading and as a flag after a command)", () => {
@@ -107,19 +107,21 @@ test("channels is a known command; its provider/action ride in the verbatim tail
   expect(run(["channels", "feishu", "approve", "CODE"]).commandTail).toEqual(["feishu", "approve", "CODE"]);
   expect(run(["channels", "feishu", "revoke", "K", "O"]).commandTail).toEqual(["feishu", "revoke", "K", "O"]);
   expect(run(["channels", "nope"]).commandTail).toEqual(["nope"]);
-  // feishu stays a known (deprecated) top-level alias, not an "unknown command"
-  expect(isKnownCommand("feishu")).toBe(true);
+  expect(isKnownCommand("feishu")).toBe(false);
 });
 
 test("an unknown command resolves (command set, but not known) — caller exits 2", () => {
   const r = run(["frobnicate"]);
   expect(r.command).toBe("frobnicate");
   expect(isKnownCommand("frobnicate")).toBe(false);
+  expect(isKnownCommand("backend")).toBe(false);
+  expect(isKnownCommand("web")).toBe(false);
   expect(isKnownCommand("status")).toBe(true);
+  expect(isKnownCommand("run")).toBe(true);
   expect(isKnownCommand("restart")).toBe(true);
 });
 
-test("bare mesh (and globals-only) resolve to no command → combined console", () => {
+test("bare mesh (and globals-only) resolve to no command → caller prints status + usage", () => {
   expect(run([]).command).toBeUndefined();
   const onlyRoot = run(["--root", "."]);
   expect(onlyRoot.command).toBeUndefined();

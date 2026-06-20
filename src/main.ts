@@ -1,7 +1,6 @@
-// src/main.ts — one binary, three commands:
-//   mesh                  combined single process (SPA + API + WS in-process)
-//   mesh backend [--port] headless control plane: REST API + WS only
-//   mesh web [--port] [--backend URL]   SPA + reverse-proxy /api + /ws to a backend
+// src/main.ts — one binary:
+//   mesh                  read-only status + help
+//   mesh run [--port]     combined single process (SPA + API + WS in-process)
 //
 // Flags: --fake (scripted demo, no real agents), --no-assistant (skip the Mesh Assistant),
 //        --assistant-harness <codex|claude|opencode|kimi> (Mesh Assistant harness).
@@ -11,7 +10,6 @@ import { MeshManager } from "./mesh-manager";
 import { MeshAssistant, meshAssistantGateway } from "./mesh-assistant";
 import { WebGateway } from "./web/gateway";
 import { startWebServer } from "./web/server";
-import { startApiServer } from "./web/api-server";
 import { FakeManager, FakeAssistant } from "./web/fake";
 import { runMeshHost } from "./mesh-host";
 import { resolveRootFrom } from "./root";
@@ -37,7 +35,7 @@ async function runCli() {
 
 // Bounded top-level dispatch (design §2.2-§2.3): resolve the command + global flags + verbatim
 // command tail BEFORE touching any service/gateway. help/unknown short-circuit here so they never
-// boot a server. (Assistant-harness parsing stays where it is for now — its downshift is Commit 2.)
+// boot a server.
 const resolved = resolveCommand(process.argv.slice(2));
 if (resolved.mode === "help") {
   for (const line of usageLines()) console.log(line);
@@ -57,8 +55,8 @@ if (command !== undefined && !isKnownCommand(command)) {
   process.exitCode = 2;
   return;
 }
-// bare `mesh` (no command token) → the combined web console (the default branch below).
-const cmd = command ?? "all";
+// bare `mesh` (no command token) is read-only: status + usage.
+const cmd = command ?? "status-help";
 const g = (k: string): string | undefined => (typeof globals[k] === "string" ? (globals[k] as string) : undefined);
 const gb = (k: string): boolean => globals[k] === true;
 const tailHas = (f: string) => commandTail.includes(f);
@@ -67,7 +65,7 @@ const fake = gb("fake");
 
 // Assistant config is resolved LAZILY (memoized): only the control-plane / gateway startup paths
 // consult it, so an invalid --assistant-harness or MESH_ASSISTANT_HARNESS never breaks a read-only
-// command (status/ps/doctor/logs/kill/device/feishu/auth), and the deprecated-flag warnings
+// command (status/ps/doctor/logs/kill/device/auth), and the deprecated-flag warnings
 // (--master-* / MESH_MASTER_HARNESS) print only when a startup path actually needs the harness.
 let assistantCfg: { harness: ReturnType<typeof parseAssistantHarness>; noAssistant: boolean } | undefined;
 function resolveAssistant() {
@@ -97,10 +95,41 @@ const { base, root } = resolveRootFrom(g("root"));
 // Bind interface: loopback by default (server fns default to 127.0.0.1); --host opts into exposure.
 const hostname = g("host");
 
+function explicitPort(value: string | undefined, label: string): number | undefined {
+  if (value === undefined || value === "") return undefined;
+  const n = Number(value);
+  if (!Number.isInteger(n) || n <= 0 || n > 65535) throw new Error(`invalid ${label} '${value}' (expected 1-65535)`);
+  return n;
+}
+
+function findFreePortAbove(minExclusive = 12345): number {
+  const start = minExclusive + 1;
+  const span = 65535 - start + 1;
+  const seed = process.pid % span;
+  const bindHost = hostname ?? "127.0.0.1";
+  for (let offset = 0; offset < span; offset++) {
+    const port = start + ((seed + offset) % span);
+    try {
+      const probe = Bun.serve({ hostname: bindHost, port, fetch: () => new Response("ok") });
+      probe.stop(true);
+      return port;
+    } catch {
+      // try next port
+    }
+  }
+  throw new Error(`no free TCP port above ${minExclusive}`);
+}
+
+function runPort(): number {
+  return explicitPort(g("port"), "--port")
+    ?? explicitPort(process.env.MESH_WEB_PORT, "MESH_WEB_PORT")
+    ?? findFreePortAbove();
+}
+
 async function buildGateway() {
   const { harness: assistantHarness, noAssistant } = resolveAssistant();
   const manager: any = fake ? new FakeManager(root) : new MeshManager({ root });
-  // Real backend: load whatever the user has defined in their root and nothing more.
+  // Real control plane: load whatever the user has defined in their root and nothing more.
   // (We deliberately do NOT seed a sample mesh — the user's storage root stays clean;
   // the UI's empty state guides first-run mesh creation. `--fake` provides the demo.)
   if (!fake) await manager.loadDefinitions();
@@ -154,15 +183,15 @@ function reapOnExit(stop: () => Promise<void> | void) {
   };
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
-  // Survive a terminal hangup so a backend started via `mesh up` (or in a closing shell)
+  // Survive a terminal hangup so a control plane started via `mesh up` (or in a closing shell)
   // isn't taken down with the launcher; stop is explicit (SIGINT/SIGTERM / `mesh down`).
   process.on("SIGHUP", () => {});
 }
 
-// ── service management (background backend under a root) ─────────────────────────
+// ── service management (background control plane under a root) ───────────────────
 const svcPort = Number(process.env.MESH_PORT) || Number(g("port")) || 10010;
 const svcCold = gb("cold");
-// flags forwarded to the spawned backend (so `mesh up --fake --no-assistant` works). Built lazily
+// flags forwarded to the spawned control plane (so internal `mesh up --fake --no-assistant` works). Built lazily
 // via resolveAssistant() so ONLY up/restart (startup paths) validate the assistant harness — `down`
 // and `status` below never trigger the parse.
 const svcPass = () => {
@@ -211,9 +240,9 @@ if (cmd === "up" || cmd === "start") {
     process.exitCode = 2;
   }
 } else if (cmd === "channels") {
-  // external chat channels (design §2.1): `mesh channels <provider> <action> …`. Routes to the same
-  // offline auth-cli implementation as the (deprecated) top-level alias; provider-keyed so more
-  // providers can be added without a new top-level command. Unknown/missing provider → exit 2.
+  // external chat channels (design §2.1): `mesh channels <provider> <action> …`. Routes to the
+  // offline auth-cli implementation; provider-keyed so more providers can be added without a new
+  // top-level command. Unknown/missing provider → exit 2.
   const provider = commandTail[0];
   if (provider && CHANNEL_PROVIDERS.has(provider)) {
     process.exitCode = await runAuthCommand(root, provider, commandTail.slice(1));
@@ -222,36 +251,18 @@ if (cmd === "up" || cmd === "start") {
     for (const line of channelsUsageLines()) console.error(line);
     process.exitCode = 2;
   }
-} else if (cmd === "feishu") {
-  // DEPRECATED top-level alias of `mesh channels feishu …` — one warning, then the same impl.
-  console.warn("`mesh feishu …` is deprecated; use `mesh channels feishu …`");
-  process.exitCode = await runAuthCommand(root, "feishu", commandTail);
 } else if (cmd === "device" || cmd === "auth") {
   // device/account authorization CLI (design §3): operates on <root>/auth/*.json directly, no
-  // backend needed. Usage + exit codes come from runAuthCli; this is pure delegation. The command
+  // service needed. Usage + exit codes come from runAuthCli; this is pure delegation. The command
   // tail is passed verbatim so subcommand-local flags (--label, --ttl) reach auth-cli intact.
   process.exitCode = await runAuthCommand(root, cmd, commandTail);
-} else if (cmd === "backend") {
-  const port = Number(process.env.MESH_API_PORT) || Number(g("port")) || 7300;
-  const { manager, assistant, gateway, feishu } = await buildGateway();
-  const server = startApiServer(gateway, { port, hostname });
-  console.log(`\n  mesh backend (headless REST + WS, no web console) → ${server.url}${fake ? "  (fake)" : `  · root: ${root}`}\n`);
-  reapOnExit(async () => {
-    server.stop();
-    gateway.dispose();
-    await feishu?.stop();
-    manager.disconnectAll?.(); // leave mesh daemons running for the next backend to reattach
-    await assistant?.stop?.();
-  });
-} else if (cmd === "web") {
-  const port = Number(process.env.MESH_WEB_PORT) || Number(g("port")) || 7317;
-  const backendUrl = g("backend") || process.env.MESH_BACKEND_URL || "http://localhost:7300";
-  const server = startWebServer({ port, backendUrl, hostname });
-  console.log(`\n  mesh web (SPA) → ${server.url}  → proxying to backend ${backendUrl}\n`);
-  reapOnExit(() => server.stop());
-} else {
-  // default: combined single process
-  const port = Number(process.env.MESH_WEB_PORT) || Number(g("port")) || 7317;
+} else if (cmd === "run") {
+  if (commandTail.length) {
+    console.error("usage: mesh run [--port <n>] [--root <dir>] [--host <addr>] [--no-assistant] [--assistant-harness <id>]");
+    process.exitCode = 2;
+    return;
+  }
+  const port = runPort();
   const { manager, assistant, gateway, feishu } = await buildGateway();
   const server = startWebServer({ port, gateway, hostname });
   console.log(`\n  agent-mesh web console → ${server.url}${fake ? "  (fake mode)" : `  · root: ${root}`}\n`);
@@ -259,8 +270,12 @@ if (cmd === "up" || cmd === "start") {
     server.stop();
     gateway.dispose();
     await feishu?.stop();
-    manager.disconnectAll?.(); // leave mesh daemons running for the next backend to reattach
+    manager.disconnectAll?.(); // leave mesh daemons running for the next control plane to reattach
     await assistant?.stop?.();
   });
-  }
+} else {
+  await service.status(root, svcPort);
+  console.log("");
+  for (const line of usageLines()) console.log(line);
+}
 }

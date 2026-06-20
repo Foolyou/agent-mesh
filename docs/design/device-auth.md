@@ -41,7 +41,7 @@ Three features:
 Pinned decisions (must hold):
 
 1. "Console / backend" = the mesh **host CLI**. New commands look like
-   `mesh device approve <code>` / `mesh feishu approve <code>`.
+   `mesh device approve <code>` / `mesh channels feishu approve <code>`.
 2. WebUI device identity: the **server issues a device token** stored in the browser locally; an
    unauthorized device only shows a device code + polls; after CLI approval the token enters the
    allowlist.
@@ -134,7 +134,7 @@ hot-reload pattern and the boards/sessions persistence, and — critically — i
     // keyed by the short auth-code id shown to the user (see §2.1/§2.3)
     "<authCodeId>": {
       "encryptedToken": "<base64url envelope>",  // the full AES-256-GCM token (§2.1) — the source of truth
-      "channelKey": "feishu:cli_abc",            // decoded copy, for `mesh feishu list` display only
+      "channelKey": "feishu:cli_abc",            // decoded copy, for `mesh channels feishu list` display only
       "openId": "ou_123",                        //   (advisory; never trusted over the decrypted token)
       "appId": "cli_abc",
       "firstSeenAt": "2026-…Z",
@@ -147,9 +147,9 @@ hot-reload pattern and the boards/sessions persistence, and — critically — i
 Notes:
 
 - **Short-id flow (recommended, §2.1 Open Q 2A):** the bot DMs a short id; this `pending` entry stores
-  the **full `encryptedToken`** under it. `mesh feishu approve <id>` looks the id up, decrypts the stored
+  the **full `encryptedToken`** under it. `mesh channels feishu approve <id>` looks the id up, decrypts the stored
   token, and trusts the decrypted `(channelKey, openId, appId)` — the plaintext `channelKey/openId/appId`
-  fields here are only a convenience for `mesh feishu list` and are never authoritative.
+  fields here are only a convenience for `mesh channels feishu list` and are never authoritative.
 - **Full-token flow (stateless alternative):** the bot DMs the whole `encryptedToken`; the host decrypts
   it directly, so a `pending` entry is **optional/advisory** (index for `list` only).
 
@@ -222,7 +222,7 @@ authCode  = base64url(JSON.stringify({
 - **Encryption + anti-forgery**: the payload is ciphertext (the user can't read or fabricate it); GCM's
   auth tag makes any bit-flip fail `decipher.final()`. A user cannot mint a valid code for another
   `(channel, open_id)` without the host key.
-- **Decode on the host** — `mesh feishu approve <code>`: base64url-decode the envelope, `JSON.parse` it,
+- **Decode on the host** — `mesh channels feishu approve <code>`: base64url-decode the envelope, `JSON.parse` it,
   read the `kid` field → select that key from `keys.json`, `createDecipheriv("aes-256-gcm", key, iv)`,
   `setAuthTag(tag)`, decrypt `ct`, `JSON.parse` the plaintext. Recovers `(channelKey, openId, appId)`
   plus `iat/exp/nonce` with **no server round-trip and no DB lookup** — the token is self-describing
@@ -242,7 +242,7 @@ authCode  = base64url(JSON.stringify({
 > Open Q (2A): readability/length. The base64url envelope (JSON wrapping kid + 12B iv + 16B tag + ct,
 > ≈ 150–220 chars) is long for a chat message. **Recommended**: the bot DMs a **short opaque id** (e.g.
 > 8 base32 chars) recorded in `feishu.json.pending`, whose `encryptedToken` field holds the full envelope;
-> the operator types the short id and `mesh feishu approve <id>` looks up + decrypts the stored token.
+> the operator types the short id and `mesh channels feishu approve <id>` looks up + decrypts the stored token.
 > (Pending entry is then required — see §3.2 / §1.2; the encrypted token, not the short id, is the source
 > of truth.) **Alternative**: DM the full envelope (stateless — the host can decrypt it without any
 > pending entry) and accept the length. Both are secure; pick per UX. (The §1.2 `pending` index supports
@@ -299,11 +299,11 @@ Device (WebUI):
 
 Feishu:
 
-- `mesh feishu list` — print pending registrations: decoded `(channelKey, openId, appId)`, first-seen,
+- `mesh channels feishu list` — print pending registrations: decoded `(channelKey, openId, appId)`, first-seen,
   expiry; and approved `(channel, open_id)` entries.
-- `mesh feishu approve <code>` — decrypt the code (AES-256-GCM, §2.1), upsert `allow[(channelKey,openId)]`
+- `mesh channels feishu approve <code>` — decrypt the code (AES-256-GCM, §2.1), upsert `allow[(channelKey,openId)]`
   `approved`, drop the pending entry. Prints "approved ou_… on feishu:cli_… (appId …)".
-- `mesh feishu revoke <channelKey> <openId>` — set `revoked`.
+- `mesh channels feishu revoke <channelKey> <openId>` — set `revoked`.
 
 Optional umbrella: `mesh auth list|rotate-key` for the auth-code **encryption key** (§2.2).
 

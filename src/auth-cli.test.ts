@@ -421,7 +421,7 @@ test("runAuthCli surfaces usage for a missing or unknown action, and rejects unk
     expect(noAction.err.join("\n")).toContain("usage: mesh device");
     const bogus = await runAuthCli(root, "feishu", ["frobnicate"]);
     expect(bogus.exitCode).toBe(2);
-    expect(bogus.err.join("\n")).toContain("usage: mesh feishu");
+    expect(bogus.err.join("\n")).toContain("usage: mesh channels feishu");
     const badGroup = await runAuthCli(root, "nope", ["list"]);
     expect(badGroup.exitCode).toBe(2);
     expect(badGroup.err.join("\n")).toContain("unknown command group 'nope'");

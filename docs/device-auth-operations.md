@@ -19,7 +19,7 @@ authorization** (device-auth phase 6). For the design rationale see
   trust or otherwise bypasses the token. (If you read about `MESH_TRUST_LOOPBACK_WHEN_EXPOSED`
   in an older note, it no longer exists.)
 - **The host CLI needs no token.** `mesh device …`, `mesh auth …`, and `mesh channels feishu …`
-  (alias `mesh feishu …`) operate directly on the on-disk auth store (`<root>/auth/*.json`); they
+  operate directly on the on-disk auth store (`<root>/auth/*.json`); they
   do not go through the HTTP gate. Anyone who can run `mesh …` on the host is already the root of trust.
 
 ### Where state lives
@@ -101,9 +101,7 @@ mesh channels feishu approve <code>              # decrypt the auth code, approv
 mesh channels feishu revoke <channelKey> <openId> # revoke an approved entry
 ```
 
-`mesh channels <provider> …` is the official form (Feishu is the first provider). The old top-level
-`mesh feishu …` still works as a **deprecated alias** — it prints a one-line deprecation warning to
-stderr and then runs the same command.
+`mesh channels <provider> …` is the only form (Feishu is the first provider).
 
 The encrypted auth-code body is never printed; `approve` trusts only the decrypted identity.
 

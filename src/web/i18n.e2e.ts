@@ -22,7 +22,7 @@ async function step(name: string, fn: () => Promise<void>) {
 }
 
 const auth = await provisionE2eAuth();
-const server = Bun.spawn(["bun", "run", "src/main.ts", "--fake", "--port", String(PORT)], { stdout: "pipe", stderr: "pipe", env: auth.env });
+const server = Bun.spawn(["bun", "run", "src/main.ts", "run", "--fake", "--port", String(PORT)], { stdout: "pipe", stderr: "pipe", env: auth.env });
 const browser = await launchChromium();
 try {
   for (let i = 0; i < 80; i++) {

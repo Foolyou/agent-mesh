@@ -47,7 +47,7 @@ await writeFile(big, Buffer.alloc(10 * 1024 * 1024 + 1));
 // device-auth (P6): seed one approved token into the same root the server resolves from --root.
 const e2eToken = await seedApprovedDevice(e2eAuthRoot(root));
 
-const server = Bun.spawn(["bun", "run", "src/main.ts", "--fake", "--port", String(PORT), "--root", root], {
+const server = Bun.spawn(["bun", "run", "src/main.ts", "run", "--fake", "--port", String(PORT), "--root", root], {
   stdout: "pipe",
   stderr: "pipe",
   env: e2eEnv(),

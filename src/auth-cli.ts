@@ -1,7 +1,7 @@
 // Host CLI commands for device/account authorization (design: docs/design/device-auth.md §3).
 //
 //   mesh device list | approve <code> [--label <name>] | revoke <deviceId|label>
-//   mesh feishu list | approve <code> | revoke <channelKey> <openId>
+//   mesh channels feishu list | approve <code> | revoke <channelKey> <openId>
 //   mesh auth   list | rotate-key
 //
 // These run on the mesh HOST with NO backend required: load `<root>/auth/*.json`, mutate, atomic-write
@@ -161,7 +161,7 @@ export async function feishuList(root: string): Promise<CliResult> {
 }
 
 export async function feishuApprove(root: string, code: string): Promise<CliResult> {
-  if (!code) return fail("usage: mesh feishu approve <code>");
+  if (!code) return fail("usage: mesh channels feishu approve <code>");
   // Loading keys is async, so do it BEFORE the lock (read-only, harmless). The decrypt itself is sync
   // and happens INSIDE the locked mutator against the pending entry observed there — so we always act
   // on the current `f.pending[code]`, never a pre-lock copy that a concurrent writer could have
@@ -196,7 +196,7 @@ export async function feishuApprove(root: string, code: string): Promise<CliResu
 }
 
 export async function feishuRevoke(root: string, channelKey: string, openId: string): Promise<CliResult> {
-  if (!channelKey || !openId) return fail("usage: mesh feishu revoke <channelKey> <openId>");
+  if (!channelKey || !openId) return fail("usage: mesh channels feishu revoke <channelKey> <openId>");
   const key = feishuAllowKey(channelKey, openId);
   let found = false;
   await updateFeishuAuth(root, (f) => {
@@ -263,9 +263,9 @@ const USAGE: Record<string, string[]> = {
     "       mesh device revoke <deviceId|label>",
   ],
   feishu: [
-    "usage: mesh feishu list",
-    "       mesh feishu approve <code>",
-    "       mesh feishu revoke <channelKey> <openId>",
+    "usage: mesh channels feishu list",
+    "       mesh channels feishu approve <code>",
+    "       mesh channels feishu revoke <channelKey> <openId>",
   ],
   auth: ["usage: mesh auth list", "       mesh auth rotate-key", "       mesh auth bootstrap [--ttl <seconds>]"],
 };

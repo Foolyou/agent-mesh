@@ -233,7 +233,7 @@
 
 ## 附录：验证 / 工具调用记录
 
-- **截图**：私有 worktree 内写一次性 TS 脚本（import `e2e-playwright.ts` 的 `provisionE2eAuth/authedContext/launchChromium`）→ 起 `bun run src/main.ts --fake --port <p>` → headless Chromium 注入设备 token → `page.screenshot()` 输出到 `$AGENT_MESH_ARTIFACTS/`；脚本用完即删，**未入库，分支只含本 .md**。
+- **截图**：私有 worktree 内写一次性 TS 脚本（import `e2e-playwright.ts` 的 `provisionE2eAuth/authedContext/launchChromium`）→ 起 `bun run src/main.ts run --fake --port <p>` → headless Chromium 注入设备 token → `page.screenshot()` 输出到 `$AGENT_MESH_ARTIFACTS/`；脚本用完即删，**未入库，分支只含本 .md**。
 - **实际产物**：`desktop-01-overview.png`、`desktop-03-running.png`、`desktop-04-board.png`、`mobile-01-list.png`、`mobile-02-detail.png`（桌面 1440×900，移动 390×844 + isMobile/touch）。HARNESSES/NEW modal 截图尝试因 `getByText` 选择器超时未取到（非阻塞，rail/board/对话已覆盖核心 IA）。
 - **代码盘点**：初稿用 Explore 子 agent 通读 `src/web/`；**reviewer 复核发现初稿对 a11y 工具有多处事实误述**（虚构 `AUDIT_PAIRS`/`evalPair`、theme.css lint、a11y.e2e 的 390×844 移动视口与 board chip、不存在的 `a11y:*` scripts）。本轮 builder 已**逐个实读源码核对修正**：`contrast.ts`（`grep` 导出符号，确认仅 4 常量 + 5 函数 + RGB 类型，无 AUDIT_PAIRS/evalPair）、`a11y-audit.ts`（76 行，私有 `PAIRS`，import `{contrastRatio,fmtRatio,AA_TEXT,UI_COMPONENT}`，无 lint）、`a11y.e2e.ts`（175 行，`THEMES` 8 个，固定 `SELECTORS`，视口 1440×900，无 390/844/board chip）、`themes.ts`（`BUILTIN_THEMES` 8 个，无 Sepia）、`browser.e2e.ts`（`assertMobileDetailLayout` 在此）、`package.json`（无 a11y scripts）。
 - **skill 发现**：本会话注入的 skill 列表 + `find-skills` + `npx skills find "ui design"`（外部备选，未安装）。

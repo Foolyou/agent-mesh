@@ -49,7 +49,7 @@ async function regPid(name: string): Promise<number | null> {
 // the simulated agent runs the REAL service restart command (cold) from inside the mesh.
 // Strip mesh-host control env first, or src/main.ts would re-enter host mode.
 const AGENT_CMD = `cd ${REPO} && exec env -u MESH_SOCK -u MESH_CONFIG -u MESH_HOST_SCRIPT -u MESH_LEASE_MS bun run src/main.ts restart --root ${ROOT} --port ${PORT} --cold > ${ROOT}/agent.log 2>&1`;
-const backend = Bun.spawn(["bun", "run", "src/main.ts", "backend", "--port", String(PORT), "--root", ROOT], {
+const backend = Bun.spawn(["bun", "run", "src/main.ts", "run", "--port", String(PORT), "--root", ROOT], {
   cwd: REPO,
   env: {
     ...process.env,

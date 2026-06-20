@@ -29,7 +29,7 @@ async function step(name: string, fn: () => Promise<void>) {
 }
 
 function spawnBackend() {
-  return Bun.spawn(["bun", "run", "src/main.ts", "backend", "--port", String(PORT), "--root", ROOT], {
+  return Bun.spawn(["bun", "run", "src/main.ts", "run", "--port", String(PORT), "--root", ROOT], {
     env: { ...process.env, MESH_HOST_SCRIPT: FIXTURE, MESH_API_PORT: "" },
     stdout: "pipe",
     stderr: "pipe",
