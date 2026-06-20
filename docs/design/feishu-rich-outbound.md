@@ -3,6 +3,8 @@
 Status: **research / design only** (original). **Superseded in part by the post-probe implementation decisions below.**
 Goal: render outbound router prose that contains GFM **tables** as Feishu **CardKit table components**, and `artifact:` **images** as uploaded Feishu **img** elements — the hard part being the **streaming split** of an incremental prose/table/image stream into ordered card elements.
 
+> Related: outbound **tool-call notification de-noising** (`outbound.toolDisplay` collapsed/inline/off — tool calls render in-card instead of opening new messages) is specced separately in [feishu-tool-display.md](./feishu-tool-display.md).
+
 ---
 
 ## ⚑ Implementation decisions (LOCKED after the live probe — supersede parts of this research)

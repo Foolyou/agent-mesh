@@ -56,9 +56,20 @@
 |---|---|---|
 | `collapsed`（默认） | 折叠摘要一行，如 `🔧 调用了 N 个工具` | 轮内累计去重计数 N |
 | `inline` | 内联列出每个工具名/标题（沿用 `toolName`），如 `🔧 调用工具：A · B · C` | 轮内累计去重名单 |
-| `off` | 完全不渲染工具 | 仅内部去重，不显示 |
+| `off` | 完全不渲染工具 **UI** | 仍消费事件做去重 + 收尾判断，仅不渲染 |
 
 三档都**保留** `scheduleStreamFinish`（兜底）、`seenToolCalls` 去重、commit barrier、replay、幂等。
+
+### 2.1 核心不变量（INVARIANT — 须写死并附测试）
+
+> **INV-1（finalize-fallback 解耦）**：finalize-fallback 与"开新消息"**彻底解耦**。工具调用的职责从"封旧卡 + 开新消息"降为**唯一一件事——调度/触发当前 turn 的 finalize**（`scheduleStreamFinish`）。即：
+> - 工具调用**不再开任何新消息/新卡**（不再 `streamSegmentBreak`）；
+> - 工具调用**仍调度当前 turn 的 finalize 兜底**（`feishu-channel.ts:779` 的 `scheduleStreamFinish`），使"工具收尾 + idle 丢失"的轮仍能交付、不拖到下一轮、不粘 buffer；
+> - 这条对 **collapsed / inline / off 三档一致成立**——finalize 触发与"是否渲染工具 UI"完全正交。
+>
+> **INV-2（off 仍消费事件）**：`off` **只抑制工具 UI 渲染**，不抑制事件消费。`off` 下 `onRouterToolCall` 仍：① 走 `seenToolCalls` 去重、② 通过 `dispatchRouterEvent` 触发 `scheduleStreamFinish` 做收尾/turn-end 判断（INV-1）。`off` ≠ "丢弃工具事件"，仅 ≠ "渲染工具"。
+>
+> 两条不变量都有**专门测试**（§8 测试 11/12）守护，防止后续重构把 finalize 兜底误绑回"开新消息"或让 off 退化成"吞掉事件导致收尾判断丢失"。
 
 ---
 
@@ -100,8 +111,10 @@ onRouterToolCall(rt, u):
   id = toolCallId(u)
   if id: if seenToolCalls.has(id) return; seenToolCalls.add(id)
   else if sessionUpdate != "tool_call": return        // 无 id 的 update 当续传，不重复计
-  // —— 不再调用 streamSegmentBreak ——
-  if toolDisplay == "off": return                       // 仅去重；prose 照常；兜底由 dispatch 负责
+  // —— 不再调用 streamSegmentBreak（INV-1：工具不开新消息）——
+  if toolDisplay == "off": return                       // INV-2：已消费(上面 seenToolCalls 去重)；
+                                                         //   收尾判断由 dispatchRouterEvent 的 scheduleStreamFinish 负责；
+                                                         //   仅跳过 UI 渲染。prose 照常流。
   rt.toolCount++                                         // 轮内累计
   if toolDisplay == "inline":
     name = toolSegmentMeta(u).toolName
@@ -116,11 +129,11 @@ onRouterToolCall(rt, u):
 
 ---
 
-## 5. finalize-fallback 如何保留（三档都必须保住）
+## 5. finalize-fallback 如何保留（三档都必须保住 — 落实 INV-1）
 
-工具调用现在兼任 turn 收尾兜底触发器。三档下都要保证"**工具后无后续文本 + idle 丢失也能 finalize**"，避免回复晚一轮 / 粘 buffer。
+工具调用现在**只**兼任 turn 收尾兜底触发器（INV-1：不再开新消息）。三档下都要保证"**工具后无后续文本 + idle 丢失也能 finalize**"，避免回复晚一轮 / 粘 buffer。
 
-- **触发器不变**：`dispatchRouterEvent` 在处理 `tool_call`/`tool_call_update` 后仍调 `scheduleStreamFinish(rt)`（`feishu-channel.ts:775-780`）——这是 channel 行为，**与是否 segment-break 无关**，原样保留。
+- **触发器不变（INV-1）**：`dispatchRouterEvent` 在处理 `tool_call`/`tool_call_update` 后仍调 `scheduleStreamFinish(rt)`（`feishu-channel.ts:775-780`）——这是 channel 行为，**与是否 segment-break / 是否渲染 UI 完全正交**，原样保留。解耦后："开新消息"这一职责被剥离，只剩"调度当前 turn finalize"。
 - **collapsed / inline 的纯工具收尾轮**：轮内只有工具、无 prose。兜底 fire → `streamFinish` → `streamCommit` → `driveStream` 走 commit 分支。此时 body 空但 `toolAnnotation` 非空：**泛化现有"仅 hint 卡" materialize 路径**（`card-sender.ts:420-430` 的 `!this.live && currentHint !== undefined`）使其同样覆盖 `toolAnnotation !== undefined`，从而 materialize 一张"仅注解"的卡（一条消息）并封卡。→ 工具轮仍有交付，不拖到下一轮。
 - **off 的纯工具收尾轮**：无注解、无 body → finalize 时无卡可开 → 安静收尾（这正是 off 的语义）。需确保：`rt.buffer` 本就为空（工具不写 buffer），`streamFinish` 空 commit、`resetTurn` 干净、不把任何东西粘到下一轮。
 - **幂等**：`streamFinish` 的 `streamTurnActive` 守护不变（兜底 fire 与迟到 idle 不二次 commit）。
@@ -170,6 +183,11 @@ onRouterToolCall(rt, u):
 8. **commit barrier 不退化**：barrier 期间到达的 tool 事件入 `queuedEvents`、`whenIdle` 后按序回放；复跑既有 barrier 测试保持绿。
 9. **幂等/seq 不退化**：注解 `content` op 的 `stableCardKey(cardId,seq)` 单调递增；断言无新 send uuid（无新通知）。
 10. **回归**：`bun test src/channels`（card-sender / feishu-channel / sender / stream-segmenter / config 全绿）。
+
+**专门守护核心不变量（§2.1）：**
+
+11. **INV-1（finalize-fallback 与"开新消息"解耦）三档一致**：对 collapsed / inline / off **各跑一遍** `prose, tool_call,（无 idle）`，断言：(a) 工具调用期间 sender 的 `streamSegmentBreak` **零调用**、`create/send`（新消息）**不因工具递增**；(b) 假时钟过 `streamCommitDebounceMs` 后 turn **确实 finalize**（`streamFinish` 触发、`streamTurnActive` 复位）；(c) 下一轮首 chunk 开新卡、不与上一轮 concat。即"工具 → 不开新消息 + 仍触发当前 turn finalize"对三档恒成立。用 spy 直接断言 `streamSegmentBreak` 调用数 === 0 以钉死解耦。
+12. **INV-2（off 仍消费事件、只抑制 UI）**：off 下注入 `tool_call(id=A) + tool_call_update(id=A) + tool_call(id=B),（无 idle）`，断言：(a) **无任何 `🔧` 注解 / 无额外 `create/send`**（UI 抑制）；(b) `seenToolCalls` 确实记录了 A、B（去重生效——可通过"再来一个 id=A 的 update 不改变任何状态"间接断言）；(c) 兜底 fire 后 turn **正常 finalize**（收尾判断未被 off 吞掉）。即 off ≠ 丢弃事件。
 
 ---
 
