@@ -50,6 +50,17 @@ test("normalizeFeishuConfig defaults streamCommitDebounceMs to 3000 and honors a
   expect(invalid!.outbound.streamCommitDebounceMs).toBe(3000); // non-positive falls back to default
 });
 
+test("normalizeFeishuConfig defaults outbound.toolDisplay to collapsed and honors inline/off", () => {
+  const base = { enabled: true, appId: "cli_1", appSecret: "secret", mesh: "m", chatId: "oc_1" };
+  // missing → collapsed
+  expect(normalizeFeishuConfig(base)!.outbound.toolDisplay).toBe("collapsed");
+  // explicit valid values pass through
+  expect(normalizeFeishuConfig({ ...base, outbound: { toolDisplay: "inline" } })!.outbound.toolDisplay).toBe("inline");
+  expect(normalizeFeishuConfig({ ...base, outbound: { toolDisplay: "off" } })!.outbound.toolDisplay).toBe("off");
+  // invalid / legacy value → collapsed (never throws)
+  expect(normalizeFeishuConfig({ ...base, outbound: { toolDisplay: "verbose" } as never })!.outbound.toolDisplay).toBe("collapsed");
+});
+
 test("normalizeFeishuConfig rejects missing required fields", () => {
   expect(normalizeFeishuConfig({ enabled: true, appSecret: "s", mesh: "m", chatId: "oc_1" })).toBeUndefined(); // no appId
   expect(normalizeFeishuConfig({ enabled: true, appId: "cli", mesh: "m", chatId: "oc_1" })).toBeUndefined(); // no appSecret

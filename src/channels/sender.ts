@@ -170,6 +170,12 @@ export class LarkSender {
     void this.driveStream();
   }
 
+  /** Tool-call de-noising (R3): the plain-text sink does not surface tool calls. No-op — tools are
+   *  shown only in the CardKit card; this keeps the text fallback clean (no per-tool splitting). */
+  streamToolAnnotation(_text: string | undefined): void {
+    /* intentionally empty */
+  }
+
   /** Resolves when the queue has fully drained and nothing is in flight. */
   whenIdle(): Promise<void> {
     if (!this.sending && this.queue.length === 0 && !this.streamBusy) return Promise.resolve();

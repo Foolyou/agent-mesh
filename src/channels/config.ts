@@ -70,6 +70,9 @@ export function normalizeFeishuConfig(parsed: unknown): FeishuChannelConfig | un
     ? out.streamCommitDebounceMs
     : 3000;
   const maxEditsPerMessage = positiveNumberOrUndefined(out.maxEditsPerMessage);
+  // De-noising: any missing / invalid / legacy value falls back to "collapsed".
+  const toolDisplay: "collapsed" | "inline" | "off" =
+    out.toolDisplay === "inline" || out.toolDisplay === "off" ? out.toolDisplay : "collapsed";
   const ws = (p.websocket ?? {}) as Record<string, unknown>;
   const handshakeTimeoutMs = positiveNumberOrUndefined(ws.handshakeTimeoutMs);
   const pingTimeout = positiveNumberOrUndefined(ws.pingTimeout);
@@ -89,6 +92,7 @@ export function normalizeFeishuConfig(parsed: unknown): FeishuChannelConfig | un
       streaming,
       cardkit,
       streamCommitDebounceMs,
+      toolDisplay,
       ...(streamMinEditIntervalMs !== undefined ? { streamMinEditIntervalMs } : {}),
       ...(maxEditsPerMessage !== undefined ? { maxEditsPerMessage } : {}),
     },

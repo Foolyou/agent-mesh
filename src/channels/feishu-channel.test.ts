@@ -568,6 +568,7 @@ function streamingSink() {
   let stopped = false;
   const enqueued: string[] = [];
   const segments: ({ toolName?: string } | undefined)[] = [];
+  const annotations: (string | undefined)[] = [];
   return {
     sink: {
       enqueue: (text: string) => enqueued.push(text),
@@ -575,10 +576,12 @@ function streamingSink() {
       streamUpdate: (t: string) => updates.push(t),
       streamCommit: () => { commits++; },
       streamSegmentBreak: (meta?: { toolName?: string }) => segments.push(meta),
+      streamToolAnnotation: (text: string | undefined) => annotations.push(text),
     },
     updates,
     enqueued,
     segments,
+    annotations,
     commits: () => commits,
     isStopped: () => stopped,
   };
@@ -631,53 +634,60 @@ test("streaming: disabled via config falls back to one-shot enqueue", () => {
   expect(s.enqueued).toEqual(["Hi"]);
 });
 
-// ── outbound: in-turn segmentation on router tool calls ────────────────────────
+// ── outbound: in-card tool annotation on router tool calls (de-noising) ─────────
+// INV-1: a tool call NEVER opens a new message (segment break) — it renders a cosmetic annotation
+// in the live card. Default mode is `collapsed` → `🔧 调用了 N 个工具`.
 
-test("streaming: a router tool_call seals the segment; following text is a new segment", () => {
+test("streaming: a router tool_call renders an in-card annotation, not a new message", () => {
   const s = setupStreaming();
   s.mesh.emit("feishu-poc", chunk("router", "Before"));
   s.mesh.emit("feishu-poc", toolCall("router", "call-1", "bash"));
   s.mesh.emit("feishu-poc", chunk("router", " after"));
   s.mesh.emit("feishu-poc", idle("router"));
-  expect(s.segments).toEqual([{ toolName: "bash" }]); // exactly one in-turn break
-  expect(s.commits()).toBe(1); // and one hard commit at idle (still one turn)
+  expect(s.segments).toEqual([]); // INV-1: tool calls never open a new message
+  expect(s.annotations).toContain("🔧 调用了 1 个工具"); // surfaced in-card instead
+  expect(s.commits()).toBe(1); // still one turn, one hard commit at idle
 });
 
-test("streaming: consecutive tool_call_update for the same call segment only once", () => {
+test("streaming: consecutive tool_call_update for the same call counts once", () => {
   const s = setupStreaming();
   s.mesh.emit("feishu-poc", chunk("router", "x"));
   s.mesh.emit("feishu-poc", toolCall("router", "call-1", "bash", "tool_call"));
   s.mesh.emit("feishu-poc", toolCall("router", "call-1", undefined, "tool_call_update"));
   s.mesh.emit("feishu-poc", toolCall("router", "call-1", undefined, "tool_call_update"));
-  expect(s.segments).toHaveLength(1);
+  expect(s.segments).toEqual([]);
+  expect(s.annotations.filter((a) => a !== undefined)).toEqual(["🔧 调用了 1 个工具"]); // counted once
 });
 
-test("streaming: a different tool call id segments again", () => {
+test("streaming: a different tool call id counts again", () => {
   const s = setupStreaming();
   s.mesh.emit("feishu-poc", chunk("router", "a"));
   s.mesh.emit("feishu-poc", toolCall("router", "call-1", "bash"));
   s.mesh.emit("feishu-poc", chunk("router", "b"));
   s.mesh.emit("feishu-poc", toolCall("router", "call-2", "grep"));
-  expect(s.segments).toEqual([{ toolName: "bash" }, { toolName: "grep" }]);
+  expect(s.segments).toEqual([]);
+  expect(s.annotations.at(-1)).toBe("🔧 调用了 2 个工具");
 });
 
-test("streaming: a late update for an earlier tool call does not re-segment it", () => {
+test("streaming: a late update for an earlier tool call does not re-count it", () => {
   const s = setupStreaming();
   s.mesh.emit("feishu-poc", chunk("router", "x"));
   s.mesh.emit("feishu-poc", toolCall("router", "call-1", "a", "tool_call"));
   s.mesh.emit("feishu-poc", toolCall("router", "call-2", "b", "tool_call"));
   s.mesh.emit("feishu-poc", toolCall("router", "call-1", undefined, "tool_call_update")); // late update for call-1
-  expect(s.segments).toEqual([{ toolName: "a" }, { toolName: "b" }]); // call-1 segmented once, not twice
+  expect(s.segments).toEqual([]);
+  expect(s.annotations.at(-1)).toBe("🔧 调用了 2 个工具"); // two distinct calls, not three
 });
 
-test("streaming: tool-call de-dup resets across turns", () => {
+test("streaming: tool-call de-dup + count resets across turns", () => {
   const s = setupStreaming();
   s.mesh.emit("feishu-poc", chunk("router", "a"));
   s.mesh.emit("feishu-poc", toolCall("router", "call-1", "bash"));
-  s.mesh.emit("feishu-poc", idle("router")); // turn ends, de-dup resets
+  s.mesh.emit("feishu-poc", idle("router")); // turn ends, de-dup + count reset
   s.mesh.emit("feishu-poc", chunk("router", "b"));
   s.mesh.emit("feishu-poc", toolCall("router", "call-1", "bash")); // same id, new turn
-  expect(s.segments).toHaveLength(2);
+  expect(s.segments).toEqual([]);
+  expect(s.annotations.at(-1)).toBe("🔧 调用了 1 个工具"); // counted again from 1 in the new turn
 });
 
 test("streaming disabled: a tool_call does not segment", () => {
@@ -685,6 +695,54 @@ test("streaming disabled: a tool_call does not segment", () => {
   s.mesh.emit("feishu-poc", chunk("router", "x"));
   s.mesh.emit("feishu-poc", toolCall("router", "call-1", "bash"));
   expect(s.segments).toEqual([]);
+});
+
+test("streaming collapsed: a turn with many tools produces NO new messages, one folded count", () => {
+  const s = setupStreaming(); // default collapsed
+  s.mesh.emit("feishu-poc", chunk("router", "work"));
+  s.mesh.emit("feishu-poc", toolCall("router", "call-1", "bash"));
+  s.mesh.emit("feishu-poc", toolCall("router", "call-2", "grep"));
+  s.mesh.emit("feishu-poc", toolCall("router", "call-3", "ls"));
+  s.mesh.emit("feishu-poc", chunk("router", " done"));
+  s.mesh.emit("feishu-poc", idle("router"));
+  expect(s.segments).toEqual([]); // INV-1: never opens a new message per tool
+  expect(s.annotations.at(-1)).toBe("🔧 调用了 3 个工具"); // folded count
+  expect(s.commits()).toBe(1); // exactly one turn / one finalize
+});
+
+test("streaming inline: lists distinct tool names, still no new messages", () => {
+  const s = setupStreaming({ outbound: { minIntervalMs: 0, toolDisplay: "inline" } });
+  s.mesh.emit("feishu-poc", chunk("router", "work"));
+  s.mesh.emit("feishu-poc", toolCall("router", "call-1", "bash"));
+  s.mesh.emit("feishu-poc", toolCall("router", "call-1", undefined, "tool_call_update")); // same id, no re-list
+  s.mesh.emit("feishu-poc", toolCall("router", "call-2", "grep"));
+  s.mesh.emit("feishu-poc", idle("router"));
+  expect(s.segments).toEqual([]);
+  expect(s.annotations.at(-1)).toBe("🔧 调用工具：bash · grep");
+});
+
+test("streaming off (INV-2): tool UI suppressed, but events still consumed (dedupe + finalize)", () => {
+  const s = setupStreaming({ outbound: { minIntervalMs: 0, toolDisplay: "off" } });
+  s.mesh.emit("feishu-poc", chunk("router", "before"));
+  s.mesh.emit("feishu-poc", toolCall("router", "call-1", "bash", "tool_call"));
+  s.mesh.emit("feishu-poc", toolCall("router", "call-1", undefined, "tool_call_update")); // dedup
+  s.mesh.emit("feishu-poc", toolCall("router", "call-2", "grep"));
+  // no following text, no idle → finalize must still fire (INV-1, off consumes for turn-end)
+  expect(s.commits()).toBe(0);
+  s.timers.advance(3000);
+  expect(s.segments).toEqual([]); // no new message
+  expect(s.annotations.filter((a) => a !== undefined)).toEqual([]); // no tool UI rendered
+  expect(s.commits()).toBe(1); // finalize still scheduled+fired (events were consumed, not dropped)
+});
+
+test("streaming off: a pure tool-only turn is silent but still finalizes (R4)", () => {
+  const s = setupStreaming({ outbound: { minIntervalMs: 0, toolDisplay: "off" } });
+  s.mesh.emit("feishu-poc", toolCall("router", "call-1", "bash")); // no prose at all
+  expect(s.commits()).toBe(0);
+  s.timers.advance(3000);
+  expect(s.updates).toEqual([]); // nothing to show
+  expect(s.annotations.filter((a) => a !== undefined)).toEqual([]);
+  expect(s.commits()).toBe(1); // turn still sealed (buffer not carried into the next turn)
 });
 
 // ── outbound turn-boundary fallback (feishu-outbound-turn-delay) ─────────────────
@@ -720,15 +778,16 @@ test("streaming: idle within the window cancels the fallback timer (single commi
   expect(s.commits()).toBe(1);
 });
 
-test("streaming: a tool_call with no following text finalizes via the fallback timer", () => {
+test("streaming: a tool_call with no following text finalizes via the fallback timer (INV-1)", () => {
   const s = setupStreaming();
   s.mesh.emit("feishu-poc", chunk("router", "before"));
   s.mesh.emit("feishu-poc", toolCall("router", "call-1", "bash"));
   // no following text, no idle
   expect(s.commits()).toBe(0);
   s.timers.advance(3000);
-  expect(s.segments).toEqual([{ toolName: "bash" }]);
-  expect(s.commits()).toBe(1); // sealed, not carried into the next turn
+  expect(s.segments).toEqual([]); // INV-1: tool call did NOT open a new message
+  expect(s.annotations).toContain("🔧 调用了 1 个工具"); // surfaced in-card
+  expect(s.commits()).toBe(1); // finalize still scheduled+fired — sealed, not carried into the next turn
 });
 
 test("streaming: a new router turn-start finalizes a residual previous turn", () => {

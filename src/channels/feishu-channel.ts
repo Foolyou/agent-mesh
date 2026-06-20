@@ -48,6 +48,12 @@ export interface OutboundSink {
    *  message, but keep the SAME turn going so the next text opens a fresh message/card. Used at
    *  router tool-call boundaries. Optional — sinks without it simply never segment. */
   streamSegmentBreak?(meta?: SegmentBreak): void;
+  /** Tool-call de-noising: set the current turn's tool-call annotation (a cosmetic suffix rendered
+   *  IN the live streaming card, after the prose, behind a divider — NEVER a new message). `undefined`
+   *  clears it. The string is the fully-composed annotation line (channel owns the copy/mode); the
+   *  sink renders it structurally outside open code fences and reserves its bytes in the size budget.
+   *  Optional — a sink without it (text fallback) simply does not surface tools. */
+  streamToolAnnotation?(text: string | undefined): void;
   /** Resolves when the sink has fully drained (no send/edit/commit in flight). The channel awaits
    *  this after a hard commit so the next turn doesn't race an async finalize. Absent => synchronous
    *  sink; the channel needs no commit barrier. */
@@ -139,10 +145,14 @@ interface BindingRuntime {
   /** Router events that arrived during a commit barrier, replayed in order once the sink is idle. */
   queuedEvents: MeshEvent[];
   startInFlight?: Promise<void>;
-  /** Router tool-call ids already segmented on this turn; de-dups the tool_call + tool_call_update
-   *  stream so a card is sealed once per distinct tool call regardless of interleaving. Cleared at
-   *  turn boundaries / replay. */
+  /** Router tool-call ids already seen on this turn; de-dups the tool_call + tool_call_update stream
+   *  so each distinct tool call is counted/annotated once regardless of interleaving. Cleared at turn
+   *  boundaries / replay. */
   seenToolCalls: Set<string>;
+  /** Distinct tool calls counted this turn (for `toolDisplay: "collapsed"` — `🔧 调用了 N 个工具`). */
+  toolCount: number;
+  /** Distinct tool names this turn, in first-seen order (for `toolDisplay: "inline"`). */
+  toolNames: string[];
 }
 
 export class FeishuChannel implements Channel {
@@ -154,6 +164,8 @@ export class FeishuChannel implements Channel {
   private readonly debounceMs: number;
   private readonly streamCommitDebounceMs: number;
   private readonly streaming: boolean;
+  /** Tool-call de-noising mode (de-coupled from "open a new message"). Default collapsed. */
+  private readonly toolDisplay: "collapsed" | "inline" | "off";
   private readonly dedup: BoundedDedup;
   private readonly idempotencyKey: (binding: FeishuMeshBinding, seq: number, text: string) => string;
   private readonly root?: string;
@@ -206,6 +218,7 @@ export class FeishuChannel implements Channel {
     this.debounceMs = opts.debounceMs ?? 800;
     this.streamCommitDebounceMs = opts.config.outbound?.streamCommitDebounceMs ?? 3000;
     this.streaming = opts.config.outbound?.streaming !== false;
+    this.toolDisplay = opts.config.outbound?.toolDisplay ?? "collapsed";
     this.dedup = new BoundedDedup(opts.dedupCapacity ?? 1000);
     this.idempotencyKey = opts.idempotencyKey ?? (() => randomUUID());
     this.root = opts.root;
@@ -241,7 +254,7 @@ export class FeishuChannel implements Channel {
         continue;
       }
       if (this.byChat.has(binding.chatId) || this.byMesh.has(binding.mesh)) continue;
-      const rt: BindingRuntime = { binding, sender, routerId: "", buffer: "", currentMessageStart: 0, flushSeq: 0, replaying: false, streamTurnActive: false, committing: false, commitGen: 0, queuedEvents: [], seenToolCalls: new Set() };
+      const rt: BindingRuntime = { binding, sender, routerId: "", buffer: "", currentMessageStart: 0, flushSeq: 0, replaying: false, streamTurnActive: false, committing: false, commitGen: 0, queuedEvents: [], seenToolCalls: new Set(), toolCount: 0, toolNames: [] };
       this.runtimes.push(rt);
       this.byChat.set(binding.chatId, rt);
       this.byMesh.set(binding.mesh, rt);
@@ -526,7 +539,7 @@ export class FeishuChannel implements Channel {
     const existing = this.p2pRuntimes.get(chatId);
     if (existing) return existing;
     if (!this.makeSender) return undefined;
-    const rt: BindingRuntime = { binding: { mesh: "", chatId }, sender: this.makeSender(chatId), routerId: "", buffer: "", currentMessageStart: 0, flushSeq: 0, replaying: false, streamTurnActive: false, committing: false, commitGen: 0, queuedEvents: [], seenToolCalls: new Set() };
+    const rt: BindingRuntime = { binding: { mesh: "", chatId }, sender: this.makeSender(chatId), routerId: "", buffer: "", currentMessageStart: 0, flushSeq: 0, replaying: false, streamTurnActive: false, committing: false, commitGen: 0, queuedEvents: [], seenToolCalls: new Set(), toolCount: 0, toolNames: [] };
     this.p2pRuntimes.set(chatId, rt);
     return rt;
   }
@@ -839,6 +852,8 @@ export class FeishuChannel implements Channel {
     rt.currentMessageId = undefined;
     rt.currentMessageStart = 0;
     rt.seenToolCalls.clear();
+    rt.toolCount = 0;
+    rt.toolNames = [];
     this.tlog(rt, "stream-finish");
     this.beginCommitBarrier(rt);
   }
@@ -870,20 +885,44 @@ export class FeishuChannel implements Channel {
     for (const e of queued) this.dispatchRouterEvent(rt, e);
   }
 
-  /** A router tool call is an in-turn boundary: seal the current card so the tool call visually
-   *  ends a segment and following text opens a fresh card. De-dup the tool_call + tool_call_update
-   *  stream so we segment once per distinct tool call, not on every update. */
+  /** A router tool call (de-noising, INV-1): the tool call no longer opens a new message/card — it
+   *  renders as a cosmetic annotation IN the current live streaming card (in-place edit). The ONLY
+   *  remaining cross-cutting job a tool call does is schedule the current turn's finalize fallback,
+   *  which lives in dispatchRouterEvent (decoupled from "open a new message"). De-dups the tool_call +
+   *  tool_call_update stream so each distinct tool call is counted/annotated once.
+   *
+   *  `off` (INV-2) still CONSUMES the event for dedupe + turn-end finalize — it only suppresses the
+   *  UI annotation; it never drops the event. */
   private onRouterToolCall(rt: BindingRuntime, u: { sessionUpdate?: string; toolCallId?: unknown; title?: unknown; kind?: unknown }): void {
-    if (!this.useStreaming(rt) || typeof rt.sender.streamSegmentBreak !== "function") return;
+    if (!this.useStreaming(rt) || typeof rt.sender.streamToolAnnotation !== "function") return;
     const id = typeof u.toolCallId === "string" && u.toolCallId ? u.toolCallId : undefined;
     if (id) {
-      if (rt.seenToolCalls.has(id)) return; // this tool call already segmented (any interleaving)
+      if (rt.seenToolCalls.has(id)) return; // this tool call already counted (any interleaving)
       rt.seenToolCalls.add(id);
     } else if (u.sessionUpdate !== "tool_call") {
-      return; // no id and only an update -> treat as a continuation, don't re-segment
+      return; // no id and only an update -> treat as a continuation, don't re-count
     }
-    if (rt.buffer.trim()) rt.sender.streamUpdate!(rt.buffer); // ensure the segment shows its final text
-    rt.sender.streamSegmentBreak!(toolSegmentMeta(u));
+    if (this.toolDisplay === "off") return; // INV-2: consumed above (dedupe); finalize handled by caller; just no UI
+    rt.toolCount++;
+    if (this.toolDisplay === "inline") {
+      const name = toolSegmentMeta(u).toolName;
+      if (name && !rt.toolNames.includes(name)) rt.toolNames.push(name);
+    }
+    if (rt.buffer.trim()) rt.sender.streamUpdate!(rt.buffer); // flush the latest prose before the annotation
+    rt.sender.streamToolAnnotation!(this.composeToolAnnotation(rt));
+  }
+
+  /** Compose the in-card tool annotation line for the current mode (R6 copy, Chinese, no i18n).
+   *  `collapsed` → `🔧 调用了 N 个工具`; `inline` → `🔧 调用工具：A · B · C`. Returns undefined when
+   *  there is nothing to show (no tools yet, or off — caller never reaches here for off). The sink
+   *  renders this behind a divider, structurally outside any open code fence (R1). */
+  private composeToolAnnotation(rt: BindingRuntime): string | undefined {
+    if (this.toolDisplay === "inline") {
+      if (!rt.toolNames.length) return rt.toolCount > 0 ? `🔧 调用了 ${rt.toolCount} 个工具` : undefined;
+      return `🔧 调用工具：${rt.toolNames.join(" · ")}`;
+    }
+    // collapsed (default)
+    return rt.toolCount > 0 ? `🔧 调用了 ${rt.toolCount} 个工具` : undefined;
   }
 
   private clearOutboundBuffer(rt: BindingRuntime): void {
@@ -899,6 +938,8 @@ export class FeishuChannel implements Channel {
     rt.currentMessageStart = 0;
     rt.streamTurnActive = false;
     rt.seenToolCalls.clear();
+    rt.toolCount = 0;
+    rt.toolNames = [];
     // Do NOT just clear `committing`: a prior streamFinish's commit (or the seal just issued) may
     // still be finalizing on the async sink. Re-establish the barrier so fresh post-replay events
     // wait for whenIdle() instead of racing the in-flight finalize; the new generation makes any
@@ -923,6 +964,8 @@ export class FeishuChannel implements Channel {
     rt.currentMessageId = undefined;
     rt.currentMessageStart = 0;
     rt.seenToolCalls.clear();
+    rt.toolCount = 0;
+    rt.toolNames = [];
     if (!text) return; // never send an empty flush
     const key = this.idempotencyKey(rt.binding, rt.flushSeq++, text);
     // Non-streaming turn boundary: a CardKit sink renders the final reply RICH in one shot (same
@@ -972,6 +1015,8 @@ function teardownRuntime(rt: BindingRuntime): void {
   rt.committing = false;
   rt.queuedEvents = []; // drop events queued behind a commit barrier; never send during teardown
   rt.seenToolCalls.clear();
+  rt.toolCount = 0;
+  rt.toolNames = [];
   rt.replaying = false;
 }
 

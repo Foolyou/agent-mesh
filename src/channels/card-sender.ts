@@ -163,9 +163,13 @@ export interface CardSenderOptions {
 interface LiveCard {
   cardId: string;
   messageId: string;
-  /** Turn-text body currently confirmed on this card (WITHOUT the cosmetic hint prefix). Tracked as
-   *  turn text only so offsets and fallback accounting never count the hint. */
+  /** Turn-text body currently confirmed on this card (WITHOUT the cosmetic hint prefix / tool
+   *  annotation suffix). Tracked as turn text only so offsets and fallback accounting never count
+   *  the cosmetic decorations. */
   sentText: string;
+  /** The tool annotation (cosmetic suffix) currently shown on this card, or undefined. Tracked so an
+   *  annotation-only change (same body, new tool count) still triggers an in-place content edit. */
+  sentAnnotation?: string;
 }
 
 export class CardSender implements OutboundSink {
@@ -213,6 +217,11 @@ export class CardSender implements OutboundSink {
    *  mid-structure (undefined => no continuation). Its displayPrefix repairs the markdown; it is a
    *  display-only prefix, NOT part of the turn text, so it never affects offsets or fallback. */
   private pendingContinuation?: CardContinuation;
+  /** Tool-call de-noising: the current turn's tool annotation (cosmetic SUFFIX, rendered after the
+   *  prose behind a divider, structurally outside any open code fence). undefined => no annotation.
+   *  NOT part of turn text — never counted in offsets / fallback / continuation scanning; its bytes
+   *  ARE reserved in the size budget so it never pushes a card over the limit. */
+  private toolAnnotation?: string;
   /** The card being grown right now (undefined => next op creates a fresh one). */
   private live?: LiveCard;
   /** When the live card was opened (now()); a card older than maxCardAgeMs rolls over before Feishu
@@ -299,6 +308,18 @@ export class CardSender implements OutboundSink {
     void this.driveStream();
   }
 
+  /** Tool-call de-noising: set the current turn's tool annotation (cosmetic suffix in the live card).
+   *  `undefined`/blank clears it. Drives an in-place content edit so the annotation appears/updates on
+   *  the SAME card — never a new message (INV-1). The text fallback does not surface tools (R3). */
+  streamToolAnnotation(text: string | undefined): void {
+    if (this.stopped) return;
+    const next = text && text.trim() ? text : undefined;
+    if (next === this.toolAnnotation) return; // no change
+    this.toolAnnotation = next;
+    if (this.fellBack) return; // degraded text path: tools are not surfaced
+    void this.driveStream();
+  }
+
   /** Non-streaming one-shot RICH render of a final reply (design §4.7). Opt-2-consistent: it reuses the
    *  SAME card-boundary path as streaming (one update + commit) — prose markdown cards + artifact-image
    *  boundary cards — rather than a same-card multi-element card. With only one update there are no
@@ -372,7 +393,9 @@ export class CardSender implements OutboundSink {
         const body = this.bodyOf(full);
         // Lazy: an armed hint alone does NOT force a card mid-stream — it prefixes the next card that
         // body warrants. Only at a boundary (below) is a hint-only card materialized.
-        const liveUpToDate = this.live ? this.live.sentText === body : body.trim() === "";
+        const liveUpToDate = this.live
+          ? this.live.sentText === body && this.live.sentAnnotation === this.toolAnnotation
+          : body.trim() === "" && this.toolAnnotation === undefined;
 
         if (!liveUpToDate) {
           // Throttle: coalesce mid-stream edits; on a boundary only honor the hard rate limit.
@@ -417,9 +440,10 @@ export class CardSender implements OutboundSink {
           continue; // a failed emit fell back (drains next loop); otherwise prose continues on a fresh card
         }
 
-        // At a boundary with a hint armed but no body/card: materialize a hint-only card so the tool
-        // call is still surfaced, then loop to finalize it.
-        if ((this.streamSegmentBreaking || this.streamCommitting) && !this.live && this.currentHint !== undefined) {
+        // At a boundary with a hint/tool-annotation armed but no body/card: materialize a hint/annotation
+        // -only card so the tool call is still surfaced (de-noising: a tool-only turn still delivers one
+        // card, never per-tool messages), then loop to finalize it.
+        if ((this.streamSegmentBreaking || this.streamCommitting) && !this.live && (this.currentHint !== undefined || this.toolAnnotation !== undefined)) {
           const waitMs = this.lastEditAt + this.minIntervalMs - this.now();
           if (waitMs > 0) {
             await this.wait(waitMs);
@@ -551,8 +575,9 @@ export class CardSender implements OutboundSink {
     const body = this.bodyOf(full);
 
     if (!this.live) {
-      if (body.trim() === "" && this.currentHint === undefined) return; // nothing to show
-      const display = this.composeDisplay(body);
+      if (body.trim() === "" && this.currentHint === undefined && this.toolAnnotation === undefined) return; // nothing to show
+      const ann = this.toolAnnotation; // snapshot what this display actually renders (may change during the await)
+      const display = this.composeLiveDisplay(body);
       try {
         const cr = await this.create({ elementId: this.elementId, text: display });
         if (!cr.ok || !cr.cardId) {
@@ -568,7 +593,7 @@ export class CardSender implements OutboundSink {
           this.giveUp();
           return;
         }
-        this.live = { cardId: cr.cardId, messageId: sr.messageId, sentText: body };
+        this.live = { cardId: cr.cardId, messageId: sr.messageId, sentText: body, sentAnnotation: ann };
         this.liveOpenedAt = this.now();
       } catch (e) {
         this.lastEditAt = this.now();
@@ -578,14 +603,16 @@ export class CardSender implements OutboundSink {
       return;
     }
 
-    if (this.live.sentText === body) return;
+    if (this.live.sentText === body && this.live.sentAnnotation === this.toolAnnotation) return;
 
     try {
+      const ann = this.toolAnnotation; // snapshot what this edit actually renders (may change during the await)
       const seq = this.nextSeq();
-      const r = await this.content({ cardId: this.live.cardId, elementId: this.elementId, content: this.composeDisplay(body), sequence: seq, uuid: stableCardKey(this.live.cardId, seq) });
+      const r = await this.content({ cardId: this.live.cardId, elementId: this.elementId, content: this.composeLiveDisplay(body), sequence: seq, uuid: stableCardKey(this.live.cardId, seq) });
       this.lastEditAt = this.now();
       if (r.ok) {
         this.live.sentText = body;
+        this.live.sentAnnotation = ann;
       } else {
         this.log(`feishu card: content update failed${codeInfo(r)}; falling back to text`);
         this.giveUp();
@@ -603,9 +630,10 @@ export class CardSender implements OutboundSink {
    *  offset; the close fence is display-only. A failed op falls back to text from the confirmed point. */
   private async sizeRollOver(split: CardSizeSplit): Promise<void> {
     // Monotonic display: never rewrite the live card to SHORTER text. If the optimal split head is
-    // shorter than what's already shown (a card filled to budget then grew), seal the live card
-    // as-is and continue the tail on a fresh card — no backward edit.
-    if (this.live && split.headText.length < this.live.sentText.length) {
+    // shorter than what's already shown (a card filled to budget then grew), OR the card already shows
+    // a tool annotation (rewriting to a body-only head would drop it ⇒ a backward shrink), seal the
+    // live card as-is (annotation snapshot stays) and continue the tail on a fresh card — no backward edit.
+    if (this.live && (split.headText.length < this.live.sentText.length || this.live.sentAnnotation !== undefined)) {
       const shownBytes = byteLen(this.composeDisplay(this.live.sentText));
       if (shownBytes > this.maxCardBytes) {
         this.log(`feishu card: soft over-budget rollover (${shownBytes}B > ${this.maxCardBytes}B); sealing without shrinking`);
@@ -671,7 +699,11 @@ export class CardSender implements OutboundSink {
     const live = this.live;
     if (!live) return;
     const ctx = continuationAfter(live.sentText, { openFence: this.pendingContinuation?.openFence, tableHeader: this.pendingContinuation?.tableHeader });
-    if (ctx?.openFence) {
+    // Skip the close-fence edit when the card already shows a tool annotation: composeLiveDisplay
+    // already closed the open fence (display-only) before the divider, so re-editing to a body-only
+    // closed display would DROP the annotation (a backward shrink). The continuation below still reopens
+    // the body's fence on the next card (sentText logically left it open; the close was cosmetic).
+    if (ctx?.openFence && live.sentAnnotation === undefined) {
       // Close the open code block on the current card (append-only; do NOT touch live.sentText).
       const display = appendCloseFence(this.composeDisplay(live.sentText), fenceMarkerOf(ctx.openFence));
       try {
@@ -699,13 +731,35 @@ export class CardSender implements OutboundSink {
     return body;
   }
 
+  /** Compose the LIVE card display: the body-only `composeDisplay` plus the tool annotation (de-noising)
+   *  rendered as a cosmetic SUFFIX — structurally OUTSIDE any open code fence (close it display-only,
+   *  never touching sentText), separated from the prose by a divider (R1). When there is no body yet
+   *  the card is annotation-only (no divider). Only the live / final tail card uses this; sealed head
+   *  cards stay body-only via `composeDisplay` (§3.4: annotation rides the live card, never duplicated). */
+  private composeLiveDisplay(body: string): string {
+    const base = this.composeDisplay(body);
+    if (this.toolAnnotation === undefined) return base;
+    if (base === "") return this.toolAnnotation; // annotation-only card (tool-only turn)
+    const open = continuationAfter(base)?.openFence; // close an open code block before the divider
+    const closed = open ? appendCloseFence(base, fenceMarkerOf(open)) : base;
+    return `${closed}\n\n---\n\n${this.toolAnnotation}`;
+  }
+
+  /** Display bytes the tool annotation suffix adds, for size budgeting. Conservatively assumes a close
+   *  fence even when the body isn't mid-fence (over-reserves a few bytes ⇒ split a hair early, safe). */
+  private annotationSuffixBytes(): number {
+    return this.toolAnnotation === undefined ? 0 : byteLen(`\n\`\`\`\n\n---\n\n${this.toolAnnotation}`);
+  }
+
   /** The display prefix bytes the current card carries before its body — passed to planSizeSplit so
-   *  the budget accounts for the hint / continuation, and the structural carry for repair. */
-  private splitStart(): { displayPrefix: string; openFence?: string; tableHeader?: string } {
+   *  the budget accounts for the hint / continuation, and the structural carry for repair. `suffixBytes`
+   *  reserves room for the tool annotation so it never pushes the card over the limit (it forces a split
+   *  BEFORE the annotation overflows; the sealed head stays body-only and the annotation rides the tail). */
+  private splitStart(): { displayPrefix: string; openFence?: string; tableHeader?: string; suffixBytes: number } {
     const displayPrefix = this.currentHint !== undefined
       ? `${this.currentHint}\n\n`
       : this.pendingContinuation?.displayPrefix ?? "";
-    return { displayPrefix, openFence: this.pendingContinuation?.openFence, tableHeader: this.pendingContinuation?.tableHeader };
+    return { displayPrefix, openFence: this.pendingContinuation?.openFence, tableHeader: this.pendingContinuation?.tableHeader, suffixBytes: this.annotationSuffixBytes() };
   }
 
   /** The hint string for a segment, or undefined when hints are disabled / empty. */
@@ -799,6 +853,7 @@ export class CardSender implements OutboundSink {
     this.streamBreakMeta = undefined;
     this.currentHint = undefined;
     this.pendingContinuation = undefined;
+    this.toolAnnotation = undefined;
     this.live = undefined;
     this.streamBaseOffset = 0;
     this.capOffset = Number.POSITIVE_INFINITY;
@@ -904,16 +959,19 @@ function takeByBytes(text: string, budget: number): string {
  *  A single line larger than the budget is split UTF-8-safely at a code-point boundary (still a true
  *  prefix of `body`). `start` carries the current card's display prefix (for budgeting) and any open
  *  fence / table header inherited from a prior continued card (so multi-card structures keep
- *  repairing). Returns null when the prefix + body already fit. */
+ *  repairing). `suffixBytes` reserves room for a cosmetic suffix (the tool annotation) so a card that
+ *  will carry the annotation splits BEFORE it overflows; the split head is body-only (no suffix), and
+ *  the annotation rides the tail. Returns null when the prefix + body (+ reserved suffix) already fit. */
 export function planSizeSplit(
   body: string,
   budgetBytes: number,
-  start?: { displayPrefix?: string; openFence?: string; tableHeader?: string },
+  start?: { displayPrefix?: string; openFence?: string; tableHeader?: string; suffixBytes?: number },
 ): CardSizeSplit | null {
   const inheritedPrefix = start?.displayPrefix
     ?? (start?.openFence ? `${start.openFence}\n` : start?.tableHeader ? `${start.tableHeader}\n` : "");
   const prefixBytes = byteLen(inheritedPrefix);
-  if (prefixBytes + byteLen(body) <= budgetBytes) return null;
+  const suffixBytes = start?.suffixBytes ?? 0;
+  if (prefixBytes + byteLen(body) + suffixBytes <= budgetBytes) return null;
 
   const lines = body.split("\n");
   let inFence = !!start?.openFence;
