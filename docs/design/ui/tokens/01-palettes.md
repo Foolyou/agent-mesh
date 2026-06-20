@@ -90,6 +90,22 @@ Accent tokens resolve from the **selected accent ramp**, independent of mode; on
 
 `on-accent` (a.k.a. `text-on-accent`) is auto-picked (black on the bright Dark accents, white on the darker Light/Eye-care accents) and verified ≥4.5.
 
+## Status subtle + on-status tokens (mode-driven, **accent-independent**)
+Symmetric with `accent-subtle` / `on-accent`, for the four status roles. **`*-subtle` are named semantic tokens** (so ErrorBanner / tinted status panels reference a token, not a component-side `12% tint` formula): `*-subtle = blend(<status>-500, 14%, surface)`, resolved to the fixed hex below. **`on-*`** is the foreground for a *filled* status chip/button, **resolved per mode by measured contrast over the fill** (≥4.5) — NOT assumed white: the bright Dark fills (stop 400) take **near-black** `on-*`, the dark Light/Eye-care fills (stop 800) take **white**. These 8 tokens depend only on the mode (status ramp + surface), so they are **invariant across the accent axis**.
+
+| token | Dark·Slate | Light·Cool | Eye-care·Warm |
+|---|---|---|---|
+| `success-subtle` | `#112a21` | `#d1ede2` | `#d6e5c5` |
+| `warning-subtle` | `#2e2515` | `#efe7d7` | `#f3dfba` |
+| `danger-subtle` | `#2e181d` | `#eedbdf` | `#f2d3c2` |
+| `info-subtle` | `#142136` | `#d5e3f8` | `#d9dbda` |
+| `on-success` | `#0b0b0b` | `#ffffff` | `#ffffff` |
+| `on-warning` | `#0b0b0b` (near-black — bright amber fill) | `#ffffff` | `#ffffff` |
+| `on-danger` | `#0b0b0b` | `#ffffff` | `#ffffff` |
+| `on-info` | `#0b0b0b` | `#ffffff` | `#ffffff` |
+
+Status fills are the `success`/`warning`/`danger`/`info` tokens (Layer-B table above: stop 400 Dark, stop 800 Light/Eye-care). Evidence (on-* over fill ≥4.5; status-text on `*-subtle` ≥4.5; text-primary on `*-subtle` ≥4.5) in `02-aa-evidence.md`, marked accent-invariant.
+
 ## Derived / interaction tokens (formula, not per-combo enumerated)
 - `accent-subtle` = `blend(accent-500, 14%, surface)` — a faint accent tint on the current surface; carries `text-primary` (verified ≥4.5 in all 9).
 - `selected` (nav/row selected bg) = `accent-subtle`; `text-on-selected` = `text-primary`.
@@ -104,3 +120,4 @@ Accent tokens resolve from the **selected accent ramp**, independent of mode; on
 
 ## Change / review log
 - 2026-06-20 — **v2 (supersedes v1)**: replaced the single-layer 19-key palettes with two-layer raw 11-stop scales (3 neutral + 5 status + 3 accent) + per-mode semantic maps + orthogonal accent axis (per-mode stops, Eye-care×Ember=800 override). All 9 combinations verified against the repo contrast math under the upgraded thresholds (AAA primary text, border-strong/focus 4.5, accent pairs, surface-step report-only). v1 values preserved in git history. Full per-pair evidence = `02-aa-evidence.md` (next checkpoint).
+- 2026-06-20 — **v2.1 status tokens**: added `success/warning/danger/info`-`subtle` (= `blend(status-500,14%,surface)`, named) + `on-success/warning/danger/info` (resolved per mode by measured contrast — Dark near-black, Light/Eye-care white). Mode-driven, accent-independent. All 8×3 verified ≥4.5 (no tight <4.9). Evidence in `02`.

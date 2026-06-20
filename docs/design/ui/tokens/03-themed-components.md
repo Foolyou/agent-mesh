@@ -5,10 +5,10 @@
 Semantic shorthand: `surface`/`surface-raised`/`surface-sunken` · `text-primary`/`-secondary`/`-muted`/`-disabled` · `border`/`border-strong` · `success`/`warning`/`danger`/`idle`/`info`/`link` · `accent`(+`accent-hover`/`-active`/`-subtle`/`on-accent`) · `focus-ring` · `selected`/`text-on-selected` · `hover`/`active`.
 
 ## Atoms (`01-primitives.md`)
-- **StatusChip** — fill/edge from the status token, label AA on the chip. ready→`success` · working→`accent` (or `info` for machine-busy) · attention→`warning` · blocked/error→`danger` · idle→`idle` · done→`success`. *Dot* variant = `status-dot` family (≥3); *worded* variant = `status-text` (≥4.5). Proven in `02`.
-- **Button / ConfirmButton** — default: `text-primary` on `surface-raised`, `border-strong` edge; primary: `accent` fill + `on-accent` label; danger: `danger`. Disabled: `text-disabled` (3.0 floor, never opacity). Hover: `accent-hover`/`hover` wash; pressed: `accent-active`/`active`. Focus: `focus-ring`.
+- **StatusChip** — status token sets fill/edge. ready→`success` · working→`accent` (or `info` for machine-busy) · attention→`warning` · blocked/error→`danger` · idle→`idle` · done→`success`. *Dot* variant = `status-dot` family (≥3); *worded* (text-on-surface) variant = `status-text` (≥4.5); *filled* (solid status bg) variant uses **`on-<status>`** for the label (e.g. filled warning chip = `warning` bg + `on-warning` = near-black on Dark). *Soft* variant = `<status>-subtle` bg + status-text. Proven in `02`.
+- **Button / ConfirmButton** — default: `text-primary` on `surface-raised`, `border-strong` edge; primary: `accent` fill + `on-accent` label; danger: `danger` fill + **`on-danger`** label. Disabled: `text-disabled` (3.0 floor, never opacity). Hover: `accent-hover`/`hover` wash; pressed: `accent-active`/`active`. Focus: `focus-ring`.
 - **RouteLink** — `link` token, AA on all surfaces (`02` status-text:link).
-- **Badge (count)** — `danger` for unread/attention, `idle` for neutral; text AA on the badge.
+- **Badge (count)** — `danger` fill + **`on-danger`** for unread/attention, `idle` for neutral; label uses the matching `on-*`.
 - **Input/Select/Textarea** — `surface-sunken` field, `border-strong` edge, `text-primary` text, `focus-ring`; placeholder `text-muted`.
 - **Avatar (AssigneeAvatar)** — disc tone `idle`/`accent`, initials `text-primary`/`on-accent`.
 - **LabelChip** — label-colored pill; **label colors are data-driven and OUTSIDE the semantic token contract** (per-label values, Step-5 handling), distinct from semantic StatusChip; the editor warns sub-AA labels (consistent with `../components/06-board.md` + Step 4).
@@ -23,13 +23,13 @@ Semantic shorthand: `surface`/`surface-raised`/`surface-sunken` · `text-primary
 ## Lists & data (`03-lists-and-data.md`)
 - **StatusListRow** (mesh rows, agent cards, harness/device/channel/notification rows) — leading StatusChip + `text-primary` title + `text-secondary` meta + trailing actions; `hover` wash; selected = `selected` + `text-on-selected`; blocked = `danger` left-border (`status-dot`).
 - **EmptyState** — `text-secondary` headline, `text-muted` body, `accent` CTA.
-- **ErrorBanner / offline** — `danger` edge + `danger` text on its ~12% tint (`tinted-text`, ≥4.5 proven); retry = Button.
+- **ErrorBanner / offline** — `danger-subtle` background (named token) + `danger` edge + `danger` text (`tinted-text`, ≥4.5 proven in `02`); retry = Button. (Success/warning/info banners use the matching `<status>-subtle` + status text.)
 - **VersionLine** — `text-secondary` adapter, `text-muted` body; stale = `warning`.
 
 ## Conversation (`04-conversation.md`)
 - **TranscriptItem family** — MessageBubble: user `surface-raised`, agent `surface`; Thought `text-muted`; ToolCallCard status chip; PlanCard checklist; MailItem `info` edge; CompactItem `accent` marker; Divider `border`. Code via Markdown/CodeBlock on `surface-sunken` with syntax tokens (`syntax-keyword`=info, `syntax-string`=success, `syntax-comment`=text-muted) — all AA on sunken (`02` syntax rows).
-- **Composer** — `surface-sunken` field, `border-strong` edge, `text-primary` text, send = `accent` primary (+`on-accent`); disabled `text-disabled`; interrupt = `danger`.
-- **ApprovalCard** — prominent: `warning`/`accent` edge, approve = primary (`accent`/`success` + `on-accent`), deny = `danger`; resolving = Spinner. Same part for runtime permission, assistant confirm, channel sender, device bootstrap.
+- **Composer** — `surface-sunken` field, `border-strong` edge, `text-primary` text, send = `accent` primary (+`on-accent`); disabled `text-disabled`; interrupt = `danger` fill + `on-danger`.
+- **ApprovalCard** — prominent: `warning`/`accent` edge (or `warning-subtle` background for the soft variant), approve = primary (`accent`/`success` fill + `on-accent`/`on-success`), deny = `danger` fill + `on-danger`; resolving = Spinner. Same part for runtime permission, assistant confirm, channel sender, device bootstrap.
 - **AttachmentCard / AuthedImage / Lightbox** — card `surface-raised`+`border`; Lightbox scrim = `surface-overlay`.
 
 ## Domain (`05-domain.md`)
@@ -71,3 +71,4 @@ Rendered via the repo's known-good chromium from the verified v2 `compose(mode,a
 ## Change / review log
 - 2026-06-20 — created (Step 3 v1): components annotated to the 19-key tokens.
 - 2026-06-20 — **v2 (supersedes v1)**: re-annotated every Step 2 component (incl. board + Avatar/LabelChip) to the v2 **semantic** tokens; added interaction-state tokens (`hover`/`active`/`selected`/`on-accent`), label-colors-outside-contract note (consistent with Step 4), v2 per-mode notes (AAA primary, per-mode accent stops), and moved PNG boards to the next checkpoint. No `src/web` code changed.
+- 2026-06-20 — **v2.1 status tokens**: ErrorBanner now references `danger-subtle` (named token, not a 12% formula); StatusChip filled/soft variants, Badge, Button danger, Composer interrupt, ApprovalCard deny use `on-<status>` for filled-status text. (Sample-board PNGs to be re-rendered for `on-danger` in the artifact checkpoint.)

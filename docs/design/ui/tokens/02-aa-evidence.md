@@ -93,6 +93,22 @@ Legend for **vs v1**: ⬆ = upgraded to a stronger threshold · ★ = new pair/f
 | accent-subtle-text (tinted-text, AA 4.5, ★ NEW) | 13.25 | 13.54 | 13.38 | 14.03 | 13.79 | 13.84 | 11.57 | 11.43 | 11.39 |
 | selection (selection, AA 4.5, = AA) | 13.25 | 13.54 | 13.38 | 14.03 | 13.79 | 13.84 | 11.57 | 11.43 | 11.39 |
 
+### Status subtle + on-status pairs (★ NEW, mode-driven, **accent-independent** — 3 columns)
+`on-*` = filled-status foreground (AA 4.5, resolved per mode by measured contrast — Dark = near-black on bright stop-400 fills, Light/Eye-care = white on dark stop-800 fills). `*-subtle` = `blend(status-500, 14%, surface)` named token; checked carrying its own status-text and `text-primary`. These 8 tokens are invariant across the accent axis (same in all 9 combos).
+| pair | family | threshold | Dark·Slate | Light·Cool | Eye-care·Warm |
+|---|---|---|---|---|---|
+| on-success over success fill | on-fill | AA 4.5 | 11.30 | 7.13 | 7.13 |
+| on-warning over warning fill | on-fill | AA 4.5 | 11.79 | 7.09 | 7.09 |
+| on-danger over danger fill | on-fill | AA 4.5 | 7.12 | 8.31 | 8.31 |
+| on-info over info fill | on-fill | AA 4.5 | 7.74 | 8.72 | 8.72 |
+| success-text on success-subtle | tinted-text | AA 4.5 | 8.75 | 5.75 | 5.39 |
+| warning-text on warning-subtle | tinted-text | AA 4.5 | 9.04 | 5.77 | 5.43 |
+| danger-text on danger-subtle | tinted-text | AA 4.5 | 6.00 | 6.27 | 5.89 |
+| info-text on info-subtle | tinted-text | AA 4.5 | 6.35 | 6.72 | 6.27 |
+| text-primary on *-subtle (min) | tinted-text | AA 4.5 | 12.94 | 13.26 | 10.97 |
+
+`on-*` resolved values: Dark `#0b0b0b` (all four) · Light/Eye-care `#ffffff` (all four). Reproduce: `bun /tmp/v2_status.ts`.
+
 ### surface-step (report-only, decision 2 — not gated)
 Elevation is intentionally subtle on near-monochrome surfaces; reinforced by `border` + (future) shadow. Reported, not gated.
 | step | Dark·Slate | Light·Cool | Eye-care·Warm |
@@ -124,3 +140,4 @@ Elevation is intentionally subtle on near-monochrome surfaces; reinforced by `bo
 
 ## Change / review log
 - 2026-06-20 — **v2 (supersedes v1)**: full per-pair contrast evidence for all 9 `compose(mode,accent)` combinations via the repo contrast math; every pair tagged with family + upgrade-vs-v1 (AAA / stronger / new / report-only / unchanged). All 9 pass hard gates; text-secondary ≥5.5 soft met everywhere; surface-step + hairline border reported (not gated). v1 evidence preserved in git history.
+- 2026-06-20 — **v2.1 status tokens**: added the status `on-*` (over fill) + `*-subtle` (status-text + text-primary) evidence, 3 modes, marked accent-independent. All ≥4.5 (on-* ≥7.0). Reproduce `bun /tmp/v2_status.ts`.

@@ -28,7 +28,7 @@ Semantic token catalogue:
 | surfaces | `surface`, `surface-raised`, `surface-sunken`, `surface-overlay` (scrim) |
 | borders | `border` (hairline), `border-strong` (interactive edge) |
 | text | `text-primary`, `text-secondary`, `text-muted`, `text-disabled` |
-| status | `success`, `warning`, `danger`, `info`, `link`, `idle` |
+| status | `success`, `warning`, `danger`, `info`, `link`, `idle`; per fill role: `success-subtle`/`warning-subtle`/`danger-subtle`/`info-subtle` + `on-success`/`on-warning`/`on-danger`/`on-info` (mode-driven, **accent-independent**; symmetric with `accent-subtle`/`on-accent`) |
 | brand (accent axis) | `accent`, `accent-hover`, `accent-active`, `accent-subtle`, `on-accent` (a.k.a. `text-on-accent`) |
 | interaction | `hover`, `active`, `selected`, `text-on-selected`, `focus-ring`, `disabled` |
 | syntax | `syntax-keyword`, `syntax-string`, `syntax-comment` |
@@ -89,9 +89,10 @@ The custom palette stays, upgraded for two layers + two axes:
 - The ThemePicker (`../components/05-domain.md`) exposes mode + accent (independent) + an advanced editor with a **live `contrast.ts` readout per semantic pair**, evaluated against the current `compose(mode,accent)`. Built-ins are AA/AAA-guaranteed (`02`); custom palettes are the user's responsibility (readout warns sub-AA).
 
 ## Contrast posture (v2)
-`text-primary` **AAA 7.0**; `text-secondary` AA 4.5 + ≥5.5 soft; `text-muted` AA 4.5; `text-disabled` 3.0 floor; `focus-ring` & `border-strong` **≥4.5** (stronger non-text); `surface-step` (raised/sunken vs surface) **report-only** (decision 2); status/tinted/syntax/accent/selection AA 4.5; status-dot 3.0. All 9 combinations pass the hard gates — `02-aa-evidence.md`.
+`text-primary` **AAA 7.0**; `text-secondary` AA 4.5 + ≥5.5 soft; `text-muted` AA 4.5; `text-disabled` 3.0 floor; `focus-ring` & `border-strong` **≥4.5** (stronger non-text); `surface-step` (raised/sunken vs surface) **report-only** (decision 2); status/tinted/syntax/accent/selection AA 4.5; status-dot 3.0; **`on-*` (filled status/accent fg) ≥4.5 resolved per mode by measured contrast; status `*-subtle` carry status-text & text-primary ≥4.5**. All 9 combinations pass the hard gates — `02-aa-evidence.md`.
 
 ## Change / review log
 - 2026-06-20 — created (Step 3 v1): single-layer 19-key model.
 - 2026-06-20 — Step 4 cross-review (`../04-cross-review.md`): label colors data-driven/outside contract.
 - 2026-06-20 — **v2 (supersedes v1)**: rewrote the index/model for the two-layer system (raw 11-stop scales + semantic tokens), runtime `compose(mode,accent)` over two orthogonal axes (9 combos), old→new comparison, Tailwind semantic mapping (raw lint-discouraged), v2 custom-palette model, and the upgraded contrast posture. Values → `01`, evidence → `02`, themed drafts → `03`.
+- 2026-06-20 — **v2.1 status tokens**: added `*-subtle` + `on-*` for the 4 status fill roles (mode-driven, accent-independent; symmetric with `accent-subtle`/`on-accent`) to the catalogue + contrast posture. `on-*` resolved per mode by measured contrast.
