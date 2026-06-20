@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { join } from "node:path";
 import { HARNESSES } from "./harness";
-import { clearHarnessProbeCache, probeHarnesses, type HarnessProbeConnection } from "./harness-probe";
+import { clearHarnessProbeCache, parseToolVersion, probeHarnesses, type HarnessProbeConnection } from "./harness-probe";
 import type { HarnessId } from "./acp/types";
 
 class FakeProbeConnection implements HarnessProbeConnection {
@@ -60,6 +60,79 @@ test("probeHarnesses uses registry latest and stale-while-error cache", async ()
     createConnection: () => new FakeProbeConnection("0.42.0", []),
   });
   expect(stale.find((r) => r.id === "claude")).toMatchObject({ latest: "0.44.0", outdated: true, error: "registry-unavailable" });
+});
+
+test("parseToolVersion extracts the semver token from --version output", () => {
+  expect(parseToolVersion("codex-cli 0.141.0")).toBe("0.141.0");
+  expect(parseToolVersion("2.1.181 (Claude Code)")).toBe("2.1.181");
+  expect(parseToolVersion("1.2.3-beta.4 extra")).toBe("1.2.3-beta.4");
+  expect(parseToolVersion("no version here")).toBeUndefined();
+  expect(parseToolVersion("")).toBeUndefined();
+});
+
+test("probeHarnesses adds display-only body-tool version for codex/claude (success)", async () => {
+  clearHarnessProbeCache();
+  const calls: string[] = [];
+  const rows = await probeHarnesses({
+    refresh: true,
+    which: (command) => (["codex-acp", "claude-agent-acp", "codex", "claude"].includes(command) ? `/bin/${command}` : null),
+    latest: async () => undefined,
+    createConnection: () => new FakeProbeConnection("9.9.9", []),
+    runToolVersion: async (command) => {
+      calls.push(command);
+      if (command === "/bin/codex") return "codex-cli 0.141.0";
+      if (command === "/bin/claude") return "2.1.181 (Claude Code)";
+      return null;
+    },
+  });
+  // adapter version (from ACP initialize) is unchanged; body version is the parsed CLI version
+  expect(rows.find((r) => r.id === "codex")).toMatchObject({ version: "9.9.9", toolVersion: "0.141.0", toolPath: "/bin/codex" });
+  expect(rows.find((r) => r.id === "claude")).toMatchObject({ version: "9.9.9", toolVersion: "2.1.181", toolPath: "/bin/claude" });
+  // opencode/kimi launch the tool directly (no separate body) → never body-probed
+  expect(rows.find((r) => r.id === "opencode")?.toolVersion).toBeUndefined();
+  expect(rows.find((r) => r.id === "kimi")?.toolVersion).toBeUndefined();
+  expect(calls.sort()).toEqual(["/bin/claude", "/bin/codex"]);
+});
+
+test("probeHarnesses body-tool probe is fail-soft (null / unparsable → unknown, row not failed)", async () => {
+  clearHarnessProbeCache();
+  const rows = await probeHarnesses({
+    refresh: true,
+    which: (command) => (["codex-acp", "claude-agent-acp", "codex", "claude"].includes(command) ? `/bin/${command}` : null),
+    latest: async () => undefined,
+    createConnection: () => new FakeProbeConnection("9.9.9", []),
+    runToolVersion: async (command) => {
+      if (command === "/bin/codex") return null; // missing/nonzero/error
+      if (command === "/bin/claude") return "weird output without a semver"; // unparsable
+      return null;
+    },
+  });
+  const codex = rows.find((r) => r.id === "codex")!;
+  expect(codex.toolVersion).toBeUndefined();
+  expect(codex.version).toBe("9.9.9"); // adapter version untouched
+  expect(codex.error).toBeUndefined(); // row not failed by a soft body-probe miss
+  const claude = rows.find((r) => r.id === "claude")!;
+  expect(claude.toolVersion).toBeUndefined();
+  expect(claude.error).toBeUndefined();
+});
+
+test("probeHarnesses skips the body-tool probe when the body binary is not on PATH", async () => {
+  clearHarnessProbeCache();
+  let called = 0;
+  const rows = await probeHarnesses({
+    refresh: true,
+    which: (command) => (command === "codex-acp" ? `/bin/${command}` : null), // body `codex` absent
+    latest: async () => undefined,
+    createConnection: () => new FakeProbeConnection("9.9.9", []),
+    runToolVersion: async () => {
+      called++;
+      return "codex-cli 0.141.0";
+    },
+  });
+  const codex = rows.find((r) => r.id === "codex")!;
+  expect(codex.toolVersion).toBeUndefined();
+  expect(codex.toolPath).toBeUndefined();
+  expect(called).toBe(0); // never invoked without a resolved body path
 });
 
 test("probeHarnesses marks npm and self installer metadata", async () => {

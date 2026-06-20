@@ -138,8 +138,13 @@ export interface HarnessProbeRow {
   id: HarnessId;
   label: string;
   installed: boolean;
+  /** ACP adapter version (compared to the registry for `outdated`). */
   version?: string;
   path?: string;
+  /** Underlying body-tool version (e.g. the `codex`/`claude` CLI), display-only; no outdated status. */
+  toolVersion?: string;
+  /** Resolved PATH of the body tool, when found. */
+  toolPath?: string;
   latest?: string;
   outdated?: boolean;
   auth: HarnessAuthState;

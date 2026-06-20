@@ -13,8 +13,14 @@ export interface HarnessProbeResult {
   id: HarnessId;
   label: string;
   installed: boolean;
+  /** ACP adapter version (from ACP `initialize().agentInfo.version`); compared to the npm registry. */
   version?: string;
   path?: string;
+  /** Underlying body-tool version (e.g. the `codex`/`claude` CLI), display-only — never compared to a
+   *  registry / `outdated` (the body tool is not an npm package we track). Undefined when unknown. */
+  toolVersion?: string;
+  /** Resolved PATH of the body tool, when found. */
+  toolPath?: string;
   latest?: string;
   outdated?: boolean;
   auth: HarnessAuthState;
@@ -43,6 +49,9 @@ export interface HarnessProbeOptions {
   latest?: () => Promise<Partial<Record<HarnessId, string>> | undefined>;
   createConnection?: (id: HarnessId, spec: HarnessSpec, cwd: string, command: string) => HarnessProbeConnection;
   runningAgentsUsingOldVersion?: (id: HarnessId, latest?: string) => string[];
+  /** Run `<command> --version` and return its raw output (or null on missing/nonzero/error). Injectable
+   *  for tests; defaults to a short-timeout `Bun.spawn`. Body-tool probing is fail-soft. */
+  runToolVersion?: (command: string) => Promise<string | null>;
 }
 
 const DEFAULT_TTL_MS = 45_000;
@@ -111,6 +120,23 @@ async function probeOne(
     }
   }
 
+  // Body-tool version (display-only). Fail-soft: a missing binary, nonzero exit, or unparsable output
+  // leaves the body version unknown and never fails the row or touches adapter status.
+  let toolVersion: string | undefined;
+  let toolPath: string | undefined;
+  if (spec.toolCommand) {
+    toolPath = (which(spec.toolCommand, managed) ?? which(spec.toolCommand)) || undefined;
+    if (toolPath) {
+      try {
+        const runToolVersion = opts.runToolVersion ?? defaultRunToolVersion;
+        const raw = await runToolVersion(toolPath);
+        toolVersion = raw != null ? parseToolVersion(raw) : undefined;
+      } catch {
+        /* fail-soft: body version stays unknown */
+      }
+    }
+  }
+
   const outdated = version && latestVersion ? compareSemver(version, latestVersion) < 0 : undefined;
   return {
     id,
@@ -118,6 +144,8 @@ async function probeOne(
     installed,
     version,
     path: path || undefined,
+    toolVersion,
+    toolPath,
     latest: latestVersion,
     outdated,
     auth,
@@ -180,6 +208,39 @@ function labelOf(id: HarnessId): string {
 
 function stringOrUndefined(value: unknown): string | undefined {
   return typeof value === "string" && value ? value : undefined;
+}
+
+/** Extract the first semver-like token from a `--version` line, e.g. "codex-cli 0.141.0" → "0.141.0",
+ *  "2.1.181 (Claude Code)" → "2.1.181". Returns undefined when no version token is present. */
+export function parseToolVersion(output: string): string | undefined {
+  const m = output.match(/\d+\.\d+\.\d+(?:[-.][0-9A-Za-z.]+)*/);
+  return m ? m[0] : undefined;
+}
+
+/** Run `<command> --version` with a short timeout and return trimmed stdout (or stderr) on a clean
+ *  exit, else null. Pure fail-soft: any error/timeout/nonzero exit → null. */
+async function defaultRunToolVersion(command: string): Promise<string | null> {
+  try {
+    const proc = Bun.spawn([command, "--version"], { stdout: "pipe", stderr: "pipe", stdin: "ignore" });
+    const timer = setTimeout(() => {
+      try {
+        proc.kill();
+      } catch {
+        /* already gone */
+      }
+    }, 5000);
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+    clearTimeout(timer);
+    if (exitCode !== 0) return null;
+    const out = (stdout || stderr).trim();
+    return out || null;
+  } catch {
+    return null;
+  }
 }
 
 function compareSemver(a: string, b: string): number {

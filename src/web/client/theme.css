@@ -1667,6 +1667,13 @@ body::after {
   color: var(--fg);
   font-weight: 600;
 }
+.harness-versions {
+  color: var(--fg-dim);
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 11px;
+  margin-top: 1px;
+  overflow-wrap: anywhere;
+}
 .harness-meta,
 .harness-desc {
   color: var(--fg-faint);
@@ -1771,19 +1778,34 @@ body::after {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-.stale-harness-note {
-  display: inline-flex;
+/* Per-harness "agents still on an older version" restart list (harness list page only;
+ * the old conversation-area stale-harness note was removed in the dual-version upgrade pass). */
+.harness-old-agents {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 4px;
+  padding: 6px 8px;
+  border: 1px solid color-mix(in srgb, var(--warn) 45%, var(--line));
+  background: color-mix(in srgb, var(--warn) 9%, transparent);
+  font-size: 11px;
+}
+.harness-old-agents-title {
+  color: var(--warn);
+}
+.harness-old-agent {
+  display: flex;
   align-items: center;
   gap: 6px;
   flex-wrap: wrap;
-  min-width: min(100%, 260px);
-  max-width: 100%;
-  color: var(--warn);
-  border: 1px solid color-mix(in srgb, var(--warn) 45%, var(--line));
-  background: color-mix(in srgb, var(--warn) 9%, transparent);
-  padding: 3px 6px;
-  font-size: 11px;
-  overflow-wrap: anywhere;
+}
+.harness-old-agent-id {
+  font-family: var(--mono);
+  color: var(--fg-dim);
+}
+.harness-old-agent-state {
+  color: var(--fg-faint);
 }
 
 /* ── Feishu settings ─────────────────────────────────────────────────── */

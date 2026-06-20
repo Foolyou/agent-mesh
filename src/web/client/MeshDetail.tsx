@@ -4,7 +4,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import type { Store } from "./store";
 import { shouldLoadInitialTranscript } from "./store";
-import type { GatewayState, MeshSummary, PerMeshState, ActivityEntry, MailEntry, ResolvedPermission, PermissionReq, AgentModes, AgentModels, HarnessId, StartSessionStrategy, HarnessProbeRow } from "../types";
+import type { GatewayState, MeshSummary, PerMeshState, ActivityEntry, MailEntry, ResolvedPermission, PermissionReq, AgentModes, AgentModels, HarnessId, StartSessionStrategy } from "../types";
 import { effortOptionsForHarness, supportsRuntimeEffort, supportsThinkingToggle, kimiThinkingEnabled, kimiModelForThinking } from "../../harness-utils";
 import { Dot, Btn, Empty, ConfirmButton, InfoIcon, fmtTime } from "./ui";
 import { ChatPane } from "./ChatPane";
@@ -215,54 +215,6 @@ function ModelControl({ mesh, agent, store, models }: { mesh: string; agent: str
   );
 }
 
-function StaleHarnessNotice({
-  mesh,
-  agent,
-  row,
-  store,
-  pending,
-  onPending,
-}: {
-  mesh: string;
-  agent: string;
-  row: HarnessProbeRow;
-  store: Store;
-  pending: boolean;
-  onPending: (pending: boolean) => void;
-}) {
-  const running = row.version ? `running ${row.id} v${row.version}` : `running ${row.id} version unknown`;
-  const newer = row.latest ? `newer v${row.latest} installed` : "newer installed version detected";
-  return (
-    <span className="stale-harness-note" role="status">
-      {pending ? (
-        <>
-          <span>restart pending (after current turn)</span>
-          <Btn small kind="ghost" onClick={() => void store.respawnAgent(mesh, agent, "cancel").then(() => onPending(false))} ariaLabel={`Cancel pending restart for ${agent}`}>
-            cancel
-          </Btn>
-        </>
-      ) : (
-        <>
-          <span>{running}</span>
-          <span>({newer})</span>
-          <Btn small kind="go" onClick={() => void store.respawnAgent(mesh, agent, "after-idle").then(() => onPending(true))} ariaLabel={`Restart ${agent} after current turn`}>
-            Restart agent
-          </Btn>
-          <ConfirmButton
-            small
-            kind="stop"
-            confirmLabel="Force restart agent will lose current ACP session context (mailbox preserved). Continue?"
-            ariaLabel={`Force restart ${agent}`}
-            onConfirm={() => void store.respawnAgent(mesh, agent, "force").then(() => onPending(false))}
-          >
-            force
-          </ConfirmButton>
-        </>
-      )}
-    </span>
-  );
-}
-
 // Per-agent reasoning-effort picker. Claude switches effort at runtime (ACP config option);
 // Codex is spawn-time only. Kimi has NO reasoning effort (its thinking is a model-variant
 // toggle — rendered separately), and OpenCode has no effort entry at all; both report an
@@ -361,12 +313,6 @@ function ConversationPanel({
   const tabRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const menuRef = useRef<HTMLDivElement | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [harnessRows, setHarnessRows] = useState<HarnessProbeRow[]>([]);
-  const [pendingRespawn, setPendingRespawn] = useState(false);
-
-  const refreshHarnesses = async () => {
-    setHarnessRows(await store.listHarnesses().catch(() => []));
-  };
   const transcript = pm.transcripts[activeId];
   const transcriptInitialLoaded = store.isTranscriptInitialLoaded(m.name, activeId);
   const canLoadInitialTranscript = shouldLoadInitialTranscript(cur?.status, transcript?.items.length ?? 0);
@@ -399,15 +345,9 @@ function ConversationPanel({
     };
   }, [menuOpen]);
 
-  useEffect(() => {
-    void refreshHarnesses();
-    return store.subscribe(() => void refreshHarnesses());
-  }, [store]);
-
   if (!cur) return <Empty>{t("empty.members")}</Empty>;
   const statusOf = (id: string) => (live ? (m.agents.find((a) => a.id === id)?.status ?? "stopped") : "stopped");
   const working = live && cur.activity === "working";
-  const staleHarness = harnessRows.find((row) => row.id === cur.harness && row.runningAgentsUsingOldVersion.includes(`${m.name}/${cur.id}`));
   const canWake = live && cur.lazy === true && cur.status === "cold";
   const self = pm.selfAwareness?.[cur.id];
   const silentCount = self?.silentTaskCompletes?.count ?? 0;
@@ -494,16 +434,6 @@ function ConversationPanel({
             >
               {t("new session")}
             </ConfirmButton>
-          ) : null}
-          {staleHarness ? (
-            <StaleHarnessNotice
-              mesh={m.name}
-              agent={cur.id}
-              row={staleHarness}
-              store={store}
-              pending={pendingRespawn}
-              onPending={setPendingRespawn}
-            />
           ) : null}
           {nearLimit ? (
             <span className="near-limit-warning" role="status" title="This agent does not advertise /compact">
