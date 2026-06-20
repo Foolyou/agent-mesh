@@ -6,6 +6,7 @@ import {
   imageDims,
   type RawImage,
   type ArtifactRef,
+  type ImageLimits,
 } from "./card-image";
 import type { ImageBoundary } from "./stream-segmenter";
 
@@ -40,7 +41,7 @@ test("parseArtifactRef: rejects traversal / empty / non-artifact refs", () => {
 
 // ── resolve: upload, cache, degrade ──
 
-function fakes(over?: { readImage?: (r: ArtifactRef) => Promise<RawImage | null>; upload?: (i: RawImage) => Promise<{ imgKey?: string; error?: string }>; viewerUrl?: (r: ArtifactRef) => string | undefined; limits?: { maxBytes: number; maxAspect: number } }) {
+function fakes(over?: { readImage?: (r: ArtifactRef) => Promise<RawImage | null>; upload?: (i: RawImage) => Promise<{ imgKey?: string; error?: string }>; viewerUrl?: (r: ArtifactRef) => string | undefined; limits?: ImageLimits }) {
   const uploads: RawImage[] = [];
   const logs: string[] = [];
   const resolver = createImageResolver({
@@ -87,23 +88,42 @@ test("missing file degrades (no upload)", async () => {
   expect(uploads).toHaveLength(0);
 });
 
+const LIMITS = { maxBytes: 10 * 1024 * 1024, maxAspect: 16 / 9, maxWidth: 1500, maxHeight: 3000 };
+
 test("over-byte-limit degrades to link (viewerUrl present) WITHOUT uploading", async () => {
   const { resolver, uploads } = fakes({
     readImage: async () => raw({ size: 20 * 1024 * 1024 }),
-    viewerUrl: (r) => `https://console/api/meshes/${r.mesh}/agents/${r.owner}/artifacts/${r.file}`,
-    limits: { maxBytes: 10 * 1024 * 1024, maxAspect: 16 / 9 },
+    viewerUrl: (r) => `https://console/mesh/${r.mesh}/agent/${r.owner}/artifact/${r.file}`,
+    limits: LIMITS,
   });
   const out = await resolver.resolve(boundary("artifact:big.png", "huge"));
   expect(out.kind).toBe("link");
-  if (out.kind === "link") expect(out.markdown).toBe("[huge](https://console/api/meshes/m1/agents/router/artifacts/big.png)");
+  if (out.kind === "link") expect(out.markdown).toBe("[huge](https://console/mesh/m1/agent/router/artifact/big.png)");
   expect(uploads).toHaveLength(0);
 });
 
 test("aspect ratio out of range (very tall) degrades without uploading", async () => {
-  const { resolver, uploads } = fakes({ readImage: async () => raw({ bytes: PNG(100, 2000) }) }); // h/w=20 > 16/9
-  const out = await resolver.resolve(boundary("artifact:tall.png"));
-  expect(out.kind).not.toBe("image");
+  const { resolver, uploads } = fakes({ readImage: async () => raw({ bytes: PNG(100, 2000) }), limits: LIMITS }); // h/w=20 > 16/9
+  expect((await resolver.resolve(boundary("artifact:tall.png"))).kind).not.toBe("image");
   expect(uploads).toHaveLength(0);
+});
+
+test("width > 1500 degrades without uploading", async () => {
+  const { resolver, uploads } = fakes({ readImage: async () => raw({ bytes: PNG(1600, 900) }), limits: LIMITS });
+  expect((await resolver.resolve(boundary("artifact:wide.png"))).kind).not.toBe("image");
+  expect(uploads).toHaveLength(0);
+});
+
+test("height > 3000 degrades without uploading", async () => {
+  const { resolver, uploads } = fakes({ readImage: async () => raw({ bytes: PNG(1000, 3200) }), limits: LIMITS });
+  expect((await resolver.resolve(boundary("artifact:long.png"))).kind).not.toBe("image");
+  expect(uploads).toHaveLength(0);
+});
+
+test("an image within all bounds (≤1500w, ≤3000h, ≤16:9, ≤10MB) uploads", async () => {
+  const { resolver, uploads } = fakes({ readImage: async () => raw({ bytes: PNG(1500, 800) }), limits: LIMITS });
+  expect((await resolver.resolve(boundary("artifact:ok.png"))).kind).toBe("image");
+  expect(uploads).toHaveLength(1);
 });
 
 test("upload failure degrades to link/text and never throws", async () => {
@@ -113,13 +133,39 @@ test("upload failure degrades to link/text and never throws", async () => {
   expect((await r2.resolve(boundary("artifact:a.png", "p"))).kind).toBe("text");
 });
 
-test("no artifact ref, bytes, or image_key leaks into logs or degrade markdown", async () => {
-  const { resolver, logs } = fakes({ upload: async () => ({ error: "x" }), viewerUrl: () => "https://c/v" });
-  const out = await resolver.resolve(boundary("artifact://codex-1/secret-file.png", "alt text"));
-  // logs use mesh/owner/file label only — never the raw `artifact:`/`artifact://` ref string
-  expect(logs.join("\n")).not.toContain("artifact:");
-  // degrade markdown carries only the alt + url, not the raw ref token
-  if (out.kind === "link") expect(out.markdown).not.toContain("artifact:");
+test("zero-leak: no ref/owner/file/secret in logs even when ref, read error, and upload error carry markers", async () => {
+  const SECRET = "S3CRET-marker";
+  const logs: string[] = [];
+  // ref, the thrown read error, and the upload error string all contain the secret marker
+  // (a) read throws with a secret in the message; (b) read OK but upload returns a secret error string
+  let mode: "throw" | "uploadfail" = "throw";
+  const resolver = createImageResolver({
+    mesh: "m1",
+    defaultAgent: "router",
+    readImage: async () => {
+      if (mode === "throw") throw new Error(`read /etc/${SECRET}/x`);
+      return raw();
+    },
+    upload: async () => ({ error: SECRET }),
+    log: (m) => logs.push(m),
+  });
+  await resolver.resolve(boundary(`artifact://owner-${SECRET}/dir/${SECRET}.png`, "a"));
+  mode = "uploadfail";
+  await resolver.resolve(boundary(`artifact:${SECRET}.png`, "a"));
+  const blob = logs.join("\n");
+  expect(blob).not.toContain(SECRET); // no owner/file/path/SDK-error text from read OR upload
+  expect(blob).not.toContain("artifact:"); // no raw ref token
+  expect(blob).not.toContain("/etc/"); // no path from the thrown read error
+});
+
+test("zero-leak: a non-image degrade markdown carries only alt + console URL, not the raw `artifact:` ref", async () => {
+  const { resolver } = fakes({ upload: async () => ({ error: "x" }), viewerUrl: (r) => `https://c/mesh/${r.mesh}/agent/${r.owner}/artifact/${r.file}` });
+  const out = await resolver.resolve(boundary("artifact://codex-1/diagram.png", "alt text"));
+  // the URL contains the file path BY DESIGN (the console viewer route); the raw `artifact:` token does not
+  if (out.kind === "link") {
+    expect(out.markdown).toContain("https://c/mesh/m1/agent/codex-1/artifact/diagram.png");
+    expect(out.markdown).not.toContain("artifact:");
+  }
 });
 
 // ── imageElement + dims ──

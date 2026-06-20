@@ -473,14 +473,14 @@ export class CardSender implements OutboundSink {
       const cr = await this.create({ elementId: this.elementId, text });
       if (!cr.ok || !cr.cardId) {
         this.lastEditAt = this.now();
-        this.log(`feishu card: image placeholder create failed${codeInfo(cr)}; falling back to text`);
+        this.log(`feishu card: image placeholder create failed (code ${cr.code ?? "?"}); falling back to text`);
         this.giveUp();
         return false;
       }
       const sr = await this.send({ chatId: this.chatId, cardId: cr.cardId, uuid: cardSendUuid(cr.cardId) });
       this.lastEditAt = this.now();
       if (!sr.ok || !sr.messageId) {
-        this.log(`feishu card: image placeholder send failed${codeInfo(sr)}; falling back to text`);
+        this.log(`feishu card: image placeholder send failed (code ${sr.code ?? "?"}); falling back to text`);
         this.giveUp();
         return false;
       }
@@ -496,11 +496,11 @@ export class CardSender implements OutboundSink {
       const seq = this.nextSeq();
       const r = await this.finalize({ cardId: cr.cardId, sequence: seq, uuid: stableCardKey(cr.cardId, seq), summary: this.cardSummary(text) });
       this.lastEditAt = this.now();
-      if (!r.ok) this.log(`feishu card: image placeholder finalize failed${codeInfo(r)}; left in streaming state`);
+      if (!r.ok) this.log(`feishu card: image placeholder finalize failed (code ${r.code ?? "?"}); left in streaming state`);
       return true;
-    } catch (e) {
+    } catch {
       this.lastEditAt = this.now();
-      this.log(`feishu card: image placeholder error: ${String(e)}; falling back to text`);
+      this.log("feishu card: image placeholder error; falling back to text");
       this.giveUp();
       return false;
     }
@@ -520,17 +520,18 @@ export class CardSender implements OutboundSink {
       const seq = this.nextSeq();
       const r = await this.updateElement!({ cardId, elementId: elId, element: JSON.stringify(el), sequence: seq, uuid: stableCardKey(cardId, seq) });
       this.lastEditAt = this.now();
-      if (!r.ok) this.log(`feishu card: image element update failed${codeInfo(r)}; placeholder kept`);
-    } catch (e) {
-      this.log(`feishu card: image resolve/update error: ${String(e)}; placeholder kept`);
+      // code only — never the SDK message (which could carry a path), the ref, the bytes, or the image_key
+      if (!r.ok) this.log(`feishu card: image element update failed (code ${r.code ?? "?"}); placeholder kept`);
+    } catch {
+      this.log("feishu card: image resolve/update error; placeholder kept");
     }
     if (this.stopped) return;
     try {
       const seq = this.nextSeq();
       await this.finalize({ cardId, sequence: seq, uuid: stableCardKey(cardId, seq), summary: this.cardSummary(summary) });
       this.lastEditAt = this.now();
-    } catch (e) {
-      this.log(`feishu card: image finalize error: ${String(e)}; left in streaming state`);
+    } catch {
+      this.log("feishu card: image finalize error; left in streaming state");
     }
   }
 

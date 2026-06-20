@@ -47,9 +47,13 @@ export interface ImageLimits {
   maxBytes: number;
   /** Reject when height/width exceeds this (Feishu: height:width ≤ 16:9). 0 disables the check. */
   maxAspect: number;
+  /** Reject when width exceeds this (Feishu: ≤1500px). 0 disables. Best-effort (skipped if dims unknown). */
+  maxWidth: number;
+  /** Reject when height exceeds this (Feishu: ≤3000px). 0 disables. Best-effort (skipped if dims unknown). */
+  maxHeight: number;
 }
 
-export const DEFAULT_IMAGE_LIMITS: ImageLimits = { maxBytes: 10 * 1024 * 1024, maxAspect: 16 / 9 };
+export const DEFAULT_IMAGE_LIMITS: ImageLimits = { maxBytes: 10 * 1024 * 1024, maxAspect: 16 / 9, maxWidth: 1500, maxHeight: 3000 };
 
 export interface ImageResolverDeps {
   /** Author agent for a bare `artifact:<file>` ref (the router that emitted the prose). */
@@ -111,31 +115,36 @@ export function createImageResolver(deps: ImageResolverDeps): ImageResolver {
 
   return {
     async resolve(boundary: ImageBoundary): Promise<ResolvedImage> {
+      // Zero-leak: every log below is a GENERIC status — never the artifact ref/owner/file/path, the
+      // bytes, the image_key, or a raw SDK/Error string (which could carry a path or secret).
       const ref = parseArtifactRef(boundary.ref, { mesh: deps.mesh, defaultAgent: deps.defaultAgent });
       if (!ref) {
-        log("feishu image: unparseable artifact ref; degrading"); // ref intentionally NOT logged
+        log("feishu image: unresolvable reference; degrading");
         return degrade(null, boundary.alt);
       }
       let raw: RawImage | null;
       try {
         raw = await deps.readImage(ref);
       } catch {
-        log(`feishu image: read failed for ${refLabel(ref)}; degrading`);
+        log("feishu image: read failed; degrading");
         return degrade(ref, boundary.alt);
       }
       if (!raw) return degrade(ref, boundary.alt);
 
-      // limits (local): over byte cap or aspect ratio → degrade without uploading
+      // limits (local, best-effort): byte cap (always), dimensions/aspect when readable → degrade without
+      // uploading. Unknown dimensions skip the dim/aspect check (Feishu's own upload validation backstops).
       if (raw.size > limits.maxBytes) {
-        log(`feishu image: ${refLabel(ref)} exceeds ${limits.maxBytes}B; degrading to link/text`);
+        log("feishu image: over size limit; degrading");
         return degrade(ref, boundary.alt);
       }
-      if (limits.maxAspect > 0) {
-        const dims = imageDims(raw.bytes, raw.contentType);
-        if (dims && dims.h / dims.w > limits.maxAspect) {
-          log(`feishu image: ${refLabel(ref)} aspect out of range; degrading to link/text`);
-          return degrade(ref, boundary.alt);
-        }
+      const dims = imageDims(raw.bytes, raw.contentType);
+      if (dims && (
+        (limits.maxWidth > 0 && dims.w > limits.maxWidth) ||
+        (limits.maxHeight > 0 && dims.h > limits.maxHeight) ||
+        (limits.maxAspect > 0 && dims.h / dims.w > limits.maxAspect)
+      )) {
+        log("feishu image: dimensions/aspect out of range; degrading");
+        return degrade(ref, boundary.alt);
       }
 
       const key = cacheKey(ref, raw);
@@ -145,12 +154,12 @@ export function createImageResolver(deps: ImageResolverDeps): ImageResolver {
       let res: { imgKey?: string; error?: string };
       try {
         res = await deps.upload(raw);
-      } catch (e) {
-        log(`feishu image: upload error for ${refLabel(ref)}: ${String(e)}; degrading`);
+      } catch {
+        log("feishu image: upload error; degrading");
         return degrade(ref, boundary.alt);
       }
       if (!res.imgKey) {
-        log(`feishu image: upload failed for ${refLabel(ref)}${res.error ? ` (${res.error})` : ""}; degrading`);
+        log("feishu image: upload failed; degrading"); // res.error intentionally NOT logged
         return degrade(ref, boundary.alt);
       }
       cache.set(key, res.imgKey);
@@ -171,11 +180,6 @@ export function markdownElement(elementId: string, content: string): Record<stri
 
 function cacheKey(ref: ArtifactRef, raw: RawImage): string {
   return `${ref.mesh}|${ref.owner}|${ref.file}|${raw.size}|${raw.mtimeMs}`;
-}
-
-/** A short, ref-only label for logs — no bytes, no image_key, no secret. */
-function refLabel(ref: ArtifactRef): string {
-  return `${ref.mesh}/${ref.owner}/${ref.file}`;
 }
 
 function mdEscape(s: string): string {
@@ -209,20 +213,22 @@ export function sdkUploadImage(client: lark.Client): (img: RawImage) => Promise<
         data: { image_type: "message", image: Readable.from(Buffer.from(img.bytes)) as unknown as any },
       });
       const imgKey = res?.image_key;
-      return imgKey ? { imgKey } : { error: "no image_key in response" };
-    } catch (e) {
-      return { error: e instanceof Error ? e.message : "upload error" };
+      return imgKey ? { imgKey } : { error: "upload-failed" }; // generic/classified — never raw SDK text
+    } catch {
+      return { error: "upload-error" }; // never a raw SDK/Error message (could carry a path/secret)
     }
   };
 }
 
-/** Build a device-auth console artifact URL from a base origin, or undefined when none is configured
- *  (→ the resolver degrades to plain text instead of a link). The path is the device-auth-gated artifact
- *  endpoint the console serves with the user's device token. */
+/** Build a device-auth console VIEWER URL from a base origin, or undefined when none is configured (→
+ *  the resolver degrades to plain text instead of a link). This is the web console SPA route
+ *  (`/mesh/<mesh>/agent/<agent>/artifact/<path>`, see FileViewer.parseFileRoute) — NOT the raw `/api`
+ *  fetch endpoint, which would need a bearer token a Feishu link can't carry. The console opens the
+ *  route and fetches the artifact with the user's device token. */
 export function consoleViewerUrl(base: string | undefined): ((ref: ArtifactRef) => string | undefined) | undefined {
   if (!base) return undefined;
   const origin = base.replace(/\/+$/, "");
-  return (ref) => `${origin}/api/meshes/${encodeURIComponent(ref.mesh)}/agents/${encodeURIComponent(ref.owner)}/artifacts/${ref.file.split("/").map(encodeURIComponent).join("/")}`;
+  return (ref) => `${origin}/mesh/${encodeURIComponent(ref.mesh)}/agent/${encodeURIComponent(ref.owner)}/artifact/${ref.file.split("/").map(encodeURIComponent).join("/")}`;
 }
 
 // ── minimal raster dimension readers (PNG / JPEG / GIF) ─────────────────────────
