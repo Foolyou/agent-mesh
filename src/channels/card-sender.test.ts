@@ -1151,3 +1151,41 @@ test("whenIdle waits for in-flight image tasks (commit barrier never releases mi
   expect(resolved).toBe(true);
   expect(updates).toHaveLength(1);
 });
+
+// ── C4: non-streaming one-shot rich render (sendOneShot) ────────────────────────
+
+test("sendOneShot renders a prose-only reply as a single finalized markdown card", async () => {
+  const r = cardRecorder();
+  const s = makeSender(r, fakeFallback());
+  s.sendOneShot("hello\nworld\n");
+  await s.whenIdle();
+  expect(r.creates.map((c) => c.text)).toEqual(["hello\nworld\n"]);
+  expect(r.finalizes).toHaveLength(1);
+});
+
+test("sendOneShot renders prose + artifact image as ordered prose/image/prose cards", async () => {
+  const r = cardRecorder();
+  const s = makeSender(r, fakeFallback());
+  s.sendOneShot("see ![a](artifact:a.png) done\n");
+  await s.whenIdle();
+  expect(r.creates.map((c) => c.text)).toEqual(["see ", "🖼 a", " done\n"]);
+});
+
+test("sendOneShot keeps a code-guarded token literal (no image card)", async () => {
+  const r = cardRecorder();
+  const s = makeSender(r, fakeFallback());
+  const code = "```\n![x](artifact:x.png)\n```\n";
+  s.sendOneShot(code);
+  await s.whenIdle();
+  expect(r.creates.map((c) => c.text)).toEqual([code]);
+});
+
+test("sendOneShot uploads + swaps the image element (C3 path) in non-streaming mode", async () => {
+  const r = cardRecorder();
+  const fb = fakeFallback();
+  const { sender, updates } = makeImageSender(r, fb, async () => ({ kind: "image", imgKey: "img_one" }));
+  sender.sendOneShot("p ![a](artifact:a.png) q\n");
+  await sender.whenIdle();
+  expect(r.creates.map((c) => c.text)).toEqual(["p ", "🖼 a", " q\n"]);
+  expect(JSON.parse(updates[0].element)).toMatchObject({ tag: "img", img_key: "img_one" });
+});

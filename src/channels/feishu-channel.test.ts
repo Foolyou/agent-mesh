@@ -1447,3 +1447,62 @@ test("p2p: an assistant failure during stop() does not enqueue a notice onto the
   // no failure notice was enqueued after stop began
   expect((p2pSenders.get("p2p_me")?.sent ?? []).some((x) => x.text.includes("助手处理失败"))).toBe(false);
 });
+
+// ── C4: streaming vs non-streaming routing of the router reply (rich outbound) ──────────────────
+
+function richSink() {
+  const calls: { m: string; text?: string }[] = [];
+  const sink = {
+    enqueue: (text: string) => calls.push({ m: "enqueue", text }),
+    stop: () => {},
+    sendOneShot: (text: string) => calls.push({ m: "sendOneShot", text }),
+    streamUpdate: (text: string) => calls.push({ m: "streamUpdate", text }),
+    streamCommit: () => calls.push({ m: "streamCommit" }),
+  };
+  return { sink, calls };
+}
+
+function channelWithSink(sink: any, over: Partial<FeishuChannelConfig> = {}) {
+  const mesh = new FakeMesh();
+  const timers = manualTimers();
+  const ch = new FeishuChannel({
+    mesh,
+    config: cfg(over),
+    sender: sink,
+    makeConsumer: () => ({ start() {}, stop() {} }),
+    debounceMs: 800,
+    setTimer: timers.setTimer,
+    idempotencyKey: (b, seq) => `${b.mesh}:${seq}`,
+  });
+  ch.start();
+  return { ch, mesh, timers };
+}
+
+test("non-streaming: the router reply (incl. an artifact image token) is delivered RICH via sendOneShot", () => {
+  const { sink, calls } = richSink();
+  const { mesh } = channelWithSink(sink, { outbound: { minIntervalMs: 0, streaming: false } });
+  mesh.emit("feishu-poc", chunk("router", "see ![a](artifact:a.png) end"));
+  mesh.emit("feishu-poc", idle("router"));
+  const one = calls.find((c) => c.m === "sendOneShot");
+  expect(one?.text).toBe("see ![a](artifact:a.png) end"); // rich one-shot path gets the full prose+token
+  expect(calls.some((c) => c.m === "enqueue")).toBe(false); // NOT the plain-text path
+});
+
+test("streaming: the router reply streams via streamUpdate/streamCommit (not sendOneShot)", () => {
+  const { sink, calls } = richSink();
+  const { mesh } = channelWithSink(sink, { outbound: { minIntervalMs: 0 } }); // streaming default on
+  mesh.emit("feishu-poc", chunk("router", "hello world"));
+  mesh.emit("feishu-poc", idle("router"));
+  expect(calls.map((c) => c.m)).toContain("streamUpdate");
+  expect(calls.map((c) => c.m)).toContain("streamCommit");
+  expect(calls.some((c) => c.m === "sendOneShot")).toBe(false);
+});
+
+test("non-streaming: a plain text sink (no sendOneShot) still uses enqueue (back-compat)", () => {
+  const calls: { m: string; text?: string }[] = [];
+  const sink = { enqueue: (text: string) => calls.push({ m: "enqueue", text }), stop: () => {} };
+  const { mesh } = channelWithSink(sink, { outbound: { minIntervalMs: 0, streaming: false } });
+  mesh.emit("feishu-poc", chunk("router", "plain reply"));
+  mesh.emit("feishu-poc", idle("router"));
+  expect(calls).toEqual([{ m: "enqueue", text: "plain reply" }]);
+});

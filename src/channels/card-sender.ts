@@ -299,6 +299,17 @@ export class CardSender implements OutboundSink {
     void this.driveStream();
   }
 
+  /** Non-streaming one-shot RICH render of a final reply (design §4.7). Opt-2-consistent: it reuses the
+   *  SAME card-boundary path as streaming (one update + commit) — prose markdown cards + artifact-image
+   *  boundary cards — rather than a same-card multi-element card. With only one update there are no
+   *  incremental edits, so it reads as a non-streaming send. `key` is unused (cards carry their own
+   *  idempotency uuids). */
+  sendOneShot(text: string, _key?: string): void {
+    if (this.stopped) return;
+    this.streamUpdate(text);
+    this.streamCommit();
+  }
+
   /** Turn boundary: show the latest text, finalize the card, and reset for the next turn. */
   streamCommit(): void {
     if (this.stopped) return;
