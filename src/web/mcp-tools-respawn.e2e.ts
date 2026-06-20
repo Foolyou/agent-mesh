@@ -4,20 +4,24 @@
 // MCP transport rejected a respawned agent's initialize with "Server already
 // initialized", leaving the agent tool-less.
 //
-// Uses a real backend + mesh-host + ControlPlane on the dev port/root, with a
-// deterministic MCP-aware fake codex-acp (src/fixtures/mcp-probe-acp.ts) injected
-// via PATH. The probe connects to the injected mesh-services server with the real
-// MCP SDK client and reports its live tool list on every prompt.
+// Uses a real backend + mesh-host + ControlPlane on a self-isolated free port + fresh temp root,
+// with a deterministic MCP-aware fake codex-acp (src/fixtures/mcp-probe-acp.ts) injected via PATH.
+// The probe connects to the injected mesh-services server with the real MCP SDK client and reports
+// its live tool list on every prompt.
 //
-// Run: E2E_PORT=10020 E2E_ROOT=~/.agent-mesh-dev bun run src/web/mcp-tools-respawn.e2e.ts
+// Self-isolating: defaults to a free port + a fresh temp root (no dependency on ~/.agent-mesh-dev).
+// Run: bun run src/web/mcp-tools-respawn.e2e.ts  (optional overrides: E2E_PORT=.. E2E_ROOT=..)
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { authedReady, e2eAuthRoot, seedApprovedDevice } from "./e2e-playwright";
+import { authedReady, e2eAuthRoot, freePort, seedApprovedDevice } from "./e2e-playwright";
 
-const PORT = Number(process.env.E2E_PORT) || 10020;
+const PORT = Number(process.env.E2E_PORT) || freePort();
 const BASE = `http://localhost:${PORT}`;
-const ROOT = process.env.E2E_ROOT?.replace(/^~/, homedir()) ?? join(homedir(), ".agent-mesh-dev");
+// Self-isolating by default: a fresh temp root (never the shared ~/.agent-mesh-dev). An explicit
+// E2E_ROOT override is honored, but we only auto-clean roots we created ourselves.
+const ownRoot = !process.env.E2E_ROOT;
+const ROOT = process.env.E2E_ROOT?.replace(/^~/, homedir()) ?? (await mkdtemp(join(tmpdir(), "mesh-mcp-tools-root-")));
 const e2eToken = await seedApprovedDevice(e2eAuthRoot(ROOT));
 const REPO = resolve(import.meta.dir, "..", "..");
 const mesh = `mcp-tools-e2e-${process.pid}`;
@@ -46,7 +50,6 @@ async function waitReady(): Promise<void> {
   throw new Error("backend never became ready");
 }
 
-const state = async () => (await fetch(`${BASE}/api/state`, { headers: { authorization: `Bearer ${e2eToken}` } })).json();
 const post = (p: string, body?: unknown) =>
   fetch(`${BASE}${p}`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${e2eToken}` }, body: body ? JSON.stringify(body) : undefined });
 const del = (p: string) => fetch(`${BASE}${p}`, { method: "DELETE", headers: { authorization: `Bearer ${e2eToken}` } });
@@ -69,8 +72,11 @@ async function waitFor(cond: () => Promise<boolean> | boolean, timeoutMs = 12000
 }
 
 async function transcriptText(agent: string): Promise<string> {
-  const s = await state();
-  return JSON.stringify(s.perMesh?.[mesh]?.transcripts?.[agent]?.items ?? []);
+  // Transcript bodies are intentionally NOT in /api/state (gateway.snapshot ships placeholders);
+  // read them the same way the client does — via the backfill endpoint.
+  const r = await fetch(`${BASE}/api/meshes/${mesh}/agents/${agent}/transcript?limit=500`, { headers: { authorization: `Bearer ${e2eToken}` } });
+  if (!r.ok) return "[]";
+  return JSON.stringify((await r.json()).items ?? []);
 }
 
 let nonceSeq = 0;
@@ -109,7 +115,11 @@ async function expectToolsAfter(agent: string, action: () => Promise<void>, isRo
     throw new Error(`MCP handshake failed for ${agent}: ${tx.slice(at, at + 180)}`);
   }
   const at = tx.indexOf(`PROBE n=${nonce} `);
-  const seg = tx.slice(at, at + 240);
+  // Capture the WHOLE probe answer (its text has no internal quotes, so it ends at the next JSON
+  // string quote). A fixed-width slice truncates once the sorted tool list grows (board_*/label
+  // tools sort ahead of mesh_status/send_mail/steer_mail), so bound to the full answer instead.
+  const end = tx.indexOf('"', at);
+  const seg = end > at ? tx.slice(at, end) : tx.slice(at);
   for (const t of ["mesh_status", "send_mail", "check_mail", "steer_mail"]) {
     if (!seg.includes(t)) throw new Error(`${agent} missing tool ${t} after respawn: ${seg}`);
   }
@@ -186,4 +196,5 @@ try {
   backend.kill("SIGKILL");
   try { process.kill(await daemonPid(), "SIGKILL"); } catch {}
   await rm(work, { recursive: true, force: true });
+  if (ownRoot) await rm(ROOT, { recursive: true, force: true });
 }
