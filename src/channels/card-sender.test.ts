@@ -1286,13 +1286,13 @@ test("tool annotation renders OUTSIDE an open code fence, behind a divider (no n
   const s = makeSender(r, fb);
   s.streamUpdate("intro\n```js\nconst a = 1"); // body ends INSIDE an open code fence
   await s.whenIdle();
-  s.streamToolAnnotation("🔧 调用了 1 个工具");
+  s.streamToolAnnotation("🔧 Called 1 tool");
   await s.whenIdle();
   expect(r.creates).toHaveLength(1); // in-place edit, NOT a new message/card
   const last = r.contents.at(-1)!.content;
   // the fence is closed (display-only) before the divider+annotation; annotation is not inside the block
-  expect(last).toContain("const a = 1\n```\n\n---\n\n🔧 调用了 1 个工具");
-  expect(last.endsWith("🔧 调用了 1 个工具")).toBe(true);
+  expect(last).toContain("const a = 1\n```\n\n---\n\n🔧 Called 1 tool");
+  expect(last.endsWith("🔧 Called 1 tool")).toBe(true);
   expect(fb.enqueued).toEqual([]); // never fell back
 });
 
@@ -1302,18 +1302,18 @@ test("tool annotation: a same-body count change still drives an in-place edit (n
   const s = makeSender(r, fb);
   s.streamUpdate("hello");
   await s.whenIdle();
-  s.streamToolAnnotation("🔧 调用了 1 个工具");
+  s.streamToolAnnotation("🔧 Called 1 tool");
   await s.whenIdle();
-  s.streamToolAnnotation("🔧 调用了 2 个工具"); // same body, new count
+  s.streamToolAnnotation("🔧 Called 2 tools"); // same body, new count
   await s.whenIdle();
   expect(r.creates).toHaveLength(1); // still ONE message
-  expect(r.contents.at(-1)!.content).toContain("🔧 调用了 2 个工具"); // updated in place
+  expect(r.contents.at(-1)!.content).toContain("🔧 Called 2 tools"); // updated in place
 });
 
 test("tool annotation is reserved in the size budget — no over-budget card, no fallback", async () => {
   const r = cardRecorder();
   const fb = fakeFallback();
-  const annotation = "🔧 调用了 1 个工具";
+  const annotation = "🔧 Called 1 tool";
   // body fits the budget ALONE, but body + annotation suffix would exceed it ⇒ a split is forced and
   // the annotation rides the tail; without the suffix reservation this would over-budget or fall back.
   const body = "aaaaaaaaaa\nbbbbbbbbbb\ncccccccccc\ndddddddddd\nend";
@@ -1345,7 +1345,7 @@ test("tool annotation survives a timeout rollover (kept, not lost; tail continue
   const s = makeSender(r, fb, { maxCardAgeMs: 1000 });
   s.streamUpdate("first part");
   await s.whenIdle();
-  s.streamToolAnnotation("🔧 调用了 1 个工具");
+  s.streamToolAnnotation("🔧 Called 1 tool");
   await s.whenIdle();
   r.advance(2000); // age the live card past maxCardAgeMs
   s.streamUpdate("first part second part"); // forces a timeout rollover before editing the aged card
@@ -1354,6 +1354,6 @@ test("tool annotation survives a timeout rollover (kept, not lost; tail continue
   await s.whenIdle();
   expect(fb.enqueued).toEqual([]); // no fallback
   const displays = [...r.creates.map((c) => c.text), ...r.contents.map((c) => c.content)];
-  expect(displays.join("\n")).toContain("🔧 调用了 1 个工具"); // annotation preserved across the rollover
+  expect(displays.join("\n")).toContain("🔧 Called 1 tool"); // annotation preserved across the rollover
   expect(displays.join("")).toContain("second part"); // tail body not lost
 });

@@ -101,9 +101,10 @@ export interface FeishuChannelConfig {
     /** Feishu caps a message at 20 edits; roll over to a fresh message past this. Default 18. */
     maxEditsPerMessage?: number;
     /** How router tool calls are surfaced in the streaming card (de-noising: tool calls render
-     *  IN-CARD and never open a new message). `collapsed` (default) = one folded line `🔧 调用了 N 个
-     *  工具`; `inline` = list each tool name `🔧 调用工具：A · B · C`; `off` = render nothing (events
-     *  are still consumed for dedupe + turn-end finalize). Missing/invalid/old config ⇒ collapsed. */
+     *  IN-CARD and never open a new message). `collapsed` (default) = one folded line `🔧 Called N
+     *  tool(s)`; `inline` = list each tool name `🔧 Tools: A · B · C`; `off` = render nothing (events
+     *  are still consumed for dedupe + turn-end finalize). Copy is centralized + i18n-ready (default
+     *  locale en); see `toolDisplayStrings`. Missing/invalid/old config ⇒ collapsed. */
     toolDisplay?: "collapsed" | "inline" | "off";
   };
   websocket: { handshakeTimeoutMs?: number; pingTimeout?: number };

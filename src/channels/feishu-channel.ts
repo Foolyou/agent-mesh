@@ -149,7 +149,7 @@ interface BindingRuntime {
    *  so each distinct tool call is counted/annotated once regardless of interleaving. Cleared at turn
    *  boundaries / replay. */
   seenToolCalls: Set<string>;
-  /** Distinct tool calls counted this turn (for `toolDisplay: "collapsed"` — `🔧 调用了 N 个工具`). */
+  /** Distinct tool calls counted this turn (for `toolDisplay: "collapsed"` — `🔧 Called N tool(s)`). */
   toolCount: number;
   /** Distinct tool names this turn, in first-seen order (for `toolDisplay: "inline"`). */
   toolNames: string[];
@@ -912,17 +912,19 @@ export class FeishuChannel implements Channel {
     rt.sender.streamToolAnnotation!(this.composeToolAnnotation(rt));
   }
 
-  /** Compose the in-card tool annotation line for the current mode (R6 copy, Chinese, no i18n).
-   *  `collapsed` → `🔧 调用了 N 个工具`; `inline` → `🔧 调用工具：A · B · C`. Returns undefined when
-   *  there is nothing to show (no tools yet, or off — caller never reaches here for off). The sink
-   *  renders this behind a divider, structurally outside any open code fence (R1). */
+  /** Compose the in-card tool annotation line for the current mode (R6 copy). All copy lives in the
+   *  module-level {@link toolDisplayStrings} (default locale `en`), never inline here — a future locale
+   *  is a lookup change there, not a call-site change. Returns undefined when there is nothing to show
+   *  (no tools yet, or off — caller never reaches here for off). The sink renders this behind a divider,
+   *  structurally outside any open code fence (R1). */
   private composeToolAnnotation(rt: BindingRuntime): string | undefined {
+    const copy = toolDisplayCopy();
     if (this.toolDisplay === "inline") {
-      if (!rt.toolNames.length) return rt.toolCount > 0 ? `🔧 调用了 ${rt.toolCount} 个工具` : undefined;
-      return `🔧 调用工具：${rt.toolNames.join(" · ")}`;
+      if (rt.toolNames.length) return copy.inline(rt.toolNames);
+      return rt.toolCount > 0 ? copy.collapsed(rt.toolCount) : undefined; // no names yet → fall back to count
     }
     // collapsed (default)
-    return rt.toolCount > 0 ? `🔧 调用了 ${rt.toolCount} 个工具` : undefined;
+    return rt.toolCount > 0 ? copy.collapsed(rt.toolCount) : undefined;
   }
 
   private clearOutboundBuffer(rt: BindingRuntime): void {
@@ -1150,6 +1152,32 @@ function toolSegmentMeta(u: { title?: unknown; kind?: unknown }): SegmentBreak {
     : typeof u.kind === "string" && u.kind.trim() ? u.kind.trim()
     : undefined;
   return name ? { toolName: name } : {};
+}
+
+// ── tool-annotation copy (R6) ──────────────────────────────────────────────────
+// Centralized, i18n-ready: all annotation strings live here keyed by locale, default `en`. Adding a
+// language is a new entry below — call sites (composeToolAnnotation) never change. This is NOT a full
+// i18n framework; it's a single lookup table with an English default.
+type ToolDisplayLocale = "en";
+const TOOL_DISPLAY_DEFAULT_LOCALE: ToolDisplayLocale = "en";
+
+interface ToolDisplayCopy {
+  /** Folded summary for `collapsed`: `🔧 Called 1 tool` / `🔧 Called 3 tools`. */
+  collapsed(n: number): string;
+  /** Per-tool list for `inline`: `🔧 Tools: A · B · C` (` · ` separator). */
+  inline(names: string[]): string;
+}
+
+const toolDisplayStrings: Record<ToolDisplayLocale, ToolDisplayCopy> = {
+  en: {
+    collapsed: (n) => `🔧 Called ${n} ${n === 1 ? "tool" : "tools"}`,
+    inline: (names) => `🔧 Tools: ${names.join(" · ")}`,
+  },
+};
+
+/** Resolve the annotation copy for a locale, falling back to the default locale for unknown ones. */
+function toolDisplayCopy(locale: ToolDisplayLocale = TOOL_DISPLAY_DEFAULT_LOCALE): ToolDisplayCopy {
+  return toolDisplayStrings[locale] ?? toolDisplayStrings[TOOL_DISPLAY_DEFAULT_LOCALE];
 }
 
 function feishuUserPrompt(text: string): string {

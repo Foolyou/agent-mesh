@@ -54,8 +54,8 @@
 
 | 档位 | 卡内渲染 | 计数/标题 |
 |---|---|---|
-| `collapsed`（默认） | 折叠摘要一行，如 `🔧 调用了 N 个工具` | 轮内累计去重计数 N |
-| `inline` | 内联列出每个工具名/标题（沿用 `toolName`），如 `🔧 调用工具：A · B · C` | 轮内累计去重名单 |
+| `collapsed`（默认） | 折叠摘要一行，如 `🔧 Called N tool(s)`（英文，default locale en） | 轮内累计去重计数 N |
+| `inline` | 内联列出每个工具名/标题（沿用 `toolName`），如 `🔧 Tools: A · B · C`（` · ` 分隔） | 轮内累计去重名单 |
 | `off` | 完全不渲染工具 **UI** | 仍消费事件做去重 + 收尾判断，仅不渲染 |
 
 三档都**保留** `scheduleStreamFinish`（兜底）、`seenToolCalls` 去重、commit barrier、replay、幂等。
@@ -92,8 +92,9 @@
 4. **新增 sink 方法** `OutboundSink.streamToolAnnotation?(text: string | undefined)`：channel 调它把"当前轮工具注解字符串"推给 sender；`undefined`/`off` 不调或清空。`LarkSender`（文本兜底）实现为 no-op（降级文本不显示工具——见 §10 R3 限制）。
 
 ### 3.2 三档映射
-- **collapsed**：`onRouterToolCall` 累加 `toolCount`，注解 = `🔧 调用了 ${toolCount} 个工具`；每次新工具调一次 `streamToolAnnotation(注解)` → 同卡 in-place 刷新计数。
-- **inline**：累加 `toolNames`（去重，取 `toolSegmentMeta(u).toolName`），注解 = `🔧 调用工具：${toolNames.join(" · ")}`；同样 in-place。
+> 文案（R6，**已改为英文 + 集中 i18n-ready helper**）：所有注解字符串集中在模块级 `toolDisplayStrings`（按 locale 索引，default `en`），调用点（`composeToolAnnotation`）只查表、不内联硬编码；加语言 = 加表项，不改调用点（非完整 i18n 框架）。
+- **collapsed**：`onRouterToolCall` 累加 `toolCount`，注解 = `toolDisplayCopy().collapsed(toolCount)` → `🔧 Called N tool(s)`（n===1→`tool` 否则 `tools`）；每次新工具调一次 `streamToolAnnotation(注解)` → 同卡 in-place 刷新计数。
+- **inline**：累加 `toolNames`（去重，取 `toolSegmentMeta(u).toolName`），注解 = `toolDisplayCopy().inline(toolNames)` → `🔧 Tools: ${toolNames.join(" · ")}`；同样 in-place。
 - **off**：`onRouterToolCall` 仅做 `seenToolCalls` 去重（保持计数器一致性，便于潜在切档），**不调** `streamToolAnnotation`、**不调** `streamSegmentBreak`、不动卡；prose 照常流。
 
 ### 3.3 为何不用方案 B（channel 把注解拼进 `streamUpdate` 文本）
@@ -202,7 +203,7 @@ onRouterToolCall(rt, u):
 
 新增/扩展 `card-sender.test.ts` + `feishu-channel.test.ts`（+ `config.test.ts`）。核心断言点 = **统计 sender 的 `create`/`send`（= 新消息）次数**，而非肉眼看卡。
 
-1. **collapsed — 一轮多工具不产生多条新消息**：注入 `prose, tool_call×3(交错 update), prose, idle`。断言 `send`（interactive 新消息）次数 == 纯 prose 驱动的卡数（不随工具递增）；`content` 更新里出现 `🔧 调用了 3 个工具`（N 正确、去重正确）。
+1. **collapsed — 一轮多工具不产生多条新消息**：注入 `prose, tool_call×3(交错 update), prose, idle`。断言 `send`（interactive 新消息）次数 == 纯 prose 驱动的卡数（不随工具递增）；`content` 更新里出现 `🔧 Called 3 tools`（N 正确、去重正确）。
 2. **inline — 同上但列名**：断言注解含三个工具名、仍无 per-tool 新消息。
 3. **off — 不渲染工具但仍不新消息**：断言无 `🔧` 注解、无额外 `create/send`，prose-only 卡数不变。
 4. **以工具结尾的轮仍 finalize**：`prose, tool_call, （无 idle）` → 推进假时钟过 `streamCommitDebounceMs` → 兜底 fire。collapsed/inline 断言 materialize 一张注解卡（一条消息）并 finalize；off 断言安静收尾、`buffer` 不粘到下一轮（下一轮首 chunk 开新卡、不 concat）。
@@ -252,7 +253,7 @@ onRouterToolCall(rt, u):
 - **R3 文本兜底（CardKit 失败降级）**：建议 `LarkSender.streamToolAnnotation` no-op（降级纯文本不显示工具）。还是要在兜底文本里也补一行计数？
 - **R4 off 的纯工具轮安静收尾**：用户会看到"只调了工具的那轮"无任何输出——这正是 off 语义，确认可接受？
 - **R5 休眠的 segment-break/`currentHint`/`toolHint`/`enableToolHint`**：建议本次**保留不删**（更小 diff、可逆）。是否要顺手清理为后续单独任务？
-- **R6 文案与 i18n**：`🔧 调用了 N 个工具` / `🔧 调用工具：A · B · C` 措辞与分隔符；飞书 channel 现有文案均中文（与 `defaultToolHint` 一致），确认沿用中文、暂不做 i18n？
+- **R6 文案与 i18n**：✅ **已定（覆盖早前"中文不 i18n"）**：默认**英文**——collapsed `🔧 Called N tool(s)`（按 n 简单单复数）、inline `🔧 Tools: A · B · C`（` · ` 分隔）。文案集中在模块级 `toolDisplayStrings`（default locale `en`，i18n-ready：加语言只改表、不改调用点），**不建完整 i18n 框架**。（注：dormant 的 `defaultToolHint` 仍为中文，属保留的旧 segment-break 路径 R5，不在 R6 范围。）
 - **R7 per-binding 覆盖**：本次仅全局，后续再加 per-binding。确认。
 
 ---

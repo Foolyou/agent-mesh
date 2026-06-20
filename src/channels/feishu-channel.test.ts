@@ -636,7 +636,7 @@ test("streaming: disabled via config falls back to one-shot enqueue", () => {
 
 // ── outbound: in-card tool annotation on router tool calls (de-noising) ─────────
 // INV-1: a tool call NEVER opens a new message (segment break) — it renders a cosmetic annotation
-// in the live card. Default mode is `collapsed` → `🔧 调用了 N 个工具`.
+// in the live card. Default mode is `collapsed` → `🔧 Called N tool(s)` (default locale en).
 
 test("streaming: a router tool_call renders an in-card annotation, not a new message", () => {
   const s = setupStreaming();
@@ -645,7 +645,7 @@ test("streaming: a router tool_call renders an in-card annotation, not a new mes
   s.mesh.emit("feishu-poc", chunk("router", " after"));
   s.mesh.emit("feishu-poc", idle("router"));
   expect(s.segments).toEqual([]); // INV-1: tool calls never open a new message
-  expect(s.annotations).toContain("🔧 调用了 1 个工具"); // surfaced in-card instead
+  expect(s.annotations).toContain("🔧 Called 1 tool"); // surfaced in-card instead
   expect(s.commits()).toBe(1); // still one turn, one hard commit at idle
 });
 
@@ -656,7 +656,7 @@ test("streaming: consecutive tool_call_update for the same call counts once", ()
   s.mesh.emit("feishu-poc", toolCall("router", "call-1", undefined, "tool_call_update"));
   s.mesh.emit("feishu-poc", toolCall("router", "call-1", undefined, "tool_call_update"));
   expect(s.segments).toEqual([]);
-  expect(s.annotations.filter((a) => a !== undefined)).toEqual(["🔧 调用了 1 个工具"]); // counted once
+  expect(s.annotations.filter((a) => a !== undefined)).toEqual(["🔧 Called 1 tool"]); // counted once
 });
 
 test("streaming: a different tool call id counts again", () => {
@@ -666,7 +666,7 @@ test("streaming: a different tool call id counts again", () => {
   s.mesh.emit("feishu-poc", chunk("router", "b"));
   s.mesh.emit("feishu-poc", toolCall("router", "call-2", "grep"));
   expect(s.segments).toEqual([]);
-  expect(s.annotations.at(-1)).toBe("🔧 调用了 2 个工具");
+  expect(s.annotations.at(-1)).toBe("🔧 Called 2 tools");
 });
 
 test("streaming: a late update for an earlier tool call does not re-count it", () => {
@@ -676,7 +676,7 @@ test("streaming: a late update for an earlier tool call does not re-count it", (
   s.mesh.emit("feishu-poc", toolCall("router", "call-2", "b", "tool_call"));
   s.mesh.emit("feishu-poc", toolCall("router", "call-1", undefined, "tool_call_update")); // late update for call-1
   expect(s.segments).toEqual([]);
-  expect(s.annotations.at(-1)).toBe("🔧 调用了 2 个工具"); // two distinct calls, not three
+  expect(s.annotations.at(-1)).toBe("🔧 Called 2 tools"); // two distinct calls, not three
 });
 
 test("streaming: tool-call de-dup + count resets across turns", () => {
@@ -687,7 +687,7 @@ test("streaming: tool-call de-dup + count resets across turns", () => {
   s.mesh.emit("feishu-poc", chunk("router", "b"));
   s.mesh.emit("feishu-poc", toolCall("router", "call-1", "bash")); // same id, new turn
   expect(s.segments).toEqual([]);
-  expect(s.annotations.at(-1)).toBe("🔧 调用了 1 个工具"); // counted again from 1 in the new turn
+  expect(s.annotations.at(-1)).toBe("🔧 Called 1 tool"); // counted again from 1 in the new turn
 });
 
 test("streaming disabled: a tool_call does not segment", () => {
@@ -706,7 +706,7 @@ test("streaming collapsed: a turn with many tools produces NO new messages, one 
   s.mesh.emit("feishu-poc", chunk("router", " done"));
   s.mesh.emit("feishu-poc", idle("router"));
   expect(s.segments).toEqual([]); // INV-1: never opens a new message per tool
-  expect(s.annotations.at(-1)).toBe("🔧 调用了 3 个工具"); // folded count
+  expect(s.annotations.at(-1)).toBe("🔧 Called 3 tools"); // folded count
   expect(s.commits()).toBe(1); // exactly one turn / one finalize
 });
 
@@ -718,7 +718,7 @@ test("streaming inline: lists distinct tool names, still no new messages", () =>
   s.mesh.emit("feishu-poc", toolCall("router", "call-2", "grep"));
   s.mesh.emit("feishu-poc", idle("router"));
   expect(s.segments).toEqual([]);
-  expect(s.annotations.at(-1)).toBe("🔧 调用工具：bash · grep");
+  expect(s.annotations.at(-1)).toBe("🔧 Tools: bash · grep");
 });
 
 test("streaming off (INV-2): tool UI suppressed, but events still consumed (dedupe + finalize)", () => {
@@ -786,7 +786,7 @@ test("streaming: a tool_call with no following text finalizes via the fallback t
   expect(s.commits()).toBe(0);
   s.timers.advance(3000);
   expect(s.segments).toEqual([]); // INV-1: tool call did NOT open a new message
-  expect(s.annotations).toContain("🔧 调用了 1 个工具"); // surfaced in-card
+  expect(s.annotations).toContain("🔧 Called 1 tool"); // surfaced in-card
   expect(s.commits()).toBe(1); // finalize still scheduled+fired — sealed, not carried into the next turn
 });
 
