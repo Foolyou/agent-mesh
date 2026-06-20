@@ -1,7 +1,31 @@
 # Feishu rich outbound — table component + artifact image + streaming split (research)
 
-Status: **research / design only**. No functional code in this change. Branch `task/feishu-rich-outbound-research`, base `5bf70fc`.
+Status: **research / design only** (original). **Superseded in part by the post-probe implementation decisions below.**
 Goal: render outbound router prose that contains GFM **tables** as Feishu **CardKit table components**, and `artifact:` **images** as uploaded Feishu **img** elements — the hard part being the **streaming split** of an incremental prose/table/image stream into ordered card elements.
+
+---
+
+## ⚑ Implementation decisions (LOCKED after the live probe — supersede parts of this research)
+
+A real Feishu live probe (bot Legion → mesh-dev chat, 3 cards, all `code=0`) plus user observation changed two premises:
+
+1. **GFM tables stay markdown — NO table component.** The probe confirmed Feishu's **markdown element renders GFM pipe tables as real tables**, and the user chose markdown over the native `table` component. ⇒ The segmenter does **not** parse tables, emits no `table` element, and §2 (table component) + decision ⑥ (5-tables/card, 50-column block split) are **obsolete**. Tables/code/links all stay in prose markdown. The only non-markdown thing extracted is an **`artifact:` image**.
+
+2. **Images are CARD BOUNDARIES (Opt-2), not same-card `insert_before` (Option B).** `src/channels/card-sender.ts` is a deep **single-element** streaming state machine (`streamBaseOffset` / `live.sentText` / `fallbackOffset` / `planSizeSplit` all assume one contiguous text stream into one element). Retrofitting same-card multi-element `insert_before` insertion (the earlier §4.6 Option B) is **high regression risk** on a production path. **User-approved Opt-2:** at an artifact-image boundary the sender **seals the current prose card → sends a separate image/placeholder card → continues prose on a fresh card**. Order + non-blocking behavior are preserved; the tradeoff (more cards) was accepted. The prose-only path stays **byte-identical** to pre-C2 (the image cap is `Infinity` when there are no artifact images).
+
+**C3 (artifact image upload) decisions:**
+- **B1 is used (verified).** The Feishu outbound `CardSender` is built **in-process** in `src/channels/index.ts` (`buildFeishuChannel`, backend process), so it has the storage `root` and reads artifact bytes **directly** via `resolveArtifactFile` (`src/channels/card-image.ts` `readArtifactImage`). No authorized-endpoint hop (B2 was not needed). Cross-agent reads need only same-mesh.
+- **Non-blocking swap (Opt-2 + C3).** At an image boundary the sender posts the placeholder card immediately and resolves+uploads **asynchronously**; when it resolves it `cardElement.update`s that standalone card's element to the uploaded `img` (or, on failure/over-limit, a degrade link/text). `whenIdle` (the commit barrier) drains in-flight image tasks. Prose never blocks on an upload.
+- **Cache** key `(mesh, owner, file, size, mtime) → image_key` (only successful uploads cached). **Limits** (user-locked): `> 10MB` OR `width > 1500` OR `height > 3000` OR aspect `height:width > 16:9` → degrade without uploading (dimension checks are best-effort via a PNG/JPEG/GIF reader; unknown dims skip the dim/aspect check and rely on Feishu's upload validation). **Degrade** = lark_md link to the web **console viewer route** `${MESH_CONSOLE_URL}/mesh/<mesh>/agent/<owner>/artifact/<path>` (NOT the raw `/api` fetch endpoint, which needs a bearer token) when `MESH_CONSOLE_URL` is set, else plain text. **Secret hygiene**: logs are GENERIC status strings only — never the artifact ref / owner / file / path, the bytes, the image_key, or a raw SDK/Error message; the degrade markdown carries only the `alt` + the console URL (which contains the file path by design).
+- **`mesh_publish_attachment` scope.** Images published via `mesh_publish_attachment` flow to Feishu **only when the router's prose references them** as `![](artifact://<owner>/<file>)` (covered by the same path). The standalone `attachment_published` event surface is NOT wired into outbound (the channel consumes only the router's text stream) — that is a **separate seam**, intentionally out of C3 scope.
+
+**C4 (non-streaming one-shot + live validation) decisions:**
+- **Non-streaming one-shot is the SAME card-boundary path.** A `CardSender.sendOneShot(text)` renders a final reply rich (prose markdown cards + artifact-image boundary cards) by doing a single `streamUpdate`+`streamCommit` — NOT a same-card multi-element card (that would violate Opt-2). With one update there are no incremental edits, so it reads as non-streaming. The channel routes the non-streaming turn boundary (`flush`) to `sendOneShot` when the sink provides it, else plain `enqueue` (a text sink is unchanged).
+- **Live-validated (real Feishu, bot Legion → mesh-dev chat).** A 1×1 generated PNG (no artifact/secret) exercised the actual sdk seams: `im.v1.image.create`→image_key (ok), `cardkit.v1.card.create`+`im.message.create` interactive (ok), **`cardkit.v1.cardElement.update` swapping a markdown placeholder → `img` element (code=0 "success")**, `card.settings` finalize (ok). The C3 async placeholder→img swap works on a sent card.
+
+**Final accepted scope (authoritative):** tables render as **markdown** (no native table component, no GFM table parsing); artifact images are **card boundaries** (Opt-2: seal prose card → image/placeholder card → continue prose; no same-card `insert_before`); **B1** direct in-process artifact read is used (**B2** not used); `mesh_publish_attachment` images reach Feishu only via `![](artifact://<owner>/<file>)` references in router prose (the standalone `attachment_published` event surface is a separate seam, not wired); both **streaming** and **non-streaming one-shot** paths are supported; code-context guards keep fenced/indented/inline `![…]`/pipe text literal.
+
+These are the authority for the C1–C4 implementation; where this older research conflicts (table component, in-card Option B), the decisions above win.
 
 Evidence tags: `[confirmed]` = verified in repo source or official docs/SDK; `[inference]` = reasoned from confirmed facts; `[not verified]` = could not confirm, designed around.
 

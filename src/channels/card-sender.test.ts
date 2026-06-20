@@ -960,3 +960,301 @@ test("stop() halts the card sender and the fallback and blocks further work", as
   expect(r.creates).toHaveLength(0);
   expect(fb.enqueued).toHaveLength(0);
 });
+
+// ── C2: artifact images as card boundaries (Opt-2) ──────────────────────────────
+
+test("an artifact image splits a turn into prose card → image placeholder card → prose card", async () => {
+  const r = cardRecorder();
+  const fb = fakeFallback();
+  const s = makeSender(r, fb);
+  s.streamUpdate("prose ![a](artifact:a.png) more\n");
+  s.streamCommit();
+  await s.whenIdle();
+  // three cards in order: the prose before, the image placeholder, the prose after (token NOT shown)
+  expect(r.creates.map((c) => c.text)).toEqual(["prose ", "🖼 a", " more\n"]);
+  expect(r.sends).toHaveLength(3);
+  expect(r.finalizes.map((f) => f.cardId)).toEqual(["card1", "card2", "card3"]); // prose sealed before image card
+  expect(fb.streamUpdates).toHaveLength(0); // no fallback
+});
+
+test("the image placeholder card never carries the raw artifact token; prose cards never show it", async () => {
+  const r = cardRecorder();
+  const s = makeSender(r, fakeFallback());
+  s.streamUpdate("![d](artifact://codex-1/out.png)\n");
+  s.streamCommit();
+  await s.whenIdle();
+  expect(r.creates.map((c) => c.text)).toEqual(["🖼 d"]); // only the placeholder card, no prose card
+  const blob = r.creates.map((c) => c.text).join("|");
+  expect(blob).not.toContain("artifact:");
+  expect(blob).not.toContain("artifact://");
+});
+
+test("a GFM table turn stays one markdown card — no image card, no table component", async () => {
+  const r = cardRecorder();
+  const s = makeSender(r, fakeFallback());
+  const table = "| mod | st |\n| --- | --- |\n| a | ok |\n";
+  s.streamUpdate(table);
+  s.streamCommit();
+  await s.whenIdle();
+  expect(r.creates.map((c) => c.text)).toEqual([table]); // whole table in one markdown card
+  expect(r.creates.some((c) => c.text.startsWith("🖼"))).toBe(false);
+});
+
+test("an artifact token inside a fenced code block does NOT create an image card", async () => {
+  const r = cardRecorder();
+  const s = makeSender(r, fakeFallback());
+  const code = "```\n![x](artifact:x.png)\n```\n";
+  s.streamUpdate(code);
+  s.streamCommit();
+  await s.whenIdle();
+  expect(r.creates.map((c) => c.text)).toEqual([code]); // the token stays literal in the code card
+  expect(r.creates.some((c) => c.text.startsWith("🖼"))).toBe(false);
+});
+
+test("multiple images produce ordered prose/image/prose/image/prose cards", async () => {
+  const r = cardRecorder();
+  const s = makeSender(r, fakeFallback());
+  s.streamUpdate("a ![x](artifact:x.png) b ![y](artifact:y.png) c\n");
+  s.streamCommit();
+  await s.whenIdle();
+  expect(r.creates.map((c) => c.text)).toEqual(["a ", "🖼 x", " b ", "🖼 y", " c\n"]);
+});
+
+test("prose-only turns are unchanged: no extra cards, single create + content edits as before", async () => {
+  const r = cardRecorder();
+  const s = makeSender(r, fakeFallback());
+  s.streamUpdate("Hello");
+  await s.whenIdle();
+  s.streamUpdate("Hello world");
+  await s.whenIdle();
+  s.streamCommit();
+  await s.whenIdle();
+  expect(r.creates.map((c) => c.text)).toEqual(["Hello"]); // exactly one card
+  expect(r.contents.map((c) => c.content)).toEqual(["Hello world"]);
+  expect(r.finalizes).toHaveLength(1);
+});
+
+test("a failed image placeholder card degrades to text from the image (incl. the literal markdown)", async () => {
+  const r = cardRecorder({ createImpl: (req, n) => (req.text.startsWith("🖼") ? { ok: false, code: 1 } : { ok: true, cardId: `card${n}` }) });
+  const fb = fakeFallback();
+  const s = makeSender(r, fb);
+  s.streamUpdate("prose ![a](artifact:a.png) tail\n");
+  s.streamCommit();
+  await s.whenIdle();
+  // the prose-before card was sent; the image card failed → fallback owns the remainder from the image
+  expect(r.creates.map((c) => c.text)).toEqual(["prose ", "🖼 a"]);
+  expect(fb.streamUpdates.length).toBeGreaterThan(0);
+  expect(fb.streamUpdates.at(-1)).toBe("![a](artifact:a.png) tail\n"); // literal markdown preserved, nothing lost
+  expect(fb.commits).toBe(1);
+});
+
+test("a trailing image with no newline is flushed at commit (final)", async () => {
+  const r = cardRecorder();
+  const s = makeSender(r, fakeFallback());
+  s.streamUpdate("see "); // partial line, no image yet
+  await s.whenIdle();
+  s.streamUpdate("see ![a](artifact:a.png)"); // image now complete but no trailing newline
+  s.streamCommit();
+  await s.whenIdle();
+  expect(r.creates.map((c) => c.text)).toEqual(["see ", "🖼 a"]); // prose card then image card at commit
+});
+
+// ── C3: artifact image upload → swap the placeholder card's element (non-blocking) ──────────────
+
+import type { CardElementUpdateRequest } from "./card-sender";
+import type { ResolvedImage } from "./card-image";
+
+function makeImageSender(
+  r: ReturnType<typeof cardRecorder>,
+  fb: ReturnType<typeof fakeFallback>,
+  resolve: (b: { ref: string; alt: string }) => Promise<ResolvedImage>,
+) {
+  const updates: CardElementUpdateRequest[] = [];
+  const sender = new CardSender({
+    chatId: "oc_1",
+    create: r.create,
+    send: r.send,
+    content: r.content,
+    finalize: r.finalize,
+    fallback: fb.sink,
+    now: r.now,
+    wait: r.wait,
+    resolveImage: { resolve: resolve as any },
+    updateElement: async (req) => {
+      updates.push(req);
+      return { ok: true };
+    },
+  });
+  return { sender, updates };
+}
+
+const tick = async () => {
+  for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0));
+};
+
+test("a successful upload swaps the placeholder element for an img element with the image_key", async () => {
+  const r = cardRecorder();
+  const fb = fakeFallback();
+  const { sender, updates } = makeImageSender(r, fb, async () => ({ kind: "image", imgKey: "img_xyz" }));
+  sender.streamUpdate("p ![a](artifact:a.png) q\n");
+  sender.streamCommit();
+  await sender.whenIdle();
+  expect(r.creates.map((c) => c.text)).toEqual(["p ", "🖼 a", " q\n"]); // prose, placeholder, prose
+  expect(updates).toHaveLength(1);
+  const el = JSON.parse(updates[0].element);
+  expect(el).toMatchObject({ tag: "img", img_key: "img_xyz" });
+  expect(updates[0].element).not.toContain("artifact:"); // no raw ref leaks into the card
+});
+
+test("an over-limit / failed upload degrades that image card to a link/text element; prose continues", async () => {
+  const r = cardRecorder();
+  const fb = fakeFallback();
+  const { sender, updates } = makeImageSender(r, fb, async () => ({ kind: "link", markdown: "[diagram](https://console/x)" }));
+  sender.streamUpdate("before ![d](artifact:d.png) after\n");
+  sender.streamCommit();
+  await sender.whenIdle();
+  // prose cards intact (turn NOT fully fallen back), placeholder swapped to a markdown link element
+  expect(r.creates.map((c) => c.text)).toEqual(["before ", "🖼 d", " after\n"]);
+  expect(fb.streamUpdates).toHaveLength(0); // not a whole-turn text fallback
+  const el = JSON.parse(updates[0].element);
+  expect(el).toMatchObject({ tag: "markdown", content: "[diagram](https://console/x)" });
+});
+
+test("the upload is non-blocking: prose after the image is sent BEFORE the upload resolves", async () => {
+  const r = cardRecorder();
+  const fb = fakeFallback();
+  let release!: (v: ResolvedImage) => void;
+  const gate = new Promise<ResolvedImage>((res) => (release = res));
+  const { sender, updates } = makeImageSender(r, fb, () => gate);
+  sender.streamUpdate("p ![a](artifact:a.png) q\n");
+  await tick(); // driver runs to completion; the image task is parked on `gate`
+  expect(r.creates.map((c) => c.text)).toEqual(["p ", "🖼 a", " q\n"]); // prose-after already sent
+  expect(updates).toHaveLength(0); // upload not resolved → element not swapped yet (non-blocking)
+  release({ kind: "image", imgKey: "img_1" });
+  sender.streamCommit();
+  await sender.whenIdle(); // the commit barrier drains the pending image task
+  expect(updates).toHaveLength(1);
+});
+
+test("whenIdle waits for in-flight image tasks (commit barrier never releases mid-upload)", async () => {
+  const r = cardRecorder();
+  const fb = fakeFallback();
+  let resolved = false;
+  const { sender, updates } = makeImageSender(r, fb, async () => {
+    await new Promise((res) => setTimeout(res, 0));
+    resolved = true;
+    return { kind: "image", imgKey: "k" };
+  });
+  sender.streamUpdate("![a](artifact:a.png)\n");
+  sender.streamCommit();
+  await sender.whenIdle();
+  expect(resolved).toBe(true);
+  expect(updates).toHaveLength(1);
+});
+
+// ── C4: non-streaming one-shot rich render (sendOneShot) ────────────────────────
+
+test("sendOneShot renders a prose-only reply as a single finalized markdown card", async () => {
+  const r = cardRecorder();
+  const s = makeSender(r, fakeFallback());
+  s.sendOneShot("hello\nworld\n");
+  await s.whenIdle();
+  expect(r.creates.map((c) => c.text)).toEqual(["hello\nworld\n"]);
+  expect(r.finalizes).toHaveLength(1);
+});
+
+test("sendOneShot renders prose + artifact image as ordered prose/image/prose cards", async () => {
+  const r = cardRecorder();
+  const s = makeSender(r, fakeFallback());
+  s.sendOneShot("see ![a](artifact:a.png) done\n");
+  await s.whenIdle();
+  expect(r.creates.map((c) => c.text)).toEqual(["see ", "🖼 a", " done\n"]);
+});
+
+test("sendOneShot keeps a code-guarded token literal (no image card)", async () => {
+  const r = cardRecorder();
+  const s = makeSender(r, fakeFallback());
+  const code = "```\n![x](artifact:x.png)\n```\n";
+  s.sendOneShot(code);
+  await s.whenIdle();
+  expect(r.creates.map((c) => c.text)).toEqual([code]);
+});
+
+test("sendOneShot uploads + swaps the image element (C3 path) in non-streaming mode", async () => {
+  const r = cardRecorder();
+  const fb = fakeFallback();
+  const { sender, updates } = makeImageSender(r, fb, async () => ({ kind: "image", imgKey: "img_one" }));
+  sender.sendOneShot("p ![a](artifact:a.png) q\n");
+  await sender.whenIdle();
+  expect(r.creates.map((c) => c.text)).toEqual(["p ", "🖼 a", " q\n"]);
+  expect(JSON.parse(updates[0].element)).toMatchObject({ tag: "img", img_key: "img_one" });
+});
+
+// ── C4 follow-up: NO raw SDK message / Error / ref / image_key in any CardKit log ───────────────
+
+const SECRET_MSG = "artifact://owner/SECRET.png image_key=KK99 leaked";
+const assertClean = (logs: string[]) => {
+  const blob = logs.join("\n");
+  expect(blob).not.toContain("SECRET");
+  expect(blob).not.toContain("artifact:");
+  expect(blob).not.toContain("image_key");
+  expect(blob).not.toContain("KK99");
+};
+
+test("create failure: the secret-laden SDK message is NOT logged (code only)", async () => {
+  const logs: string[] = [];
+  const r = cardRecorder({ createImpl: () => ({ ok: false, code: 1, message: SECRET_MSG }) });
+  const s = makeSender(r, fakeFallback(), { log: (m) => logs.push(m) });
+  s.streamUpdate("hello");
+  s.streamCommit();
+  await s.whenIdle();
+  assertClean(logs);
+  expect(logs.join("\n")).toContain("(code 1)"); // numeric code is allowed
+});
+
+test("a thrown SDK Error during create/send is logged generically (message dropped)", async () => {
+  const logs: string[] = [];
+  const r = cardRecorder({ createImpl: () => { throw new Error(`boom ${SECRET_MSG}`); } });
+  const s = makeSender(r, fakeFallback(), { log: (m) => logs.push(m) });
+  s.streamUpdate("hi");
+  s.streamCommit();
+  await s.whenIdle();
+  assertClean(logs);
+  expect(logs.join("\n")).toContain("create/send error");
+});
+
+test("content + finalize failures never log the SDK message", async () => {
+  const logs: string[] = [];
+  const r = cardRecorder({
+    contentImpl: () => ({ ok: false, code: 2, message: SECRET_MSG }),
+    finalizeImpl: () => ({ ok: false, code: 3, message: SECRET_MSG }),
+  });
+  const s = makeSender(r, fakeFallback(), { log: (m) => logs.push(m) });
+  s.streamUpdate("a");
+  await s.whenIdle();
+  s.streamUpdate("ab"); // forces a content edit (which fails with the secret message)
+  s.streamCommit();
+  await s.whenIdle();
+  assertClean(logs);
+});
+
+test("image element update failure logs code only, never the SDK message", async () => {
+  const logs: string[] = [];
+  const r = cardRecorder();
+  const sender = new CardSender({
+    chatId: "oc_1",
+    create: r.create,
+    send: r.send,
+    content: r.content,
+    finalize: r.finalize,
+    fallback: fakeFallback().sink,
+    now: r.now,
+    wait: r.wait,
+    log: (m) => logs.push(m),
+    resolveImage: { resolve: async () => ({ kind: "image", imgKey: "img_1" }) },
+    updateElement: async () => ({ ok: false, code: 7, message: SECRET_MSG }),
+  });
+  sender.sendOneShot("p ![a](artifact:a.png) q\n");
+  await sender.whenIdle();
+  assertClean(logs);
+});

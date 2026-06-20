@@ -13,8 +13,17 @@ import { loadFeishuConfig } from "./config";
 import { FeishuChannel } from "./feishu-channel";
 import { createFeishuClient, LarkConsumer, sdkDownloadImage } from "./consumer";
 import { LarkSender, sdkSend, sdkUpdate } from "./sender";
-import { CardSender, sdkCardCreate, sdkCardSend, sdkCardContent, sdkCardFinalize, type CardSenderOptions } from "./card-sender";
+import { CardSender, sdkCardCreate, sdkCardSend, sdkCardContent, sdkCardFinalize, sdkCardElementUpdate, type CardSenderOptions } from "./card-sender";
+import { createImageResolver, readArtifactImage, sdkUploadImage, consoleViewerUrl } from "./card-image";
 import { FeishuChannelController } from "./controller";
+
+/** Context for resolving `artifact:` images on a bound mesh chat (C3). p2p chats omit it. */
+export interface OutboundImageContext {
+  root: string;
+  mesh: string;
+  /** Author agent for a bare `artifact:<file>` ref (the mesh's router). */
+  defaultAgent: string;
+}
 
 export interface BuildFeishuChannelOpts {
   root: string;
@@ -29,8 +38,19 @@ export function buildFeishuChannel(mesh: MeshGateway, opts: BuildFeishuChannelOp
   const cfg = loadFeishuConfig(opts.root, log);
   if (!cfg) return undefined;
   const client = createFeishuClient(cfg);
+  // Router id per mesh, for resolving bare `artifact:<file>` refs to the author's artifact dir (C3).
+  const routerOf = (meshName: string): string => {
+    try {
+      return mesh.routerOf(meshName);
+    } catch {
+      return ""; // mesh not defined/running → bare artifact: refs degrade gracefully
+    }
+  };
   const senders = new Map(
-    cfg.bindings.map((binding) => [binding.chatId, createOutboundSender(client, cfg, binding.chatId, log)]),
+    cfg.bindings.map((binding) => [
+      binding.chatId,
+      createOutboundSender(client, cfg, binding.chatId, log, { root: opts.root, mesh: binding.mesh, defaultAgent: routerOf(binding.mesh) }),
+    ]),
   );
   return new FeishuChannel({
     mesh,
@@ -56,10 +76,11 @@ export function buildFeishuChannel(mesh: MeshGateway, opts: BuildFeishuChannelOp
   });
 }
 
-/** Build the outbound sink for one bound chat. Default path is the CardKit streaming `CardSender`
- *  wrapping a text `LarkSender` as its fallback; `outbound.cardkit=false` (or `streaming=false`)
- *  selects the plain text sender. No client-version probing — CardKit is the advertised default. */
-export function createOutboundSender(client: lark.Client, cfg: FeishuChannelConfig, chatId: string, log: (msg: string) => void): OutboundSink {
+/** Build the outbound sink for one bound chat. Default path is the CardKit `CardSender` wrapping a text
+ *  `LarkSender` as its fallback. Only `outbound.cardkit=false` selects the plain text `LarkSender`;
+ *  `streaming=false` still uses the `CardSender` (FeishuChannel routes it to `flush()→sendOneShot()` for
+ *  a non-streaming rich one-shot). No client-version probing — CardKit is the advertised default. */
+export function createOutboundSender(client: lark.Client, cfg: FeishuChannelConfig, chatId: string, log: (msg: string) => void, image?: OutboundImageContext): OutboundSink {
   const textSender = new LarkSender({
     chatId,
     send: sdkSend(client),
@@ -69,16 +90,33 @@ export function createOutboundSender(client: lark.Client, cfg: FeishuChannelConf
     maxEditsPerMessage: cfg.outbound.maxEditsPerMessage,
     log,
   });
-  const streamingOn = cfg.outbound.streaming !== false;
-  const cardkitOn = cfg.outbound.cardkit !== false;
-  if (!streamingOn || !cardkitOn) return textSender;
-  return new CardSender(cardSenderOptions(client, cfg, chatId, textSender, log));
+  // CardKit is the rich path. Build a CardSender whenever cardkit is enabled — INCLUDING when
+  // outbound.streaming=false: FeishuChannel.useStreaming() then routes the turn to flush()→sendOneShot
+  // (a non-streaming one-shot rich render), so a non-streaming binding still gets markdown + image
+  // cards. Only an explicit cardkit=false falls back to the plain text LarkSender.
+  if (cfg.outbound.cardkit === false) return textSender;
+  return new CardSender(cardSenderOptions(client, cfg, chatId, textSender, log, image));
 }
 
 /** Build the CardSender options for a binding. The card path gets the configured timing — the hard
  *  inter-op gap (minIntervalMs) and the per-card edit gap (from outbound.streamMinEditIntervalMs) —
  *  which were previously only wired to the text fallback. Exported so wiring is unit-testable. */
-export function cardSenderOptions(client: lark.Client, cfg: FeishuChannelConfig, chatId: string, fallback: OutboundSink, log: (msg: string) => void): CardSenderOptions {
+export function cardSenderOptions(client: lark.Client, cfg: FeishuChannelConfig, chatId: string, fallback: OutboundSink, log: (msg: string) => void, image?: OutboundImageContext): CardSenderOptions {
+  // C3: on a bound mesh chat, wire artifact-image resolution (B1: in-process direct read) + upload +
+  // element swap. Absent (p2p) → the sender keeps the C2 placeholder-only behavior.
+  const imageDeps = image
+    ? {
+        resolveImage: createImageResolver({
+          mesh: image.mesh,
+          defaultAgent: image.defaultAgent,
+          readImage: readArtifactImage(image.root),
+          upload: sdkUploadImage(client),
+          viewerUrl: consoleViewerUrl(process.env.MESH_CONSOLE_URL),
+          log,
+        }),
+        updateElement: sdkCardElementUpdate(client),
+      }
+    : {};
   return {
     chatId,
     create: sdkCardCreate(client),
@@ -89,6 +127,7 @@ export function cardSenderOptions(client: lark.Client, cfg: FeishuChannelConfig,
     minIntervalMs: cfg.outbound.minIntervalMs,
     minEditIntervalMs: cfg.outbound.streamMinEditIntervalMs,
     log,
+    ...imageDeps,
   };
 }
 

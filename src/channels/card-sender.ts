@@ -20,11 +20,13 @@
 import * as lark from "@larksuiteoapi/node-sdk";
 import type { OutboundSink, SegmentBreak } from "./feishu-channel";
 import { safeUuid, defaultIdempotencyKey } from "./sender";
+import { planOutbound, type ImageBoundary } from "./stream-segmenter";
+import { imageElement, markdownElement, type ImageResolver } from "./card-image";
 
 /** Why a card is being finalized. Card finalization is unified through one path so tool-call
  *  boundaries, size rollover, the streaming-window rollover, and the turn boundary all behave
  *  identically w.r.t. sequence management and fallback accounting. */
-export type FinalizeReason = "segment_break" | "size_rollover" | "stream_timeout_rollover" | "turn_commit";
+export type FinalizeReason = "segment_break" | "size_rollover" | "stream_timeout_rollover" | "turn_commit" | "image_boundary";
 
 export interface CardCreateRequest {
   /** The markdown element id the content/finalize ops will target. */
@@ -85,6 +87,23 @@ export type CardSendFn = (req: CardSendRequest) => Promise<CardSendResult>;
 export type CardContentFn = (req: CardContentRequest) => Promise<CardContentResult>;
 export type CardFinalizeFn = (req: CardFinalizeRequest) => Promise<CardFinalizeResult>;
 
+/** Replace a whole element on a card (C3: swap an image placeholder for the uploaded `img`, or a
+ *  degrade link/text). `element` is the full element JSON string; sequence is the shared monotonic
+ *  counter; uuid is the stable idempotency key. */
+export interface CardElementUpdateRequest {
+  cardId: string;
+  elementId: string;
+  element: string;
+  sequence: number;
+  uuid: string;
+}
+export interface CardElementUpdateResult {
+  ok: boolean;
+  code?: number;
+  message?: string;
+}
+export type CardElementUpdateFn = (req: CardElementUpdateRequest) => Promise<CardElementUpdateResult>;
+
 /** Feishu rejects a card op whose sequence is not strictly greater than the last applied one. */
 export const CARD_SEQUENCE_ERROR_CODE = 300317;
 
@@ -124,6 +143,16 @@ export interface CardSenderOptions {
   /** Derive the card summary (chat-list / notification text) from the card body. Centralized so it
    *  can be tuned later. Default {@link defaultCardSummary}. */
   cardSummary?: (body: string) => string;
+  /** Render the markdown shown on the standalone card emitted at an artifact-image boundary (C2). C2
+   *  only reserves the position with a placeholder; C3 turns it into the uploaded `img` element.
+   *  Default {@link defaultImagePlaceholder}. */
+  imagePlaceholder?: (image: ImageBoundary) => string;
+  /** C3: resolve an artifact image boundary to an uploaded image_key (or a degrade link/text). When set
+   *  WITH `updateElement`, the sender posts the placeholder card immediately (non-blocking) and swaps in
+   *  the result asynchronously once the upload resolves. Absent → C2 behavior (placeholder card only). */
+  resolveImage?: ImageResolver;
+  /** C3: replace the placeholder card's element with the resolved `img` (or degrade) element. */
+  updateElement?: CardElementUpdateFn;
   log?: (msg: string) => void;
   wait?: (ms: number) => Promise<void>;
   now?: () => number;
@@ -152,6 +181,12 @@ export class CardSender implements OutboundSink {
   private readonly enableToolHint: boolean;
   private readonly toolHint: (meta?: SegmentBreak) => string;
   private readonly cardSummary: (body: string) => string;
+  private readonly imagePlaceholder: (image: ImageBoundary) => string;
+  private readonly resolveImage?: ImageResolver;
+  private readonly updateElement?: CardElementUpdateFn;
+  /** In-flight async image resolve/upload tasks (C3, non-blocking). whenIdle() drains them so the commit
+   *  barrier waits for the turn's images before releasing. */
+  private readonly pendingImages = new Set<Promise<void>>();
   private readonly maxCardBytes: number;
   private readonly maxCardAgeMs: number;
   private readonly log: (msg: string) => void;
@@ -185,6 +220,10 @@ export class CardSender implements OutboundSink {
   private liveOpenedAt = 0;
   /** Chars already sealed into PRIOR cards of THIS turn (cross-card rollover). */
   private streamBaseOffset = 0;
+  /** Cap on how far the current prose card may show (C2): the next artifact-image boundary's start, or
+   *  a forming `![` token in the open tail. Infinity for a prose-only turn → body == full.slice(base),
+   *  i.e. byte-identical to the pre-C2 single-element behavior. Recomputed each driver iteration. */
+  private capOffset = Number.POSITIVE_INFINITY;
   /** Monotonic sequence counter — strictly increasing across the whole sender lifetime, which is
    *  also strictly increasing within every card it ever touches. */
   private sequence = 0;
@@ -217,6 +256,9 @@ export class CardSender implements OutboundSink {
     this.enableToolHint = opts.enableToolHint ?? true;
     this.toolHint = opts.toolHint ?? defaultToolHint;
     this.cardSummary = opts.cardSummary ?? defaultCardSummary;
+    this.imagePlaceholder = opts.imagePlaceholder ?? defaultImagePlaceholder;
+    this.resolveImage = opts.resolveImage;
+    this.updateElement = opts.updateElement;
     this.maxCardBytes = opts.maxCardBytes ?? DEFAULT_MAX_CARD_BYTES;
     this.maxCardAgeMs = opts.maxCardAgeMs ?? DEFAULT_MAX_CARD_AGE_MS;
     this.log = opts.log ?? (() => {});
@@ -257,6 +299,17 @@ export class CardSender implements OutboundSink {
     void this.driveStream();
   }
 
+  /** Non-streaming one-shot RICH render of a final reply (design §4.7). Opt-2-consistent: it reuses the
+   *  SAME card-boundary path as streaming (one update + commit) — prose markdown cards + artifact-image
+   *  boundary cards — rather than a same-card multi-element card. With only one update there are no
+   *  incremental edits, so it reads as a non-streaming send. `key` is unused (cards carry their own
+   *  idempotency uuids). */
+  sendOneShot(text: string, _key?: string): void {
+    if (this.stopped) return;
+    this.streamUpdate(text);
+    this.streamCommit();
+  }
+
   /** Turn boundary: show the latest text, finalize the card, and reset for the next turn. */
   streamCommit(): void {
     if (this.stopped) return;
@@ -270,10 +323,17 @@ export class CardSender implements OutboundSink {
 
   whenIdle(): Promise<void> {
     const mine = this.streamBusy ? new Promise<void>((r) => this.idleResolvers.push(r)) : Promise.resolve();
-    return mine.then(() => {
-      const fb = this.fallback as { whenIdle?: () => Promise<void> };
-      return fb.whenIdle ? fb.whenIdle() : undefined;
-    });
+    return mine
+      .then(() => this.drainImages()) // wait for in-flight C3 image upload/replace tasks too
+      .then(() => {
+        const fb = this.fallback as { whenIdle?: () => Promise<void> };
+        return fb.whenIdle ? fb.whenIdle() : undefined;
+      });
+  }
+
+  /** Await all in-flight image tasks. Loops in case the driver was still adding tasks as we entered. */
+  private async drainImages(): Promise<void> {
+    while (this.pendingImages.size) await Promise.allSettled([...this.pendingImages]);
   }
 
   stop(): void {
@@ -304,7 +364,12 @@ export class CardSender implements OutboundSink {
         }
 
         const full = this.streamPending ?? "";
-        const body = full.slice(this.streamBaseOffset);
+        // C2: plan the next artifact-image card boundary + how far prose may safely show now. For a
+        // prose-only turn this is { proseCap: full.length } ⇒ body == full.slice(base), i.e. byte-for-byte
+        // the pre-C2 single-element behavior. `final` lets a turn-commit flush a trailing image.
+        const plan = planOutbound(full, this.streamBaseOffset, { final: this.streamCommitting });
+        this.capOffset = plan.proseCap;
+        const body = this.bodyOf(full);
         // Lazy: an armed hint alone does NOT force a card mid-stream — it prefixes the next card that
         // body warrants. Only at a boundary (below) is a hint-only card materialized.
         const liveUpToDate = this.live ? this.live.sentText === body : body.trim() === "";
@@ -332,6 +397,24 @@ export class CardSender implements OutboundSink {
           }
           await this.doStreamOp(full);
           continue; // re-loop; the op may have triggered a fallback
+        }
+
+        // C2: the prose up to the next artifact image is fully shown (or there is none before it) → seal
+        // the prose card, send a standalone image/placeholder card, and advance PAST the image token so
+        // prose continues on a fresh card. Reuses the existing seal/offset machinery (Opt-2: images are
+        // card boundaries, not same-card elements). A failed image op degrades to text like any other op.
+        if (plan.image) {
+          if (this.live) {
+            const minGap = this.streamCommitting || this.streamSegmentBreaking ? this.minIntervalMs : this.minEditIntervalMs;
+            const waitMs = this.lastEditAt + minGap - this.now();
+            if (waitMs > 0) {
+              await this.wait(waitMs);
+              continue;
+            }
+            await this.finalizeCurrentCard("image_boundary"); // seals prose card; advances base to image.start
+          }
+          if (await this.emitImageCard(plan.image)) this.streamBaseOffset = plan.image.end; // skip the token text
+          continue; // a failed emit fell back (drains next loop); otherwise prose continues on a fresh card
         }
 
         // At a boundary with a hint armed but no body/card: materialize a hint-only card so the tool
@@ -386,9 +469,86 @@ export class CardSender implements OutboundSink {
     }
   }
 
+  /** The prose body the current card may show: from the turn's cross-card base up to the C2 image cap. */
+  private bodyOf(full: string): string {
+    return full.slice(this.streamBaseOffset, this.capOffset < full.length ? this.capOffset : full.length);
+  }
+
+  /** Emit a standalone card at an artifact-image boundary (C2): create + send + finalize a static card
+   *  carrying the image placeholder. C3 replaces the placeholder with the uploaded `img` element. On any
+   *  failed op, degrade to the text fallback (the remainder, incl. the literal image markdown, is never
+   *  lost). Returns true iff the placeholder card was sent. */
+  private async emitImageCard(image: ImageBoundary): Promise<boolean> {
+    const text = this.imagePlaceholder(image);
+    try {
+      const cr = await this.create({ elementId: this.elementId, text });
+      if (!cr.ok || !cr.cardId) {
+        this.lastEditAt = this.now();
+        this.log(`feishu card: image placeholder create failed (code ${cr.code ?? "?"}); falling back to text`);
+        this.giveUp();
+        return false;
+      }
+      const sr = await this.send({ chatId: this.chatId, cardId: cr.cardId, uuid: cardSendUuid(cr.cardId) });
+      this.lastEditAt = this.now();
+      if (!sr.ok || !sr.messageId) {
+        this.log(`feishu card: image placeholder send failed (code ${sr.code ?? "?"}); falling back to text`);
+        this.giveUp();
+        return false;
+      }
+      // C3: with an image resolver, post the placeholder NOW (above) and swap in the uploaded img (or a
+      // degrade link/text) ASYNCHRONOUSLY — so the upload never blocks the prose that follows. The task
+      // is tracked so the commit barrier (whenIdle) waits for it. Without a resolver this is C2: finalize
+      // the placeholder card immediately.
+      if (this.resolveImage && this.updateElement) {
+        const task = this.replaceImage(cr.cardId, image).finally(() => this.pendingImages.delete(task));
+        this.pendingImages.add(task);
+        return true;
+      }
+      const seq = this.nextSeq();
+      const r = await this.finalize({ cardId: cr.cardId, sequence: seq, uuid: stableCardKey(cr.cardId, seq), summary: this.cardSummary(text) });
+      this.lastEditAt = this.now();
+      if (!r.ok) this.log(`feishu card: image placeholder finalize failed (code ${r.code ?? "?"}); left in streaming state`);
+      return true;
+    } catch {
+      this.lastEditAt = this.now();
+      this.log("feishu card: image placeholder error; falling back to text");
+      this.giveUp();
+      return false;
+    }
+  }
+
+  /** C3 async task: resolve the artifact image, swap the placeholder card's element for the uploaded
+   *  `img` (or a degrade link/text markdown element), then finalize the card. Best-effort and isolated:
+   *  a failure degrades ONLY this image card (never the turn) and never throws into the driver. */
+  private async replaceImage(cardId: string, image: ImageBoundary): Promise<void> {
+    const elId = this.elementId;
+    let summary = this.imagePlaceholder(image);
+    try {
+      const resolved = await this.resolveImage!.resolve(image);
+      if (this.stopped) return;
+      const el = resolved.kind === "image" ? imageElement(elId, resolved.imgKey, image.alt) : markdownElement(elId, resolved.markdown);
+      if (resolved.kind !== "image") summary = resolved.markdown;
+      const seq = this.nextSeq();
+      const r = await this.updateElement!({ cardId, elementId: elId, element: JSON.stringify(el), sequence: seq, uuid: stableCardKey(cardId, seq) });
+      this.lastEditAt = this.now();
+      // code only — never the SDK message (which could carry a path), the ref, the bytes, or the image_key
+      if (!r.ok) this.log(`feishu card: image element update failed (code ${r.code ?? "?"}); placeholder kept`);
+    } catch {
+      this.log("feishu card: image resolve/update error; placeholder kept");
+    }
+    if (this.stopped) return;
+    try {
+      const seq = this.nextSeq();
+      await this.finalize({ cardId, sequence: seq, uuid: stableCardKey(cardId, seq), summary: this.cardSummary(summary) });
+      this.lastEditAt = this.now();
+    } catch {
+      this.log("feishu card: image finalize error; left in streaming state");
+    }
+  }
+
   /** Perform exactly one streaming op (create+send, or a content edit) toward `full`. */
   private async doStreamOp(full: string): Promise<void> {
-    const body = full.slice(this.streamBaseOffset);
+    const body = this.bodyOf(full);
 
     if (!this.live) {
       if (body.trim() === "" && this.currentHint === undefined) return; // nothing to show
@@ -412,7 +572,7 @@ export class CardSender implements OutboundSink {
         this.liveOpenedAt = this.now();
       } catch (e) {
         this.lastEditAt = this.now();
-        this.log(`feishu card: create/send error: ${String(e)}; falling back to text`);
+        this.log("feishu card: create/send error; falling back to text");
         this.giveUp();
       }
       return;
@@ -432,7 +592,7 @@ export class CardSender implements OutboundSink {
       }
     } catch (e) {
       this.lastEditAt = this.now();
-      this.log(`feishu card: content update error: ${String(e)}; falling back to text`);
+      this.log("feishu card: content update error; falling back to text");
       this.giveUp();
     }
   }
@@ -474,7 +634,7 @@ export class CardSender implements OutboundSink {
         this.liveOpenedAt = this.now();
       } catch (e) {
         this.lastEditAt = this.now();
-        this.log(`feishu card: create/send error: ${String(e)}; falling back to text`);
+        this.log("feishu card: create/send error; falling back to text");
         this.giveUp();
         return;
       }
@@ -491,7 +651,7 @@ export class CardSender implements OutboundSink {
         this.live.sentText = split.headText;
       } catch (e) {
         this.lastEditAt = this.now();
-        this.log(`feishu card: content update error: ${String(e)}; falling back to text`);
+        this.log("feishu card: content update error; falling back to text");
         this.giveUp();
         return;
       }
@@ -521,7 +681,7 @@ export class CardSender implements OutboundSink {
         if (!r.ok) this.log(`feishu card: close-fence edit failed${codeInfo(r)}; sealing card unbalanced`);
       } catch (e) {
         this.lastEditAt = this.now();
-        this.log(`feishu card: close-fence edit error: ${String(e)}; sealing card unbalanced`);
+        this.log("feishu card: close-fence edit error; sealing card unbalanced");
       }
       // A failed close is cosmetic (body already shown) — do not give up or re-send confirmed body.
     }
@@ -579,7 +739,7 @@ export class CardSender implements OutboundSink {
       if (!r.ok) this.log(`feishu card: finalize failed${codeInfo(r)}; card left in streaming state`);
     } catch (e) {
       this.lastEditAt = this.now();
-      this.log(`feishu card: finalize error: ${String(e)}; card left in streaming state`);
+      this.log("feishu card: finalize error; card left in streaming state");
     }
   }
 
@@ -641,6 +801,7 @@ export class CardSender implements OutboundSink {
     this.pendingContinuation = undefined;
     this.live = undefined;
     this.streamBaseOffset = 0;
+    this.capOffset = Number.POSITIVE_INFINITY;
     this.fellBack = false;
     this.fallbackOffset = 0;
     this.fbPending = undefined;
@@ -654,8 +815,16 @@ export function defaultToolHint(meta?: SegmentBreak): string {
   return meta?.toolName ? `🔧 调用工具：${meta.toolName}` : "🔧 正在调用工具";
 }
 
+/** Default placeholder markdown for the standalone card emitted at an artifact-image boundary (C2). C3
+ *  replaces this with the uploaded `img` element; the artifact ref is intentionally not shown. */
+export function defaultImagePlaceholder(image: ImageBoundary): string {
+  return image.alt ? `🖼 ${image.alt}` : "🖼 image";
+}
+
+/** Numeric code ONLY for logs — never the SDK `message`/`msg` (which can carry a path/secret/marker).
+ *  The result type keeps `message` internally for callers that need it; it just never reaches a log. */
 function codeInfo(r: { code?: number; message?: string }): string {
-  return `${r.code !== undefined ? ` (code ${r.code})` : ""}${r.message ? `: ${r.message}` : ""}`;
+  return r.code !== undefined ? ` (code ${r.code})` : "";
 }
 
 /** Unique idempotency key for the ONE interactive message that sends a card. Keyed on the card id
@@ -957,6 +1126,19 @@ export function sdkCardFinalize(client: lark.Client): CardFinalizeFn {
         sequence: req.sequence,
         uuid: req.uuid,
       },
+    });
+    const code = res.code ?? 0;
+    return { ok: code === 0, code, message: res.msg };
+  };
+}
+
+/** C3: replace a whole element on a card (swap the image placeholder for the uploaded `img`, or a
+ *  degrade link/text element) via `cardkit.v1.cardElement.update`. */
+export function sdkCardElementUpdate(client: lark.Client): CardElementUpdateFn {
+  return async (req: CardElementUpdateRequest): Promise<CardElementUpdateResult> => {
+    const res = await client.cardkit.v1.cardElement.update({
+      path: { card_id: req.cardId, element_id: req.elementId },
+      data: { element: req.element, sequence: req.sequence, uuid: req.uuid },
     });
     const code = res.code ?? 0;
     return { ok: code === 0, code, message: res.msg };

@@ -52,6 +52,10 @@ export interface OutboundSink {
    *  this after a hard commit so the next turn doesn't race an async finalize. Absent => synchronous
    *  sink; the channel needs no commit barrier. */
   whenIdle?(): Promise<void>;
+  /** One-shot RICH render of a final reply (the non-streaming turn boundary), reusing the same
+   *  segmenter / image-resolver semantics as streaming (prose markdown cards + artifact-image boundary
+   *  cards). Optional — when absent the channel falls back to plain `enqueue`. */
+  sendOneShot?(text: string, key?: string): void;
 }
 
 /** What the channel needs from an inbound source (LarkConsumer satisfies it). */
@@ -920,7 +924,11 @@ export class FeishuChannel implements Channel {
     rt.currentMessageStart = 0;
     rt.seenToolCalls.clear();
     if (!text) return; // never send an empty flush
-    rt.sender.enqueue(text, this.idempotencyKey(rt.binding, rt.flushSeq++, text));
+    const key = this.idempotencyKey(rt.binding, rt.flushSeq++, text);
+    // Non-streaming turn boundary: a CardKit sink renders the final reply RICH in one shot (same
+    // segmenter/image semantics as streaming); a plain text sink just enqueues it.
+    if (rt.sender.sendOneShot) rt.sender.sendOneShot(text, key);
+    else rt.sender.enqueue(text, key);
   }
 
   /** Low-noise outbound-timing log. Never includes message text/content — only routing identifiers,
