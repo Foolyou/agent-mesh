@@ -76,9 +76,10 @@ export function buildFeishuChannel(mesh: MeshGateway, opts: BuildFeishuChannelOp
   });
 }
 
-/** Build the outbound sink for one bound chat. Default path is the CardKit streaming `CardSender`
- *  wrapping a text `LarkSender` as its fallback; `outbound.cardkit=false` (or `streaming=false`)
- *  selects the plain text sender. No client-version probing — CardKit is the advertised default. */
+/** Build the outbound sink for one bound chat. Default path is the CardKit `CardSender` wrapping a text
+ *  `LarkSender` as its fallback. Only `outbound.cardkit=false` selects the plain text `LarkSender`;
+ *  `streaming=false` still uses the `CardSender` (FeishuChannel routes it to `flush()→sendOneShot()` for
+ *  a non-streaming rich one-shot). No client-version probing — CardKit is the advertised default. */
 export function createOutboundSender(client: lark.Client, cfg: FeishuChannelConfig, chatId: string, log: (msg: string) => void, image?: OutboundImageContext): OutboundSink {
   const textSender = new LarkSender({
     chatId,
