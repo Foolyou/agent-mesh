@@ -181,21 +181,30 @@ try {
     if (await claudeInstall.isDisabled()) throw new Error("npm install action disabled after registry-unavailable row");
   });
 
-  await step("stale agent prompt shows running and newer installed versions with restart action", async () => {
-    await page.locator('.harness-modal .mhead .btn:has-text("close")').click();
-    await page.locator('.mrow:has-text("demo")').first().click().catch(() => {});
+  await step("harness row lists agents on the old version with a restart action", async () => {
+    // The install above set claude.runningAgentsUsingOldVersion = ["demo/router"]; the panel refreshes
+    // on the harnesses-changed store event. Old-version restart lives on the harness list page only —
+    // the conversation area no longer shows any harness upgrade prompt.
     await page.evaluate(() => (window as any).__meshStore.apply({ t: "harnesses-changed" }));
-    await page.waitForSelector('.stale-harness-note:has-text("running claude v0.44.0")', { timeout: 6000 });
-    await page.waitForSelector('.stale-harness-note:has-text("newer v0.44.0 installed")', { timeout: 6000 });
-    await page.waitForSelector('.stale-harness-note .btn:has-text("Restart agent")', { timeout: 5000 });
+    const claudeRowSel = '.harness-row:has-text("Claude")';
+    await page.waitForSelector(`${claudeRowSel} .harness-old-agents`, { timeout: 6000 });
+    await page.waitForSelector(`${claudeRowSel} .harness-old-agent-id:has-text("demo/router")`, { timeout: 6000 });
+    await page.waitForSelector(`${claudeRowSel} .harness-old-agents .btn:has-text("Restart agent")`, { timeout: 5000 });
   });
 
-  await step("force respawn clears stale prompt after reprobe refresh", async () => {
-    await page.locator('.stale-harness-note .btn:has-text("force")').click();
-    await page.waitForSelector('.stale-harness-note .btn:has-text("Force restart agent will lose current ACP session context")', { timeout: 5000 });
-    await page.locator('.stale-harness-note .btn:has-text("Force restart agent will lose current ACP session context")').click();
+  await step("force restart clears the old-version agent after refresh", async () => {
+    const claudeRowSel = '.harness-row:has-text("Claude")';
+    await page.locator(`${claudeRowSel} .harness-old-agents .btn:has-text("force")`).click();
+    await page.waitForSelector(`${claudeRowSel} .btn:has-text("Force restart agent will lose current ACP session context")`, { timeout: 5000 });
+    await page.locator(`${claudeRowSel} .btn:has-text("Force restart agent will lose current ACP session context")`).click();
     await page.evaluate(() => (window as any).__meshStore.apply({ t: "harnesses-changed" }));
-    await page.locator(".stale-harness-note").waitFor({ state: "detached", timeout: 5000 });
+    await page.locator(`${claudeRowSel} .harness-old-agents`).waitFor({ state: "detached", timeout: 5000 });
+  });
+
+  await step("conversation area has no harness upgrade prompt residue", async () => {
+    await page.locator('.harness-modal .mhead .btn:has-text("close")').click();
+    await page.locator('.mrow:has-text("demo")').first().click().catch(() => {});
+    if (await page.locator(".stale-harness-note").count()) throw new Error("conversation still shows a stale-harness note");
   });
 
   await step("self-installer shows copyable plain command, docs, reprobe, and no install button", async () => {

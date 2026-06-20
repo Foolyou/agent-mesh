@@ -61,6 +61,38 @@ test("HarnessRow omits the dual-version line when the harness is not installed",
   expect(html).toContain("missing — install required");
 });
 
+test("HarnessRow lists old-version agents with restart + force actions when a store is present", () => {
+  const html = renderToStaticMarkup(createElement(HarnessRow, {
+    row: probeRow({ id: "claude", label: "Claude", version: "0.42.0", toolVersion: "2.1.181", latest: "0.44.0", outdated: true, path: "/bin/claude-agent-acp", runningAgentsUsingOldVersion: ["demo/router", "demo/codex-1"] }),
+    onInstall: () => {},
+    onReprobe: () => {},
+    store: { respawnAgent: async () => ({}) } as unknown as Store,
+  }));
+  expect(html).toContain("harness-old-agents");
+  expect(html).toContain("demo/router");
+  expect(html).toContain("demo/codex-1");
+  expect(html).toContain("restart to adopt v0.44.0");
+  expect(html).toContain('aria-label="Restart demo/router after current turn"');
+  expect(html).toContain('aria-label="Force restart demo/router"');
+});
+
+test("HarnessRow omits the old-version list when there are none, or when no store is wired", () => {
+  const none = renderToStaticMarkup(createElement(HarnessRow, {
+    row: probeRow({ id: "claude", label: "Claude", version: "0.44.0", runningAgentsUsingOldVersion: [] }),
+    onInstall: () => {},
+    onReprobe: () => {},
+    store: { respawnAgent: async () => ({}) } as unknown as Store,
+  }));
+  expect(none).not.toContain("harness-old-agents");
+  // entries but no store (isolated render) → no restart UI
+  const noStore = renderToStaticMarkup(createElement(HarnessRow, {
+    row: probeRow({ id: "claude", label: "Claude", version: "0.44.0", runningAgentsUsingOldVersion: ["demo/router"] }),
+    onInstall: () => {},
+    onReprobe: () => {},
+  }));
+  expect(noStore).not.toContain("harness-old-agents");
+});
+
 test("HarnessPanel renders self-installer commands as copyable text without install buttons", () => {
   const html = renderToStaticMarkup(createElement(HarnessRow, {
     row: {

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Store } from "./store";
 import type { HarnessId, HarnessInstallEvent, HarnessProbeRow } from "../types";
-import { Btn } from "./ui";
+import { Btn, ConfirmButton } from "./ui";
 
 const HARNESS_ORDER: HarnessId[] = ["claude", "codex", "opencode", "kimi"];
 
@@ -103,7 +103,7 @@ export function HarnessPanel({ store, open, onClose }: { store: Store; open: boo
           <div className="harness-grid" aria-busy={loading}>
             {HARNESS_ORDER.map((id) => {
               const row = byId.get(id);
-              return row ? <HarnessRow key={id} row={row} onInstall={() => void startInstall(row)} onReprobe={() => void store.reprobeHarness(row.id).then(refresh)} /> : (
+              return row ? <HarnessRow key={id} row={row} store={store} onInstall={() => void startInstall(row)} onReprobe={() => void store.reprobeHarness(row.id).then(refresh)} /> : (
                 <div className="harness-row" key={id}>
                   <span className="harness-name">{id}</span>
                   <span className="harness-badge off">loading status</span>
@@ -123,7 +123,7 @@ export function HarnessPanel({ store, open, onClose }: { store: Store; open: boo
   );
 }
 
-export function HarnessRow({ row, onInstall, onReprobe }: { row: HarnessProbeRow; onInstall: () => void; onReprobe: () => void }) {
+export function HarnessRow({ row, onInstall, onReprobe, store }: { row: HarnessProbeRow; onInstall: () => void; onReprobe: () => void; store?: Store }) {
   const status = statusLabel(row);
   const installHint = row.installable === "self" ? row.installHint : undefined;
   const installDisabled = row.installable !== "npm";
@@ -150,6 +150,63 @@ export function HarnessRow({ row, onInstall, onReprobe }: { row: HarnessProbeRow
       </span>
       {installHint ? <SelfInstallerGuide row={row} command={installHint.command} docsUrl={installHint.docsUrl} onReprobe={onReprobe} /> : null}
       {installDisabled && !installHint ? <span id={descId} className="harness-desc">Use the copy command flow for self-installing harnesses; click docs from the self-installer guide.</span> : null}
+      {store && row.runningAgentsUsingOldVersion.length ? <OldVersionAgents row={row} store={store} /> : null}
+    </div>
+  );
+}
+
+// Agents still running an older adapter version — restart them to adopt the newer one. Lives on the
+// harness list page only (the conversation-area note was removed). Reuses the existing per-agent
+// respawn API (after-idle / force / cancel); no global notification surface.
+function OldVersionAgents({ row, store }: { row: HarnessProbeRow; store: Store }) {
+  const [pending, setPending] = useState<ReadonlySet<string>>(new Set());
+  const setEntryPending = (entry: string, on: boolean) =>
+    setPending((cur) => {
+      const next = new Set(cur);
+      if (on) next.add(entry);
+      else next.delete(entry);
+      return next;
+    });
+  const target = row.latest ?? row.version;
+  return (
+    <div className="harness-old-agents" role="group" aria-label={`Agents running an older ${row.id}`}>
+      <div className="harness-old-agents-title">
+        running an older {row.id}{target ? ` — restart to adopt v${target}` : ""}:
+      </div>
+      {row.runningAgentsUsingOldVersion.map((entry) => {
+        const slash = entry.indexOf("/");
+        const mesh = slash >= 0 ? entry.slice(0, slash) : entry;
+        const agent = slash >= 0 ? entry.slice(slash + 1) : entry;
+        const isPending = pending.has(entry);
+        return (
+          <div className="harness-old-agent" key={entry}>
+            <span className="harness-old-agent-id">{entry}</span>
+            {isPending ? (
+              <>
+                <span className="harness-old-agent-state">restart pending (after current turn)</span>
+                <Btn small kind="ghost" ariaLabel={`Cancel pending restart for ${entry}`} onClick={() => void store.respawnAgent(mesh, agent, "cancel").then(() => setEntryPending(entry, false))}>
+                  cancel
+                </Btn>
+              </>
+            ) : (
+              <>
+                <Btn small kind="go" ariaLabel={`Restart ${entry} after current turn`} onClick={() => void store.respawnAgent(mesh, agent, "after-idle").then(() => setEntryPending(entry, true))}>
+                  Restart agent
+                </Btn>
+                <ConfirmButton
+                  small
+                  kind="stop"
+                  confirmLabel="Force restart agent will lose current ACP session context (mailbox preserved). Continue?"
+                  ariaLabel={`Force restart ${entry}`}
+                  onConfirm={() => void store.respawnAgent(mesh, agent, "force").then(() => setEntryPending(entry, false))}
+                >
+                  force
+                </ConfirmButton>
+              </>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
