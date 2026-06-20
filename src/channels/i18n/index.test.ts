@@ -58,7 +58,7 @@ test("auth-required is the only [REQ]; errors are [FYI]; completed actions are [
   expect(t("feishu.cmd.stopDone", { mesh: "m" })).toBe("[DONE] Mesh stopped\nmesh: m\nstatus: stopped");
 });
 
-test("the en bundle covers every Category-A/C/card/tool key the migration will reference", () => {
+test("the en bundle covers every Category-A/C/card key the migration references (tool copy is team3-owned)", () => {
   const required = [
     "feishu.cmd.status", "feishu.cmd.startAlready", "feishu.cmd.startDone", "feishu.cmd.stopAlready",
     "feishu.cmd.stopDone", "feishu.cmd.restartDone", "feishu.cmd.newSessionRunning",
@@ -66,7 +66,7 @@ test("the en bundle covers every Category-A/C/card/tool key the migration will r
     "feishu.deliver.failed", "feishu.image.disabled", "feishu.image.unprocessable",
     "feishu.image.downloadFailed", "feishu.assistant.disabled", "feishu.assistant.busy",
     "feishu.assistant.failed", "feishu.auth.failed", "feishu.auth.required", "card.fallbackTitle",
-    "feishu.prompt.group", "feishu.prompt.p2p", "feishu.prompt.image", "tool.hint", "tool.hintNamed",
+    "feishu.prompt.group", "feishu.prompt.p2p", "feishu.prompt.image",
   ];
   for (const key of required) {
     expect(hasKey(key, "en")).toBe(true);

@@ -1,12 +1,11 @@
 // src/channels/i18n/en.ts — the default (and currently only) channel copy bundle (design:
 // docs/design/channel-i18n-prompts.md). Single flat file; keys are namespaced by surface
-// (`feishu.*` / `card.*` / `tool.*`). Generated notifications follow the mail-prompt style aligned with
-// mesh send_mail: `[REQ]` = operator/user action required, `[FYI]` = informational/error (no action),
+// (`feishu.*` / `card.*`). Generated notifications follow the mail-prompt style aligned with mesh
+// send_mail: `[REQ]` = operator/user action required, `[FYI]` = informational/error (no action),
 // `[DONE]` = a requested action completed. Mirrored user/agent conversation content is never in here.
 //
-// NOTE: call sites are migrated in C2 (feishu) / C3 (card + agent prompts). The `tool.*` entries are
-// TEMPORARY placeholders — team3's `feishu-tool-display` (`toolDisplayStrings`) is the canonical home for
-// tool-annotation copy; C3 folds these into it (or references it) so there is no permanent duplication.
+// Tool-annotation copy (Category B) is NOT here — it is team3-owned (`feishu-tool-display`'s
+// `toolDisplayStrings` / `toolDisplayCopy()` in feishu-channel.ts). This bundle never duplicates it.
 
 export const en = {
   // ── A. Feishu command replies (mail-prompt; status lines included per approved decision) ──
@@ -64,8 +63,4 @@ export const en = {
     "user_message: {text}",
   ].join("\n"),
   "feishu.prompt.image": "[the user sent an image]", // the {text} payload of an image-only turn
-
-  // ── B. Tool annotation — TEMPORARY placeholders pending team3's toolDisplayStrings (emoji team3-owned) ──
-  "tool.hint": "🔧 Calling tool",
-  "tool.hintNamed": "🔧 Calling tool: {toolName}",
 } satisfies Record<string, string>;
