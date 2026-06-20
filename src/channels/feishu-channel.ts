@@ -17,6 +17,7 @@ import type { MeshEvent, PromptImageRef } from "../acp/types";
 import type { Channel, FeishuChannelConfig, FeishuMeshBinding, InboundImageDownloader, InboundMsg, MeshGateway } from "./types";
 import { BoundedDedup } from "./dedup";
 import { applyAllowSeed, feishuChannelKey, passesAtGate, senderAuthorized, stripBotMention } from "./gating";
+import { t } from "./i18n";
 import type { AssistantGateway } from "./assistant-gateway";
 import { storeUploads, type UploadFileLike } from "../web/uploads";
 import { emptyFeishuAuth, feishuAuthPath, readFeishuAuth, updateFeishuAuth, type FeishuAuthFile } from "../auth-store";
@@ -442,7 +443,7 @@ export class FeishuChannel implements Channel {
       await this.mesh.promptRouter(rt.binding.mesh, feishuUserPrompt(text), images);
     } catch (e) {
       this.log(`feishu channel: promptRouter failed: ${String(e)}`);
-      rt.sender.enqueue(`消息已收到，但投递到 mesh "${rt.binding.mesh}" 失败：${shortError(e)}`);
+      rt.sender.enqueue(t("feishu.deliver.failed", { mesh: rt.binding.mesh, error: shortError(e) }));
     }
   }
 
@@ -453,12 +454,12 @@ export class FeishuChannel implements Channel {
   private async provisionImage(rt: BindingRuntime, m: InboundMsg, bucket: string): Promise<PromptImageRef[] | undefined> {
     if (!this.downloadImage || !this.root) {
       this.log(`feishu channel: inbound image but image handling not configured event=${m.eventId}`);
-      rt.sender.enqueue("收到一张图片，但当前未启用图片处理。");
+      rt.sender.enqueue(t("feishu.image.disabled"));
       return undefined;
     }
     if (!m.messageId || !m.imageKey) {
       this.log(`feishu channel: inbound image missing ids event=${m.eventId} hasMessageId=${!!m.messageId} hasImageKey=${!!m.imageKey}`);
-      rt.sender.enqueue("收到一张图片但无法处理。");
+      rt.sender.enqueue(t("feishu.image.unprocessable"));
       return undefined;
     }
     let refs: PromptImageRef[];
@@ -475,12 +476,12 @@ export class FeishuChannel implements Channel {
       // Safe log only: a raw SDK error message can embed the request path / file_key, so log the
       // error CLASS (never the message) to avoid leaking the resource key.
       this.log(`feishu channel: inbound image download/store failed event=${m.eventId} error=${errorClass(e)}`);
-      rt.sender.enqueue("收到一张图片但下载失败。");
+      rt.sender.enqueue(t("feishu.image.downloadFailed"));
       return undefined;
     }
     if (!refs.length) {
       this.log(`feishu channel: inbound image produced no refs event=${m.eventId}`);
-      rt.sender.enqueue("收到一张图片但无法处理。");
+      rt.sender.enqueue(t("feishu.image.unprocessable"));
       return undefined;
     }
     return refs;
@@ -490,7 +491,7 @@ export class FeishuChannel implements Channel {
   private async handleInboundImage(rt: BindingRuntime, m: InboundMsg): Promise<void> {
     const refs = await this.provisionImage(rt, m, rt.binding.mesh);
     if (!refs) return;
-    await this.deliverPrompt(rt, m.eventId, "用户发送了一张图片。", refs);
+    await this.deliverPrompt(rt, m.eventId, t("feishu.prompt.image"), refs);
   }
 
   // ── p2p -> Mesh Assistant (Phase 5) ─────────────────────────────────────────
@@ -515,7 +516,7 @@ export class FeishuChannel implements Channel {
     }
     if (!this.assistant || !this.assistant.available()) {
       this.log(`feishu channel: inbound p2p assistant unavailable event=${m.eventId}`);
-      rt.sender.enqueue("助手未启用。");
+      rt.sender.enqueue(t("feishu.assistant.disabled"));
       return;
     }
     // Busy-reject BEFORE any image download/store: the shared session is held by another source, so
@@ -523,12 +524,12 @@ export class FeishuChannel implements Channel {
     // keeps its own busy guard as a second defense for the enqueue→execute race.
     if (this.assistant.busy()) {
       this.log(`feishu channel: inbound p2p deferred — assistant busy event=${m.eventId}`);
-      rt.sender.enqueue("助手正在处理其他请求，请稍后再试。");
+      rt.sender.enqueue(t("feishu.assistant.busy"));
       return;
     }
     if (m.messageType === "image") {
       const refs = await this.provisionImage(rt, m, P2P_IMAGE_BUCKET);
-      if (refs) this.enqueueP2pTurn(rt, "用户发送了一张图片。", refs);
+      if (refs) this.enqueueP2pTurn(rt, t("feishu.prompt.image"), refs);
       return;
     }
     const text = m.text.trim();
@@ -563,7 +564,7 @@ export class FeishuChannel implements Channel {
     // p2p turns are serialized by the queue, so `busy` here means a non-Feishu source holds the turn.)
     if (this.assistant.busy()) {
       this.log(`feishu channel: p2p deferred — assistant busy chat=${rt.binding.chatId}`);
-      rt.sender.enqueue("助手正在处理其他请求，请稍后再试。");
+      rt.sender.enqueue(t("feishu.assistant.busy"));
       return;
     }
     this.activeAssistantRuntime = rt; // only now bind assistant updates to this chat
@@ -574,7 +575,7 @@ export class FeishuChannel implements Channel {
       // active turn — avoids enqueuing onto a sink that's being stopped.
       if (this.started && this.activeAssistantRuntime === rt) {
         this.log(`feishu channel: assistant prompt failed chat=${rt.binding.chatId} error=${errorClass(e)}`);
-        rt.sender.enqueue("消息已收到，但助手处理失败，请稍后再试。");
+        rt.sender.enqueue(t("feishu.assistant.failed"));
       }
     } finally {
       // prompt() resolving IS the turn-idle boundary: finalize the streamed reply.
@@ -606,7 +607,7 @@ export class FeishuChannel implements Channel {
     } catch (e) {
       // never surface the raw crypto/store error (could embed key material / paths)
       this.log(`feishu channel: failed to issue auth code event=${m.eventId} error=${errorClass(e)}`);
-      rt.sender.enqueue("授权失败，请稍后再试或联系管理员。");
+      rt.sender.enqueue(t("feishu.auth.failed"));
     }
   }
 
@@ -662,41 +663,39 @@ export class FeishuChannel implements Channel {
           rt.sender.enqueue(meshCommandHelp(meshName));
           return;
         case "status":
-          rt.sender.enqueue(`mesh "${meshName}" 当前状态：${status()}`);
+          rt.sender.enqueue(t("feishu.cmd.status", { mesh: meshName, status: status() }));
           return;
         case "start":
           if (status() === "running") {
-            rt.sender.enqueue(`mesh "${meshName}" 已在运行。`);
+            rt.sender.enqueue(t("feishu.cmd.startAlready", { mesh: meshName }));
             return;
           }
           await this.startBoundMesh(rt);
-          rt.sender.enqueue(`已启动 mesh "${meshName}"。`);
+          rt.sender.enqueue(t("feishu.cmd.startDone", { mesh: meshName }));
           return;
         case "stop":
           if (status() === "stopped") {
-            rt.sender.enqueue(`mesh "${meshName}" 已经是 stopped。`);
+            rt.sender.enqueue(t("feishu.cmd.stopAlready", { mesh: meshName }));
             return;
           }
           await this.mesh.stopMesh(meshName);
-          rt.sender.enqueue(`已停止 mesh "${meshName}"。`);
+          rt.sender.enqueue(t("feishu.cmd.stopDone", { mesh: meshName }));
           return;
         case "restart":
           if (status() !== "stopped") await this.mesh.stopMesh(meshName);
           await this.startBoundMesh(rt);
-          rt.sender.enqueue(`已重启 mesh "${meshName}"。`);
+          rt.sender.enqueue(t("feishu.cmd.restartDone", { mesh: meshName }));
           return;
         case "new-session": {
           const before = status();
           await this.mesh.newAllSessions(meshName);
-          rt.sender.enqueue(before === "running"
-            ? `已为 mesh "${meshName}" 开启新 session。`
-            : `已清空 mesh "${meshName}" 的 session；下次启动将使用新会话。`);
+          rt.sender.enqueue(t(before === "running" ? "feishu.cmd.newSessionRunning" : "feishu.cmd.newSessionStopped", { mesh: meshName }));
           return;
         }
       }
     } catch (e) {
       this.log(`feishu channel: command ${command.kind} failed: ${String(e)}`);
-      rt.sender.enqueue(`命令执行失败：${shortError(e)}`);
+      rt.sender.enqueue(t("feishu.cmd.failed", { error: shortError(e) }));
     }
   }
 
@@ -715,7 +714,7 @@ export class FeishuChannel implements Channel {
       return true;
     } catch (e) {
       this.log(`feishu channel: failed to start mesh "${meshName}": ${String(e)}`);
-      rt.sender.enqueue(`目标 mesh "${meshName}" 自动启动失败：${shortError(e)}`);
+      rt.sender.enqueue(t("feishu.mesh.autostartFailed", { mesh: meshName, error: shortError(e) }));
       return false;
     }
   }
@@ -1050,11 +1049,7 @@ function teardownRuntime(rt: BindingRuntime): void {
 
 /** Frame a p2p-DM user message for the shared Mesh Assistant (a private chat, not a bound group). */
 function feishuAssistantPrompt(text: string): string {
-  return [
-    "来自飞书私聊的已授权用户消息。你是总控 Mesh Assistant；请直接回复该用户，回复内容会原样发回其飞书私聊。",
-    "",
-    `用户消息：${text}`,
-  ].join("\n");
+  return t("feishu.prompt.p2p", { text });
 }
 
 /** Union of top-level and per-binding allowSenders — all map to the one channelKey (feishu:<appId>)
@@ -1113,12 +1108,7 @@ function defaultShortAuthId(): string {
 /** The group reply for an unauthorized sender: the short id + how the operator approves it. Carries NO
  *  open_id / app_id / encrypted envelope. */
 function authCodeReply(shortId: string): string {
-  return [
-    "你尚未获授权使用本群的 mesh。",
-    "请把下面的授权码发给管理员，由其在宿主机控制台批准：",
-    `  ${shortId}`,
-    "（管理员执行：mesh channels feishu approve <授权码>）",
-  ].join("\n");
+  return t("feishu.auth.required", { code: shortId });
 }
 
 /** Extract plain text from an ACP content block (string, {text}, arrays, or nested content). */
@@ -1207,11 +1197,7 @@ function toolDisplayCopy(locale: ToolDisplayLocale = TOOL_DISPLAY_DEFAULT_LOCALE
 }
 
 function feishuUserPrompt(text: string): string {
-  return [
-    "来自飞书授权群聊的用户消息。请直接回复该用户，回复内容会原样发回该飞书群；除非用户明确要求不要回复。",
-    "",
-    `用户消息：${text}`,
-  ].join("\n");
+  return t("feishu.prompt.group", { text });
 }
 
 function shortError(e: unknown): string {
@@ -1255,12 +1241,5 @@ function parseMeshCommand(text: string): MeshCommand | undefined {
 }
 
 function meshCommandHelp(mesh: string): string {
-  return [
-    `mesh "${mesh}" 可用命令：`,
-    "/mesh status - 查看状态",
-    "/mesh start - 启动绑定 mesh",
-    "/mesh stop - 停止绑定 mesh",
-    "/mesh restart - 重启绑定 mesh",
-    "/mesh new-session - 为所有 agent 开新 session",
-  ].join("\n");
+  return t("feishu.cmd.help", { mesh });
 }
