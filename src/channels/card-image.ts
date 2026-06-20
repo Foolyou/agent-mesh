@@ -17,6 +17,7 @@
 import { Readable } from "node:stream";
 import { stat } from "node:fs/promises";
 import * as lark from "@larksuiteoapi/node-sdk";
+import { Jimp } from "jimp";
 import type { ImageBoundary } from "./stream-segmenter";
 import { resolveArtifactFile } from "../web/artifacts";
 import { AgentFileError } from "../web/agent-files";
@@ -55,6 +56,31 @@ export interface ImageLimits {
 
 export const DEFAULT_IMAGE_LIMITS: ImageLimits = { maxBytes: 10 * 1024 * 1024, maxAspect: 16 / 9, maxWidth: 1500, maxHeight: 3000 };
 
+/** A proportional downscale request handed to an injectable scaler when an image is dimension-oversize but
+ *  salvageable (aspect already within range). `bytes` are the original artifact bytes; the scaler fits the
+ *  image inside (maxWidth, maxHeight) and must keep the result ≤ maxBytes. */
+export interface ScaleRequest {
+  bytes: Uint8Array;
+  contentType: string;
+  maxWidth: number;
+  maxHeight: number;
+  maxBytes: number;
+}
+
+/** A scaled image: re-encoded bytes in the SAME container, with its new dimensions. */
+export interface ScaleResult {
+  bytes: Uint8Array;
+  contentType: string;
+  width: number;
+  height: number;
+}
+
+/** Injectable downscaler (jimpScaler by default; injected for tests and to degrade cleanly when the
+ *  scaler is unavailable). Returns the scaled image, or null when it cannot produce an in-limit image
+ *  (undecodable bytes, an unsupported container, or still over maxBytes) → the resolver degrades.
+ *  MUST NOT throw and MUST NOT log the bytes (zero-leak). */
+export type ImageScaler = (req: ScaleRequest) => Promise<ScaleResult | null>;
+
 export interface ImageResolverDeps {
   /** Author agent for a bare `artifact:<file>` ref (the router that emitted the prose). */
   mesh: string;
@@ -63,6 +89,9 @@ export interface ImageResolverDeps {
   readImage: (ref: ArtifactRef) => Promise<RawImage | null>;
   /** Upload bytes to Feishu, returning the image_key (or an error string). Injected for tests. */
   upload: (img: RawImage) => Promise<{ imgKey?: string; error?: string }>;
+  /** Downscale an oversize-but-salvageable image to fit the limits (jimpScaler by default). Optional:
+   *  when absent, oversize images degrade exactly as before (no local autoscale). */
+  scaler?: ImageScaler;
   /** Build a device-auth console URL for the artifact, or undefined when none can be built (→ text). */
   viewerUrl?: (ref: ArtifactRef) => string | undefined;
   limits?: ImageLimits;
@@ -131,25 +160,36 @@ export function createImageResolver(deps: ImageResolverDeps): ImageResolver {
       }
       if (!raw) return degrade(ref, boundary.alt);
 
-      // limits (local, best-effort): byte cap (always), dimensions/aspect when readable → degrade without
-      // uploading. Unknown dimensions skip the dim/aspect check (Feishu's own upload validation backstops).
+      // Source identity for the upload cache is the ORIGINAL file (mesh,owner,file,size,mtime); a cache HIT
+      // short-circuits both scaling and upload for a re-sent image.
+      const key = cacheKey(ref, raw);
+      const cached = cache.get(key);
+      if (cached) return { kind: "image", imgKey: cached };
+
+      // Dimension/aspect policy (local, best-effort). Unknown dims (e.g. WebP) skip these checks entirely
+      // and let Feishu's own upload validation backstop — preserving prior behavior with NO local autoscale.
+      const dims = imageDims(raw.bytes, raw.contentType);
+      if (dims) {
+        if (limits.maxAspect > 0 && dims.h / dims.w > limits.maxAspect) {
+          log("feishu image: aspect out of range; degrading"); // not salvageable here (no crop/reshape)
+          return degrade(ref, boundary.alt);
+        }
+        const dimOver = (limits.maxWidth > 0 && dims.w > limits.maxWidth) || (limits.maxHeight > 0 && dims.h > limits.maxHeight);
+        if (dimOver) {
+          // Salvageable (aspect OK, only too big): proportionally downscale to fit, then re-check
+          // dims + bytes before trusting the (injectable) scaler's output.
+          const scaled = await runScaler(deps.scaler, raw, limits, log);
+          if (!scaled) return degrade(ref, boundary.alt);
+          raw = scaled;
+        }
+      }
+
+      // Byte cap is enforced AFTER any scaling: a scaled image may now fit, while an unscaled image
+      // (in-dims but heavy, or unknown-dims) is capped exactly as before.
       if (raw.size > limits.maxBytes) {
         log("feishu image: over size limit; degrading");
         return degrade(ref, boundary.alt);
       }
-      const dims = imageDims(raw.bytes, raw.contentType);
-      if (dims && (
-        (limits.maxWidth > 0 && dims.w > limits.maxWidth) ||
-        (limits.maxHeight > 0 && dims.h > limits.maxHeight) ||
-        (limits.maxAspect > 0 && dims.h / dims.w > limits.maxAspect)
-      )) {
-        log("feishu image: dimensions/aspect out of range; degrading");
-        return degrade(ref, boundary.alt);
-      }
-
-      const key = cacheKey(ref, raw);
-      const cached = cache.get(key);
-      if (cached) return { kind: "image", imgKey: cached };
 
       let res: { imgKey?: string; error?: string };
       try {
@@ -166,6 +206,38 @@ export function createImageResolver(deps: ImageResolverDeps): ImageResolver {
       return { kind: "image", imgKey: res.imgKey };
     },
   };
+}
+
+/** Run the injectable scaler on an oversize-but-salvageable image and validate its output. Returns the
+ *  scaled RawImage (guaranteed within the dim + byte limits), or null to degrade — when there is no
+ *  scaler, the scaler returns null / throws, or its output is still out of range (never trust an
+ *  injectable scaler blindly). Zero-leak: every log is a generic status, never bytes/ref/path. */
+async function runScaler(scaler: ImageScaler | undefined, raw: RawImage, limits: ImageLimits, log: (m: string) => void): Promise<RawImage | null> {
+  if (!scaler) {
+    log("feishu image: oversize and no scaler; degrading");
+    return null;
+  }
+  let scaled: ScaleResult | null;
+  try {
+    scaled = await scaler({ bytes: raw.bytes, contentType: raw.contentType, maxWidth: limits.maxWidth, maxHeight: limits.maxHeight, maxBytes: limits.maxBytes });
+  } catch {
+    log("feishu image: scale error; degrading");
+    return null;
+  }
+  if (!scaled) {
+    log("feishu image: scale failed; degrading");
+    return null;
+  }
+  const sd = imageDims(scaled.bytes, scaled.contentType) ?? { w: scaled.width, h: scaled.height };
+  const stillOver =
+    (limits.maxWidth > 0 && sd.w > limits.maxWidth) ||
+    (limits.maxHeight > 0 && sd.h > limits.maxHeight) ||
+    scaled.bytes.length > limits.maxBytes;
+  if (stillOver) {
+    log("feishu image: scaled image still out of range; degrading");
+    return null;
+  }
+  return { bytes: scaled.bytes, contentType: scaled.contentType, size: scaled.bytes.length, mtimeMs: raw.mtimeMs };
 }
 
 /** The card `img` element JSON for a resolved image_key. */
@@ -218,6 +290,50 @@ export function sdkUploadImage(client: lark.Client): (img: RawImage) => Promise<
       return { error: "upload-error" }; // never a raw SDK/Error message (could carry a path/secret)
     }
   };
+}
+
+/** jimp-backed proportional downscaler (pure JS; bundles into `bun build --compile`, no native build, no
+ *  external binary). Decodes the image, fits it inside (maxWidth, maxHeight) preserving aspect, and
+ *  re-encodes in the SAME container: PNG keeps its alpha channel, JPEG stays JPEG (with ONE lower-quality
+ *  retry if it's still over maxBytes — PNG is never re-quantized or converted to JPEG). Returns null on
+ *  undecodable bytes, an unsupported container, or if it still can't get under maxBytes (→ the resolver
+ *  degrades). Never throws; never logs the bytes. */
+export function jimpScaler(): ImageScaler {
+  return async (req) => {
+    try {
+      const mime = encodeContainer(req.contentType);
+      if (!mime) return null; // only PNG/JPEG/GIF have a container we re-encode to
+      const img = await Jimp.read(Buffer.from(req.bytes));
+      const w = img.bitmap.width, h = img.bitmap.height;
+      const f = Math.min(
+        req.maxWidth > 0 ? req.maxWidth / w : 1,
+        req.maxHeight > 0 ? req.maxHeight / h : 1,
+        1,
+      );
+      const tw = Math.max(1, Math.floor(w * f)), th = Math.max(1, Math.floor(h * f));
+      if (tw < w || th < h) img.resize({ w: tw, h: th });
+      let bytes = await encodeImage(img, mime, 90);
+      if (mime === "image/jpeg" && bytes.length > req.maxBytes) {
+        bytes = await encodeImage(img, mime, 60); // one quality retry (JPEG only)
+      }
+      if (bytes.length > req.maxBytes) return null; // still too big → degrade (no PNG→JPEG conversion)
+      return { bytes, contentType: mime, width: img.bitmap.width, height: img.bitmap.height };
+    } catch {
+      return null; // undecodable / encode failure → degrade cleanly, no leak
+    }
+  };
+}
+
+type EncodeMime = "image/png" | "image/jpeg" | "image/gif";
+function encodeContainer(ct: string): EncodeMime | null {
+  if (ct.includes("png")) return "image/png";
+  if (ct.includes("jpeg") || ct.includes("jpg")) return "image/jpeg";
+  if (ct.includes("gif")) return "image/gif";
+  return null;
+}
+async function encodeImage(img: Awaited<ReturnType<typeof Jimp.read>>, mime: EncodeMime, quality: number): Promise<Uint8Array> {
+  const buf = mime === "image/jpeg" ? await img.getBuffer(mime, { quality }) : await img.getBuffer(mime);
+  return new Uint8Array(buf);
 }
 
 /** Build a device-auth console VIEWER URL from a base origin, or undefined when none is configured (→

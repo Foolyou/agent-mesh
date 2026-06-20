@@ -14,7 +14,7 @@ import { FeishuChannel } from "./feishu-channel";
 import { createFeishuClient, LarkConsumer, sdkDownloadImage } from "./consumer";
 import { LarkSender, sdkSend, sdkUpdate } from "./sender";
 import { CardSender, sdkCardCreate, sdkCardSend, sdkCardContent, sdkCardFinalize, sdkCardElementUpdate, type CardSenderOptions } from "./card-sender";
-import { createImageResolver, readArtifactImage, sdkUploadImage, consoleViewerUrl } from "./card-image";
+import { createImageResolver, readArtifactImage, sdkUploadImage, consoleViewerUrl, jimpScaler } from "./card-image";
 import { FeishuChannelController } from "./controller";
 
 /** Context for resolving `artifact:` images on a bound mesh chat (C3). p2p chats omit it. */
@@ -111,6 +111,9 @@ export function cardSenderOptions(client: lark.Client, cfg: FeishuChannelConfig,
           defaultAgent: image.defaultAgent,
           readImage: readArtifactImage(image.root),
           upload: sdkUploadImage(client),
+          // jimp-backed autoscale: salvageable oversize images are proportionally downscaled to the
+          // Feishu limits instead of degrading (the live 200570 "invalid image keys" / over-dimension fix).
+          scaler: jimpScaler(),
           viewerUrl: consoleViewerUrl(process.env.MESH_CONSOLE_URL),
           log,
         }),

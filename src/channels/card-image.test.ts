@@ -4,11 +4,15 @@ import {
   parseArtifactRef,
   imageElement,
   imageDims,
+  jimpScaler,
   type RawImage,
   type ArtifactRef,
   type ImageLimits,
+  type ImageScaler,
+  type ScaleRequest,
 } from "./card-image";
 import type { ImageBoundary } from "./stream-segmenter";
+import { Jimp } from "jimp";
 
 const boundary = (ref: string, alt = "pic"): ImageBoundary => ({ start: 0, end: 0, ref, alt });
 const PNG = (w: number, h: number): Uint8Array => {
@@ -41,7 +45,7 @@ test("parseArtifactRef: rejects traversal / empty / non-artifact refs", () => {
 
 // ── resolve: upload, cache, degrade ──
 
-function fakes(over?: { readImage?: (r: ArtifactRef) => Promise<RawImage | null>; upload?: (i: RawImage) => Promise<{ imgKey?: string; error?: string }>; viewerUrl?: (r: ArtifactRef) => string | undefined; limits?: ImageLimits }) {
+function fakes(over?: { readImage?: (r: ArtifactRef) => Promise<RawImage | null>; upload?: (i: RawImage) => Promise<{ imgKey?: string; error?: string }>; viewerUrl?: (r: ArtifactRef) => string | undefined; limits?: ImageLimits; scaler?: ImageScaler }) {
   const uploads: RawImage[] = [];
   const logs: string[] = [];
   const resolver = createImageResolver({
@@ -51,6 +55,7 @@ function fakes(over?: { readImage?: (r: ArtifactRef) => Promise<RawImage | null>
     upload: over?.upload ?? (async (i) => { uploads.push(i); return { imgKey: `img_${uploads.length}` }; }),
     viewerUrl: over?.viewerUrl,
     limits: over?.limits,
+    scaler: over?.scaler,
     log: (m) => logs.push(m),
   });
   return { resolver, uploads, logs };
@@ -126,6 +131,108 @@ test("an image within all bounds (≤1500w, ≤3000h, ≤16:9, ≤10MB) uploads"
   expect(uploads).toHaveLength(1);
 });
 
+// ── autoscale decision flow (C2): scaler wired into the resolver, exercised with a FAKE scaler ──
+
+test("autoscale: salvageable oversize (wide PNG, aspect OK) runs the scaler and uploads the SCALED bytes", async () => {
+  const scaledBytes = PNG(1500, 844); // fake scaler output, within limits
+  const calls: ScaleRequest[] = [];
+  const { resolver, uploads } = fakes({
+    readImage: async () => raw({ bytes: PNG(2320, 1466), size: 5000 }), // width 2320 > 1500, aspect OK
+    scaler: async (req) => { calls.push(req); return { bytes: scaledBytes, contentType: "image/png", width: 1500, height: 844 }; },
+    limits: LIMITS,
+  });
+  expect((await resolver.resolve(boundary("artifact:wide.png"))).kind).toBe("image");
+  expect(calls).toHaveLength(1); // scaler consulted
+  expect(calls[0]).toMatchObject({ maxWidth: 1500, maxHeight: 3000, maxBytes: LIMITS.maxBytes });
+  expect(uploads).toHaveLength(1);
+  expect(uploads[0]!.bytes).toBe(scaledBytes); // the SCALED bytes were uploaded, not the original
+});
+
+test("autoscale: aspect too tall degrades WITHOUT consulting the scaler (no crop/reshape)", async () => {
+  let called = 0;
+  const { resolver, uploads } = fakes({
+    readImage: async () => raw({ bytes: PNG(100, 2000) }), // h/w = 20 > 16/9
+    scaler: async () => { called++; return null; },
+    limits: LIMITS,
+  });
+  expect((await resolver.resolve(boundary("artifact:tall.png"))).kind).not.toBe("image");
+  expect(called).toBe(0);
+  expect(uploads).toHaveLength(0);
+});
+
+test("autoscale: an already in-limit image uploads ORIGINAL bytes without calling the scaler", async () => {
+  let called = 0;
+  const orig = PNG(1400, 800);
+  const { resolver, uploads } = fakes({
+    readImage: async () => raw({ bytes: orig }),
+    scaler: async () => { called++; return null; },
+    limits: LIMITS,
+  });
+  expect((await resolver.resolve(boundary("artifact:ok.png"))).kind).toBe("image");
+  expect(called).toBe(0);
+  expect(uploads[0]!.bytes).toBe(orig);
+});
+
+test("autoscale: scaler returns null (unsalvageable) degrades, no upload", async () => {
+  const { resolver, uploads } = fakes({
+    readImage: async () => raw({ bytes: PNG(2320, 1466) }),
+    scaler: async () => null,
+    viewerUrl: (r) => `https://c/${r.file}`,
+    limits: LIMITS,
+  });
+  expect((await resolver.resolve(boundary("artifact:wide.png", "w"))).kind).toBe("link");
+  expect(uploads).toHaveLength(0);
+});
+
+test("autoscale: scaler throws degrades cleanly, no upload", async () => {
+  const { resolver, uploads } = fakes({
+    readImage: async () => raw({ bytes: PNG(2320, 1466) }),
+    scaler: async () => { throw new Error("boom"); },
+    limits: LIMITS,
+  });
+  expect((await resolver.resolve(boundary("artifact:wide.png"))).kind).not.toBe("image");
+  expect(uploads).toHaveLength(0);
+});
+
+test("autoscale: no scaler injected → oversize degrades exactly as before (no regression)", async () => {
+  const { resolver, uploads } = fakes({ readImage: async () => raw({ bytes: PNG(2320, 1466) }), limits: LIMITS });
+  expect((await resolver.resolve(boundary("artifact:wide.png"))).kind).not.toBe("image");
+  expect(uploads).toHaveLength(0);
+});
+
+test("autoscale: scaled output still over WIDTH degrades (re-check after scaling)", async () => {
+  const { resolver, uploads } = fakes({
+    readImage: async () => raw({ bytes: PNG(2320, 1466) }),
+    scaler: async () => ({ bytes: PNG(1600, 900), contentType: "image/png", width: 1600, height: 900 }), // still >1500w
+    limits: LIMITS,
+  });
+  expect((await resolver.resolve(boundary("artifact:wide.png"))).kind).not.toBe("image");
+  expect(uploads).toHaveLength(0);
+});
+
+test("autoscale: scaled output still over maxBytes degrades (re-check after scaling)", async () => {
+  const { resolver, uploads } = fakes({
+    readImage: async () => raw({ bytes: PNG(2320, 1466), size: 50 }),
+    scaler: async () => ({ bytes: PNG(1500, 844), contentType: "image/png", width: 1500, height: 844 }), // dims OK, 24 bytes
+    limits: { ...LIMITS, maxBytes: 10 }, // cap below the scaled output's byte length
+  });
+  expect((await resolver.resolve(boundary("artifact:wide.png"))).kind).not.toBe("image");
+  expect(uploads).toHaveLength(0);
+});
+
+test("autoscale: unknown dims (WebP) skip autoscale and upload the original (current behavior preserved)", async () => {
+  let called = 0;
+  const webp = new Uint8Array([0x52, 0x49, 0x46, 0x46]); // RIFF → imageDims returns null
+  const { resolver, uploads } = fakes({
+    readImage: async () => raw({ bytes: webp, contentType: "image/webp", size: 1000 }),
+    scaler: async () => { called++; return null; },
+    limits: LIMITS,
+  });
+  expect((await resolver.resolve(boundary("artifact:x.webp"))).kind).toBe("image");
+  expect(called).toBe(0);
+  expect(uploads[0]!.bytes).toBe(webp);
+});
+
 test("upload failure degrades to link/text and never throws", async () => {
   const { resolver } = fakes({ upload: async () => ({ error: "feishu 1001" }), viewerUrl: () => "https://c/x" });
   expect((await resolver.resolve(boundary("artifact:a.png", "p"))).kind).toBe("link");
@@ -174,6 +281,98 @@ test("imageElement builds a Feishu img element with img_key + alt (no raw ref)",
   expect(imageElement("img0", "img_abc", "a diagram")).toEqual({
     tag: "img", element_id: "img0", img_key: "img_abc", alt: { tag: "plain_text", content: "a diagram" },
   });
+});
+
+// ── integration: the REAL jimpScaler wired into the resolver decision flow (C3 production combo) ──
+
+test("integration: real jimpScaler scales a real oversize PNG through the resolver and uploads the SCALED, in-limit bytes", async () => {
+  // a real 2320×1466 PNG (the live-failing dimension; aspect ~1.58 < 16:9 → salvageable, width > 1500)
+  const big = await makeImage(2320, 1466, 255, "image/png");
+  const uploaded: RawImage[] = [];
+  const resolver = createImageResolver({
+    mesh: "m1",
+    defaultAgent: "router",
+    readImage: async () => ({ bytes: big.bytes, contentType: "image/png", size: big.bytes.length, mtimeMs: 1 }),
+    upload: async (i) => { uploaded.push(i); return { imgKey: "img_live" }; },
+    scaler: jimpScaler(), // the REAL production scaler (not a fake)
+    limits: LIMITS,
+  });
+  expect(await resolver.resolve(boundary("artifact:wide.png"))).toEqual({ kind: "image", imgKey: "img_live" });
+  expect(uploaded).toHaveLength(1);
+  const dims = imageDims(uploaded[0]!.bytes, uploaded[0]!.contentType)!;
+  expect(dims.w).toBeLessThanOrEqual(LIMITS.maxWidth); // genuinely downscaled to fit
+  expect(dims.h).toBeLessThanOrEqual(LIMITS.maxHeight);
+  expect(uploaded[0]!.contentType).toBe("image/png"); // PNG container preserved (no JPEG conversion)
+  expect(uploaded[0]!.bytes.length).toBeLessThanOrEqual(LIMITS.maxBytes);
+  expect(uploaded[0]!.bytes.length).not.toBe(big.bytes.length); // not the original bytes
+});
+
+// ── jimpScaler adapter (real in-memory images; no disk fixtures) ──
+
+/** Build a real raster image in memory via jimp. `gradient` makes a non-trivial image so a JPEG actually
+ *  compresses differently per quality (for the quality-retry test); otherwise a flat color. */
+async function makeImage(w: number, h: number, alpha: number, mime: "image/png" | "image/jpeg", gradient = false): Promise<{ bytes: Uint8Array; contentType: string }> {
+  const img = new Jimp({ width: w, height: h });
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const o = (y * w + x) * 4;
+    img.bitmap.data[o] = gradient ? x & 255 : 200;
+    img.bitmap.data[o + 1] = gradient ? y & 255 : 80;
+    img.bitmap.data[o + 2] = gradient ? (x ^ y) & 255 : 40;
+    img.bitmap.data[o + 3] = alpha;
+  }
+  const buf = mime === "image/jpeg" ? await img.getBuffer(mime, { quality: 90 }) : await img.getBuffer(mime);
+  return { bytes: new Uint8Array(buf), contentType: mime };
+}
+const HUGE = 64 * 1024 * 1024;
+
+test("jimpScaler: wide PNG scales proportionally to fit and preserves alpha", async () => {
+  const src = await makeImage(400, 250, 128, "image/png");
+  const out = await jimpScaler()({ ...src, maxWidth: 100, maxHeight: 3000, maxBytes: HUGE });
+  expect(out).not.toBeNull();
+  expect(out!.width).toBe(100); // 400 → 100
+  expect(out!.height).toBe(62); // 250 * (100/400) = 62.5 → 62, aspect preserved
+  expect(out!.contentType).toBe("image/png"); // same container
+  const re = await Jimp.read(Buffer.from(out!.bytes)); // output is a real decodable PNG
+  expect(re.bitmap.width).toBe(100);
+  expect(re.bitmap.data[3]).toBe(128); // alpha channel survived the scale
+});
+
+test("jimpScaler: oversize JPEG stays JPEG and fits within bounds", async () => {
+  const src = await makeImage(400, 200, 255, "image/jpeg", true);
+  const out = await jimpScaler()({ ...src, maxWidth: 150, maxHeight: 3000, maxBytes: HUGE });
+  expect(out).not.toBeNull();
+  expect(out!.contentType).toBe("image/jpeg"); // JPEG stays JPEG
+  expect(out!.width).toBe(150);
+  expect(out!.height).toBe(75);
+});
+
+test("jimpScaler: JPEG over maxBytes triggers ONE quality retry that fits", async () => {
+  const src = await makeImage(256, 256, 255, "image/jpeg", true);
+  // measure this exact image's q90/q60 so the byte threshold is deterministic (gradient → q60 < q90)
+  const img = await Jimp.read(Buffer.from(src.bytes));
+  const q90 = (await img.getBuffer("image/jpeg", { quality: 90 })).length;
+  const q60 = (await img.getBuffer("image/jpeg", { quality: 60 })).length;
+  expect(q60).toBeLessThan(q90);
+  // maxWidth/Height 0 → no resize; force the retry purely on bytes with a cap between q90 and q60
+  const out = await jimpScaler()({ ...src, maxWidth: 0, maxHeight: 0, maxBytes: q90 - 1 });
+  expect(out).not.toBeNull();
+  expect(out!.bytes.length).toBeLessThanOrEqual(q90 - 1); // retry produced smaller bytes that fit
+});
+
+test("jimpScaler: PNG still over maxBytes after scaling degrades (null, no JPEG conversion)", async () => {
+  const src = await makeImage(400, 300, 255, "image/png", true);
+  const out = await jimpScaler()({ ...src, maxWidth: 100, maxHeight: 100, maxBytes: 1 }); // 1-byte cap
+  expect(out).toBeNull(); // PNG is never converted to JPEG to fit
+});
+
+test("jimpScaler: undecodable bytes return null (degrade), never throw", async () => {
+  const out = await jimpScaler()({ bytes: new Uint8Array([1, 2, 3, 4]), contentType: "image/png", maxWidth: 100, maxHeight: 100, maxBytes: HUGE });
+  expect(out).toBeNull();
+});
+
+test("jimpScaler: unsupported container (webp) returns null without decoding", async () => {
+  const out = await jimpScaler()({ bytes: new Uint8Array([1, 2, 3]), contentType: "image/webp", maxWidth: 100, maxHeight: 100, maxBytes: HUGE });
+  expect(out).toBeNull();
 });
 
 test("imageDims reads PNG / GIF / JPEG sizes", () => {

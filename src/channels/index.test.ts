@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { createOutboundSender, cardSenderOptions } from "./index";
+import { createOutboundSender, cardSenderOptions, type OutboundImageContext } from "./index";
 import { createFeishuClient } from "./consumer";
 import { CardSender } from "./card-sender";
 import { LarkSender } from "./sender";
@@ -55,4 +55,19 @@ test("cardSenderOptions passes the configured timing through to the CardSender",
   expect(opts.fallback).toBe(fallback);
   expect(typeof opts.create).toBe("function");
   expect(typeof opts.finalize).toBe("function");
+});
+
+test("cardkit path with a bound image context wires the artifact image resolver (autoscale-enabled)", () => {
+  const fallback: OutboundSink = { enqueue() {}, stop() {} };
+  const image: OutboundImageContext = { root: "/tmp/none", mesh: "m", defaultAgent: "router" };
+  const opts = cardSenderOptions(client, cfg(), "oc_1", fallback, () => {}, image);
+  expect(typeof opts.resolveImage?.resolve).toBe("function"); // resolver (built with scaler: jimpScaler()) wired in the cardkit path
+  expect(typeof opts.updateElement).toBe("function"); // element swap wired alongside it
+});
+
+test("no bound image context (p2p): no image resolver/updater wired", () => {
+  const fallback: OutboundSink = { enqueue() {}, stop() {} };
+  const opts = cardSenderOptions(client, cfg(), "oc_1", fallback, () => {});
+  expect(opts.resolveImage).toBeUndefined();
+  expect(opts.updateElement).toBeUndefined();
 });
