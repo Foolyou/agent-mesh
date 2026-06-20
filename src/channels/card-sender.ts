@@ -699,23 +699,25 @@ export class CardSender implements OutboundSink {
     const live = this.live;
     if (!live) return;
     const ctx = continuationAfter(live.sentText, { openFence: this.pendingContinuation?.openFence, tableHeader: this.pendingContinuation?.tableHeader });
-    // Skip the close-fence edit when the card already shows a tool annotation: composeLiveDisplay
-    // already closed the open fence (display-only) before the divider, so re-editing to a body-only
-    // closed display would DROP the annotation (a backward shrink). The continuation below still reopens
-    // the body's fence on the next card (sentText logically left it open; the close was cosmetic).
-    if (ctx?.openFence && live.sentAnnotation === undefined) {
-      // Close the open code block on the current card (append-only; do NOT touch live.sentText).
-      const display = appendCloseFence(this.composeDisplay(live.sentText), fenceMarkerOf(ctx.openFence));
+    // The sealed HEAD card is always body-only: the tool annotation rides the continuation (tail) card,
+    // never duplicated (spec §3.4). Re-display the body-only head (closing any open code block for
+    // balance) before finalizing — this drops a shown annotation here. It is a deliberate one-time
+    // seal-boundary edit (a display shrink when an annotation is removed, NOT the mid-stream monotonic
+    // path); a failed edit is cosmetic (body already shown), so we never give up or re-send.
+    if (ctx?.openFence || live.sentAnnotation !== undefined) {
+      const display = ctx?.openFence
+        ? appendCloseFence(this.composeDisplay(live.sentText), fenceMarkerOf(ctx.openFence)) // close the open block (append-only)
+        : this.composeDisplay(live.sentText); // body-only (drops the annotation suffix)
       try {
         const seq = this.nextSeq();
         const r = await this.content({ cardId: live.cardId, elementId: this.elementId, content: display, sequence: seq, uuid: stableCardKey(live.cardId, seq) });
         this.lastEditAt = this.now();
-        if (!r.ok) this.log(`feishu card: close-fence edit failed${codeInfo(r)}; sealing card unbalanced`);
+        if (r.ok) live.sentAnnotation = undefined; // head is now body-only; the tail re-shows the annotation
+        else this.log(`feishu card: seal head edit failed${codeInfo(r)}; sealing card as-is`);
       } catch (e) {
         this.lastEditAt = this.now();
-        this.log("feishu card: close-fence edit error; sealing card unbalanced");
+        this.log("feishu card: seal head edit error; sealing card as-is");
       }
-      // A failed close is cosmetic (body already shown) — do not give up or re-send confirmed body.
     }
     await this.finalizeCurrentCard(reason); // advances by live.sentText.length; clears hint/continuation
     this.pendingContinuation = ctx; // reopen any fence/table the sealed text left open
@@ -772,10 +774,27 @@ export class CardSender implements OutboundSink {
   /** Seal the live card: finalize it (streaming off), advance the turn's base offset past its
    *  confirmed body text, clear it, and drop the consumed segment's hint. Used for every reason a
    *  card ends mid-turn or at the turn boundary, so sequence and fallback accounting stay consistent.
-   *  The `reason` is currently informational (the seam is uniform across all of them). */
-  private async finalizeCurrentCard(_reason: FinalizeReason): Promise<void> {
+   *
+   *  A tool annotation rides the FINAL (tail) card only. Every NON-`turn_commit` seal (image boundary,
+   *  size/timeout rollover, segment break) is a HEAD card: strip a shown annotation to body-only before
+   *  finalizing so it is never duplicated onto the following card (spec §3.4). `turn_commit` keeps it —
+   *  that IS the tail card. (`sealLiveAndContinue` already strips before calling here; this also covers
+   *  the direct callers, e.g. image boundaries.) */
+  private async finalizeCurrentCard(reason: FinalizeReason): Promise<void> {
     const live = this.live;
     if (!live) return;
+    if (reason !== "turn_commit" && live.sentAnnotation !== undefined) {
+      try {
+        const seq = this.nextSeq();
+        const r = await this.content({ cardId: live.cardId, elementId: this.elementId, content: this.composeDisplay(live.sentText), sequence: seq, uuid: stableCardKey(live.cardId, seq) });
+        this.lastEditAt = this.now();
+        if (r.ok) live.sentAnnotation = undefined;
+        else this.log(`feishu card: head annotation strip failed${codeInfo(r)}; sealing as-is`);
+      } catch (e) {
+        this.lastEditAt = this.now();
+        this.log("feishu card: head annotation strip error; sealing as-is");
+      }
+    }
     await this.doFinalize(live);
     this.streamBaseOffset += live.sentText.length;
     this.live = undefined;

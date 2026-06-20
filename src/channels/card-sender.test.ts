@@ -1339,13 +1339,24 @@ test("tool annotation: planSizeSplit reserves suffixBytes (splits a body that fi
   expect(split!.headText.length).toBeLessThan(body.length); // leaves a tail for the annotation card
 });
 
-test("tool annotation survives a timeout rollover (kept, not lost; tail continues)", async () => {
+/** The FINAL displayed content of each card, in creation order. The recorder assigns cardId `card1`,
+ *  `card2`, … in create order; a card's final content is its last content() edit (or its create text
+ *  if never edited). Used to assert annotation attribution: head cards body-only, tail card annotated. */
+function finalDisplays(r: ReturnType<typeof cardRecorder>): string[] {
+  const byCard = new Map<string, string>();
+  r.creates.forEach((c, i) => byCard.set(`card${i + 1}`, c.text));
+  for (const c of r.contents) byCard.set(c.cardId, c.content); // a later edit overrides the create text
+  return [...byCard.values()];
+}
+
+test("tool annotation across a TIMEOUT rollover: appears exactly once, only on the tail card", async () => {
   const r = cardRecorder();
   const fb = fakeFallback();
+  const ann = "🔧 Called 1 tool";
   const s = makeSender(r, fb, { maxCardAgeMs: 1000 });
   s.streamUpdate("first part");
   await s.whenIdle();
-  s.streamToolAnnotation("🔧 Called 1 tool");
+  s.streamToolAnnotation(ann); // shown on the (soon-to-be head) card
   await s.whenIdle();
   r.advance(2000); // age the live card past maxCardAgeMs
   s.streamUpdate("first part second part"); // forces a timeout rollover before editing the aged card
@@ -1353,7 +1364,34 @@ test("tool annotation survives a timeout rollover (kept, not lost; tail continue
   s.streamCommit();
   await s.whenIdle();
   expect(fb.enqueued).toEqual([]); // no fallback
-  const displays = [...r.creates.map((c) => c.text), ...r.contents.map((c) => c.content)];
-  expect(displays.join("\n")).toContain("🔧 Called 1 tool"); // annotation preserved across the rollover
-  expect(displays.join("")).toContain("second part"); // tail body not lost
+  const finals = finalDisplays(r);
+  expect(finals.length).toBeGreaterThanOrEqual(2); // rolled over to a tail card
+  expect(finals.filter((d) => d.includes(ann))).toHaveLength(1); // NOT duplicated — exactly one card
+  expect(finals[0]).not.toContain(ann); // sealed head card is body-only
+  expect(finals[0]).toContain("first part"); // head still has its body
+  expect(finals.at(-1)!).toContain(ann); // annotation rides the final/tail card
+  expect(finals.join("")).toContain("second part"); // tail body not lost
+});
+
+test("tool annotation across a SIZE rollover: appears exactly once, only on the tail card", async () => {
+  const r = cardRecorder();
+  const fb = fakeFallback();
+  const ann = "🔧 Called 1 tool";
+  // budget comfortably holds a small body + annotation; a later large body forces a size rollover.
+  const s = makeSender(r, fb, { maxCardBytes: byteLen(`aaaa\n\n---\n\n${ann}`) + 4 });
+  s.streamUpdate("aaaa");
+  await s.whenIdle();
+  s.streamToolAnnotation(ann); // shown on the head card
+  await s.whenIdle();
+  s.streamUpdate("aaaa\nbbbbbbbbbbbbbbbbbbbb\ncccccccccc\ndddddddddd"); // grows past budget → size rollover
+  await s.whenIdle();
+  s.streamCommit();
+  await s.whenIdle();
+  expect(fb.enqueued).toEqual([]); // no fallback (annotation reserved in budget; rollover handled it)
+  const finals = finalDisplays(r);
+  expect(finals.length).toBeGreaterThanOrEqual(2); // rolled over
+  expect(finals.filter((d) => d.includes(ann))).toHaveLength(1); // NOT duplicated — exactly one card
+  expect(finals[0]).not.toContain(ann); // sealed head card is body-only
+  expect(finals.at(-1)!).toContain(ann); // annotation rides the final/tail card
+  for (const d of finals) expect(byteLen(d)).toBeLessThanOrEqual(byteLen(`aaaa\n\n---\n\n${ann}`) + 4); // every card within budget
 });

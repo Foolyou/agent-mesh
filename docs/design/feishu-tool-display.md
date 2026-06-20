@@ -101,10 +101,12 @@
 方案 B（`streamUpdate(rt.buffer + "\n\n" + 注解)`，零 sender 改动）问题：注解会被当成 turn-text 计入偏移/rollover/兜底；`streamUpdate` 语义是"全量单调 turn 文本"，prose 在工具后继续增长会排到注解之后→**顺序错乱**；变化的尾缀可能触发"绝不回退到更短显示"的单调守护（`card-sender.ts:605-615`）→ 误 rollover。**仅 collapsed（纯计数尾注、无顺序）勉强可用，inline 不行。** 故推荐 A。
 
 ### 3.4 多卡轮的注解归属（size/age rollover）
-一轮 prose 超长会 size/age rollover 成多卡。**注解只跟随当前 live（尾）卡**：
-- **因 size/timeout/segment rollover 被封的"头卡"不带注解**——头卡的 display 用 **body-only** 组合（纯 prose + 现有结构修复 `closeFence`/continuation），注解推迟到续卡。这样：(a) 头卡 size 预算只按 body 算（不受注解影响）；(b) 注解不会在多张卡上重复。
-- 注解在续卡上随 body 一起重新组合渲染；turn 提交（finalize）时落在最后一张 live 卡上。
-- 实现要点：seal 路径（`sizeRollOver` `card-sender.ts:604-661`、`sealLiveAndContinue` 663-690、`finalizeCurrentCard` 722-730 用于 segment/image 边界）组合头卡显示时**走 body-only compose**（不加注解后缀）；只有"非 seal 的常规 live 编辑"和"turn 提交的最后一张卡"才加注解。详见 §3.5。
+一轮 prose 超长会 size/age rollover 成多卡。**注解只跟随当前 live（尾）卡，绝不在多卡重复**：
+- **任何 NON-`turn_commit` 的 seal（size/timeout rollover、image 边界、segment break）= 头卡 → 不带注解。** 注解推迟到续卡；`turn_commit`（最后一张卡）才保留注解——那就是尾卡。
+- **关键修正（reviewer 返工）**：若一张卡在被封为头卡前**已经显示过注解**（`live.sentAnnotation !== undefined`），仅靠"seal 路径走 body-only compose"不够——卡上已渲染的注解不会自动消失。必须在 finalize **之前**对该头卡做**一次 body-only 的 `content` 重绘**（去掉注解后缀，必要时补 close fence），把注解从头卡抹掉，再 finalize；续卡再重新渲染注解。这是一次**有意的 seal 边界显示缩短**（仅此一次、非 mid-stream 单调路径），失败仅 cosmetic（body 已显示，不 giveUp/不重发）。
+  - 落点：`sealLiveAndContinue`（size/timeout rollover）先 body-only 重绘+strip 注解再 finalize；`finalizeCurrentCard(reason)` 对 `reason !== "turn_commit"` 且 `sentAnnotation !== undefined` 也做同样 strip（覆盖 image 边界等直接 finalize 的路径）。strip 成功后 `live.sentAnnotation = undefined`。
+- 续卡随 body 重新组合渲染注解（`toolAnnotation` 未清，仍是当前轮状态）；turn 提交时落在最后一张 live 卡上。
+- 头卡 size 预算只按 body 算（注解已推迟到续卡），不受注解影响。详见 §3.5。
 
 ### 3.5 工具注解与 Markdown 结构修复 / size budget 的交互（reviewer 返工，核心）
 
@@ -124,7 +126,7 @@
 **修法（落实 reviewer 第 4 点）**：
 - live 卡 body 末尾在 fence 内时，注解前的 `structuralClose(body)` 临时补 close fence——**纯 display，`live.sentText` 仍是裸 body**（与 `sealLiveAndContinue` 的 close-fence "append-only、never touch sentText" 同构，`card-sender.ts:675-686`）。
 - **同一卡内继续同一 body 无需 reopen**：每次 `content` 编辑都全量重算 `composeDisplay(newBody)`，display-only 的 close 每次重新推导，body 增长后自然覆盖；reopen 只发生在**跨卡 rollover**，由现有 body 的 `pendingContinuation` 机制负责（`card-sender.ts:660/689`），**注解不参与 continuation reopen**。
-- **单调显示守护不破**（`card-sender.ts:605-615`：绝不把 live 卡改写成更短）：body 单调增长 + 注解单调增长（计数升 / 名单增），故 `composeDisplay` 单调增长。唯一边界——body 自己补上闭合 ``` 那一刻 display-only close 消失：因 body 至少增加了 ``` 的字节，净显示仍 ≥ 之前，守护不触发（列入 §8 测试 13 边界）。
+- **mid-stream 单调显示守护不破**（`card-sender.ts:605-615`：mid-stream 绝不把 live 卡改写成更短）：mid-stream body 单调增长 + 注解单调增长（计数升 / 名单增），故 mid-stream 编辑单调增长。**例外：seal 边界的 body-only strip（§3.4）是有意的一次性缩短**——它发生在卡即将 finalize、续卡接管之时（不是 mid-stream），把注解从头卡移到尾卡；这是该卡生命周期的最后一次 `content` 编辑，UX 上等价于"注解换到下一张卡"，可接受。唯一 mid-stream 边界——body 自己补上闭合 ``` 那一刻 display-only close 消失：因 body 至少增加了 ``` 的字节，净显示仍 ≥ 之前，守护不触发（列入 §8 测试 13 边界）。
 
 **不变式补充**：注解是纯 cosmetic 后缀，**永不进入** `live.sentText`、`streamBaseOffset`、`continuationAfter` 扫描、`planSizeSplit` 的 `body` 实参（只进它的 *budget*）。turn-text 偏移/fallback/replay 会计全部只看裸 body。
 
@@ -223,7 +225,7 @@ onRouterToolCall(rt, u):
 
 13. **未闭合 code fence 时注解在代码块外**：collapsed/inline，body = 以未闭合 ` ``` ` 结尾的片段（如 `"前言\n```js\nconst a=1"`）+ `tool_call`。断言渲染的 card content：(a) 注解 `🔧 …` **不在** code block 内——注解前出现一行闭合 ` ``` `（`structuralClose`）；(b) `live.sentText` 仍是裸 body（不含 close fence/注解），`streamBaseOffset` 不被注解/close 改动；(c) 边界：body 随后自己补上闭合 ` ``` ` 时，显示仍单调不变短（不触发 shrink 守护/误 rollover）。
 14. **临近 `maxCardBytes` 时注解不超预算/不 fallback**：构造 body 使 `prefixBytes + byteLen(body) + 注解显示字节` 略超 `maxCardBytes`。断言：(a) 发生 **size split**（头卡 body-only、不含注解），注解落到续卡；(b) 任何单张 card 的 display 字节 **≤ `maxCardBytes`**；(c) **不触发 `giveUp()`/文本 fallback**（content op 全 `ok`）。对照：去掉注解预算的实现会让该 case 超预算——用注解字节占满边界来区分。
-15. **size/timeout rollover 带注解不丢、不重复、不破 continuation**：长 body（含一段跨卡 code fence）+ 工具 + 触发 size rollover（和单独一例 `maxCardAgeMs` timeout rollover）。断言：(a) 注解只出现在**最后一张 live/最终卡**，前序被封头卡**不含注解**（不重复）；(b) turn finalize 后注解**存在且正确**（不丢）；(c) 跨卡 fence 的 `closeFence`/`reopen`（`pendingContinuation`）仍正确，注解未污染 continuation（reopen 前缀不含注解）。
+15. **size/timeout rollover 带注解：出现次数 === 1、只在尾卡、头卡 body-only（reviewer 返工强化）**：**两个独立用例**——(15a) timeout rollover（`maxCardAgeMs` 老化）、(15b) size rollover（注解显示后 body 增长超预算）。两者都：先 streamUpdate 小 body + streamToolAnnotation 让注解显示在头卡，再触发 rollover。用 `finalDisplays(r)`（取每张卡的**最终** content）断言：(a) 含注解的卡**恰好 1 张**（`filter(includes(ann)).length === 1`，**不重复**）；(b) `finals[0]`（头卡）**不含注解**且仍含其 body（head body-only）；(c) `finals.at(-1)`（尾卡）**含注解**（归属正确、不丢）；(d) 无 fallback（`fb.enqueued` 空）；size 用例额外断言每卡 ≤ `maxCardBytes`。这直接复现并防回归 reviewer 报的"注解在 rollover 前后两卡重复"。
 
 ---
 
