@@ -66,8 +66,8 @@ Legend for **vs v1**: ⬆ = upgraded to a stronger threshold · ★ = new pair/f
 | status-text:link / raised | status-text | AA 4.5 | = AA | 6.37 | 8.41 | 8.02 |
 | status-text:idle / surface | status-text | AA 4.5 | = AA | 7.44 | 6.77 | 6.32 |
 | status-text:idle / raised | status-text | AA 4.5 | = AA | 6.37 | 7.29 | 6.95 |
-| tinted:danger (12% over sunken) | tinted-text | AA 4.5 | = AA | 6.37 | 5.46 | 5.2 |
-| tinted:warning (10% over sunken) | tinted-text | AA 4.5 | = AA | 10.38 | 4.95 | 4.71 |
+| tinted:danger (legacy ad-hoc 12% over sunken — superseded by named `danger-subtle`) | tinted-text | AA 4.5 | = AA | 6.37 | 5.46 | 5.2 |
+| tinted:warning (legacy ad-hoc 10% over sunken — superseded by named `warning-subtle`) | tinted-text | AA 4.5 | = AA | 10.38 | 4.95 | 4.71 |
 | status-dot:success / surface | status-dot | 3.0 | = AA(non-text) | 10.85 | 6.39 | 5.96 |
 | status-dot:warning / surface | status-dot | 3.0 | = AA(non-text) | 11.32 | 6.35 | 5.93 |
 | status-dot:danger / surface | status-dot | 3.0 | = AA(non-text) | 6.83 | 7.44 | 6.95 |

@@ -4,7 +4,7 @@ Low-fi part specs. Format: purpose · variants/states · surfaces · desktop/mob
 
 ## StatusChip (signature)
 - **Purpose**: at-a-glance status as `dot + icon + label` pill. The connective tissue across the app.
-- **Variants** (canonical 6, Step1 `00-index`): `ready`(success ●) `working`(info ▶) `blocked`(danger ■) `idle`(idle ○) `done`(success ✓) `attention`(warning !) — v2 semantic token names. Sizes: inline / compact (dot-only on dense rows). Optional count suffix.
+- **Variants** (canonical 6, Step1 `00-index`): `ready`(success ●) `working`(info ▶) `blocked`(danger ■) `idle`(idle ○) `done`(success ✓) `attention`(warning !) — v2 semantic token names. Render variants: *dot*, *worded* (status text on surface), *soft* (`<status>-subtle` bg), *filled* (solid status fill + `on-<status>` label). Sizes: inline / compact (dot-only on dense rows). Optional count suffix.
 - **Surfaces**: shell connection, mesh rows, topology nodes, agent cards, board task status, harness status, channels, doctor findings, device status.
 - **Desktop/mobile**: same; compact (dot-only) where space is tight (mobile dense lists).
 - **Reuse**: embedded in StatusListRow, topology node, board card. Color from semantic tokens (Step 3).
@@ -15,7 +15,7 @@ Low-fi part specs. Format: purpose · variants/states · surfaces · desktop/mob
 
 ## Badge (count)
 - **Purpose**: small numeric/notification count.
-- **Variants**: number / dot-only; tones: unread(`accent` or `info`), urgent(`danger`).
+- **Variants**: number / dot-only; tones: unread(`accent` or `info`), urgent(`danger` fill + `on-danger` label).
 - **Surfaces**: 🔔 unread, pending-approval red count (topology node + overview), board task count, harness "update" indicator, channel pending count.
 - **Reuse**: overlaid on Button/icon/RouteLink/StatusListRow.
 

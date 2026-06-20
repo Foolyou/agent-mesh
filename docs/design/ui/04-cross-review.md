@@ -66,6 +66,29 @@ After the approved Step-3 **v2 token rework** (two-layer raw scales + semantic t
 ## Self-consistency confirmation (v2)
 Steps 1–3 are **mutually consistent under the v2 two-layer semantic token system**: Step 1/2 docs reference only v2 semantic token names (or kept tokens info/link/accent), the status vocabulary matches `tokens/`, and components map cleanly to the v2 semantic catalogue. Docs-only; no `src/web`/`contrast.ts`/build changes.
 
+---
+
+# Step 4 re-review — v2.1 status tokens (2026-06-20)
+After the v2.1 follow-up (status `*-subtle` + `on-*` tokens), Steps 1–3 were re-reviewed for the three patterns the gate called out: component-side status tinting, unnamed filled-status foregrounds, and old "AA on chip" wording.
+
+## Findings & back-edits
+1. **Component-side status tinting** — only the legacy ad-hoc tints remained: `02-aa-evidence.md`'s `tinted:danger (12% over sunken)` / `tinted:warning (10% over sunken)` evidence rows. Annotated both as **legacy, superseded by the named `danger-subtle`/`warning-subtle` tokens** (the canonical status tint is now `*-subtle`). `03-themed-components.md` ErrorBanner already references `danger-subtle` (v2.1 checkpoint 1).
+2. **Unnamed filled-status foregrounds** — `03-themed-components.md` already routes filled-status text through `on-<status>` (Button danger, Composer interrupt, ApprovalCard deny, StatusChip filled, Badge urgent). For Step-2↔3 parity, added the *soft*/*filled* render variants + `on-<status>` to `components/01-primitives.md` StatusChip and `on-danger` to Badge.
+3. **"AA on chip" wording** — none remained (removed in the v2 re-review; StatusChip now describes dot/worded/soft/filled variants, not "label AA on the chip").
+4. **Stale wording** — `03-themed-components.md` change log still said "Sample-board PNGs to be re-rendered…"; corrected to past tense + a v2.1-artifacts log line (the re-render was done in checkpoint 2).
+
+## v2.1 back-edits made
+| file | change |
+|---|---|
+| `components/01-primitives.md` | StatusChip soft/filled variants + `on-<status>`; Badge urgent → `danger` fill + `on-danger` |
+| `tokens/02-aa-evidence.md` | legacy `tinted:danger`/`tinted:warning` rows annotated as superseded by `danger-subtle`/`warning-subtle` |
+| `tokens/03-themed-components.md` | change-log stale "to be re-rendered" wording fixed + v2.1-artifacts log line |
+| `04-cross-review.md` | this v2.1 re-review section |
+
+## Self-consistency confirmation (v2.1)
+Steps 1–3 are **mutually consistent under v2.1**: the 8 status tokens (`*-subtle` + `on-*`) are mode-driven/accent-independent (`01`, `02`), components reference named `*-subtle` tints and `on-<status>` filled foregrounds (`01-primitives`, `03`), no component-side tint formula or unnamed filled foreground or "AA on chip" wording remains, and the artifacts (`v2-status-tokens.png` + re-rendered sample boards) match. Docs-only; no `src/web`/`contrast.ts`/build changes.
+
 ## Change / review log
 - 2026-06-20 — created (Step 4 v1): cross-review of Steps 1–3 under v1 tokens; 7 docs back-edited.
 - 2026-06-20 — **Step 4 re-review (v2)**: re-checked Steps 1–3 against the v2 two-layer token system; back-edited `00-index`, `00-inventory`, `01-primitives`, `02-surfaces`, and this doc from v1 token names → v2 semantic names; residual-v1-token grep = zero. Docs-only.
+- 2026-06-20 — **Step 4 re-review (v2.1)**: re-checked for component-side tinting / unnamed filled-status fg / "AA on chip"; annotated legacy tint evidence rows as superseded by `*-subtle`, added StatusChip soft/filled + Badge `on-danger` to `01-primitives`, fixed stale re-render wording in `03`. Docs-only.
