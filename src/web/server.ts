@@ -44,6 +44,7 @@ export function startWebServer(opts: WebServerOptions = {}): WebServerHandle {
   const wsBackend = backendUrl ? backendUrl.replace(/^http/, "ws") + "/ws" : undefined;
   const dev = opts.dev ?? process.env.NODE_ENV !== "production";
   const hostname = opts.hostname ?? "127.0.0.1";
+  const uiPreviewEnabled = process.env.MESH_UI_PREVIEW === "1";
   // Auth root: the gateway carries it in-process; in proxy mode the web tier (where the real browser
   // socket terminates and the authoritative gate runs) resolves the SAME root directly (design §6 /
   // proposal A). A divergent root simply makes non-loopback fail closed.
@@ -74,7 +75,8 @@ export function startWebServer(opts: WebServerOptions = {}): WebServerHandle {
     port: 0,
     hostname: "127.0.0.1",
     development: dev ? { hmr: true, console: false } : false,
-    routes: { "/": index, "/mesh/*": index },
+    // `/__ui-preview` is a temporary Step-5 design preview; the public server gates access below.
+    routes: { "/": index, "/mesh/*": index, "/__ui-preview": index },
     fetch() {
       return new Response("not found", { status: 404 });
     },
@@ -131,6 +133,9 @@ export function startWebServer(opts: WebServerOptions = {}): WebServerHandle {
         });
       }
 
+      if (url.pathname.startsWith("/__ui-preview") && !uiPreviewEnabled) {
+        return new Response("not found", { status: 404 });
+      }
       const resp = await fetch(assetOrigin + url.pathname + url.search).catch(() => null);
       if (!resp) return new Response("not found", { status: 404 });
       const headers = new Headers(resp.headers);
