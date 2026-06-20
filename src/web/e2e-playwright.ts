@@ -16,6 +16,17 @@ export function e2eEnv(extra: Record<string, string | undefined> = {}): Record<s
   return { ...process.env, NODE_ENV: "production", ...extra };
 }
 
+/** Reserve an available TCP port (bind :0, read the assigned port, release it). Lets e2e
+ *  self-isolate on a default-free port so back-to-back and concurrent runs never collide on a
+ *  shared fixed port (e.g. the old 10020 default). Small bind→spawn race is acceptable for e2e. */
+export function freePort(): number {
+  const srv = Bun.serve({ port: 0, fetch: () => new Response("") });
+  const port = srv.port;
+  srv.stop(true);
+  if (!port) throw new Error("failed to reserve a free port");
+  return port;
+}
+
 // ── device-auth for browser e2e (device-auth P6: a device token is the only allow path) ──────────
 //
 // The web gate now requires an approved device token for every non-device /api/* call and the WS

@@ -1,15 +1,19 @@
 // Session-resume e2e over the real backend + mesh-host + ACP client, with a
 // deterministic fake codex-acp executable injected through PATH.
-// Run: E2E_PORT=10020 E2E_ROOT=~/.agent-mesh-dev bun run src/web/session-resume.e2e.ts
+// Self-isolating: defaults to a free port + a fresh temp root (no dependency on ~/.agent-mesh-dev).
+// Run: bun run src/web/session-resume.e2e.ts  (optional overrides: E2E_PORT=.. E2E_ROOT=..)
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { type Browser, type Page } from "playwright";
-import { authedContext, authedReady, e2eAuthRoot, launchChromium, seedApprovedDevice } from "./e2e-playwright";
+import { authedContext, authedReady, e2eAuthRoot, freePort, launchChromium, seedApprovedDevice } from "./e2e-playwright";
 
-const PORT = Number(process.env.E2E_PORT) || 10020;
+const PORT = Number(process.env.E2E_PORT) || freePort();
 const BASE = `http://localhost:${PORT}`;
-const ROOT = process.env.E2E_ROOT?.replace(/^~/, homedir()) ?? join(homedir(), ".agent-mesh-dev");
+// Self-isolating by default: a fresh temp root (never the shared ~/.agent-mesh-dev). An explicit
+// E2E_ROOT override is honored, but we only auto-clean roots we created ourselves.
+const ownRoot = !process.env.E2E_ROOT;
+const ROOT = process.env.E2E_ROOT?.replace(/^~/, homedir()) ?? (await mkdtemp(join(tmpdir(), "mesh-resume-root-")));
 const e2eToken = await seedApprovedDevice(e2eAuthRoot(ROOT));
 const REPO = resolve(import.meta.dir, "..", "..");
 const mesh = `resume-e2e-${process.pid}`;
@@ -67,8 +71,11 @@ async function waitFor(cond: () => Promise<boolean> | boolean, timeoutMs = 8000)
 }
 
 async function transcriptText(): Promise<string> {
-  const s = await state();
-  return JSON.stringify(s.perMesh?.[mesh]?.transcripts?.r?.items ?? []);
+  // Transcript bodies are intentionally NOT in /api/state (gateway.snapshot ships placeholders);
+  // read them the same way the client does — via the backfill endpoint.
+  const r = await fetch(`${BASE}/api/meshes/${mesh}/agents/r/transcript?limit=500`, { headers: { authorization: `Bearer ${e2eToken}` } });
+  if (!r.ok) return "[]";
+  return JSON.stringify((await r.json()).items ?? []);
 }
 
 await mkdir(bin, { recursive: true });
@@ -194,4 +201,5 @@ try {
     process.kill(pid, "SIGKILL");
   } catch {}
   await rm(work, { recursive: true, force: true });
+  if (ownRoot) await rm(ROOT, { recursive: true, force: true });
 }
