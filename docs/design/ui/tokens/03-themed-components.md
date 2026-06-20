@@ -1,66 +1,69 @@
-# Step 3 — themed component drafts (Step 2 parts under the tokens)
+# Step 3 token v2 — themed component drafts (Step 2 parts under semantic tokens)
 
-Renders the Step 2 components (`../components/`) against the Step 3 tokens. Fidelity stays design-doc level: each part is annotated with **which token paints which surface**, so Step 5 builds them token-driven (Tailwind utilities → `var(--token)`) and a theme swap recolors them with zero per-component work. Per-mode visual notes follow.
+**v2 (supersedes v1).** Renders the Step 2 components (`../components/`) against the **v2 semantic tokens** (`00-tokens.md`, `01-palettes.md`). Each part is annotated with the **semantic token** that paints each surface, so Step 5 builds them token-driven (Tailwind utilities → `var(--<semantic>)`) and a mode/accent swap recolors them with zero per-component work. Components reference **only** semantic tokens (never raw scales).
 
-Token shorthand: `bg`/`raise`/`inset` surfaces · `fg`/`dim`/`faint` text · `line`/`line-bright` borders · `ok`/`warn`/`bad`/`off`/`info` status · `accent` brand · `focus` ring · `sel-bg`/`sel-fg` selection.
+Semantic shorthand: `surface`/`surface-raised`/`surface-sunken` · `text-primary`/`-secondary`/`-muted`/`-disabled` · `border`/`border-strong` · `success`/`warning`/`danger`/`idle`/`info`/`link` · `accent`(+`accent-hover`/`-active`/`-subtle`/`on-accent`) · `focus-ring` · `selected`/`text-on-selected` · `hover`/`active`.
 
 ## Atoms (`01-primitives.md`)
-- **StatusChip** — fill/edge from the status token, label text AA on the chip. ready→`ok` · working→`accent` (or `info` for machine-busy) · attention→`warn` · blocked/error→`bad` · idle→`off` · done→`good`. *Dot* variant = `status-dot` family (≥3:1 non-text); *worded* variant = `status-text` family (≥4.5). Both proven in `02`.
-- **Button / ConfirmButton** — default: `fg` on `raise`, border `line-bright`; primary: `accent` fill with AA label; danger: `bad`. Disabled = `fg-faint` (the hard 3.0 floor, never opacity). Focus = `focus` ring.
-- **RouteLink** — `link` token (own token; defaults to `info`), AA on all surfaces (`02` status-text:link rows).
-- **Badge (count)** — `bad` for unread/attention counts, `off` for neutral counts; text AA on the badge.
-- **Input/Select/Textarea** — `inset` field, `line-bright` border, `fg` text, `focus` ring; placeholder `fg-faint`.
-- **Skeleton / Spinner / ProgressBar** — `line`→`bg-raise` shimmer; progress fill `accent`, track `line`.
+- **StatusChip** — fill/edge from the status token, label AA on the chip. ready→`success` · working→`accent` (or `info` for machine-busy) · attention→`warning` · blocked/error→`danger` · idle→`idle` · done→`success`. *Dot* variant = `status-dot` family (≥3); *worded* variant = `status-text` (≥4.5). Proven in `02`.
+- **Button / ConfirmButton** — default: `text-primary` on `surface-raised`, `border-strong` edge; primary: `accent` fill + `on-accent` label; danger: `danger`. Disabled: `text-disabled` (3.0 floor, never opacity). Hover: `accent-hover`/`hover` wash; pressed: `accent-active`/`active`. Focus: `focus-ring`.
+- **RouteLink** — `link` token, AA on all surfaces (`02` status-text:link).
+- **Badge (count)** — `danger` for unread/attention, `idle` for neutral; text AA on the badge.
+- **Input/Select/Textarea** — `surface-sunken` field, `border-strong` edge, `text-primary` text, `focus-ring`; placeholder `text-muted`.
+- **Avatar (AssigneeAvatar)** — disc tone `idle`/`accent`, initials `text-primary`/`on-accent`.
+- **LabelChip** — label-colored pill; **label colors are data-driven and OUTSIDE the semantic token contract** (per-label values, Step-5 handling), distinct from semantic StatusChip; the editor warns sub-AA labels (consistent with `../components/06-board.md` + Step 4).
+- **Skeleton / Spinner / ProgressBar** — `border`→`surface-raised` shimmer; progress fill `accent`, track `border`.
 
 ## Surfaces (`02-surfaces-and-layout.md`)
-- **PanelFrame (Card)** — body on `raise`, hairline `line`, header text `fg`, meta `fg-dim`. Inset wells/code use `inset`.
-- **SegmentedControl / Tabs** — track `inset`, selected segment `raise` + `fg`, unselected `fg-dim`, selected underline/edge `accent`; focus `focus`. (Board view switch `[List · Board]`, runtime `[运行态 · 看板]`.)
-- **Topbar / LeftNav / RightContext** — `bg` shell, nav rows `fg-dim`→`fg` on hover (`sel-bg` wash), active route `accent` marker; dividers `line`.
-- **Modal/Drawer/Sheet** — scrim = `fg` at low alpha over `bg`; panel `raise` + `line`.
+- **PanelFrame (Card)** — body on `surface-raised`, hairline `border`, header `text-primary`, meta `text-secondary`. Code/inset wells use `surface-sunken`.
+- **SegmentedControl / Tabs** — track `surface-sunken`, selected segment `surface-raised` + `text-primary`, unselected `text-secondary`, selected edge `accent`; `focus-ring`. (Board `[List · Board]`, runtime `[运行态 · 看板]`.)
+- **Topbar / LeftNav / RightContext** — `surface` shell, nav rows `text-secondary`→`text-primary` on `hover` wash, active route = `selected` (`accent-subtle`) + `accent` marker; dividers `border`.
+- **Modal/Drawer/Sheet** — scrim `surface-overlay`; panel `surface-raised` + `border`.
 
 ## Lists & data (`03-lists-and-data.md`)
-- **StatusListRow** (mesh rows, agent cards, harness/device/channel/notification rows) — leading StatusChip + `fg` title + `fg-dim` meta + trailing actions; hover = `sel-bg`/`sel-fg` wash (the `selection`/hover-wash pairs, ≥12:1); blocked tint uses `bad` left-border (`status-dot`).
-- **EmptyState** — `fg-dim` headline, `fg-faint` body, `accent` CTA.
-- **ErrorBanner / offline** — `bad` edge + `bad` text on its ~12% tint (`tinted-text:bad`, proven ≥4.5); retry = Button.
-- **VersionLine** — `fg-dim` adapter, `fg-faint` body; stale = `warn`.
+- **StatusListRow** (mesh rows, agent cards, harness/device/channel/notification rows) — leading StatusChip + `text-primary` title + `text-secondary` meta + trailing actions; `hover` wash; selected = `selected` + `text-on-selected`; blocked = `danger` left-border (`status-dot`).
+- **EmptyState** — `text-secondary` headline, `text-muted` body, `accent` CTA.
+- **ErrorBanner / offline** — `danger` edge + `danger` text on its ~12% tint (`tinted-text`, ≥4.5 proven); retry = Button.
+- **VersionLine** — `text-secondary` adapter, `text-muted` body; stale = `warning`.
 
 ## Conversation (`04-conversation.md`)
-- **TranscriptItem family** — MessageBubble: user `raise`, agent `bg`; Thought `fg-faint`; ToolCallCard status chip; PlanCard checklist; MailItem `info` edge; CompactItem `accent` marker; Divider `line`. Code via Markdown/CodeBlock on `inset` with syntax tokens (`info`=keyword, `good`=string, `fg-faint`=comment, `bad`/`warn`) — all AA on inset (`02` syntax rows).
-- **Composer** — `inset` field, `line-bright` border, `fg` text, send = `accent` primary; disabled `fg-faint`; interrupt = `bad`.
-- **ApprovalCard** — prominent: `warn`/`accent` edge, approve = primary (`accent`/`ok`), deny = `bad`; resolving = Spinner. Same part for runtime permission, assistant confirm, channel sender, device bootstrap.
-- **AttachmentCard / AuthedImage / Lightbox** — card `raise`+`line`; Lightbox scrim over `bg`.
+- **TranscriptItem family** — MessageBubble: user `surface-raised`, agent `surface`; Thought `text-muted`; ToolCallCard status chip; PlanCard checklist; MailItem `info` edge; CompactItem `accent` marker; Divider `border`. Code via Markdown/CodeBlock on `surface-sunken` with syntax tokens (`syntax-keyword`=info, `syntax-string`=success, `syntax-comment`=text-muted) — all AA on sunken (`02` syntax rows).
+- **Composer** — `surface-sunken` field, `border-strong` edge, `text-primary` text, send = `accent` primary (+`on-accent`); disabled `text-disabled`; interrupt = `danger`.
+- **ApprovalCard** — prominent: `warning`/`accent` edge, approve = primary (`accent`/`success` + `on-accent`), deny = `danger`; resolving = Spinner. Same part for runtime permission, assistant confirm, channel sender, device bootstrap.
+- **AttachmentCard / AuthedImage / Lightbox** — card `surface-raised`+`border`; Lightbox scrim = `surface-overlay`.
 
 ## Domain (`05-domain.md`)
-- **TopologyGraph** (desktop) — nodes = StatusChip color + `fg` id + `bad` pending badge; edges `line-bright`, active edge `accent`; selected node `focus` ring.
-- **ThemePicker** — mode SegmentedControl + accent SegmentedControl (swatches = the 9 accent values) + advanced custom editor with a **live `contrast.ts` readout** per role (recommended). Current selection = `accent` ring.
-- **InstallProgress** — ProgressBar `accent`; log on `inset`; error `bad`.
-- **DoctorTable / MeshBuilderForm / NotificationDrawer** — PanelFrame + StatusListRow + StatusChip; service-down prominent `bad`.
+- **TopologyGraph** (desktop) — nodes = StatusChip color + `text-primary` id + `danger` pending badge; edges `border-strong`, active edge `accent`; selected node `focus-ring`.
+- **ThemePicker** — **mode** SegmentedControl + **accent** SegmentedControl (independent axes; swatches = the 3 accent ramps) + advanced custom editor with a **live `contrast.ts` readout** per semantic pair. Current selection = `accent` ring.
+- **InstallProgress** — ProgressBar `accent`; log on `surface-sunken`; error `danger`.
+- **DoctorTable / MeshBuilderForm / NotificationDrawer** — PanelFrame + StatusListRow + StatusChip; service-down prominent `danger`.
 
 ## Board (`06-board.md`, GitHub-Issues depth)
-- **IssueListRow** — `#N` `fg-faint` · lifecycle StatusChip · `fg` title · AssigneeAvatar · LabelChips · priority · subtask progress (`accent` fill) · blocked `bad` badge · `fg-faint` updated-at; selected = `sel-bg`.
-- **LabelChip** — label-colored pill (own label palette, Step-5 label color tokens; distinct from semantic StatusChip). On dark modes labels read on `raise`; on light modes ensure label colors stay AA — labels are user/data-driven so the editor should warn sub-AA (noted).
-- **AssigneeAvatar** — initials on `off`/`accent` chip, `fg`/`sel-fg` text.
-- **EpicGroupHeader** — `fg` epic title + `fg-faint` counts; collapsible chevron `fg-dim`.
-- **FilterQueryBar / SortControl / BulkActionToolbar** — Inputs + Selects + Buttons on `raise`; active filter chips `accent`/`info`.
-- **IssueDetailHeader/Body + ActivityTimeline** — PanelFrame; timeline reuses TranscriptItem rendering (lifecycle `info`, comment `fg`, mail `accent`).
-- **KanbanColumn/Card** (desktop) — column header StatusChip + count Badge; card = condensed IssueListRow; over-drop highlight `accent`; perm-locked card `off`; focus `focus` (keyboard drag-alt).
+- **IssueListRow** — `#N` `text-muted` · lifecycle StatusChip · `text-primary` title · AssigneeAvatar · LabelChips · priority · subtask progress (`accent` fill) · blocked `danger` badge · `text-muted` updated-at; selected = `selected`.
+- **LabelChip** — data-driven label colors (outside the semantic contract; see Atoms above + `06-board.md`).
+- **AssigneeAvatar** — `idle`/`accent` disc, `text-primary`/`on-accent` initials.
+- **EpicGroupHeader** — `text-primary` epic title + `text-muted` counts; chevron `text-secondary`.
+- **FilterQueryBar / SortControl / BulkActionToolbar** — Inputs + Selects + Buttons on `surface-raised`; active filter chips `accent`/`info`.
+- **IssueDetailHeader/Body + ActivityTimeline** — PanelFrame; timeline reuses TranscriptItem rendering (lifecycle `info`, comment `text-primary`, mail `accent`).
+- **KanbanColumn/Card** (desktop) — column header StatusChip + count Badge; card = condensed IssueListRow; over-drop highlight `accent`; perm-locked card `idle`; `focus-ring` (keyboard drag-alt).
 
 ```
-draft — IssueListRow (Dark·Slate / Teal accent)
-┌ raise ───────────────────────────────────────────────────────────────── line ┐
-│ ☐  #12[faint]  ▸in_review[warn chip]  Add device-auth page[fg]  ◌@codex-1[off] │
-│    🏷auth🏷ui[label]   ▣▣▢ 2/3[accent]   ⛔blocked[bad]              2d[faint]  │
-└───────────────────────────────────────────────────────────────────────────────┘
- hover → sel-bg wash · focus → focus ring · selected → sel-bg fill
+draft — IssueListRow (Dark·Slate × Signal Teal)
+┌ surface-raised ─────────────────────────────────────────────── border ┐
+│ ☐ #12[muted] ▸in_review[warning chip] Add device-auth page[text-primary] ◌@codex-1[idle] │
+│   🏷auth🏷ui[label]  ▣▣▢ 2/3[accent]  ⛔blocked[danger]            2d[muted] │
+└─────────────────────────────────────────────────────────────────────────┘
+ hover → hover wash · focus → focus-ring · selected → selected fill (accent-subtle)
 ```
 
-## Per-mode rendering notes
-- **Dark·Slate** — high headroom everywhere (text ≥7.6); status hues pop on the slate field; accent (esp. Teal/Azure) is luminous, use restrained (selected-nav, thinking, progress), not as large fills. Default landing theme.
-- **Light·Cool** — tighter margins (`text` 4.53, `border` 3.59); do **not** lighten `line-bright`/`fg-faint` further. Dark accents read as ink; Ember (`#b8460a`) is the warmest, good for a single brand touch.
-- **Eye-care·Warm** — lowest luminance contrast by design (still AA); reduced blue. Sepia surfaces + warm inks; `warn` is deliberately dark (`#7a4c00`). Best for long sessions; accent stays an ink, not a glow.
+## Per-mode rendering notes (v2)
+- **Dark·Slate** — huge headroom (`text-primary` ≥12.95, AAA). Status hues at the light end (stop 400) pop on the slate field; `accent` (esp. Teal/Azure) is luminous — use restrained (selected-nav, thinking, progress, small fills), with `on-accent` = near-black. Default landing theme.
+- **Light·Cool** — status/accent at dark stops (700–800) read as ink; `on-accent` = white. Tightest pairs are floor families (`text-disabled`/sunken 3.24, `accent-text` ~4.6) — do **not** lighten `border-strong`/`text-muted`/accent further.
+- **Eye-care·Warm** — warm sepia, reduced blue, gentler luminance — still full AA/AAA. Status/accent at 700–800 (Ember at 800); `on-accent` = white. Best for long sessions; `accent` stays an ink, not a glow.
 
 ## Artifacts
-PNG token/swatch boards (full 19-token swatches per mode + the 9 accent chips, each labeled with its `02` ratio) are published to `$AGENT_MESH_ARTIFACTS` (not committed): see the report mail for filenames (`step3-token-board.png`).
+PNG sample boards are **the next checkpoint** (not generated here, per the pass plan): three per-mode boards `v2-sample-dark-slate.png` / `v2-sample-light-cool.png` / `v2-sample-eye-care-warm.png` (each ≤~1500px, all 3 accents inside) + raw-scale/old↔new swatch boards, published to `$AGENT_MESH_ARTIFACTS` (not committed). See `05-v2-pass-plan.md`.
 
 ## Change / review log
-- 2026-06-20 — created (Step 3): every Step 2 component annotated to tokens; per-mode notes + board draft; PNG boards published as artifacts. No `src/web` code changed.
+- 2026-06-20 — created (Step 3 v1): components annotated to the 19-key tokens.
+- 2026-06-20 — **v2 (supersedes v1)**: re-annotated every Step 2 component (incl. board + Avatar/LabelChip) to the v2 **semantic** tokens; added interaction-state tokens (`hover`/`active`/`selected`/`on-accent`), label-colors-outside-contract note (consistent with Step 4), v2 per-mode notes (AAA primary, per-mode accent stops), and moved PNG boards to the next checkpoint. No `src/web` code changed.
