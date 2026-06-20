@@ -79,7 +79,7 @@
 
 ### 3.1 数据流（A）
 1. **Channel 拥有 mode→字符串映射 + 计数**：`BindingRuntime` 新增每轮工具状态（见 §4）。`onRouterToolCall` 去重后更新状态，composeAnnotation→交给 sender。
-2. **Sender 渲染**：`CardSender` 新增 `toolAnnotation?: string`（cosmetic，**不计入** `streamBaseOffset/live.sentText/continuation 扫描**），在 `composeDisplay` 里作为 body 的**尾部块**追加——但**必须先把 body 当前未闭合的结构（code fence）显示性地闭合**，再渲染注解（详见 §3.5）：
+2. **Sender 渲染**：`CardSender` 新增 `toolAnnotation?: string`（cosmetic，**不计入** `streamBaseOffset/live.sentText` / continuation 扫描），在 `composeDisplay` 里作为 body 的**尾部块**追加——但**必须先把 body 当前未闭合的结构（code fence）显示性地闭合**，再渲染注解（详见 §3.5）：
    ```
    composeDisplay(body) =
      [continuation prefix] + body
@@ -87,9 +87,9 @@
    // structuralClose(body) = body 末尾若有未闭合 fence 则补一行 fence marker（display-only，
    //                          不写回 sentText）；table 无需 close；无开放结构则为空。
    ```
-   （`currentHint` 仍是首行 prefix；二者不同时出现——见 §6 表 R5，工具路径不再用 currentHint。`structuralClose` 复用 `continuationAfter(body).openFence` + `fenceMarkerOf` 推导，与现有 `appendCloseFence` 的 display-only 语义一致，`card-sender.ts:670-687`。）
+   （`currentHint` 仍是首行 prefix；二者不同时出现——见 §10 R5，工具路径不再用 currentHint。`structuralClose` 复用 `continuationAfter(body).openFence` + `fenceMarkerOf` 推导，与现有 `appendCloseFence` 的 display-only 语义一致，`card-sender.ts:670-687`。）
 3. **in-place 更新**：注解变化时驱动一次 `cardElement.content` push（同卡，seq 递增）→ 飞书**不通知**。
-4. **新增 sink 方法** `OutboundSink.streamToolAnnotation?(text: string | undefined)`：channel 调它把"当前轮工具注解字符串"推给 sender；`undefined`/`off` 不调或清空。`LarkSender`（文本兜底）实现为 no-op（降级文本不显示工具——见 §5 R3 限制）。
+4. **新增 sink 方法** `OutboundSink.streamToolAnnotation?(text: string | undefined)`：channel 调它把"当前轮工具注解字符串"推给 sender；`undefined`/`off` 不调或清空。`LarkSender`（文本兜底）实现为 no-op（降级文本不显示工具——见 §10 R3 限制）。
 
 ### 3.2 三档映射
 - **collapsed**：`onRouterToolCall` 累加 `toolCount`，注解 = `🔧 调用了 ${toolCount} 个工具`；每次新工具调一次 `streamToolAnnotation(注解)` → 同卡 in-place 刷新计数。
