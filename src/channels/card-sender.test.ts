@@ -960,3 +960,101 @@ test("stop() halts the card sender and the fallback and blocks further work", as
   expect(r.creates).toHaveLength(0);
   expect(fb.enqueued).toHaveLength(0);
 });
+
+// ── C2: artifact images as card boundaries (Opt-2) ──────────────────────────────
+
+test("an artifact image splits a turn into prose card → image placeholder card → prose card", async () => {
+  const r = cardRecorder();
+  const fb = fakeFallback();
+  const s = makeSender(r, fb);
+  s.streamUpdate("prose ![a](artifact:a.png) more\n");
+  s.streamCommit();
+  await s.whenIdle();
+  // three cards in order: the prose before, the image placeholder, the prose after (token NOT shown)
+  expect(r.creates.map((c) => c.text)).toEqual(["prose ", "🖼 a", " more\n"]);
+  expect(r.sends).toHaveLength(3);
+  expect(r.finalizes.map((f) => f.cardId)).toEqual(["card1", "card2", "card3"]); // prose sealed before image card
+  expect(fb.streamUpdates).toHaveLength(0); // no fallback
+});
+
+test("the image placeholder card never carries the raw artifact token; prose cards never show it", async () => {
+  const r = cardRecorder();
+  const s = makeSender(r, fakeFallback());
+  s.streamUpdate("![d](artifact://codex-1/out.png)\n");
+  s.streamCommit();
+  await s.whenIdle();
+  expect(r.creates.map((c) => c.text)).toEqual(["🖼 d"]); // only the placeholder card, no prose card
+  const blob = r.creates.map((c) => c.text).join("|");
+  expect(blob).not.toContain("artifact:");
+  expect(blob).not.toContain("artifact://");
+});
+
+test("a GFM table turn stays one markdown card — no image card, no table component", async () => {
+  const r = cardRecorder();
+  const s = makeSender(r, fakeFallback());
+  const table = "| mod | st |\n| --- | --- |\n| a | ok |\n";
+  s.streamUpdate(table);
+  s.streamCommit();
+  await s.whenIdle();
+  expect(r.creates.map((c) => c.text)).toEqual([table]); // whole table in one markdown card
+  expect(r.creates.some((c) => c.text.startsWith("🖼"))).toBe(false);
+});
+
+test("an artifact token inside a fenced code block does NOT create an image card", async () => {
+  const r = cardRecorder();
+  const s = makeSender(r, fakeFallback());
+  const code = "```\n![x](artifact:x.png)\n```\n";
+  s.streamUpdate(code);
+  s.streamCommit();
+  await s.whenIdle();
+  expect(r.creates.map((c) => c.text)).toEqual([code]); // the token stays literal in the code card
+  expect(r.creates.some((c) => c.text.startsWith("🖼"))).toBe(false);
+});
+
+test("multiple images produce ordered prose/image/prose/image/prose cards", async () => {
+  const r = cardRecorder();
+  const s = makeSender(r, fakeFallback());
+  s.streamUpdate("a ![x](artifact:x.png) b ![y](artifact:y.png) c\n");
+  s.streamCommit();
+  await s.whenIdle();
+  expect(r.creates.map((c) => c.text)).toEqual(["a ", "🖼 x", " b ", "🖼 y", " c\n"]);
+});
+
+test("prose-only turns are unchanged: no extra cards, single create + content edits as before", async () => {
+  const r = cardRecorder();
+  const s = makeSender(r, fakeFallback());
+  s.streamUpdate("Hello");
+  await s.whenIdle();
+  s.streamUpdate("Hello world");
+  await s.whenIdle();
+  s.streamCommit();
+  await s.whenIdle();
+  expect(r.creates.map((c) => c.text)).toEqual(["Hello"]); // exactly one card
+  expect(r.contents.map((c) => c.content)).toEqual(["Hello world"]);
+  expect(r.finalizes).toHaveLength(1);
+});
+
+test("a failed image placeholder card degrades to text from the image (incl. the literal markdown)", async () => {
+  const r = cardRecorder({ createImpl: (req, n) => (req.text.startsWith("🖼") ? { ok: false, code: 1 } : { ok: true, cardId: `card${n}` }) });
+  const fb = fakeFallback();
+  const s = makeSender(r, fb);
+  s.streamUpdate("prose ![a](artifact:a.png) tail\n");
+  s.streamCommit();
+  await s.whenIdle();
+  // the prose-before card was sent; the image card failed → fallback owns the remainder from the image
+  expect(r.creates.map((c) => c.text)).toEqual(["prose ", "🖼 a"]);
+  expect(fb.streamUpdates.length).toBeGreaterThan(0);
+  expect(fb.streamUpdates.at(-1)).toBe("![a](artifact:a.png) tail\n"); // literal markdown preserved, nothing lost
+  expect(fb.commits).toBe(1);
+});
+
+test("a trailing image with no newline is flushed at commit (final)", async () => {
+  const r = cardRecorder();
+  const s = makeSender(r, fakeFallback());
+  s.streamUpdate("see "); // partial line, no image yet
+  await s.whenIdle();
+  s.streamUpdate("see ![a](artifact:a.png)"); // image now complete but no trailing newline
+  s.streamCommit();
+  await s.whenIdle();
+  expect(r.creates.map((c) => c.text)).toEqual(["see ", "🖼 a"]); // prose card then image card at commit
+});

@@ -1,7 +1,19 @@
 # Feishu rich outbound — table component + artifact image + streaming split (research)
 
-Status: **research / design only**. No functional code in this change. Branch `task/feishu-rich-outbound-research`, base `5bf70fc`.
+Status: **research / design only** (original). **Superseded in part by the post-probe implementation decisions below.**
 Goal: render outbound router prose that contains GFM **tables** as Feishu **CardKit table components**, and `artifact:` **images** as uploaded Feishu **img** elements — the hard part being the **streaming split** of an incremental prose/table/image stream into ordered card elements.
+
+---
+
+## ⚑ Implementation decisions (LOCKED after the live probe — supersede parts of this research)
+
+A real Feishu live probe (bot Legion → mesh-dev chat, 3 cards, all `code=0`) plus user observation changed two premises:
+
+1. **GFM tables stay markdown — NO table component.** The probe confirmed Feishu's **markdown element renders GFM pipe tables as real tables**, and the user chose markdown over the native `table` component. ⇒ The segmenter does **not** parse tables, emits no `table` element, and §2 (table component) + decision ⑥ (5-tables/card, 50-column block split) are **obsolete**. Tables/code/links all stay in prose markdown. The only non-markdown thing extracted is an **`artifact:` image**.
+
+2. **Images are CARD BOUNDARIES (Opt-2), not same-card `insert_before` (Option B).** `src/channels/card-sender.ts` is a deep **single-element** streaming state machine (`streamBaseOffset` / `live.sentText` / `fallbackOffset` / `planSizeSplit` all assume one contiguous text stream into one element). Retrofitting same-card multi-element `insert_before` insertion (the earlier §4.6 Option B) is **high regression risk** on a production path. **User-approved Opt-2:** at an artifact-image boundary the sender **seals the current prose card → sends a separate image/placeholder card → continues prose on a fresh card**. Order + non-blocking behavior are preserved; the tradeoff (more cards) was accepted. The prose-only path stays **byte-identical** to pre-C2 (the image cap is `Infinity` when there are no artifact images).
+
+These are the authority for the C1/C2/… implementation; where this older research conflicts (table component, in-card Option B), the decisions above win.
 
 Evidence tags: `[confirmed]` = verified in repo source or official docs/SDK; `[inference]` = reasoned from confirmed facts; `[not verified]` = could not confirm, designed around.
 

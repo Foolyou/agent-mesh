@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { segmentStream, type Segment } from "./stream-segmenter";
+import { segmentStream, imageBoundaries, planOutbound, type Segment } from "./stream-segmenter";
 
 // Convenience: full-parse (turn-commit) segments.
 const seg = (s: string): Segment[] => segmentStream(s, { final: true }).segments;
@@ -165,4 +165,82 @@ test("CRLF line endings are handled (fence close + image extraction)", () => {
 test("empty input yields no segments", () => {
   expect(seg("")).toEqual([]);
   expect(segmentStream("")).toEqual({ segments: [], open: "" });
+});
+
+// ── imageBoundaries: char ranges of committed artifact images (sender boundary detection) ──
+
+test("imageBoundaries returns exact char ranges of committed artifact images", () => {
+  const s = "see ![a](artifact:a.png) end\n";
+  const bs = imageBoundaries(s, { final: true });
+  expect(bs).toHaveLength(1);
+  expect(s.slice(bs[0].start, bs[0].end)).toBe("![a](artifact:a.png)");
+  expect(bs[0]).toMatchObject({ ref: "artifact:a.png", alt: "a" });
+});
+
+test("imageBoundaries skips images in code context, finds real ones", () => {
+  const s = "```\n![x](artifact:in.png)\n```\nout ![r](artifact:out.png)\n";
+  const bs = imageBoundaries(s, { final: true });
+  expect(bs.map((b) => b.ref)).toEqual(["artifact:out.png"]);
+});
+
+test("imageBoundaries during streaming only counts committed (newline-terminated) images", () => {
+  expect(imageBoundaries("a ![x](artifact:x.png")).toEqual([]); // no newline → not committed
+  expect(imageBoundaries("a ![x](artifact:x.png)\n").map((b) => b.ref)).toEqual(["artifact:x.png"]);
+});
+
+// ── planOutbound: the streaming sender's next-step plan ──
+
+test("planOutbound: no images → no boundary, prose showable to the end", () => {
+  const full = "just prose, a | b | c table\n| - | - | - |\n";
+  expect(planOutbound(full, 0)).toEqual({ proseCap: full.length });
+});
+
+test("planOutbound: an image ahead is the next boundary; prose capped at its start", () => {
+  const full = "before ![a](artifact:a.png) after\n";
+  const p = planOutbound(full, 0, { final: true });
+  expect(p.image).toMatchObject({ ref: "artifact:a.png", alt: "a" });
+  expect(p.proseCap).toBe(p.image!.start);
+  expect(full.slice(0, p.proseCap)).toBe("before ");
+});
+
+test("planOutbound: from-offset skips an already-passed image, finds the next", () => {
+  const full = "![a](artifact:a.png)mid![b](artifact:b.png)\n";
+  const first = planOutbound(full, 0, { final: true }).image!;
+  const next = planOutbound(full, first.end, { final: true }).image!;
+  expect(first.ref).toBe("artifact:a.png");
+  expect(next.ref).toBe("artifact:b.png");
+});
+
+test("planOutbound: a FORMING image token in the open tail caps prose before it (no premature prose)", () => {
+  const full = "shown text ![half](artifact:x"; // no newline, token incomplete
+  const p = planOutbound(full, 0);
+  expect(p.image).toBeUndefined();
+  expect(p.proseCap).toBe(full.indexOf("![")); // hold the forming token
+  expect(full.slice(0, p.proseCap)).toBe("shown text ");
+});
+
+test("planOutbound: a FORMING non-artifact token (![x](http…) is NOT held — prose-only cadence preserved", () => {
+  const full = "see ![logo](http://x/y."; // forming non-artifact image, no newline
+  const p = planOutbound(full, 0);
+  expect(p.image).toBeUndefined();
+  expect(p.proseCap).toBe(full.length); // decided non-artifact → stream as prose, don't hold
+});
+
+test("planOutbound: an undecided forming token (![alt] / ![alt](artif…) IS held", () => {
+  expect(planOutbound("x ![a", 0).proseCap).toBe("x ".length); // still typing alt
+  expect(planOutbound("x ![a](artif", 0).proseCap).toBe("x ".length); // ref prefix consistent with artifact:
+});
+
+test("planOutbound: a `![` inside an open fenced block is NOT held (it is code, stream it)", () => {
+  const full = "```\ncode ![x](artifact:x.png) more"; // open fence, no close
+  const p = planOutbound(full, 0);
+  expect(p.image).toBeUndefined();
+  expect(p.proseCap).toBe(full.length); // inside a fence → not a forming image, stream the code
+});
+
+test("planOutbound at final flushes a trailing committed image with no newline", () => {
+  const full = "done ![a](artifact:a.png)";
+  const p = planOutbound(full, 0, { final: true });
+  expect(p.image).toMatchObject({ ref: "artifact:a.png" });
+  expect(full.slice(0, p.proseCap)).toBe("done ");
 });

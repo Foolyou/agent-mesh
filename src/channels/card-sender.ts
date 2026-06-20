@@ -20,11 +20,12 @@
 import * as lark from "@larksuiteoapi/node-sdk";
 import type { OutboundSink, SegmentBreak } from "./feishu-channel";
 import { safeUuid, defaultIdempotencyKey } from "./sender";
+import { planOutbound, type ImageBoundary } from "./stream-segmenter";
 
 /** Why a card is being finalized. Card finalization is unified through one path so tool-call
  *  boundaries, size rollover, the streaming-window rollover, and the turn boundary all behave
  *  identically w.r.t. sequence management and fallback accounting. */
-export type FinalizeReason = "segment_break" | "size_rollover" | "stream_timeout_rollover" | "turn_commit";
+export type FinalizeReason = "segment_break" | "size_rollover" | "stream_timeout_rollover" | "turn_commit" | "image_boundary";
 
 export interface CardCreateRequest {
   /** The markdown element id the content/finalize ops will target. */
@@ -124,6 +125,10 @@ export interface CardSenderOptions {
   /** Derive the card summary (chat-list / notification text) from the card body. Centralized so it
    *  can be tuned later. Default {@link defaultCardSummary}. */
   cardSummary?: (body: string) => string;
+  /** Render the markdown shown on the standalone card emitted at an artifact-image boundary (C2). C2
+   *  only reserves the position with a placeholder; C3 turns it into the uploaded `img` element.
+   *  Default {@link defaultImagePlaceholder}. */
+  imagePlaceholder?: (image: ImageBoundary) => string;
   log?: (msg: string) => void;
   wait?: (ms: number) => Promise<void>;
   now?: () => number;
@@ -152,6 +157,7 @@ export class CardSender implements OutboundSink {
   private readonly enableToolHint: boolean;
   private readonly toolHint: (meta?: SegmentBreak) => string;
   private readonly cardSummary: (body: string) => string;
+  private readonly imagePlaceholder: (image: ImageBoundary) => string;
   private readonly maxCardBytes: number;
   private readonly maxCardAgeMs: number;
   private readonly log: (msg: string) => void;
@@ -185,6 +191,10 @@ export class CardSender implements OutboundSink {
   private liveOpenedAt = 0;
   /** Chars already sealed into PRIOR cards of THIS turn (cross-card rollover). */
   private streamBaseOffset = 0;
+  /** Cap on how far the current prose card may show (C2): the next artifact-image boundary's start, or
+   *  a forming `![` token in the open tail. Infinity for a prose-only turn → body == full.slice(base),
+   *  i.e. byte-identical to the pre-C2 single-element behavior. Recomputed each driver iteration. */
+  private capOffset = Number.POSITIVE_INFINITY;
   /** Monotonic sequence counter — strictly increasing across the whole sender lifetime, which is
    *  also strictly increasing within every card it ever touches. */
   private sequence = 0;
@@ -217,6 +227,7 @@ export class CardSender implements OutboundSink {
     this.enableToolHint = opts.enableToolHint ?? true;
     this.toolHint = opts.toolHint ?? defaultToolHint;
     this.cardSummary = opts.cardSummary ?? defaultCardSummary;
+    this.imagePlaceholder = opts.imagePlaceholder ?? defaultImagePlaceholder;
     this.maxCardBytes = opts.maxCardBytes ?? DEFAULT_MAX_CARD_BYTES;
     this.maxCardAgeMs = opts.maxCardAgeMs ?? DEFAULT_MAX_CARD_AGE_MS;
     this.log = opts.log ?? (() => {});
@@ -304,7 +315,12 @@ export class CardSender implements OutboundSink {
         }
 
         const full = this.streamPending ?? "";
-        const body = full.slice(this.streamBaseOffset);
+        // C2: plan the next artifact-image card boundary + how far prose may safely show now. For a
+        // prose-only turn this is { proseCap: full.length } ⇒ body == full.slice(base), i.e. byte-for-byte
+        // the pre-C2 single-element behavior. `final` lets a turn-commit flush a trailing image.
+        const plan = planOutbound(full, this.streamBaseOffset, { final: this.streamCommitting });
+        this.capOffset = plan.proseCap;
+        const body = this.bodyOf(full);
         // Lazy: an armed hint alone does NOT force a card mid-stream — it prefixes the next card that
         // body warrants. Only at a boundary (below) is a hint-only card materialized.
         const liveUpToDate = this.live ? this.live.sentText === body : body.trim() === "";
@@ -332,6 +348,24 @@ export class CardSender implements OutboundSink {
           }
           await this.doStreamOp(full);
           continue; // re-loop; the op may have triggered a fallback
+        }
+
+        // C2: the prose up to the next artifact image is fully shown (or there is none before it) → seal
+        // the prose card, send a standalone image/placeholder card, and advance PAST the image token so
+        // prose continues on a fresh card. Reuses the existing seal/offset machinery (Opt-2: images are
+        // card boundaries, not same-card elements). A failed image op degrades to text like any other op.
+        if (plan.image) {
+          if (this.live) {
+            const minGap = this.streamCommitting || this.streamSegmentBreaking ? this.minIntervalMs : this.minEditIntervalMs;
+            const waitMs = this.lastEditAt + minGap - this.now();
+            if (waitMs > 0) {
+              await this.wait(waitMs);
+              continue;
+            }
+            await this.finalizeCurrentCard("image_boundary"); // seals prose card; advances base to image.start
+          }
+          if (await this.emitImageCard(plan.image)) this.streamBaseOffset = plan.image.end; // skip the token text
+          continue; // a failed emit fell back (drains next loop); otherwise prose continues on a fresh card
         }
 
         // At a boundary with a hint armed but no body/card: materialize a hint-only card so the tool
@@ -386,9 +420,48 @@ export class CardSender implements OutboundSink {
     }
   }
 
+  /** The prose body the current card may show: from the turn's cross-card base up to the C2 image cap. */
+  private bodyOf(full: string): string {
+    return full.slice(this.streamBaseOffset, this.capOffset < full.length ? this.capOffset : full.length);
+  }
+
+  /** Emit a standalone card at an artifact-image boundary (C2): create + send + finalize a static card
+   *  carrying the image placeholder. C3 replaces the placeholder with the uploaded `img` element. On any
+   *  failed op, degrade to the text fallback (the remainder, incl. the literal image markdown, is never
+   *  lost). Returns true iff the placeholder card was sent. */
+  private async emitImageCard(image: ImageBoundary): Promise<boolean> {
+    const text = this.imagePlaceholder(image);
+    try {
+      const cr = await this.create({ elementId: this.elementId, text });
+      if (!cr.ok || !cr.cardId) {
+        this.lastEditAt = this.now();
+        this.log(`feishu card: image placeholder create failed${codeInfo(cr)}; falling back to text`);
+        this.giveUp();
+        return false;
+      }
+      const sr = await this.send({ chatId: this.chatId, cardId: cr.cardId, uuid: cardSendUuid(cr.cardId) });
+      this.lastEditAt = this.now();
+      if (!sr.ok || !sr.messageId) {
+        this.log(`feishu card: image placeholder send failed${codeInfo(sr)}; falling back to text`);
+        this.giveUp();
+        return false;
+      }
+      const seq = this.nextSeq();
+      const r = await this.finalize({ cardId: cr.cardId, sequence: seq, uuid: stableCardKey(cr.cardId, seq), summary: this.cardSummary(text) });
+      this.lastEditAt = this.now();
+      if (!r.ok) this.log(`feishu card: image placeholder finalize failed${codeInfo(r)}; left in streaming state`);
+      return true;
+    } catch (e) {
+      this.lastEditAt = this.now();
+      this.log(`feishu card: image placeholder error: ${String(e)}; falling back to text`);
+      this.giveUp();
+      return false;
+    }
+  }
+
   /** Perform exactly one streaming op (create+send, or a content edit) toward `full`. */
   private async doStreamOp(full: string): Promise<void> {
-    const body = full.slice(this.streamBaseOffset);
+    const body = this.bodyOf(full);
 
     if (!this.live) {
       if (body.trim() === "" && this.currentHint === undefined) return; // nothing to show
@@ -641,6 +714,7 @@ export class CardSender implements OutboundSink {
     this.pendingContinuation = undefined;
     this.live = undefined;
     this.streamBaseOffset = 0;
+    this.capOffset = Number.POSITIVE_INFINITY;
     this.fellBack = false;
     this.fallbackOffset = 0;
     this.fbPending = undefined;
@@ -652,6 +726,12 @@ export class CardSender implements OutboundSink {
  *  as the first line of the segment's first card. */
 export function defaultToolHint(meta?: SegmentBreak): string {
   return meta?.toolName ? `🔧 调用工具：${meta.toolName}` : "🔧 正在调用工具";
+}
+
+/** Default placeholder markdown for the standalone card emitted at an artifact-image boundary (C2). C3
+ *  replaces this with the uploaded `img` element; the artifact ref is intentionally not shown. */
+export function defaultImagePlaceholder(image: ImageBoundary): string {
+  return image.alt ? `🖼 ${image.alt}` : "🖼 image";
 }
 
 function codeInfo(r: { code?: number; message?: string }): string {
