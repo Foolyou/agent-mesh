@@ -1,9 +1,26 @@
 import { test, expect } from "bun:test";
 import {
   MODES, ACCENTS, DEFAULT_MODE, DEFAULT_ACCENT, SEMANTIC_KEYS,
-  compose, v1PaletteToSemantic, loadThemeSelection, BUILTIN_THEMES, isHexColor, applyPalette,
+  compose, v1PaletteToSemantic, loadThemeSelection, BUILTIN_THEMES, isHexColor, applyPalette, applyRawScales,
   type SemanticPalette,
 } from "./themes";
+
+test("applyRawScales writes the raw 11-stop vars to :root (backs the raw-* escape hatch; hex only in RAW)", () => {
+  const store: Record<string, string> = {};
+  const root = { style: { setProperty: (k: string, v: string) => { store[k] = v; } } };
+  const g = globalThis as any;
+  const prev = g.document;
+  g.document = { documentElement: root };
+  try {
+    applyRawScales();
+    expect(Object.keys(store).filter((k) => k.startsWith("--raw-")).length).toBe(121); // 11 ramps × 11 stops
+    expect(store["--raw-slate-500"]).toBe("#5f6772"); // raw-token-allow: test asserts applyRawScales var output
+    expect(store["--raw-signal-teal-400"]).toBe("#2dd4bf"); // raw-token-allow: test asserts applyRawScales var output
+    expect(isHexColor(store["--raw-fleet-azure-700"])).toBe(true); // raw-token-allow: test asserts applyRawScales var output
+  } finally {
+    g.document = prev;
+  }
+});
 
 const allHex = (p: SemanticPalette) => SEMANTIC_KEYS.every((k) => isHexColor(p[k]));
 

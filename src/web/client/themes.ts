@@ -472,6 +472,18 @@ export function applyComposition(c: SemanticPalette): void {
   for (const k of THEME_KEYS) root.style.setProperty(`--${k}`, c[V1_FROM_SEMANTIC[k]]);
 }
 
+/** Write the raw 11-stop scale CSS vars (`--raw-<ramp>-<stop>`) to :root. These are
+ *  static (theme-independent), so this is called once by initTheme(). They back the
+ *  Tailwind `raw-*` escape-hatch utilities (tailwind.css `@theme inline` maps
+ *  `--color-raw-*` → `var(--raw-*)`); the HEX values live ONLY here (RAW), never
+ *  duplicated into CSS. Component use of `raw-*` is lint-discouraged — see
+ *  src/web/raw-token-guard.ts. */
+export function applyRawScales(): void {
+  const root = document.documentElement;
+  for (const [ramp, scale] of Object.entries(RAW))
+    for (const [stop, hex] of Object.entries(scale)) root.style.setProperty(`--raw-${ramp}-${stop}`, hex);
+}
+
 /** v1 19-key → v2 semantic migration/fallback shim. Best-effort derivation so a
  *  stored v1 custom palette still renders under v2: status `*-subtle`/`on-*` and
  *  the interaction washes are derived from the v1 values (no raw ramp available).
@@ -526,6 +538,7 @@ export function saveAccent(a: Accent): void {
  *  fresh / non-legacy state falls through to the v2 composition, default
  *  Dark·Slate × Signal Teal. (The mode/accent ThemePicker UI is a later commit.) */
 export function initTheme(): void {
+  applyRawScales(); // static raw-* escape-hatch vars (theme-independent)
   let legacy: string | null = null;
   try { legacy = localStorage.getItem(ACTIVE_KEY); } catch { /* unavailable */ }
   if (legacy === "custom") {
