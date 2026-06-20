@@ -62,3 +62,12 @@ None blocking. One product-boundary note carried from Step 1 (device approve in 
 
 ## Change / review log
 - 2026-06-20 — created (Step 2): inventory + 5 detail docs; 8 backward-consistency unifications applied to Step 1 docs (logged in each).
+
+## Step 2 addendum — Board deepening (2026-06-20, prdmgr/user)
+Board raised to **GitHub Issues + Milestones** maturity (see `../interaction/03-board-view.md`, deepened). Board-specific parts are inventoried in **`06-board.md`** (added to the detail-doc set): IssueListRow (StatusListRow variant), FilterQueryBar (extends FilterBar), SortControl, LabelChip, AssigneeAvatar (new shared Avatar primitive), MilestonePill / MilestoneProgressRow / MilestoneCard, IssueDetailHeader/Body, ActivityTimeline (shares TranscriptItem patterns), BulkActionToolbar, KanbanColumn/Card (desktop; consolidates the abstract `05` Kanban for the board), KeyboardFocus affordances.
+- **Backward consistency held**: board reuses StatusChip / PanelFrame / SegmentedControl(List·Board·Milestones) / FilterBar / EmptyState·ErrorBanner·Skeleton / ApprovalCard(soft close gate) / Composer(comment box) / RouteLink; the Step 1 board doc was back-edited first (deepened + components-used + change log).
+- **New shared primitives surfaced by board**: `AssigneeAvatar` (small Avatar) and `LabelChip` (label-colored pill, distinct from semantic StatusChip) — usable beyond board later; recorded here as shared.
+- **New data entity flagged** (not a component decision): `BoardMilestone {id,title,due?,description?}` + `Task.milestoneId?` — additive/migration-safe, deferred to Step 3+/impl; raised as the one real new product surface (issue-panel.md had excluded milestones).
+
+## Change / review log — Board addendum
+- 2026-06-20 — Step 2 board deepening: added `06-board.md`; Step 1 `03-board-view.md` deepened first (GH Issues + Milestones); inventory + matrix extended.
