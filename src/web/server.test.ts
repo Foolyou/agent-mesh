@@ -67,24 +67,24 @@ async function approvedRoot(): Promise<{ root: string; token: string }> {
   return { root, token };
 }
 
-test("exposed bind: non-device /api + /ws require auth; loopback is NOT implicitly trusted", async () => {
+test("loopback bind STILL requires a device token (a loopback socket is never trusted)", async () => {
+  // Funnel testing proved remote traffic reaches the service as a loopback socket, so even on a
+  // loopback bind a token is the only allow path.
   const { root, token } = await approvedRoot();
   const gw = new WebGateway(fakeManager() as any, undefined, { root });
-  const server = startWebServer({ gateway: gw, port: 0, dev: false, hostname: "0.0.0.0" });
+  const server = startWebServer({ gateway: gw, port: 0, dev: false, hostname: "127.0.0.1" });
   const base = `http://127.0.0.1:${server.port}`;
   try {
-    // No token: denied even though the socket is loopback, because the bind is exposed.
-    expect((await fetch(`${base}/api/state`)).status).toBe(401);
-    // A spoofed X-Forwarded-For claiming loopback cannot bypass — the gate uses the socket, not headers.
+    expect((await fetch(`${base}/api/state`)).status).toBe(401); // no token → denied (no loopback trust)
+    // A spoofed X-Forwarded-For cannot conjure a token; still denied.
     expect((await fetch(`${base}/api/state`, { headers: { "x-forwarded-for": "127.0.0.1" } })).status).toBe(401);
     // An approved device token passes via Authorization: Bearer.
     expect((await fetch(`${base}/api/state`, { headers: { authorization: `Bearer ${token}` } })).status).toBe(200);
-    // ...but a `?token=` query is REJECTED for /api/* (URL tokens leak via history/logs/referrers);
-    // that transport is reserved for /ws only.
+    // ...but a `?token=` query is REJECTED for /api/* (URL tokens leak); reserved for /ws only.
     expect((await fetch(`${base}/api/state?token=${encodeURIComponent(token)}`)).status).toBe(401);
-    // Device-auth endpoints stay pre-auth (reachable without a token even on an exposed bind).
+    // Device-auth endpoints stay pre-auth so first enrollment is possible.
     expect((await fetch(`${base}/api/auth/device/start`, { method: "POST" })).status).toBe(200);
-    // WS upgrade is gated BEFORE the protocol upgrade: denied → 401; allowed → 400 (upgrade-without-headers).
+    // WS gated BEFORE upgrade: no token → 401; valid token → 400 (upgrade-without-headers in this fetch).
     expect((await fetch(`${base}/ws`)).status).toBe(401);
     expect((await fetch(`${base}/ws?token=${encodeURIComponent(token)}`)).status).toBe(400);
   } finally {
@@ -93,46 +93,38 @@ test("exposed bind: non-device /api + /ws require auth; loopback is NOT implicit
   }
 });
 
-test("loopback bind implicitly trusts loopback without a token", async () => {
-  const { root } = await approvedRoot();
+test("exposed bind enforces identically — token required, no override", async () => {
+  const { root, token } = await approvedRoot();
   const gw = new WebGateway(fakeManager() as any, undefined, { root });
-  const server = startWebServer({ gateway: gw, port: 0, dev: false, hostname: "127.0.0.1" });
+  const server = startWebServer({ gateway: gw, port: 0, dev: false, hostname: "0.0.0.0" });
   const base = `http://127.0.0.1:${server.port}`;
   try {
-    expect((await fetch(`${base}/api/state`)).status).toBe(200); // implicit loopback trust
-    expect((await fetch(`${base}/ws`)).status).toBe(400); // gate passes → upgrade-without-headers
+    expect((await fetch(`${base}/api/state`)).status).toBe(401);
+    expect((await fetch(`${base}/api/state`, { headers: { authorization: `Bearer ${token}` } })).status).toBe(200);
+    expect((await fetch(`${base}/api/auth/device/start`, { method: "POST" })).status).toBe(200); // pre-auth
   } finally {
     server.stop();
     await rm(root, { recursive: true, force: true });
   }
 });
 
-test("trustLoopbackWhenExposed override re-enables loopback trust on an exposed bind", async () => {
-  const { root } = await approvedRoot();
-  const gw = new WebGateway(fakeManager() as any, undefined, { root });
-  const server = startWebServer({ gateway: gw, port: 0, dev: false, hostname: "0.0.0.0", trustLoopbackWhenExposed: true });
-  const base = `http://127.0.0.1:${server.port}`;
-  try {
-    expect((await fetch(`${base}/api/state`)).status).toBe(200);
-  } finally {
-    server.stop();
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
-test("WS upgrade succeeds end-to-end for an allowed (loopback) request", async () => {
-  const { root } = await approvedRoot();
+test("WS upgrade succeeds with a valid token and is rejected without one", async () => {
+  const { root, token } = await approvedRoot();
   const gw = new WebGateway(fakeManager() as any, undefined, { root });
   const server = startWebServer({ gateway: gw, port: 0, dev: false });
-  try {
-    const ws = new WebSocket(`ws://127.0.0.1:${server.port}/ws`);
-    const opened = await new Promise<boolean>((resolve) => {
-      ws.onopen = () => resolve(true);
+  const open = (url: string) =>
+    new Promise<boolean>((resolve) => {
+      const ws = new WebSocket(url);
+      ws.onopen = () => {
+        resolve(true);
+        ws.close();
+      };
       ws.onerror = () => resolve(false);
       setTimeout(() => resolve(false), 2000);
     });
-    expect(opened).toBe(true);
-    ws.close();
+  try {
+    expect(await open(`ws://127.0.0.1:${server.port}/ws?token=${encodeURIComponent(token)}`)).toBe(true);
+    expect(await open(`ws://127.0.0.1:${server.port}/ws`)).toBe(false); // no token → upgrade refused
   } finally {
     server.stop();
     await rm(root, { recursive: true, force: true });
@@ -145,7 +137,8 @@ test("proxy mode handles device-auth at the web tier → remoteHint is the TRUE 
   const baseDir = await mkdtemp(join(tmpdir(), "mesh-proxy-root-"));
   const prev = process.env.MESH_ROOT;
   process.env.MESH_ROOT = baseDir; // the proxy web tier resolves its auth root via resolveRoot()
-  // exposed bind + loopback socket → the web tier should classify the device as "exposed-loopback".
+  // The web tier (where the browser socket terminates) records the TRUE browser origin class as a
+  // coarse, advisory remoteHint — not the backend's loopback view of the web→backend hop.
   const server = startWebServer({ backendUrl: "http://127.0.0.1:1", port: 0, dev: false, hostname: "0.0.0.0" });
   const origin = `http://127.0.0.1:${server.port}`;
   try {
@@ -153,7 +146,7 @@ test("proxy mode handles device-auth at the web tier → remoteHint is the TRUE 
     expect(r.status).toBe(200); // handled locally; the dead backendUrl is never contacted
     const body = await r.json();
     const file = await readDevices(resolveRoot([], { MESH_ROOT: baseDir } as any));
-    expect(file.pending[body.code].remoteHint).toBe("exposed-loopback"); // web-tier view, NOT backend loopback
+    expect(file.pending[body.code].remoteHint).toBe("loopback"); // web-tier socket view (advisory only)
   } finally {
     server.stop();
     if (prev === undefined) delete process.env.MESH_ROOT;

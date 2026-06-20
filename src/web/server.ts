@@ -21,9 +21,6 @@ export interface WebServerOptions {
   dev?: boolean;
   gateway?: WebGateway;
   backendUrl?: string;
-  /** Escape hatch (design §6 rule 5): trust loopback even on an exposed bind. Defaults to the
-   *  `MESH_TRUST_LOOPBACK_WHEN_EXPOSED=1` env var (off), but an explicit option wins for tests. */
-  trustLoopbackWhenExposed?: boolean;
 }
 export interface WebServerHandle {
   port: number;
@@ -53,9 +50,8 @@ export function startWebServer(opts: WebServerOptions = {}): WebServerHandle {
   // Proxy mode has no in-process gateway; device-auth routes don't touch it, so a bare stub lets
   // handleApi serve them locally (it never reaches a gateway-using route for these paths).
   const proxyDeviceGw = {} as unknown as WebGateway;
-  const trustLoopbackWhenExposed = opts.trustLoopbackWhenExposed ?? process.env.MESH_TRUST_LOOPBACK_WHEN_EXPOSED === "1";
-  // Observability (design §6 Open Q 6A): log every deny + the first allow per (remote, via, route)
-  // so the funnel topology can be validated without per-request spam. Never logs a token.
+  // Observability: log every deny + the first allow per (remote, via, route) without per-request
+  // spam. Includes remote/bind for funnel diagnosis; never logs a token.
   const loggedGate = new Set<string>();
   async function gate(req: Request, srv: Bun.Server<WsData>, url: URL, route: "api" | "ws"): Promise<{ result: AuthGateResult; token: string | undefined }> {
     const remoteAddress = srv.requestIP(req)?.address; // socket-derived; never a header
@@ -65,7 +61,7 @@ export function startWebServer(opts: WebServerOptions = {}): WebServerHandle {
     const token = route === "ws"
       ? url.searchParams.get("token") ?? bearerToken(req.headers) ?? undefined
       : bearerToken(req.headers) ?? undefined;
-    const result = await authorizeRequest({ root: authRoot, token, remoteAddress, bindHostname: hostname, trustLoopbackWhenExposed });
+    const result = await authorizeRequest({ root: authRoot, token, remoteAddress });
     const key = `${remoteAddress}|${result.via}|${route}`;
     if (!result.ok || !loggedGate.has(key)) {
       if (loggedGate.size < 1000) loggedGate.add(key);
@@ -114,7 +110,7 @@ export function startWebServer(opts: WebServerOptions = {}): WebServerHandle {
         if (gw || isPreAuthApiPath(url.pathname)) {
           const body = hasBody ? await requestBody(req) : undefined;
           const expectedOrigin = `http://${req.headers.get("host") ?? url.host}`;
-          const r = await handleApi(gw ?? proxyDeviceGw, req.method, url.pathname, body, url.searchParams, undefined, undefined, undefined, { headers: req.headers, expectedOrigin, root: authRoot, remoteAddress, bindHostname: hostname });
+          const r = await handleApi(gw ?? proxyDeviceGw, req.method, url.pathname, body, url.searchParams, undefined, undefined, undefined, { headers: req.headers, expectedOrigin, root: authRoot, remoteAddress });
           if (r.body instanceof Response) return r.body;
           return Response.json(r.body, { status: r.status });
         }
