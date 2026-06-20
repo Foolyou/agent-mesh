@@ -66,6 +66,7 @@ Rendered via the repo's known-good chromium from the verified v2 `compose(mode,a
 - `v2-sample-dark-slate.png` · `v2-sample-light-cool.png` · `v2-sample-eye-care-warm.png` — per-mode component sample boards (1480px), each showing all 3 accents (Signal Teal / Ember / Fleet Azure) across StatusChip · Button states · StatusListRow (incl. selected = `accent-subtle`) · IssueListRow (progress = `accent`) · Composer (send = `accent`/`on-accent`) · ApprovalCard.
 - `v2-raw-scales.png` (1480px) — the 11 raw 11-stop ramps (neutral ×3 / status ×5 / accent ×3).
 - `v2-semantic-swatches.png` (1100px) — the v2 semantic tokens × 3 modes (the "new" side of old→new; name mapping is the table in `00-tokens.md`; accent tokens vary by accent axis → see the sample boards).
+- `v2-oldnew-comparison.png` (1180px) — explicit **v1 19-key → v2 semantic** visual comparison: each token's v1 swatch beside its v2 resolved swatch, across all 3 modes (accent = Signal Teal). `text-disabled` marked new (was opacity-faded); `sel-bg → selected*` noted as a concept change (inverted-selection → `accent-subtle`).
 
 ## Change / review log
 - 2026-06-20 — created (Step 3 v1): components annotated to the 19-key tokens.
