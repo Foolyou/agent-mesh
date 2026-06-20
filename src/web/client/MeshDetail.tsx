@@ -906,14 +906,14 @@ export function MeshDetail({
   const railTopology = (
     <div className="panel">
       <div className="head">
-        <span className="ttl">topology</span>
-        <span className="sub">agents · mail edges</span>
+        <span className="ttl">{t("topology")}</span>
         <span className="right">
           <span className="topology-inline-controls">
             {agentAddControl}
             {edgeAddControl}
           </span>
           <span className="topology-manage-toggle">{topologyManageButton}</span>
+          <InfoIcon text={t("topology.sub")} />
           <Btn small kind="ghost" title="expand topology" onClick={() => setTopoOpen(true)}>
             ⤢
           </Btn>
