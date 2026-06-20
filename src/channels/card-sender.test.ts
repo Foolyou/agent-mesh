@@ -476,7 +476,7 @@ test("streamingCardJson declares update_multi, streaming_mode, streaming_config 
 test("defaultCardSummary uses the first line, truncates long text, falls back when empty", () => {
   expect(defaultCardSummary("short answer")).toBe("short answer");
   expect(defaultCardSummary("line one\nline two")).toBe("line one");
-  expect(defaultCardSummary("")).toBeTruthy(); // non-empty generic fallback
+  expect(defaultCardSummary("")).toBe("Agent reply"); // i18n card fallback title (channel-i18n-prompts C3)
   expect(defaultCardSummary("x".repeat(100)).length).toBeLessThanOrEqual(41);
 });
 

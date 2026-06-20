@@ -20,6 +20,7 @@
 import * as lark from "@larksuiteoapi/node-sdk";
 import type { OutboundSink, SegmentBreak } from "./feishu-channel";
 import { safeUuid, defaultIdempotencyKey } from "./sender";
+import { t } from "./i18n";
 import { planOutbound, type ImageBoundary } from "./stream-segmenter";
 import { imageElement, markdownElement, type ImageResolver } from "./card-image";
 
@@ -1163,7 +1164,7 @@ export function stableCardKey(cardId: string, sequence: number): string {
  *  the copy can be tuned later. First line, truncated; a generic line when there is no body yet. */
 export function defaultCardSummary(body: string): string {
   const firstLine = (body ?? "").trim().split("\n")[0]?.trim() ?? "";
-  if (!firstLine) return "Agent 回复";
+  if (!firstLine) return t("card.fallbackTitle");
   return firstLine.length > 40 ? `${firstLine.slice(0, 40)}…` : firstLine;
 }
 

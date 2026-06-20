@@ -46,12 +46,24 @@ export const en = {
   // ── card surface ──
   "card.fallbackTitle": "Agent reply",
 
-  // ── C. Agent-facing prompt scaffolding (migrated in C3; plain English instruction, NOT mail-tagged) ──
-  "feishu.prompt.group":
-    "An authorized user message from a Feishu group chat. Reply to the user directly; your reply is sent back to that Feishu group verbatim, unless the user explicitly asks you not to reply.\n\nUser message: {text}",
-  "feishu.prompt.p2p":
-    "An authorized user message from a Feishu private chat. You are the Mesh Assistant; reply to the user directly; your reply is sent back verbatim.\n\nUser message: {text}",
-  "feishu.prompt.image": "The user sent an image.",
+  // ── C. channel→agent injected prompt frames — [REQ] mail-format (the agent is asked to reply). The
+  //    `{text}` value is the mirrored user message (Category D) and is interpolated, never rewritten. ──
+  "feishu.prompt.group": [
+    "[REQ] Feishu message",
+    "source: feishu",
+    "chat_type: group",
+    "instructions: Reply to the user directly. Your reply is sent verbatim to this Feishu group, unless the user explicitly asks you not to reply.",
+    "user_message: {text}",
+  ].join("\n"),
+  "feishu.prompt.p2p": [
+    "[REQ] Feishu message",
+    "source: feishu",
+    "chat_type: private",
+    "role: Mesh Assistant",
+    "instructions: Reply to the user directly. Your reply is sent verbatim to this Feishu private chat.",
+    "user_message: {text}",
+  ].join("\n"),
+  "feishu.prompt.image": "[the user sent an image]", // the {text} payload of an image-only turn
 
   // ── B. Tool annotation — TEMPORARY placeholders pending team3's toolDisplayStrings (emoji team3-owned) ──
   "tool.hint": "🔧 Calling tool",

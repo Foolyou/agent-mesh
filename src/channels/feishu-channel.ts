@@ -491,7 +491,7 @@ export class FeishuChannel implements Channel {
   private async handleInboundImage(rt: BindingRuntime, m: InboundMsg): Promise<void> {
     const refs = await this.provisionImage(rt, m, rt.binding.mesh);
     if (!refs) return;
-    await this.deliverPrompt(rt, m.eventId, "用户发送了一张图片。", refs);
+    await this.deliverPrompt(rt, m.eventId, t("feishu.prompt.image"), refs);
   }
 
   // ── p2p -> Mesh Assistant (Phase 5) ─────────────────────────────────────────
@@ -529,7 +529,7 @@ export class FeishuChannel implements Channel {
     }
     if (m.messageType === "image") {
       const refs = await this.provisionImage(rt, m, P2P_IMAGE_BUCKET);
-      if (refs) this.enqueueP2pTurn(rt, "用户发送了一张图片。", refs);
+      if (refs) this.enqueueP2pTurn(rt, t("feishu.prompt.image"), refs);
       return;
     }
     const text = m.text.trim();
@@ -1049,11 +1049,7 @@ function teardownRuntime(rt: BindingRuntime): void {
 
 /** Frame a p2p-DM user message for the shared Mesh Assistant (a private chat, not a bound group). */
 function feishuAssistantPrompt(text: string): string {
-  return [
-    "来自飞书私聊的已授权用户消息。你是总控 Mesh Assistant；请直接回复该用户，回复内容会原样发回其飞书私聊。",
-    "",
-    `用户消息：${text}`,
-  ].join("\n");
+  return t("feishu.prompt.p2p", { text });
 }
 
 /** Union of top-level and per-binding allowSenders — all map to the one channelKey (feishu:<appId>)
@@ -1201,11 +1197,7 @@ function toolDisplayCopy(locale: ToolDisplayLocale = TOOL_DISPLAY_DEFAULT_LOCALE
 }
 
 function feishuUserPrompt(text: string): string {
-  return [
-    "来自飞书授权群聊的用户消息。请直接回复该用户，回复内容会原样发回该飞书群；除非用户明确要求不要回复。",
-    "",
-    `用户消息：${text}`,
-  ].join("\n");
+  return t("feishu.prompt.group", { text });
 }
 
 function shortError(e: unknown): string {

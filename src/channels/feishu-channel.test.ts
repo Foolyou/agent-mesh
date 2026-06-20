@@ -232,8 +232,14 @@ test("inbound: an authorized bound group message feeds the router with the feish
   await Promise.resolve();
   expect(s.mesh.prompts).toHaveLength(1);
   expect(s.mesh.prompts[0].name).toBe("feishu-poc");
-  expect(s.mesh.prompts[0].text).toContain("来自飞书授权群聊的用户消息");
-  expect(s.mesh.prompts[0].text).toContain("用户消息：hello");
+  // Category C group frame is the [REQ] Feishu message mail-format (exact, minus the mirrored {text}).
+  expect(s.mesh.prompts[0].text).toBe([
+    "[REQ] Feishu message",
+    "source: feishu",
+    "chat_type: group",
+    "instructions: Reply to the user directly. Your reply is sent verbatim to this Feishu group, unless the user explicitly asks you not to reply.",
+    "user_message: hello",
+  ].join("\n"));
   expect(s.started()).toBe(true);
 });
 
@@ -276,7 +282,7 @@ test("inbound: a wrong-chat event does not consume dedup capacity for the bound 
   s.push(inbound({ eventId: "shared", chatId: "oc_1", text: "real" }));
   await Promise.resolve();
   expect(s.mesh.prompts).toHaveLength(1);
-  expect(s.mesh.prompts[0].text).toContain("用户消息：real");
+  expect(s.mesh.prompts[0].text).toContain("user_message: real");
 });
 
 test("inbound: group message without @bot is ignored; with @bot it is stripped and fed", async () => {
@@ -285,7 +291,7 @@ test("inbound: group message without @bot is ignored; with @bot it is stripped a
   s.push(inbound({ eventId: "g2", chatType: "group", text: "@MeshBot do it" }));
   await Promise.resolve();
   expect(s.mesh.prompts).toHaveLength(1);
-  expect(s.mesh.prompts[0].text).toContain("用户消息：do it");
+  expect(s.mesh.prompts[0].text).toContain("user_message: do it");
 });
 
 test("inbound: configured trusted group can skip @bot gate", async () => {
@@ -293,7 +299,7 @@ test("inbound: configured trusted group can skip @bot gate", async () => {
   s.push(inbound({ eventId: "g-open", chatType: "group", text: "just chatting" }));
   await Promise.resolve();
   expect(s.mesh.prompts).toHaveLength(1);
-  expect(s.mesh.prompts[0].text).toContain("用户消息：just chatting");
+  expect(s.mesh.prompts[0].text).toContain("user_message: just chatting");
 });
 
 test("multiple bindings route inbound and outbound by chat and mesh", async () => {
@@ -367,7 +373,7 @@ test("inbound: group @ gate can use mention id instead of display name", async (
   }));
   await Promise.resolve();
   expect(s.mesh.prompts).toHaveLength(1);
-  expect(s.mesh.prompts[0].text).toContain("用户消息：do it");
+  expect(s.mesh.prompts[0].text).toContain("user_message: do it");
 });
 
 test("inbound: a stopped mesh is auto-started before routing the message", async () => {
@@ -377,7 +383,7 @@ test("inbound: a stopped mesh is auto-started before routing the message", async
   await flushAsync();
   expect(s.mesh.startCalls).toBe(1);
   expect(s.mesh.prompts).toHaveLength(1);
-  expect(s.mesh.prompts[0].text).toContain("用户消息：anyone home?");
+  expect(s.mesh.prompts[0].text).toContain("user_message: anyone home?");
   expect(s.sent).toHaveLength(0);
 });
 
@@ -1026,7 +1032,7 @@ test("inbound image: downloads, provisions refs (bucket=mesh), prompts router wi
   expect(s.downloadCalls).toEqual([{ messageId: "om_img", imageKey: "img_secret_KEY" }]);
   expect(s.storeCalls[0].bucket).toBe("feishu-poc"); // mesh name as upload bucket
   expect(s.mesh.prompts).toHaveLength(1);
-  expect(s.mesh.prompts[0].text).toContain("用户发送了一张图片");
+  expect(s.mesh.prompts[0].text).toContain("user_message: [the user sent an image]");
   expect(s.mesh.prompts[0].images).toHaveLength(1);
   expect(s.mesh.prompts[0].images![0].path).toContain("uploads/feishu-poc"); // agent-readable path ref
   expect(s.sent).toHaveLength(0); // no error notice
@@ -1361,7 +1367,15 @@ test("p2p: an authorized DM routes to the assistant; streamed chunks mirror to t
   s.push(inbound({ chatType: "p2p", chatId: "p2p_me", senderId: "ou_me", text: "hello assistant" }));
   await flushAsync();
   expect(s.assistant.prompts).toHaveLength(1);
-  expect(s.assistant.prompts[0].text).toContain("用户消息：hello assistant");
+  // Category C p2p frame: [REQ] mail-format with chat_type private + the Mesh Assistant role.
+  expect(s.assistant.prompts[0].text).toBe([
+    "[REQ] Feishu message",
+    "source: feishu",
+    "chat_type: private",
+    "role: Mesh Assistant",
+    "instructions: Reply to the user directly. Your reply is sent verbatim to this Feishu private chat.",
+    "user_message: hello assistant",
+  ].join("\n"));
   s.assistant.emit(rawChunk("hi from the assistant"));
   await flushAsync();
   s.assistant.finishTurn(); // turn-end boundary
@@ -1429,7 +1443,7 @@ test("p2p: a group bound chat still routes to its mesh (group path unchanged)", 
   await flushAsync();
   expect(s.mesh.prompts).toHaveLength(1);
   expect(s.mesh.prompts[0].name).toBe("feishu-poc");
-  expect(s.mesh.prompts[0].text).toContain("用户消息：do it");
+  expect(s.mesh.prompts[0].text).toContain("user_message: do it");
   expect(s.assistant.prompts).toHaveLength(0); // group never goes to the assistant
 });
 
@@ -1632,17 +1646,22 @@ test("non-streaming: a plain text sink (no sendOneShot) still uses enqueue (back
   expect(calls).toEqual([{ m: "enqueue", text: "plain reply" }]);
 });
 
-// ── i18n migration guard (channel-i18n-prompts C2) ──
-// Every user-visible reply goes through `rt.sender.enqueue(...)`. After the Category-A migration, none
-// of those call sites may contain a Han character (Category-C agent prompts use promptRouter/
-// deliverPrompt/enqueueP2pTurn, and parseMeshCommand's Chinese INPUT aliases are whitelisted — neither
-// is a sender.enqueue).
-test("no user-visible sender.enqueue copy contains Chinese (Category A is fully migrated)", async () => {
+// ── i18n migration guard (channel-i18n-prompts C2 + C3) ──
+// After Category A (outbound, C2) AND Category C (channel→agent frames, C3) are migrated, NO line of
+// feishu-channel.ts may contain a Han character EXCEPT the explicitly retained surfaces:
+//   - comments (`//`, `/*`, ` *`), and
+//   - parseMeshCommand's Chinese INPUT aliases (the `raw === "状态"` etc. — kept by user decision).
+// Category D mirrored user text is a runtime value, never a source literal, so it is not in scope here.
+test("no source copy in feishu-channel.ts contains Chinese (A + C migrated; aliases/comments whitelisted)", async () => {
   const { readFile } = await import("node:fs/promises");
   const { join } = await import("node:path");
   const src = await readFile(join(import.meta.dir, "feishu-channel.ts"), "utf8");
-  const offenders = src
-    .split("\n")
-    .filter((line) => line.includes(".sender.enqueue(") && /[一-鿿]/.test(line));
+  const offenders = src.split("\n").filter((line) => {
+    if (!/[一-鿿]/.test(line)) return false;
+    const trimmed = line.trim();
+    if (trimmed.startsWith("//") || trimmed.startsWith("*") || trimmed.startsWith("/*")) return false; // comment
+    if (line.includes("raw ===")) return false; // parseMeshCommand Chinese INPUT aliases (retained)
+    return true;
+  });
   expect(offenders).toEqual([]);
 });
