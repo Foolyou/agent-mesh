@@ -4,12 +4,16 @@ import type { AgentConfig, HarnessId } from "./acp/types";
 export interface HarnessSpec {
   command: string;
   args: string[];
+  /** The underlying body tool whose version differs from the ACP adapter (e.g. codex-acp adapter
+   *  vs the `codex` CLI). Only set where adapter ≠ body; opencode/kimi launch the tool directly so
+   *  there is no separate body. Used for display-only body-version probing (`<toolCommand> --version`). */
+  toolCommand?: string;
 }
 
 export const HARNESSES: Record<HarnessId, HarnessSpec> = {
-  codex: { command: "codex-acp", args: [] },
+  codex: { command: "codex-acp", args: [], toolCommand: "codex" },
   opencode: { command: "opencode", args: ["acp"] },
-  claude: { command: "claude-agent-acp", args: [] },
+  claude: { command: "claude-agent-acp", args: [], toolCommand: "claude" },
   kimi: { command: "kimi", args: ["acp"] },
 };
 
