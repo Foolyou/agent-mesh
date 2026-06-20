@@ -22,6 +22,8 @@ import {
   deviceStatus,
   deviceVerify,
 } from "./auth";
+import { collectPsDetail, runDoctor } from "../diagnostics";
+import { diagnosticsRunDir, doctorSources, webPsSources } from "../diagnostics-sources";
 
 export interface ApiResult {
   status: number;
@@ -35,6 +37,8 @@ export interface ApiRequestContext {
   expectedOrigin?: string;
   /** Resolved mesh root; the device-auth store lives under `<root>/auth/`. */
   root?: string;
+  /** Control-plane port the `doctor` backend check probes. Defaults to 10010 (the prod service port). */
+  servicePort?: number;
   /** SOCKET-derived remote address (Bun `server.requestIP`); only a coarse origin class is recorded. */
   remoteAddress?: string;
   clearProbeCache?: (id?: AgentConfig["harness"]) => void;
@@ -145,6 +149,24 @@ export async function handleApi(
       gw.broadcastHarnessesChanged(harness);
       const row = rows.find((h: any) => h.id === harness);
       return ok({ id: harness, installed: row?.installed === true, version: row?.version });
+    }
+
+    // System diagnostics (mesh-ps-doctor). GATED: these sit BELOW the device-auth block, so the
+    // server-level gate (authorizeRequest) has already required an approved device token — there is no
+    // pre-auth entry here. Both routes consume the SHARED diagnostics model (no logic re-derived in the
+    // web handler) and the structured results are already secret-free (the builders emit only
+    // counts/booleans/redacted detail — never appSecret/token/key/hash/envelope/raw credential).
+    if (p[0] === "diagnostics" && method === "GET" && p.length === 2) {
+      if (!ctx.root) return fail(500, "diagnostics root not configured");
+      if (p[1] === "ps") {
+        // Live agent detail (activity/context) injected from the in-process gateway snapshot; degrades
+        // to static config detail for any running mesh not yet in the live snapshot.
+        const ps = await collectPsDetail(diagnosticsRunDir(ctx.root), webPsSources(ctx.root, safeSnapshot(gw)));
+        return ok(ps);
+      }
+      if (p[1] === "doctor") {
+        return ok(await runDoctor(doctorSources(ctx.root, ctx.servicePort ?? 10010)));
+      }
     }
 
     if (p[0] === "channels" && p[1] === "feishu") {
@@ -442,6 +464,17 @@ function publicInstallEvent(event: InstallEvent): Record<string, unknown> {
     if (event.message !== undefined) out.message = event.message;
   }
   return out;
+}
+
+/** The live gateway snapshot for ps-detail enrichment, or undefined if unavailable (e.g. the bare
+ *  proxy-mode stub). Never throws into the request path — a missing snapshot just falls back to the
+ *  static config detail in webPsSources. */
+function safeSnapshot(gw: WebGateway): import("../diagnostics-sources").LiveSnapshot | undefined {
+  try {
+    return typeof gw?.snapshot === "function" ? (gw.snapshot() as unknown as import("../diagnostics-sources").LiveSnapshot) : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function isHarnessMutationRoute(method: string, p: string[]): boolean {

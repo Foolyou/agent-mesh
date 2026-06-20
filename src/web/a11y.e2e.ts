@@ -217,6 +217,33 @@ try {
     });
   }
 
+  // mesh-ps-doctor: the System health / process panel (doctor checks + ps detail) paints
+  // severity-coloured text (--ok/--warn/--bad) and faint metadata on the raised modal surface, so
+  // crawl its rendered DOM in every theme. Data comes from the gated /api/diagnostics/* routes (the
+  // authed e2e context satisfies the device gate); --fake yields a populated report.
+  for (const theme of THEMES) {
+    await step(`theme "${theme}": System panel (doctor + ps) text meets WCAG`, async () => {
+      await page.evaluate((t) => localStorage.setItem("mesh.theme", t), theme);
+      await page.reload({ waitUntil: "domcontentloaded" });
+      await page.waitForSelector(".mrow.sel .btn", { timeout: 8000 });
+      await page.locator('[aria-label="Open system health"]').click();
+      await page.waitForSelector(".system-modal", { timeout: 6000 });
+      // Wait for the fetch to resolve into real content (a section) or a surfaced error — not the
+      // transient "loading…" placeholder — so the crawler measures the populated panel.
+      await page.waitForSelector(".system-modal .system-section, .system-modal .system-error", { timeout: 8000 });
+      await page.addStyleTag({ content: "*,*::before,*::after{transition:none!important;animation:none!important}" });
+      await sleep(40);
+      await installColorMath(page);
+      const { offenders, scanned } = await page.evaluate(CRAWL, exceptSels);
+      if (scanned < 20) throw new Error(`only ${scanned} text nodes scanned — System panel likely not rendered`);
+      if (offenders.length)
+        throw new Error(
+          `${offenders.length} System-panel text node(s) below AA (scanned ${scanned}): ` +
+            offenders.slice(0, 6).map((o) => `<${o.tag}.${o.cls}> "${o.text}"=${o.ratio} need ${o.need}`).join(" · "),
+        );
+    });
+  }
+
   // issue-panel Phase 4: label chips paint user-chosen palette backgrounds, so their TEXT must stay
   // AA. Seed two chips via REST (a LIGHT palette color → black foreground, and a DARK one → white)
   // then open the board so the crawler measures the chip text against its custom background.

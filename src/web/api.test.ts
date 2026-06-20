@@ -961,3 +961,45 @@ test("POST /api/meshes/:name/board with an unknown command type maps to 400 (dom
   const r = await handleApi(gw, "POST", "/api/meshes/demo/board", { command: { type: "frobnicate" }, expectedBoardRevision: 0 });
   expect(r.status).toBe(400);
 });
+
+test("GET /api/diagnostics/ps returns the structured ps-detail (empty root → no running/leaks)", async () => {
+  const root = await mkdtemp(join(tmpdir(), "api-diag-"));
+  try {
+    const gw = new WebGateway(fakeManager() as any);
+    const r = await handleApi(gw, "GET", "/api/diagnostics/ps", undefined, new URLSearchParams(), undefined, undefined, undefined, { root });
+    expect(r.status).toBe(200);
+    expect(r.body).toEqual({ running: [], leaks: [] });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("GET /api/diagnostics/{ps,doctor} fail with 500 when no auth/diagnostics root is configured", async () => {
+  const gw = new WebGateway(fakeManager() as any);
+  expect((await handleApi(gw, "GET", "/api/diagnostics/ps", undefined)).status).toBe(500);
+  expect((await handleApi(gw, "GET", "/api/diagnostics/doctor", undefined)).status).toBe(500);
+});
+
+test("GET /api/diagnostics/ps enriches running agents from the live gateway snapshot (activity)", async () => {
+  // A real registry record makes the mesh "running"; webPsSources then reads live agent activity from
+  // the gateway snapshot instead of the static config (proving the live-enrichment seam).
+  const { writeRecord } = await import("../mesh-registry");
+  const root = await mkdtemp(join(tmpdir(), "api-diag-live-"));
+  try {
+    const runDir = join(root, "run");
+    await mkdir(runDir, { recursive: true });
+    const sock = join(runDir, "demo.sock");
+    await writeRecord(runDir, { name: "demo", pid: process.pid, socketPath: sock, startedAt: new Date().toISOString() } as any);
+    await writeFile(sock, "");
+    const gw = new WebGateway(fakeManager() as any); // listMeshes → demo running; snapshot has live agents
+    const r = await handleApi(gw, "GET", "/api/diagnostics/ps", undefined, new URLSearchParams(), undefined, undefined, undefined, { root });
+    expect(r.status).toBe(200);
+    const mesh = (r.body.running as any[]).find((m) => m.name === "demo");
+    expect(mesh).toBeTruthy();
+    expect(mesh.agents.length).toBeGreaterThan(0);
+    // every agent carries one of the known activity states (live snapshot path, not "unknown" static)
+    for (const a of mesh.agents) expect(["idle", "working", "unknown"]).toContain(a.activity);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

@@ -8,6 +8,7 @@ import { MeshDetail } from "./MeshDetail";
 import { MeshBuilder } from "./MeshBuilder";
 import { HarnessPanel } from "./HarnessPanel";
 import { FeishuPanel } from "./FeishuPanel";
+import { SystemPanel } from "./SystemPanel";
 import { useIsMobile } from "./useMedia";
 import { ThemeControls } from "./Theme";
 import { I18nContext, loadLang, saveLang, translate, tStatus, type Lang } from "./i18n";
@@ -80,6 +81,7 @@ export function App() {
   const [newMeshOpen, setNewMeshOpen] = useState(false);
   const [harnessOpen, setHarnessOpen] = useState(false);
   const [feishuOpen, setFeishuOpen] = useState(false);
+  const [systemOpen, setSystemOpen] = useState(false);
   const [editInitial, setEditInitial] = useState<import("../types").MeshConfig | null>(null);
   const [fileRoute, setFileRoute] = useState<FileRoute | undefined>(() => parseFileRoute(window.location.pathname));
 
@@ -205,6 +207,9 @@ export function App() {
         </span>
         <span className="spacer" />
         <ThemeControls />
+        <Btn small kind="ghost" title="System health" ariaLabel="Open system health" onClick={() => setSystemOpen(true)}>
+          System
+        </Btn>
         <Btn small kind="ghost" title="Harness settings" ariaLabel="Open harness settings" onClick={() => setHarnessOpen(true)}>
           Harnesses
         </Btn>
@@ -265,6 +270,7 @@ export function App() {
         />
       ) : null}
 
+      <SystemPanel store={store} open={systemOpen} onClose={() => setSystemOpen(false)} />
       <HarnessPanel store={store} open={harnessOpen} onClose={() => setHarnessOpen(false)} />
       <FeishuPanel store={store} open={feishuOpen} meshes={state.meshes} onClose={() => setFeishuOpen(false)} />
 

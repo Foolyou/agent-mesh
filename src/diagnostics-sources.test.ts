@@ -2,7 +2,8 @@ import { expect, test } from "bun:test";
 import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { meshConfigChecks, authReadiness } from "./diagnostics-sources";
+import { meshConfigChecks, authReadiness, webPsSources, type LiveSnapshot } from "./diagnostics-sources";
+import type { MeshHostRecord } from "./mesh-registry";
 import { updateDevices } from "./auth-store";
 import { hashToken } from "./auth-codes";
 
@@ -37,6 +38,43 @@ test("meshConfigChecks: no meshes dir => []", async () => {
   const root = await tmpRoot();
   try {
     expect(await meshConfigChecks(root)).toEqual([]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+const REC = (name: string): MeshHostRecord => ({ name, pid: 123, socketPath: `/run/${name}.sock`, startedAt: "2026-06-20T00:00:00.000Z" } as MeshHostRecord);
+
+test("webPsSources: enriches a running mesh from the live snapshot (activity + normalized context %)", async () => {
+  const snap: LiveSnapshot = {
+    meshes: [{ name: "demo", agents: [
+      { id: "router", harness: "claude", role: "router", status: "ready", activity: "working" },
+      { id: "m1", harness: "codex", role: "member", activity: "idle" },
+    ] }],
+    perMesh: { demo: { usage: { router: { used: 50, size: 200 }, m1: { used: 0, size: 0 } } } },
+  };
+  const deps = webPsSources("/root", snap);
+  const agents = await deps.agentsFor!(REC("demo"));
+  const router = agents.find((a) => a.id === "router")!;
+  expect(router.activity).toBe("working");
+  expect(router.harness).toBe("claude");
+  expect(router.contextPercent).toBe(25); // 50/200 → 25%, normalized 0–100
+  expect(router.contextUsed).toBe(50);
+  const m1 = agents.find((a) => a.id === "m1")!;
+  expect(m1.activity).toBe("idle");
+  expect(m1.contextPercent).toBeUndefined(); // size 0 → no context, never NaN/Infinity
+});
+
+test("webPsSources: a running mesh absent from the live snapshot falls back to static config detail", async () => {
+  const root = await tmpRoot();
+  try {
+    const dir = join(root, "meshes");
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, "demo.json"), JSON.stringify({ name: "demo", agents: [{ id: "r", harness: "codex", project: ".", role: "router" }], edges: [] }), "utf8");
+    // snapshot has NO "demo" mesh → must read the static config, marking activity "unknown"
+    const deps = webPsSources(root, { meshes: [], perMesh: {} });
+    const agents = await deps.agentsFor!(REC("demo"));
+    expect(agents).toEqual([{ id: "r", harness: "codex", role: "router", activity: "unknown" }]);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

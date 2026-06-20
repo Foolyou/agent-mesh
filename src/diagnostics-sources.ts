@@ -27,8 +27,9 @@ import { readFeishuConfig } from "./channels/config";
 import { backendStatus } from "./service";
 import { devicesPath, feishuAuthPath, readDevices, readFeishuAuth } from "./auth-store";
 import { authKeysPath, loadKeys } from "./auth-codes";
-import { collectProcLeaks, probeBaseDir, type AgentDetail, type AuthReadiness, type ConfigInputs, type DoctorDeps, type HarnessProbeLike, type PsDetailDeps } from "./diagnostics";
+import { collectProcLeaks, probeBaseDir, type AgentActivityState, type AgentDetail, type AuthReadiness, type ConfigInputs, type DoctorDeps, type HarnessProbeLike, type PsDetailDeps } from "./diagnostics";
 import type { MeshHostRecord } from "./mesh-registry";
+import type { AgentRole, HarnessId } from "./acp/types";
 
 const meshesDir = (root: string) => join(root, "meshes");
 export const diagnosticsRunDir = (root: string) => join(root, "run");
@@ -108,6 +109,59 @@ function cliAgentsFor(root: string): (record: MeshHostRecord) => Promise<AgentDe
 /** PsDetailDeps for the standalone CLI: default read-only registry scan + static agent detail. */
 export function cliPsSources(root: string): PsDetailDeps {
   return { agentsFor: cliAgentsFor(root) };
+}
+
+// ── ps-detail (web): live per-agent view enriched from the in-process gateway snapshot ──
+//
+// The web tier runs WITH the backend, so it already holds live agent status/context — no socket
+// connection needed (unlike the CLI). We read a MINIMAL structural slice of the gateway snapshot
+// (defined here, not imported from the web layer, so this core module stays free of a web dependency)
+// and fall back to the same static config detail when a running mesh isn't in the live snapshot yet
+// (e.g. the gateway is still reattaching) so a missing live row never blanks a running mesh.
+
+/** The slice of a live WebGateway snapshot that web ps-detail needs. Structural on purpose. */
+export interface LiveSnapshot {
+  meshes: ReadonlyArray<{
+    name: string;
+    agents: ReadonlyArray<{ id: string; harness?: string; role?: string; status?: string; activity?: string }>;
+  }>;
+  perMesh: Record<string, { usage?: Record<string, { used?: number; size?: number } | undefined> } | undefined>;
+}
+
+function liveActivity(a: string | undefined): AgentActivityState {
+  return a === "working" ? "working" : a === "idle" ? "idle" : "unknown";
+}
+
+/** Context fields from a live usage row, normalized to 0–100 percent. Only counts/percent — never any
+ *  token text. Returns {} when usage is missing or malformed so the agent simply omits context. */
+function contextFields(u: { used?: number; size?: number } | undefined): Partial<AgentDetail> {
+  if (!u || typeof u.used !== "number" || typeof u.size !== "number" || u.size <= 0) return {};
+  return {
+    contextUsed: u.used,
+    contextSize: u.size,
+    contextPercent: Math.max(0, Math.min(100, Math.round((u.used / u.size) * 100))),
+  };
+}
+
+/** PsDetailDeps for the web API: a gateway-backed `agentsFor` that supplies live activity + context,
+ *  degrading to the static CLI detail for any running mesh absent from the live snapshot. */
+export function webPsSources(root: string, snapshot: LiveSnapshot | undefined): PsDetailDeps {
+  const fallback = cliAgentsFor(root);
+  return {
+    agentsFor: async (record) => {
+      const mesh = snapshot?.meshes.find((m) => m.name === record.name);
+      if (!mesh) return fallback(record); // not in live state yet → static config detail
+      const usage = snapshot?.perMesh?.[record.name]?.usage ?? {};
+      return mesh.agents.map((a) => ({
+        id: a.id,
+        harness: a.harness as HarnessId | undefined,
+        role: a.role as AgentRole | undefined,
+        activity: liveActivity(a.activity),
+        ...(a.status ? { status: a.status } : {}),
+        ...contextFields(usage[a.id]),
+      }));
+    },
+  };
 }
 
 /** DoctorDeps wired to the real modules. `port` is the backend port to probe (default 10010). */
