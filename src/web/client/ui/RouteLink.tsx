@@ -10,6 +10,9 @@ export interface RouteLinkProps extends AnchorHTMLAttributes<HTMLAnchorElement> 
   href: string;
   /** Marks the current route (sets aria-current="page" + emphasis). */
   active?: boolean;
+  /** Drop the default link visuals (text-link/underline) — for link-as-row/card
+   *  wrappers that supply their own styling; SPA behavior + focus ring are kept. */
+  unstyled?: boolean;
 }
 
 /** The minimal click shape we inspect — keeps {@link spaTarget} testable without a DOM. */
@@ -45,7 +48,7 @@ export function spaTarget(
   return url.pathname + url.search + url.hash;
 }
 
-export function RouteLink({ href, active = false, className = "", onClick, target, download, children, ...rest }: RouteLinkProps) {
+export function RouteLink({ href, active = false, unstyled = false, className = "", onClick, target, download, children, ...rest }: RouteLinkProps) {
   return (
     <a
       href={href}
@@ -64,9 +67,9 @@ export function RouteLink({ href, active = false, className = "", onClick, targe
         }
       }}
       className={[
-        "text-link underline-offset-2 hover:underline rounded-sm",
-        "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus-ring",
-        active ? "font-medium" : "",
+        unstyled ? "" : "text-link underline-offset-2 hover:underline",
+        "rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus-ring",
+        !unstyled && active ? "font-medium" : "",
         className,
       ].join(" ")}
       {...rest}
