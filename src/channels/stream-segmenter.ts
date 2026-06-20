@@ -205,29 +205,28 @@ function isIndentedCode(line: string): boolean {
 }
 
 /** Could `rest` (which begins with `![`) still become an `![alt](artifact:...)` token? Used to decide
- *  whether to HOLD prose at a forming token in the open tail. Returns false once it is decided to be a
- *  non-artifact link/image (e.g. `![x](http…`) or not an image at all, so prose-only streaming is
- *  unaffected. Conservative while undecided (still typing the alt / ref prefix). */
+ *  whether to HOLD prose at a forming token in the open tail. The alt/ref boundary is the FIRST `](`
+ *  (the alt may itself contain `[`/`]` — Feishu renders `![a [v1]](artifact:…)` as an image, so we must
+ *  hold it). Returns false once decided to be a non-artifact link/image (`![x](http…`), so prose-only
+ *  streaming cadence is unaffected. Conservative while still typing the alt. */
 function couldBeArtifactToken(rest: string): boolean {
-  const bracket = rest.indexOf("]");
-  if (bracket < 0) return true; // still typing the alt → undecided
-  const after = rest.slice(bracket + 1);
-  if (after === "") return true; // `![alt]` exactly → could become `(artifact:…`
-  if (after[0] !== "(") return false; // `![alt]x` — not an image token
-  const ref = after.slice(1); // partial (or full) ref after `](`
+  const sep = rest.indexOf("]("); // alt..ref boundary
+  if (sep < 0) return true; // no `](` yet → still typing the alt → undecided
+  const ref = rest.slice(sep + 2); // partial (or full) ref after `](`
   return "artifact:".startsWith(ref) || ref.startsWith("artifact:");
 }
 
-/** Match a complete `![alt](artifact:...)` token at position i (alt has no nested brackets), or null. */
+/** Match a complete `![alt](artifact:...)` token at position i, or null. The alt ends at the FIRST `](`,
+ *  so the alt MAY contain `[`/`]` — Feishu renders `![a [v1]](artifact:…)` as an image (live-verified),
+ *  so leaving it in prose poisons the card ("invalid image keys"); we must extract it. */
 function imageAt(line: string, i: number): { ref: string; alt: string; end: number } | null {
   if (line[i] !== "!" || line[i + 1] !== "[") return null;
-  const close = line.indexOf("]", i + 2);
-  if (close < 0 || line[close + 1] !== "(") return null;
-  const paren = line.indexOf(")", close + 2);
+  const closeBracket = line.indexOf("](", i + 2); // alt ends at the `]` immediately before `(`
+  if (closeBracket < 0) return null;
+  const paren = line.indexOf(")", closeBracket + 2);
   if (paren < 0) return null;
-  const alt = line.slice(i + 2, close);
-  if (alt.includes("[")) return null; // keep alt simple
-  const ref = line.slice(close + 2, paren).trim();
+  const alt = line.slice(i + 2, closeBracket); // may contain [ ]
+  const ref = line.slice(closeBracket + 2, paren).trim();
   if (!IMAGE_REF.test(ref)) return null; // only artifact: refs become image elements
   return { ref, alt, end: paren + 1 };
 }

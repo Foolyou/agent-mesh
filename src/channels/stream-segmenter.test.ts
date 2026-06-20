@@ -244,3 +244,25 @@ test("planOutbound at final flushes a trailing committed image with no newline",
   expect(p.image).toMatchObject({ ref: "artifact:a.png" });
   expect(full.slice(0, p.proseCap)).toBe("done ");
 });
+
+// ── P1 fix: alt text with [brackets] (Feishu renders it as an image → must extract, not leak) ──
+
+test("an image whose alt contains [brackets] is extracted (not left in prose)", () => {
+  const t = "Compare ![accents [before vs after]](artifact://team1_builder/ui.png) here\n";
+  expect(seg(t)).toEqual([prose("Compare "), img("artifact://team1_builder/ui.png", "accents [before vs after]"), prose(" here\n")]);
+  expect(imageBoundaries(t, { final: true })[0]).toMatchObject({ ref: "artifact://team1_builder/ui.png", alt: "accents [before vs after]" });
+});
+
+test("the alt ends at the FIRST `](` so a bracketed alt does not over-run", () => {
+  expect(seg("![a [b] c](artifact:x.png)")).toEqual([img("artifact:x.png", "a [b] c")]);
+});
+
+test("a forming bracketed-alt artifact token is held in the open tail (streaming, no premature prose)", () => {
+  const p = planOutbound("see ![accents [v1 vs v2]](artif", 0);
+  expect(p.image).toBeUndefined();
+  expect(p.proseCap).toBe("see ".length);
+});
+
+test("a plain [link](artifact:...) (no !) stays prose — Feishu renders it as a link, not an image", () => {
+  expect(seg("see [doc](artifact:notes.png) end\n")).toEqual([prose("see [doc](artifact:notes.png) end\n")]);
+});

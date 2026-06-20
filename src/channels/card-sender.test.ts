@@ -1258,3 +1258,22 @@ test("image element update failure logs code only, never the SDK message", async
   await sender.whenIdle();
   assertClean(logs);
 });
+
+// ── P1 regression: a bracketed-alt artifact image never leaks its raw ref through the streaming path ──
+
+test("STREAMING: a bracketed-alt artifact image is extracted; no op ever carries the raw artifact ref", async () => {
+  const r = cardRecorder();
+  const fb = fakeFallback();
+  const { sender, updates } = makeImageSender(r, fb, async () => ({ kind: "text", markdown: "🖼 (image too wide)" })); // simulate dims-degrade
+  const full = "Comparison board:\n\n![accents [before vs after]](artifact://team1_builder/ui-p1-accents-compare.png)\n\nNotes follow.\n";
+  for (let i = 8; i < full.length; i += 19) { // feed incrementally (streaming, token split across ticks)
+    sender.streamUpdate(full.slice(0, i));
+    await sender.whenIdle();
+  }
+  sender.streamUpdate(full);
+  sender.streamCommit();
+  await sender.whenIdle();
+  const allOps = [...r.creates.map((c) => c.text), ...r.contents.map((c) => c.content), ...updates.map((u) => u.element)].join("|");
+  expect(allOps).not.toContain("artifact:"); // the raw ref never reaches a create/content/update op
+  expect(r.creates.some((c) => c.text.startsWith("🖼"))).toBe(true); // an image card was emitted for it
+});
