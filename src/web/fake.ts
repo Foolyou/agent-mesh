@@ -2,13 +2,19 @@
 // (streamed messages, a thought, a tool call with status transitions, inter-agent
 // mail, a permission escalation, and an interrupt) so every widget can be exercised
 // in the browser without spawning real agents. Doubles as a zero-dependency demo.
-import type { AgentConfig, MeshConfig, MeshEdge, MeshEvent, AgentId } from "../acp/types";
+import type { AgentConfig, MeshConfig, MeshEdge, MeshEvent, AgentId, PromptImageRef } from "../acp/types";
 import { now } from "../acp/types";
 import type { MeshStatus } from "./types";
 import { deleteArtifactMesh } from "./artifacts";
 import { applyBoardCommand, createEmptyBoard, type BoardActor, type BoardCommand, type BoardCommandResult, type BoardState } from "../board";
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+/** Project image refs to the fields safe to broadcast in a transcript (drops server-side
+ *  `path`/`bucket`), mirroring the real control-plane's operator-turn echo. Clients render
+ *  the thumbnail from `url`. */
+const publicImages = (images: PromptImageRef[]): PromptImageRef[] =>
+  images.map((i) => ({ id: i.id, mimeType: i.mimeType, name: i.name, url: i.url }));
 
 const DEMO: MeshConfig = {
   name: "demo",
@@ -162,17 +168,17 @@ export class FakeManager {
     void this.stopAll();
   }
 
-  async promptRouter(name: string, text: string, _images = []): Promise<void> {
-    this.startTurn(name, "router", { source: "operator", from: "operator", to: "router", text, preview: this.preview("you", text) });
+  async promptRouter(name: string, text: string, images: PromptImageRef[] = []): Promise<void> {
+    this.startTurn(name, "router", { source: "operator", from: "operator", to: "router", text, preview: this.preview("you", text), images: publicImages(images) });
     void this.reply(name, "router", `Understood — "${text}". Coordinating the members now.`);
   }
-  promptAgent(name: string, agentId: string, text: string, _images = []): void {
-    this.startTurn(name, agentId, { source: "operator", from: "operator", to: agentId, text, preview: this.preview("you", text) });
+  promptAgent(name: string, agentId: string, text: string, images: PromptImageRef[] = []): void {
+    this.startTurn(name, agentId, { source: "operator", from: "operator", to: agentId, text, preview: this.preview("you", text), images: publicImages(images) });
     void this.reply(name, agentId, `[${agentId}] working on: ${text}`);
   }
-  steerAgent(name: string, agentId: string, text: string, _images = []): void {
+  steerAgent(name: string, agentId: string, text: string, images: PromptImageRef[] = []): void {
     this.emit(name, { kind: "steer", from: "operator", to: agentId, body: text, ts: now() });
-    this.startTurn(name, agentId, { source: "steer", from: "operator", to: agentId, text, preview: this.preview("you", text) });
+    this.startTurn(name, agentId, { source: "steer", from: "operator", to: agentId, text, preview: this.preview("you", text), images: publicImages(images) });
     void this.reply(name, agentId, `[${agentId}] steering to: ${text}`);
   }
   resolvePermission(name: string, requestId: string, optionId: string): void {
