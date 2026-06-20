@@ -235,7 +235,7 @@ if (cmd === "up" || cmd === "start") {
   const port = Number(process.env.MESH_API_PORT) || Number(g("port")) || 7300;
   const { manager, assistant, gateway, feishu } = await buildGateway();
   const server = startApiServer(gateway, { port, hostname });
-  console.log(`\n  mesh backend (REST + WS) → ${server.url}${fake ? "  (fake)" : `  · root: ${root}`}\n`);
+  console.log(`\n  mesh backend (headless REST + WS, no web console) → ${server.url}${fake ? "  (fake)" : `  · root: ${root}`}\n`);
   reapOnExit(async () => {
     server.stop();
     gateway.dispose();

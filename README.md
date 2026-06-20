@@ -310,16 +310,24 @@ On Windows, the updater installs `mesh.exe` to
 `%LOCALAPPDATA%\Programs\agent-mesh\bin` by default and warns if that directory
 is not on `PATH`.
 
-The same binary also supports service commands:
+The same binary also runs the control plane as a background service. `mesh up`/`restart` start the
+**combined web+API control plane** (SPA + REST + WS in one process), not just a headless backend —
+use `mesh backend` for headless REST+WS only. A hot `mesh down` stops the control plane but **leaves
+the mesh daemons running** (so the next `mesh up` reattaches to them); `--cold` also reaps the daemons.
 
 ```bash
-mesh up
-mesh status
+mesh up                 # start the combined web+API control plane in the background
+mesh status             # control-plane up/down + running meshes
 mesh logs -f
-mesh restart
-mesh restart --cold
-mesh down --cold
+mesh restart            # hot restart (mesh daemons kept)
+mesh restart --cold     # also reap the mesh daemons
+mesh down --cold        # stop the control plane and reap the mesh daemons
 ```
+
+Other commands: `mesh help` (usage), `mesh ps [-v]` / `mesh doctor` (read-only diagnostics),
+`mesh channels feishu list|approve|revoke` (external chat channels; `mesh feishu …` is a deprecated
+alias), `mesh device …` / `mesh auth …` (device + key authorization). Global flags (`--root`,
+`--port`, …) work before or after the command.
 
 ## Verification
 

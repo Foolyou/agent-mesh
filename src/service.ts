@@ -128,7 +128,7 @@ export async function up(base: string, root: string, port: number, opts: UpOpts 
   while (Date.now() < deadline) {
     if (await healthy(port)) {
       await writeRec(root, { pid: child.pid, port, startedAt: new Date().toISOString() });
-      console.log(`backend up → http://localhost:${port}  (pid ${child.pid}, root ${root})`);
+      console.log(`backend up → http://localhost:${port}  (combined web+API control plane; pid ${child.pid}, root ${root})`);
       return;
     }
     await Bun.sleep(250);
@@ -162,17 +162,22 @@ export async function down(root: string, port: number, opts: { cold?: boolean } 
   if (opts.cold) {
     const n = await reapDaemons(root);
     console.log(`reaped ${n} mesh daemon(s)`);
+  } else {
+    // Hot stop: only the control-plane process is gone; the mesh daemons keep running so the next
+    // `mesh up` reattaches to them. `--cold` is the way to tear the daemons down too.
+    console.log("mesh daemons left running (use --cold to reap them)");
   }
 }
 
-/** Print backend up/down + port + running meshes. */
+/** Print control-plane up/down + port + running meshes. The `backend :` line names the combined
+ *  web+API control-plane process (the same one `mesh up`/`restart` start). */
 export async function status(root: string, port: number): Promise<void> {
   console.log(`service : ${root}`);
   console.log(`port    : ${port}`);
   const pid = await backendPid(root, port);
-  if (await healthy(port)) console.log(`backend : UP (pid ${pid ?? "?"})`);
+  if (await healthy(port)) console.log(`backend : UP (pid ${pid ?? "?"})  — combined web+API control plane`);
   else if (pid) console.log(`backend : starting/unhealthy (pid ${pid})`);
-  else console.log("backend : DOWN");
+  else console.log("backend : DOWN  (combined web+API control plane not running)");
   const running = await listLiveRecords(runDir(root));
   console.log("meshes  :");
   if (running.length) for (const r of running) console.log(`  ${r.name}\tpid ${r.pid}`);

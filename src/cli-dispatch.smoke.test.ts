@@ -230,3 +230,19 @@ test("device/auth command-local flags still pass through after the channels refa
     await rm(base, { recursive: true, force: true });
   }
 }, 20000);
+
+// ── Commit 4: control-plane wording clarifiers (output only; substrings the e2e needs are preserved) ──
+
+test("status/down name the combined control plane and explain daemon retention", async () => {
+  const base = await mkdtemp(join(tmpdir(), "cli-word-"));
+  try {
+    const status = await runMesh(["status", "--root", base, "--port", "1"]); // dead port → DOWN
+    expect(status.out).toContain("backend : DOWN"); // substring preserved for service.e2e
+    expect(status.out).toContain("combined web+API control plane");
+    const down = await runMesh(["down", "--root", base, "--port", "1"]); // nothing running
+    expect(down.code).toBe(0);
+    expect(down.out).toContain("mesh daemons left running (use --cold to reap them)");
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+}, 20000);
