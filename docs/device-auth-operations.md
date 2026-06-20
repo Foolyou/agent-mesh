@@ -18,9 +18,9 @@ authorization** (device-auth phase 6). For the design rationale see
 - **There is no override.** No environment variable, flag, or config re-enables loopback
   trust or otherwise bypasses the token. (If you read about `MESH_TRUST_LOOPBACK_WHEN_EXPOSED`
   in an older note, it no longer exists.)
-- **The host CLI needs no token.** `mesh device|feishu|auth …` operate directly on the
-  on-disk auth store (`<root>/auth/*.json`); they do not go through the HTTP gate. Anyone who
-  can run `mesh …` on the host is already the root of trust.
+- **The host CLI needs no token.** `mesh device …`, `mesh auth …`, and `mesh channels feishu …`
+  (alias `mesh feishu …`) operate directly on the on-disk auth store (`<root>/auth/*.json`); they
+  do not go through the HTTP gate. Anyone who can run `mesh …` on the host is already the root of trust.
 
 ### Where state lives
 
@@ -96,10 +96,14 @@ Unauthorized Feishu users receive an auth code from the bot; approve `(channelKe
 the host. `channelKey` is `feishu:<appId>`.
 
 ```
-mesh feishu list                                 # pending registrations + approved/revoked (channelKey, openId)
-mesh feishu approve <code>                        # decrypt the auth code, approve that (channelKey, openId)
-mesh feishu revoke <channelKey> <openId>          # revoke an approved entry
+mesh channels feishu list                        # pending registrations + approved/revoked (channelKey, openId)
+mesh channels feishu approve <code>              # decrypt the auth code, approve that (channelKey, openId)
+mesh channels feishu revoke <channelKey> <openId> # revoke an approved entry
 ```
+
+`mesh channels <provider> …` is the official form (Feishu is the first provider). The old top-level
+`mesh feishu …` still works as a **deprecated alias** — it prints a one-line deprecation warning to
+stderr and then runs the same command.
 
 The encrypted auth-code body is never printed; `approve` trusts only the decrypted identity.
 
@@ -124,11 +128,12 @@ Rotation keeps prior keys so codes minted before the rotation still decrypt unti
   (which needs no token): `mesh device approve <code>` for a device showing a code, or
   `mesh auth bootstrap` to mint a one-time token. Both work offline against `<root>/auth/`.
 - **Use the right root.** If the service runs with a non-default `--root`/`MESH_ROOT`, pass the
-  same `--root` to the `mesh device|feishu|auth` commands, or they will read an empty store.
-- **Service liveness is unaffected.** `mesh up/status/restart` and `scripts/update.sh` probe the
-  backend for liveness, not data: a protected backend answering `401` to an unauthenticated probe
-  still counts as **alive** (only a 5xx, network error, or timeout is unhealthy). The probe sends
-  no token and exposes nothing.
+  same `--root` to the `mesh device …` / `mesh auth …` / `mesh channels feishu …` commands, or they
+  will read an empty store.
+- **Service liveness is unaffected.** `mesh up/status/restart` run the combined web+API control
+  plane and, like `scripts/update.sh`, probe it for liveness, not data: a protected control plane
+  answering `401` to an unauthenticated probe still counts as **alive** (only a 5xx, network error,
+  or timeout is unhealthy). The probe sends no token and exposes nothing.
 - **Exposing the console.** When binding beyond loopback (`--host 0.0.0.0`, a Tailscale funnel,
   etc.) the token is the entire protection — there is no loopback shortcut. Approve devices via
   the CLI (or bootstrap) and treat the device tokens as secrets.

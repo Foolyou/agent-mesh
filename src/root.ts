@@ -20,10 +20,23 @@ export function expandHome(p: string): string {
   return isAbsolute(p) ? p : resolve(process.cwd(), p);
 }
 
-/** Storage root = `<base>/.agent-mesh`, where base = `--root` arg | MESH_ROOT env | home. */
+/** Resolve base + storage root from an ALREADY-EXTRACTED `--root` value (e.g. from the CLI
+ *  dispatcher's parsed globals, which also handle `--root=<v>`) plus the env. base = rootArg |
+ *  MESH_ROOT env | home; root = `<base>/.agent-mesh`. Returns both so a caller can forward `base`
+ *  as `--root` to a re-spawned backend and have it resolve the SAME root. */
+export function resolveRootFrom(
+  rootArg: string | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): { base: string; root: string } {
+  const rawBase = rootArg ?? env.MESH_ROOT;
+  const base = rawBase ? expandHome(rawBase) : homedir();
+  return { base, root: join(base, MESH_DIR) };
+}
+
+/** Storage root = `<base>/.agent-mesh`, where base = `--root` arg | MESH_ROOT env | home.
+ *  Parses `--root <value>` from `argv`; for the `--root=<value>` form, extract via the dispatcher
+ *  and use {@link resolveRootFrom} instead (this raw-argv form is kept for non-CLI callers). */
 export function resolveRoot(argv: string[] = process.argv, env: NodeJS.ProcessEnv = process.env): string {
   const i = argv.indexOf("--root");
-  const rawBase = (i >= 0 ? argv[i + 1] : undefined) ?? env.MESH_ROOT;
-  const base = rawBase ? expandHome(rawBase) : homedir();
-  return join(base, MESH_DIR);
+  return resolveRootFrom(i >= 0 ? argv[i + 1] : undefined, env).root;
 }
