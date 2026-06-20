@@ -4,16 +4,20 @@
 // publishes it → attachment card appears in the console (image loads, document opens
 // in the FileViewer) → dangerous publishes are rejected → deleting the mesh clears the
 // artifact bucket.
-// Run: E2E_PORT=10026 E2E_ROOT=~/.agent-mesh-dev bun run src/web/artifact-publish.e2e.ts
+// Self-isolating: defaults to a free port + a fresh temp root (no dependency on ~/.agent-mesh-dev).
+// Run: bun run src/web/artifact-publish.e2e.ts  (optional overrides: E2E_PORT=.. E2E_ROOT=..)
 import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { type Browser, type Page } from "playwright";
-import { authedContext, authedReady, e2eAuthRoot, launchChromium, seedApprovedDevice } from "./e2e-playwright";
+import { authedContext, authedReady, e2eAuthRoot, freePort, launchChromium, seedApprovedDevice } from "./e2e-playwright";
 
-const PORT = Number(process.env.E2E_PORT) || 10026;
+const PORT = Number(process.env.E2E_PORT) || freePort();
 const BASE = `http://localhost:${PORT}`;
-const ROOT = process.env.E2E_ROOT?.replace(/^~/, homedir()) ?? join(homedir(), ".agent-mesh-dev");
+// Self-isolating by default: a fresh temp root (never the shared ~/.agent-mesh-dev). An explicit
+// E2E_ROOT override is honored, but we only auto-clean roots we created ourselves.
+const ownRoot = !process.env.E2E_ROOT;
+const ROOT = process.env.E2E_ROOT?.replace(/^~/, homedir()) ?? (await mkdtemp(join(tmpdir(), "mesh-artifact-root-")));
 const e2eToken = await seedApprovedDevice(e2eAuthRoot(ROOT));
 const REPO = resolve(import.meta.dir, "..", "..");
 const mesh = `artifact-e2e-${process.pid}`;
@@ -142,10 +146,17 @@ try {
     await page.waitForSelector(".brand", { timeout: 8000 });
     const panel = page.locator(".conv-panel").first();
 
-    const img = panel.locator('.attachment img[src="/api/meshes/' + mesh + '/agents/r/artifacts/chart.png"]').first();
+    // The attachment image renders via AuthedImage: it fetches the artifact bytes WITH the device
+    // token and swaps in a blob: object URL (the raw /api/... URL is never a static, un-authed src).
+    // Scope to the chart.png card by its stable viewer-link href, then assert the blob loaded.
+    const imgCard = panel.locator('.attachment:has(a[href="/mesh/' + mesh + '/agent/r/artifact/chart.png"])').first();
+    const img = imgCard.locator("img.attachment-image").first();
     await img.waitFor({ timeout: 8000 });
-    const loaded = await img.evaluate((el: any) => el.complete && el.naturalWidth > 0);
-    if (!loaded) throw new Error("attachment image did not load");
+    // AuthedImage omits the src until its Bearer fetch resolves, then swaps in a blob: object URL;
+    // wait for the blob to actually load + decode rather than checking the instant the el attaches.
+    await waitFor(() => img.evaluate((el: any) => el.complete && el.naturalWidth > 0), 8000);
+    const src = await img.evaluate((el: any) => el.getAttribute("src"));
+    if (!src?.startsWith("blob:")) throw new Error(`attachment image src was ${src} (expected an AuthedImage blob:)`);
 
     await panel.locator('.attachment a[href="/mesh/' + mesh + '/agent/r/artifact/report.md"]').first().click();
     await page.waitForSelector(".file-viewer-path", { timeout: 8000 });
@@ -175,4 +186,5 @@ try {
   try { await del(`/api/meshes/${mesh}`); } catch {}
   backend.kill("SIGKILL");
   await rm(work, { recursive: true, force: true });
+  if (ownRoot) await rm(ROOT, { recursive: true, force: true });
 }
