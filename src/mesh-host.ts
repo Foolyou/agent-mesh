@@ -6,7 +6,7 @@
 // explicit `stop` command, a SIGTERM/SIGINT (`mesh kill`), or the idle/cold-start lease.
 import net from "node:net";
 import { join, dirname } from "node:path";
-import { rm, mkdir } from "node:fs/promises";
+import { readFile, rm, mkdir } from "node:fs/promises";
 import { appendFileSync } from "node:fs";
 import { ControlPlane, type ControlPlaneStopReason } from "./control-plane";
 import type { RespawnMode, RespawnResult } from "./control-plane";
@@ -27,6 +27,19 @@ export function writeMeshCrashDump(path: string, kind: string, err: unknown): vo
   } catch {
     /* best-effort: never let crash logging mask the original crash */
   }
+}
+
+async function readBuildId(): Promise<string | undefined> {
+  const candidates = [...new Set([process.argv[0], process.argv[1], process.execPath].filter((s): s is string => !!s))];
+  for (const candidate of candidates) {
+    try {
+      const buildId = (await readFile(`${candidate}.build-id`, "utf8")).trim();
+      if (buildId) return buildId;
+    } catch {
+      /* try next candidate */
+    }
+  }
+  return undefined;
 }
 
 /** The slice of ControlPlane the daemon depends on (keeps it unit-testable). */
@@ -330,7 +343,18 @@ export async function runMeshHost(): Promise<void> {
     onStopped: () => void removeRecord(runDir, config.name).finally(() => process.exit(0)),
   });
   await daemon.listen();
-  await writeRecord(runDir, { name: config.name, pid: process.pid, socketPath, proto: PROTO_VERSION, startedAt: now() });
+  await writeRecord(runDir, {
+    name: config.name,
+    pid: process.pid,
+    socketPath,
+    proto: PROTO_VERSION,
+    startedAt: now(),
+    root,
+    runDir,
+    executable: process.argv[0] || process.execPath,
+    buildId: await readBuildId(),
+    cwd: process.cwd(),
+  });
 
   // `mesh kill` sends SIGTERM → reap agents + drop the registry record cleanly.
   process.on("SIGTERM", () => void daemon.stop("explicit"));

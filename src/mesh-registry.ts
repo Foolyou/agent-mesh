@@ -7,11 +7,22 @@ import { readdir, readFile, writeFile, rm, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 
 export interface MeshHostRecord {
+  /** Mesh name inside the storage root namespace. */
   name: string;
   pid: number;
   socketPath: string;
   proto: number;
   startedAt: string;
+  /** Storage root that owns this host. Diagnostic metadata only; the runDir path is authoritative. */
+  root?: string;
+  /** Run directory that contains this record. Diagnostic metadata only. */
+  runDir?: string;
+  /** Executable path that launched the host. Diagnostic metadata, not part of the namespace. */
+  executable?: string;
+  /** Optional deploy/build id read from the executable's .build-id sidecar. */
+  buildId?: string;
+  /** Host cwd at launch, useful when diagnosing mixed worktree/binary incidents. */
+  cwd?: string;
 }
 
 const recordPath = (runDir: string, name: string) => join(runDir, `${name}.json`);
@@ -23,6 +34,19 @@ export async function writeRecord(runDir: string, rec: MeshHostRecord): Promise<
 
 export async function removeRecord(runDir: string, name: string): Promise<void> {
   await rm(recordPath(runDir, name), { force: true });
+}
+
+export interface ConditionalRemoveResult {
+  removed: boolean;
+  record?: MeshHostRecord;
+}
+
+/** Remove a host record only when it is missing or its recorded pid is no longer alive. */
+export async function removeRecordIfDead(runDir: string, name: string): Promise<ConditionalRemoveResult> {
+  const record = await readRecord(runDir, name);
+  if (record && pidAlive(record.pid)) return { removed: false, record };
+  await removeRecord(runDir, name);
+  return { removed: true, record };
 }
 
 /** signal 0 never kills; ESRCH ⇒ the process is gone, EPERM ⇒ alive but not ours. */

@@ -5,7 +5,7 @@ import { existsSync } from "node:fs";
 import { spawn, type ChildProcess } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { writeRecord, readRecord, removeRecord, listLiveRecords, pidAlive, reapAllHosts } from "./mesh-registry";
+import { writeRecord, readRecord, removeRecord, removeRecordIfDead, listLiveRecords, pidAlive, reapAllHosts } from "./mesh-registry";
 
 let dir: string;
 const spawned: ChildProcess[] = [];
@@ -57,10 +57,11 @@ const touchSock = (name: string) => writeFile(join(dir, `${name}.sock`), "");
 const fast = { termWaitMs: 400, killWaitMs: 2000 };
 
 test("write → read round-trips a record", async () => {
-  await writeRecord(dir, rec("a", process.pid));
+  await writeRecord(dir, { ...rec("a", process.pid), root: "/root", runDir: dir, executable: "/bin/mesh", buildId: "build-1", cwd: "/work" });
   const got = await readRecord(dir, "a");
   expect(got?.name).toBe("a");
   expect(got?.pid).toBe(process.pid);
+  expect(got).toMatchObject({ root: "/root", runDir: dir, executable: "/bin/mesh", buildId: "build-1", cwd: "/work" });
 });
 
 test("pidAlive: true for self, false for a surely-dead pid", () => {
@@ -81,6 +82,22 @@ test("removeRecord deletes the file", async () => {
   await writeRecord(dir, rec("x", process.pid));
   await removeRecord(dir, "x");
   expect(await readRecord(dir, "x")).toBeUndefined();
+});
+
+test("removeRecordIfDead keeps a live host record", async () => {
+  await writeRecord(dir, rec("live", process.pid));
+  const result = await removeRecordIfDead(dir, "live");
+  expect(result.removed).toBe(false);
+  expect(result.record).toMatchObject({ name: "live", pid: process.pid });
+  expect(await readRecord(dir, "live")).toMatchObject({ name: "live", pid: process.pid });
+});
+
+test("removeRecordIfDead deletes a dead host record", async () => {
+  await writeRecord(dir, rec("dead", 2147483646));
+  const result = await removeRecordIfDead(dir, "dead");
+  expect(result.removed).toBe(true);
+  expect(result.record).toMatchObject({ name: "dead", pid: 2147483646 });
+  expect(await readRecord(dir, "dead")).toBeUndefined();
 });
 
 test("reapAllHosts: SIGTERM kills a live host, then deletes its record + socket", async () => {

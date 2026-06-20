@@ -7,7 +7,7 @@ import { rm } from "node:fs/promises";
 import { MeshStore } from "./mesh-store";
 import { MeshHostClient, type MutationAck } from "./mesh-host-client";
 import type { MutationApplyResult } from "./web/types";
-import { listLiveRecords, readRecord, removeRecord, pidAlive, type MeshHostRecord } from "./mesh-registry";
+import { listLiveRecords, readRecord, removeRecord, removeRecordIfDead, pidAlive, type MeshHostRecord } from "./mesh-registry";
 import { Mesh } from "./mesh";
 import { validateAddAgent, validateAddEdge } from "./mesh-validate";
 import { now } from "./acp/types";
@@ -190,11 +190,23 @@ export class MeshManager {
       this.emit(name, { kind: "log", text: `mesh "${name}" host exited`, ts: now() });
     }
     entry.client = undefined;
-    // a crashed daemon leaves its registry record + unix-socket file behind; clear both
-    // so the mesh is immediately restartable (a fresh daemon re-listens on the path).
-    void removeRecord(this.runDir, name).catch(() => {});
-    const socketPath = meshSocketPath(this.runDir, name);
-    if (!isWindowsNamedPipePath(socketPath)) void rm(socketPath, { force: true }).catch(() => {});
+    void this.cleanupLostDaemonArtifact(name).catch(() => {});
+  }
+
+  private async cleanupLostDaemonArtifact(name: string): Promise<void> {
+    const result = await removeRecordIfDead(this.runDir, name);
+    if (!result.removed) {
+      this.emit(name, { kind: "log", text: `mesh "${name}" connection closed; host pid ${result.record?.pid} is still alive, keeping registry`, ts: now() });
+      return;
+    }
+    // A truly dead daemon can leave its unix-socket file behind; clear it so the mesh is restartable.
+    const socketPath = result.record?.socketPath ?? meshSocketPath(this.runDir, name);
+    if (!isWindowsNamedPipePath(socketPath)) await rm(socketPath, { force: true }).catch(() => {});
+  }
+
+  private async waitPidGone(pid: number, timeoutMs: number): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline && pidAlive(pid)) await Bun.sleep(100);
   }
 
   async startMesh(name: string, opts: StartMeshOptions = {}): Promise<void> {
@@ -284,7 +296,11 @@ export class MeshManager {
       } catch {
         /* already gone */
       }
-      await removeRecord(this.runDir, name).catch(() => {});
+      await this.waitPidGone(rec.pid, 4000);
+      const result = await removeRecordIfDead(this.runDir, name);
+      if (!result.removed) {
+        this.emit(name, { kind: "log", text: `mesh "${name}" pid ${rec.pid} survived SIGTERM; keeping registry`, ts: now() });
+      }
       return true;
     }
     return false;

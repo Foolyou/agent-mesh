@@ -1,10 +1,13 @@
 // src/mesh-manager.test.ts
 import { test, expect, beforeEach, afterEach } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MeshManager } from "./mesh-manager";
+import { MeshHostClient } from "./mesh-host-client";
 import { meshSocketPath } from "./mesh-socket";
+import { readRecord } from "./mesh-registry";
 import { readSessionState, writeSessionState } from "./session-storage";
 import type { MeshConfig, MeshEvent } from "./acp/types";
 
@@ -559,6 +562,32 @@ hostTest("a daemon outlives the backend: reattachRunning reconnects + replays + 
 
   await mgr2.stopMesh("echo");
   await waitForPidExit(pid); // now truly reaped
+}, HOST_TEST_TIMEOUT);
+
+hostTest("losing the host socket to a live daemon keeps the registry so start reattaches", async () => {
+  await mgr.defineMesh(cfg);
+  await mgr.startMesh("echo");
+  const pid = mgr.pidOf("echo")!;
+  const runDir = join(dir, "run");
+  const rec = await readRecord(runDir, "echo");
+  expect(rec).toMatchObject({ name: "echo", pid });
+
+  // A second client simulates another backend attach/takeover. The host drops the manager's
+  // socket, but the daemon process is still alive, so its root-scoped registry must remain.
+  const takeover = new MeshHostClient({ name: "echo", config: cfg, socketPath: rec!.socketPath, runDir });
+  await takeover.attach(rec!);
+  for (let i = 0; i < 50 && mgr.listMeshes()[0]!.status !== "dead"; i++) await Bun.sleep(20);
+  expect(mgr.listMeshes()[0]!.status).toBe("dead");
+  expect(await readRecord(runDir, "echo")).toMatchObject({ name: "echo", pid });
+  expect(existsSync(rec!.socketPath)).toBe(true);
+
+  takeover.disconnect();
+  await mgr.startMesh("echo");
+  expect(mgr.listMeshes()[0]!.status).toBe("running");
+  expect(mgr.pidOf("echo")).toBe(pid);
+
+  await mgr.stopMesh("echo");
+  await waitForPidExit(pid);
 }, HOST_TEST_TIMEOUT);
 
 hostTest("a crashed mesh host is reaped: status dead, socket file removed, restartable", async () => {
