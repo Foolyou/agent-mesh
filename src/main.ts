@@ -14,7 +14,7 @@ import { startWebServer } from "./web/server";
 import { startApiServer } from "./web/api-server";
 import { FakeManager, FakeAssistant } from "./web/fake";
 import { runMeshHost } from "./mesh-host";
-import { resolveRoot, expandHome } from "./root";
+import { resolveRootFrom } from "./root";
 import { uploadRoot } from "./web/uploads";
 import { assistantCliDeprecationWarnings, assistantHarnessPassthrough, noAssistantSelected, parseAssistantHarness } from "./cli-options";
 import { createFeishuChannelController, unavailableAssistantGateway } from "./channels";
@@ -22,7 +22,6 @@ import { runAuthCommand } from "./auth-cli";
 import { collectPsDetail, runDoctor, renderPsDetail, renderDoctor, doctorExitCode } from "./diagnostics";
 import { cliPsSources, doctorSources, diagnosticsRunDir } from "./diagnostics-sources";
 import { resolveCommand, isKnownCommand, usageLines } from "./cli-dispatch";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import * as service from "./service";
 
@@ -69,9 +68,10 @@ const noAssistant = noAssistantSelected(process.argv);
 for (const warning of assistantCliDeprecationWarnings(process.argv)) console.warn(warning);
 const assistantHarness = parseAssistantHarness(process.argv);
 
-const root = resolveRoot();
-// the base dir we'd pass back as --root so a re-spawned backend resolves to the same root
-const base = g("root") ? expandHome(g("root")!) : homedir();
+// Derive BOTH the storage root and the base from the resolver's parsed `--root` global (which also
+// handles `--root=<v>`), so they can never disagree. `base` is what we forward as --root to a
+// re-spawned backend; `root` = `<base>/.agent-mesh`. MESH_ROOT env fallback is preserved.
+const { base, root } = resolveRootFrom(g("root"));
 // Bind interface: loopback by default (server fns default to 127.0.0.1); --host opts into exposure.
 const hostname = g("host");
 
