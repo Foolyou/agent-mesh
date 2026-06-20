@@ -57,3 +57,4 @@ The existing **custom palette** stays: a full 19-key user-editable palette, pers
 
 ## Change / review log
 - 2026-06-20 — created (Step 3): token model + 3×3 matrix specified; values in `01`, AA evidence in `02`, themed component drafts in `03`. No `src/web` code changed; tokens reuse the existing 19-key contract so `contrast.ts` audits the new palettes unmodified.
+- 2026-06-20 — Step 4 cross-review (`../04-cross-review.md`): confirmed token contract consistent with Steps 1–2 (19-key, accent axis, status→token mapping). **No token value changes.** Clarified that **LabelChip colors are data-driven and OUTSIDE the 19-key contract** (Step-5), aligning `01`/`03` with `../components/06-board.md`.

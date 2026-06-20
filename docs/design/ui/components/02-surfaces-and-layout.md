@@ -28,8 +28,8 @@
 
 ## Modal / Drawer / Sheet (overlay)
 - **Purpose**: overlay container for focused/secondary surfaces.
-- **Variants**: center modal (new-mesh, install progress), right drawer (notifications, task detail desktop), bottom sheet (mobile menus, mesh picker, filters). Scrim; dismiss; focus-trap.
-- **Surfaces**: new-mesh, harness install, notifications drawer, board task detail, mobile "更多"/pickers.
+- **Variants**: center modal (new-mesh, install progress), right drawer (notifications), bottom sheet (mobile menus, mesh picker, filters). Scrim; dismiss; focus-trap.
+- **Surfaces**: new-mesh, harness install, notifications drawer, mobile "更多"/pickers. (Board **issue detail** is a routable page `/board/issue/<N>`, not a drawer — see Note + `../interaction/03-board-view.md`.)
 - **Note**: several Step-1 app surfaces (harness/channels/doctor/assistant) become routable **pages**; whether they also present as overlay vs full page is a Step-3/5 styling choice — the container component is the same.
 
 ## Shell regions (composed)
@@ -41,3 +41,4 @@
 
 ## Change / review log
 - 2026-06-20 — created (Step 2). PanelFrame + SegmentedControl unifications back-applied to Step 1 (logged there).
+- 2026-06-20 — Step 4 cross-review: board issue detail clarified as a routable page (`/board/issue/<N>`), not a drawer; "task detail" wording → "issue detail".

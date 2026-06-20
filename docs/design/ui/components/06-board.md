@@ -24,7 +24,7 @@ Board is the highest-part-count surface (deepened to GitHub-Issues maturity, see
 - **Reuse**: a Select/menu variant in the ActionBar.
 
 ## LabelChip
-- **Purpose**: a colored issue label (GH-style). **Variants**: read chip / removable (in editor) / filter-active. **Surfaces**: issue row, detail meta, filter chips. **Reuse**: a StatusChip-adjacent pill but label-colored (Step-3 label color tokens); distinct from semantic StatusChip.
+- **Purpose**: a colored issue label (GH-style). **Variants**: read chip / removable (in editor) / filter-active. **Surfaces**: issue row, detail meta, filter chips. **Reuse**: a StatusChip-adjacent pill but label-colored. Label colors are **data-driven and live OUTSIDE the 19-key token contract** — per-label values (Step-5 label-color handling), not theme tokens; the editor should warn on sub-AA label colors. Distinct from semantic StatusChip. Also catalogued as a shared primitive in `01-primitives.md`.
 
 ## AssigneeAvatar
 - **Purpose**: the assignee identity (agent id → avatar/initials), or "unassigned". **Variants**: single / stacked (rare) / unassigned placeholder. **Surfaces**: issue row, detail, kanban card, bulk assign. **Reuse**: shared small Avatar primitive (also usable elsewhere later).
@@ -58,3 +58,4 @@ Board is the highest-part-count surface (deepened to GitHub-Issues maturity, see
 ## Change / review log
 - 2026-06-20 — created (Step 2): board deepened to GH Issues + Milestones; board-specific parts inventoried; shared parts reused. Kanban consolidated here for the board (the generic `05` entry remains the abstract reference).
 - 2026-06-20 — **Step 2 correction (prdmgr/user)**: removed milestone parts (MilestonePill / MilestoneProgressRow / MilestoneCard) and all milestone flows; milestones were a maturity benchmark, not a feature. Added **EpicGroupHeader** as the grouping/aggregation part. FilterQueryBar/SortControl/IssueDetail facets dropped `milestone`; SegmentedControl reduced to `List/Board`. AssigneeAvatar + LabelChip remain shared primitives (backed by existing assignee/label data).
+- 2026-06-20 — Step 4 cross-review: LabelChip colors clarified as data-driven, **outside the 19-key token contract** (Step-5, not Step-3); AssigneeAvatar + LabelChip promoted to atoms in `01-primitives.md`.

@@ -48,6 +48,18 @@ Low-fi part specs. Format: purpose · variants/states · surfaces · desktop/mob
 - **Surfaces**: panel heads (topology/activity/mailbox), harness rows, settings, doctor.
 - **Reuse**: lives in ActionBar/PanelFrame head.
 
+## Avatar (AssigneeAvatar)
+- **Purpose**: small identity chip — an agent/human id rendered as initials (or image) on a tinted disc; "unassigned" placeholder.
+- **Variants**: single / stacked (rare) / unassigned. Sizes: inline (rows) / sm (kanban card, bulk).
+- **Surfaces**: board issue row / detail / kanban card / bulk-assign (today); reusable wherever an actor identity shows later.
+- **Reuse**: surfaced as a shared primitive in Step 2 (board) and used by Step 3 themed drafts; disc tone = `off`/`accent`, text AA (`fg`/`sel-fg`). Board specialization documented in `06-board.md`.
+
+## LabelChip
+- **Purpose**: a colored data label (GitHub-style), distinct from the semantic StatusChip.
+- **Variants**: read chip / removable (editor) / filter-active.
+- **Surfaces**: board issue row / detail meta / filter chips (today); reusable for any tag-like data.
+- **Reuse**: shared primitive. **Label colors are data-driven and live OUTSIDE the 19-key token contract** (per-label values, Step-5 handling) — not theme tokens; sub-AA label colors should be warned in the editor. Board specialization in `06-board.md`.
+
 ## Skeleton
 - **Purpose**: loading placeholder (shape of forthcoming content).
 - **Variants**: line, block, row, card, table.
@@ -59,3 +71,4 @@ Low-fi part specs. Format: purpose · variants/states · surfaces · desktop/mob
 
 ## Change / review log
 - 2026-06-20 — created (Step 2).
+- 2026-06-20 — Step 4 cross-review: promoted **Avatar (AssigneeAvatar)** + **LabelChip** to shared atoms here (they were declared shared primitives in `00-inventory.md` and used by Step 3 themed drafts, but only specced under `06-board.md`). Recorded that LabelChip colors are data-driven, outside the 19-key token contract.
