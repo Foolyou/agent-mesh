@@ -324,7 +324,10 @@ Each command: load store → mutate → atomic write under lockfile → print re
 ### 4.2 Endpoints (added to `src/web/api.ts` `handleApi`, the `/api/*` router)
 
 All return JSON. Device endpoints are exempt from the CSRF same-origin gate (they're pre-auth and the
-device presents a bearer token, not an ambient cookie) — but see §6 for the loopback rule.
+device presents a bearer token, not an ambient cookie). **Phase 6:** the `/api/auth/device/*` and
+bootstrap endpoints are the *only* pre-auth opening — every other gated request needs an approved
+device token (no loopback rule; the §6 "loopback is implicitly trusted" anchor was removed — see the
+Phase 6 supersession banner at the top and [`docs/device-auth-operations.md`](../device-auth-operations.md)).
 
 - `POST /api/auth/device/start` → server generates `deviceId` + token + short `code`, stores a `pending`
   entry, returns `{ code, deviceId, pollAfterMs }`. (Token is returned now but **dormant** until
@@ -346,8 +349,11 @@ query param or first-message handshake (`?token=` on the WS URL — `store.ts` b
 The server validates the token on WS upgrade and on each mutating `/api/*` call (alongside the existing
 CSRF check). Unauthorized → `401`/close.
 
-> Open Q 4B: do we gate **read** endpoints (`GET /api/state`) too, or only mutations + WS? Recommended:
-> gate **everything non-loopback** (the whole app is operator-only), loopback stays open for bootstrap.
+> Open Q 4B **[RESOLVED — Phase 6]**: do we gate **read** endpoints (`GET /api/state`) too, or only
+> mutations + WS? **Gate every read and mutation endpoint plus the `/ws` upgrade — token-only, loopback
+> included.** The only pre-auth opening is the `/api/auth/device/*` + bootstrap enrollment endpoints
+> (and static assets / the unauthorized page). There is no loopback exemption. *(Original recommendation
+> "gate everything non-loopback, loopback stays open for bootstrap" is superseded.)*
 
 ---
 
@@ -458,8 +464,9 @@ Modified (touch points found in research):
 - `src/channels/types.ts` / `config.ts` — `allowSenders` stays as an **optional seed/migration source**
   (read once to pre-populate the registry), no longer the live gate.
 - `src/web/api.ts` `handleApi` (~L34) + `sameOriginCheck` (~L418) — add endpoints + token gate.
-- `src/web/server.ts` / `api-server.ts` — pass the socket remote address into `ApiRequestContext` so the
-  loopback rule (§6) can be evaluated (not from headers).
+- `src/web/server.ts` / `api-server.ts` — pass the socket remote address into `ApiRequestContext`
+  (not from headers). **Phase 6:** the remote address is **diagnostic only** (gate logs / coarse origin
+  class) — it never grants access; the original "evaluate the §6 loopback rule" use was removed.
 - `src/web/gateway.ts` (WebGateway) + `src/web/client/store.ts` — token on `/api/*` + `/ws`.
 - `src/main.ts` — CLI subcommand wiring; construct/inject `AssistantGateway`.
 - `src/mesh-assistant.ts` — expose the narrow `AssistantGateway` (prompt + update subscription +
@@ -522,7 +529,9 @@ parallel, but **3 and 5 must be serial** (same file). Phase 6 last.
 - **2A:** Short opaque auth-code id (stateful pending lookup) vs full AES-256-GCM token in chat
   (stateless, long). *Recommend short id for UX; both secure.*
 - **4A:** Poll (2–3s `GET status`) vs long-poll/SSE. *Recommend simple poll pre-auth.*
-- **4B:** Gate read endpoints too or only mutations+WS. *Recommend gate everything non-loopback.*
+- **4B — [RESOLVED, Phase 6]:** Gate read endpoints too or only mutations+WS? *Gate every read and
+  mutation endpoint plus the `/ws` upgrade — token-only, loopback included; only `/api/auth/device/*` +
+  bootstrap (and static/unauthorized page) stay pre-auth. (Old "gate everything non-loopback" superseded.)*
 - **5A:** No-assistant p2p behavior — notice vs route to a default mesh. *Recommend notice.*
 - **5B:** Shared single Mesh Assistant session for all p2p users vs per-user sessions. *Recommend shared
   for v1; document the shared-context caveat.*
