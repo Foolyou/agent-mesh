@@ -14,7 +14,7 @@ Step 0 inputs (read, treated as settled — not re-litigated): `docs/design/ui-r
 
 ## Shared vocabulary (used by every page doc — keep consistent)
 **Status chip** (the signature, phase1 §1.4): `dot + icon + label`, semantic color. Canonical set:
-`ready`(ok ●) · `working`(info ▶) · `blocked`(bad ■) · `idle`(off ○) · `done`(good ✓) · `attention`(warn !).
+`ready`(success ●) · `working`(info ▶) · `blocked`(danger ■) · `idle`(idle ○) · `done`(success ✓) · `attention`(warning !). (v2 semantic token names; see `../tokens/00-tokens.md`.)
 **State vocabulary** (each page enumerates the relevant subset): `empty` · `loading` · `populated` · `error` · `permission` (awaiting approval) · `busy` (action in flight) · `offline` (disconnected) · `unauthorized` (device-auth).
 **Device-split principle:** desktop = full control surface; mobile = touch-reflowed core (status/conversation/approvals), deep/secondary surfaces simplified or deferred — never a folded desktop.
 
@@ -67,6 +67,7 @@ None blocking for Step 1 — Step 0 docs + locked rules cover product scope. Any
 Component vocabulary unified in Step 2 — see `../components/`. The shared-vocabulary section above (status chips, state words) is now backed by concrete component specs; per-page one-offs (mesh/agent/task/device/harness/notification rows, permission/confirm cards, panels, tabs) were unified into StatusListRow / ApprovalCard / PanelFrame / SegmentedControl and each page doc carries a "Components used (Step 2)" cross-link.
 
 ## Step 3 + Step 4 addendum (2026-06-20)
-- **Step 3 tokens** live in `../tokens/` (token model, the 3×3 palette values, AA evidence, themed component drafts). Status-chip semantics here map to status tokens (`ready→ok`, `working→info`/`accent`, `blocked→bad`, `idle→off`, `done→good`, `attention→warn`); accent is the brand/"thinking" token.
+- **Step 3 tokens** live in `../tokens/` (token model, the 3×3 palette values, AA evidence, themed component drafts). Status-chip semantics here map to v2 status tokens (`ready→success`, `working→info`/`accent`, `blocked→danger`, `idle→idle`, `done→success`, `attention→warning`); accent is the brand/"thinking" token.
 - **Board correction** (milestones were a maturity benchmark, not a feature): the board view (`03-board-view.md`) uses GitHub-Issues maturity over the existing data model only, with **Epic** (not milestones) as the grouping primitive. The route map + coverage matrix above were aligned in Step 4 (issue-detail route `/board/issue/<N>`; board has a `permission` state).
 - **Step 4 cross-review record**: `../04-cross-review.md` (Steps 1–3 mutual-consistency pass + the back-edits it triggered).
+- 2026-06-20 — **Step 4 re-review (v2 tokens)**: status-chip vocabulary + Step-3 mapping aligned to v2 semantic token names (`success`/`danger`/`idle`/`warning`); see `../04-cross-review.md`.

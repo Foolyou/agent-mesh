@@ -4,7 +4,7 @@ Low-fi part specs. Format: purpose · variants/states · surfaces · desktop/mob
 
 ## StatusChip (signature)
 - **Purpose**: at-a-glance status as `dot + icon + label` pill. The connective tissue across the app.
-- **Variants** (canonical 6, Step1 `00-index`): `ready`(ok ●) `working`(info ▶) `blocked`(bad ■) `idle`(off ○) `done`(good ✓) `attention`(warn !). Sizes: inline / compact (dot-only on dense rows). Optional count suffix.
+- **Variants** (canonical 6, Step1 `00-index`): `ready`(success ●) `working`(info ▶) `blocked`(danger ■) `idle`(idle ○) `done`(success ✓) `attention`(warning !) — v2 semantic token names. Sizes: inline / compact (dot-only on dense rows). Optional count suffix.
 - **Surfaces**: shell connection, mesh rows, topology nodes, agent cards, board task status, harness status, channels, doctor findings, device status.
 - **Desktop/mobile**: same; compact (dot-only) where space is tight (mobile dense lists).
 - **Reuse**: embedded in StatusListRow, topology node, board card. Color from semantic tokens (Step 3).
@@ -15,13 +15,13 @@ Low-fi part specs. Format: purpose · variants/states · surfaces · desktop/mob
 
 ## Badge (count)
 - **Purpose**: small numeric/notification count.
-- **Variants**: number / dot-only; tones: unread(accent or info), urgent(bad).
+- **Variants**: number / dot-only; tones: unread(`accent` or `info`), urgent(`danger`).
 - **Surfaces**: 🔔 unread, pending-approval red count (topology node + overview), board task count, harness "update" indicator, channel pending count.
 - **Reuse**: overlaid on Button/icon/RouteLink/StatusListRow.
 
 ## Button
 - **Purpose**: action trigger.
-- **Variants**: `primary`(accent bg) · `ghost`/secondary(line border) · `danger`(bad) · `link-style`; sizes sm/md; states default/hover/active/disabled/busy(spinner). Icon-only variant.
+- **Variants**: `primary`(`accent` fill + `on-accent`) · `ghost`/secondary(`border-strong` edge) · `danger`(`danger`) · `link-style`; sizes sm/md; states default/hover(`hover`)/active(`active`)/disabled(`text-disabled`)/busy(spinner). Icon-only variant.
 - **Surfaces**: every page (Send, Start/Stop, Reload, install/update, approve, save…).
 - **Desktop/mobile**: mobile = larger tap targets, icon-only collapses to labeled where room.
 
@@ -52,7 +52,7 @@ Low-fi part specs. Format: purpose · variants/states · surfaces · desktop/mob
 - **Purpose**: small identity chip — an agent/human id rendered as initials (or image) on a tinted disc; "unassigned" placeholder.
 - **Variants**: single / stacked (rare) / unassigned. Sizes: inline (rows) / sm (kanban card, bulk).
 - **Surfaces**: board issue row / detail / kanban card / bulk-assign (today); reusable wherever an actor identity shows later.
-- **Reuse**: surfaced as a shared primitive in Step 2 (board) and used by Step 3 themed drafts; disc tone = `off`/`accent`, text AA (`fg`/`sel-fg`). Board specialization documented in `06-board.md`.
+- **Reuse**: surfaced as a shared primitive in Step 2 (board) and used by Step 3 themed drafts; disc tone = `idle`/`accent`, text AA (`text-primary`/`on-accent`). Board specialization documented in `06-board.md`.
 
 ## LabelChip
 - **Purpose**: a colored data label (GitHub-style), distinct from the semantic StatusChip.
@@ -72,3 +72,4 @@ Low-fi part specs. Format: purpose · variants/states · surfaces · desktop/mob
 ## Change / review log
 - 2026-06-20 — created (Step 2).
 - 2026-06-20 — Step 4 cross-review: promoted **Avatar (AssigneeAvatar)** + **LabelChip** to shared atoms here (they were declared shared primitives in `00-inventory.md` and used by Step 3 themed drafts, but only specced under `06-board.md`). Recorded that LabelChip colors are data-driven, outside the 19-key token contract.
+- 2026-06-20 — Step 4 re-review (v2 tokens): StatusChip set, Badge, Button, Avatar re-annotated from v1 token names to v2 semantic tokens (`success`/`danger`/`idle`/`warning`, `accent`+`on-accent`, `border-strong`, `text-disabled`, `text-primary`). See `../04-cross-review.md`.

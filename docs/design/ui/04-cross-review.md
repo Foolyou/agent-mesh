@@ -10,7 +10,7 @@ Read all 13 Step 1 docs, 7 Step 2 docs, 4 Step 3 docs. Cross-checked the five re
 - **Fix (back-edit Step 2):** `AssigneeAvatar` + `LabelChip` were used by Step 3 as shared primitives but only specced under `06-board.md`. Promoted to atoms in `components/01-primitives.md` and added to the `00-inventory.md` matrix, so Step 3's "shared primitive" usage is backed in Step 2.
 
 ## Axis 2 — Components referenced by Step 1 pages are covered by Step 2 and Step 3
-**Result: consistent.** Each Step 1 page doc's "Components used (Step 2)" list maps to existing Step 2 parts; all Step 2 parts get a token treatment in `tokens/03-themed-components.md`. Status-chip vocabulary in `interaction/00-index.md` maps to status tokens in Step 3 (`ready→ok`, `working→info`/`accent`, `blocked→bad`, `idle→off`, `done→good`, `attention→warn`).
+**Result: consistent.** Each Step 1 page doc's "Components used (Step 2)" list maps to existing Step 2 parts; all Step 2 parts get a token treatment in `tokens/03-themed-components.md`. Status-chip vocabulary in `interaction/00-index.md` maps to v2 status tokens (`ready→success`, `working→info`/`accent`, `blocked→danger`, `idle→idle`, `done→success`, `attention→warning`).
 
 ## Axis 3 — Board correction consistent everywhere (no live milestone feature; Epic grouping only)
 **Result: consistent after route/state/log alignment.** Global grep confirms `milestone` appears only in the 3 board docs and only as change-log / "benchmark-not-feature" clarification / the EpicGroupHeader "replaces removed milestone grouping" note — no product/component/route/token definition references a live milestone.
@@ -39,8 +39,33 @@ Read all 13 Step 1 docs, 7 Step 2 docs, 4 Step 3 docs. Cross-checked the five re
 | `components/06-board.md` | LabelChip colors = data-driven/outside 19-key contract (Step-5, not Step-3) |
 | `tokens/00-tokens.md` | Step 4 cross-review note; label-colors-outside-contract clarification |
 
-## Self-consistency confirmation
-After the back-edits, Steps 1–3 are **mutually consistent**: every Step-3 component exists and is named consistently in Step 2; every Step-1-referenced component is covered by Steps 2 and 3; the board correction (no milestones, Epic grouping) holds across interaction/components/tokens; the token contract (19-key + accent axis + status mapping) is uniform and label colors are consistently scoped outside it. No contradiction required a product decision — all findings were docs cleanup.
+## Self-consistency confirmation (v1 pass)
+After the v1 back-edits, Steps 1–3 were **mutually consistent** under the v1 single-layer 19-key token model.
+
+---
+
+# Step 4 re-review — v2 token system (2026-06-20)
+After the approved Step-3 **v2 token rework** (two-layer raw scales + semantic tokens, orthogonal mode×accent axes, AAA/stronger contrast — `tokens/00`–`03` + `04`/`05`), Steps 1–3 were re-reviewed against the v2 semantic system.
+
+## v2 axes re-checked
+1. **No Step 1/2 doc still names v1 tokens.** Swept `interaction/` + `components/` for every v1 token (`bg`/`bg-raise`/`bg-inset`/`line`/`line-bright`/`fg`/`fg-dim`/`fg-faint`/`ok`/`warn`/`bad`/`off`/`good`/`sel-bg`/`sel-fg` + in-paren color hints). All references back-edited to v2 semantic names; final grep = zero residual. (`info`/`link`/`accent` are unchanged v2 tokens and stay.)
+2. **Status vocabulary aligned.** `interaction/00-index.md` + `components/01-primitives.md` StatusChip set now reads `ready→success · working→info/accent · blocked→danger · idle→idle · done→success · attention→warning`.
+3. **Surfaces/borders aligned.** PanelFrame (`02-surfaces`, `00-inventory`) now uses `surface-raised`/`surface-sunken`/`border`; Button uses `accent`+`on-accent` / `border-strong` / `danger` / `text-disabled`; Avatar uses `idle`/`accent` + `text-primary`/`on-accent`.
+4. **Step 3 already v2.** `tokens/00`–`03` are the v2 two-layer system; artifacts (`v2-sample-*`, `v2-raw-scales`, `v2-semantic-swatches`, `v2-oldnew-comparison`) match the values. Board correction (no milestones, Epic grouping) still holds.
+5. **No contradictions needing a product decision** — all findings were token-name cleanup.
+
+## v2 back-edits made
+| file | change |
+|---|---|
+| `interaction/00-index.md` | status vocab + Step-3 mapping → v2 names (success/danger/idle/warning) |
+| `components/00-inventory.md` | PanelFrame unification note → `surface-raised`/`border` |
+| `components/01-primitives.md` | StatusChip set, Badge, Button, Avatar → v2 semantic tokens |
+| `components/02-surfaces-and-layout.md` | PanelFrame surfaces/border → `surface-raised`/`surface-sunken`/`border` |
+| `04-cross-review.md` | Axis-2 status mapping → v2 names; this v2 re-review section |
+
+## Self-consistency confirmation (v2)
+Steps 1–3 are **mutually consistent under the v2 two-layer semantic token system**: Step 1/2 docs reference only v2 semantic token names (or kept tokens info/link/accent), the status vocabulary matches `tokens/`, and components map cleanly to the v2 semantic catalogue. Docs-only; no `src/web`/`contrast.ts`/build changes.
 
 ## Change / review log
-- 2026-06-20 — created (Step 4): cross-review of Steps 1–3; 7 docs back-edited for consistency; no token value changes; no `src/web` code changed. Stops at the Step 4 gate.
+- 2026-06-20 — created (Step 4 v1): cross-review of Steps 1–3 under v1 tokens; 7 docs back-edited.
+- 2026-06-20 — **Step 4 re-review (v2)**: re-checked Steps 1–3 against the v2 two-layer token system; back-edited `00-index`, `00-inventory`, `01-primitives`, `02-surfaces`, and this doc from v1 token names → v2 semantic names; residual-v1-token grep = zero. Docs-only.
