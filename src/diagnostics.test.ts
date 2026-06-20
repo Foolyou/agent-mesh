@@ -15,6 +15,8 @@ import {
   probeBaseDir,
   procChecks,
   redactDetail,
+  renderDoctor,
+  renderPsDetail,
   runDoctor,
   scanMeshProcesses,
   summarizeDoctor,
@@ -22,6 +24,7 @@ import {
   type AuthReadiness,
   type DoctorCheck,
   type HarnessProbeLike,
+  type PsDetail,
   type ScannedMeshSlot,
 } from "./diagnostics";
 
@@ -222,13 +225,58 @@ test("runDoctor assembles all domains and turns a throwing gatherer into an erro
 
 // ── probeBaseDir (real fs) ─────────────────────────────────────────────────────
 
-test("probeBaseDir reports an existing writable dir, and a missing one", async () => {
+test("probeBaseDir: existing+writable, missing, and a non-writable dir via real access(W_OK)", async () => {
   const dir = await mkdtemp(join(tmpdir(), "diag-base-"));
   try {
     expect(await probeBaseDir(dir)).toEqual({ path: dir, exists: true, writable: true });
     expect(await probeBaseDir(join(dir, "nope"))).toEqual({ path: join(dir, "nope"), exists: false, writable: false });
+    const ro = join(dir, "ro");
+    await mkdtemp(join(dir, "x-")); // ensure dir exists for context
+    await Bun.write(join(dir, "marker"), "x");
+    const { mkdir } = await import("node:fs/promises");
+    await mkdir(ro);
+    await chmod(ro, 0o555); // r-x: owner has no write → access(W_OK) must fail (mode-bit heuristic would miss)
+    const res = await probeBaseDir(ro);
+    expect(res.exists).toBe(true);
+    expect(res.writable).toBe(false);
   } finally {
     await chmod(dir, 0o700).catch(() => {});
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+// ── pure renderers (CLI only renders the shared structures) ────────────────────
+
+test("renderPsDetail: meshes + agents + leaks, and the standalone-CLI no-agent-detail note", () => {
+  const ps: PsDetail = {
+    running: [
+      { name: "ops", pid: 7, socketPath: "/run/ops.sock", agents: [{ id: "router", harness: "codex", role: "router", activity: "unknown" }] },
+      { name: "bare", pid: 8, socketPath: "/run/bare.sock", agents: [] },
+    ],
+    leaks: [{ name: "dead", kind: "stale_record", pid: 9, detail: 'mesh "dead" registry record points at dead pid 9' }],
+  };
+  const text = renderPsDetail(ps).join("\n");
+  expect(text).toContain("ops\tpid 7");
+  expect(text).toContain("- router\tcodex\trouter\tunknown");
+  expect(text).toContain("agent detail unavailable from a standalone CLI"); // bare mesh hint
+  expect(text).toContain("stale_record");
+  expect(text).toContain("mesh down --cold");
+});
+
+test("renderPsDetail: empty => 'no running meshes'", () => {
+  expect(renderPsDetail({ running: [], leaks: [] })).toEqual(["no running meshes"]);
+});
+
+test("renderDoctor: status marks per check + a summary line", () => {
+  const report = summarizeDoctor([
+    { id: "service.backend", severity: "ok", ok: true, detail: "backend healthy" },
+    { id: "harness.kimi", severity: "warning", ok: false, detail: "auth required", fixHint: "log in" },
+    { id: "config.meshes", severity: "error", ok: false, detail: "1 invalid", fixHint: "fix it" },
+  ]);
+  const lines = renderDoctor(report);
+  expect(lines[0]).toContain("✓ [service.backend] backend healthy");
+  expect(lines[1]).toContain("! [harness.kimi] auth required");
+  expect(lines[1]).toContain("→ log in");
+  expect(lines[2]).toContain("✗ [config.meshes] 1 invalid");
+  expect(lines.at(-1)).toContain("1/3 ok · 1 warning(s) · 1 error(s)");
 });

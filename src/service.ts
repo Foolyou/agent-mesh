@@ -60,6 +60,14 @@ async function backendPid(root: string, port?: number): Promise<number | undefin
   return port !== undefined ? (findPidOnPort(port) ?? undefined) : undefined;
 }
 
+/** Read-only backend status for diagnostics: whether a `backend.json` record exists, the live pid
+ *  (recorded-if-alive else port listener), and a <500 liveness probe. Reuses the same record reader +
+ *  `healthy` probe as `mesh up/status` — no separate logic. */
+export async function backendStatus(root: string, port: number): Promise<{ recordPresent: boolean; pid?: number; port: number; healthy: boolean }> {
+  const rec = await readRec(root);
+  return { recordPresent: !!rec, pid: await backendPid(root, port), port, healthy: await healthy(port) };
+}
+
 /** Strip the mesh-host control env so a re-spawned backend can't misfire as a host. */
 function cleanEnv(): Record<string, string> {
   const out: Record<string, string> = {};

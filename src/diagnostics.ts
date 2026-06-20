@@ -17,7 +17,8 @@
 // appSecret, bearer/device token, AES key, or raw secret ever appears in any `detail`. Auth checks
 // report presence/counts only; config checks report validation messages, never secret field values.
 
-import { readdir, stat } from "node:fs/promises";
+import { access, readdir, stat } from "node:fs/promises";
+import { constants as FS } from "node:fs";
 import type { AgentRole, HarnessId } from "./acp/types";
 import { pidAlive, readRecord, type MeshHostRecord } from "./mesh-registry";
 
@@ -369,20 +370,60 @@ function errMsg(e: unknown): string {
   return redactDetail(e instanceof Error ? e.message : String(e));
 }
 
-/** Default base-dir status probe (exists + writable) for a resolved data root. */
+/** Base-dir status probe (exists + writable). Writability uses a real `access(W_OK)` so it respects
+ *  the effective uid, group, ACLs, and root — not just the owner mode bit. */
 export async function probeBaseDir(path: string): Promise<BaseDirStatus> {
+  let isDir: boolean;
   try {
-    const st = await stat(path);
-    if (!st.isDirectory()) return { path, exists: true, writable: false };
-    // writability: a successful access(W_OK)-style check via a throwaway stat of the dir + mode bit.
-    const writable = (st.mode & 0o200) !== 0;
-    return { path, exists: true, writable };
+    isDir = (await stat(path)).isDirectory();
   } catch {
     return { path, exists: false, writable: false };
+  }
+  if (!isDir) return { path, exists: true, writable: false };
+  try {
+    await access(path, FS.W_OK);
+    return { path, exists: true, writable: true };
+  } catch {
+    return { path, exists: true, writable: false };
   }
 }
 
 /** Convenience for callers that pass a run dir: the standard leaks-only view. */
 export async function collectProcLeaks(runDir: string, deps: ScanMeshDeps = {}): Promise<ProcLeak[]> {
   return classifyMeshScan(await scanMeshProcesses(runDir, deps)).leaks;
+}
+
+// ── pure text renderers (CLI only RENDERS the shared structures — no re-derivation) ──
+
+const SEVERITY_MARK: Record<Severity, string> = { ok: "✓", info: "·", warning: "!", error: "✗" };
+
+/** Render `mesh ps -v` (running meshes + agents + leaks) to plain lines. */
+export function renderPsDetail(ps: PsDetail): string[] {
+  const out: string[] = [];
+  if (!ps.running.length) out.push("no running meshes");
+  for (const m of ps.running) {
+    out.push(`${m.name}\tpid ${m.pid}\t${m.socketPath}${m.startedAt ? `\tstarted ${m.startedAt}` : ""}`);
+    if (!m.agents.length) {
+      out.push("  (agent detail unavailable from a standalone CLI — see the web console for live status)");
+    }
+    for (const a of m.agents) {
+      const ctx = a.contextPercent !== undefined ? `\tctx ${Math.round(a.contextPercent)}%` : "";
+      const pid = a.pid !== undefined ? `\tpid ${a.pid}` : "";
+      out.push(`  - ${a.id}\t${a.harness ?? "?"}\t${a.role ?? "?"}\t${a.activity}${pid}${ctx}`);
+    }
+  }
+  if (ps.leaks.length) {
+    out.push(`leaks/orphans (${ps.leaks.length}):`);
+    for (const l of ps.leaks) out.push(`  ! ${l.kind}: ${l.detail}`);
+    out.push("  reap with `mesh down --cold`");
+  }
+  return out;
+}
+
+/** Render a `mesh doctor` report to plain lines (status mark + id + detail + fix hint). */
+export function renderDoctor(report: DoctorReport): string[] {
+  const out = report.checks.map((c) => `${SEVERITY_MARK[c.severity]} [${c.id}] ${c.detail}${c.fixHint ? `\n    → ${c.fixHint}` : ""}`);
+  const s = report.summary;
+  out.push(`\n${SEVERITY_MARK[s.worst]} ${s.ok}/${s.total} ok · ${s.warnings} warning(s) · ${s.errors} error(s)`);
+  return out;
 }
