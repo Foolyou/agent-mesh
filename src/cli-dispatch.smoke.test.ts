@@ -5,8 +5,13 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-async function runMesh(args: string[]): Promise<{ code: number; out: string }> {
-  const p = Bun.spawn(["bun", "run", "src/main.ts", ...args], { stdout: "pipe", stderr: "pipe", stdin: "ignore" });
+async function runMesh(args: string[], env: Record<string, string> = {}): Promise<{ code: number; out: string }> {
+  const p = Bun.spawn(["bun", "run", "src/main.ts", ...args], {
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+    env: { ...process.env, ...env },
+  });
   const [code, out, err] = await Promise.all([
     p.exited,
     Bun.readableStreamToText(p.stdout as ReadableStream),
@@ -57,6 +62,56 @@ test("--root in =, pre-command, and post-command forms all resolve the SAME stor
       const { out } = await runMesh([...args, "--port", "1"]); // dead port → fast DOWN probe, no env backend
       expect(out).toContain(expected);
     }
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+}, 30000);
+
+// ── Commit 2: assistant-harness parsing is downshifted to control-plane startup paths only ──
+
+test("read-only commands do NOT validate the assistant harness (bogus env never breaks them)", async () => {
+  const base = await mkdtemp(join(tmpdir(), "cli-asst-ro-"));
+  const env = { MESH_ASSISTANT_HARNESS: "totally-bogus" };
+  try {
+    // status / ps / auth exit 0 and never surface the harness parse error; doctor must not throw it.
+    for (const cmd of [["status"], ["ps"], ["auth", "list"]]) {
+      const { code, out } = await runMesh([...cmd, "--root", base, "--port", "1"], env);
+      expect(out).not.toContain("invalid assistant harness");
+      expect(out).not.toContain("→ http");
+      expect(code).toBe(0);
+    }
+    const doctor = await runMesh(["doctor", "--root", base, "--port", "1"], env);
+    expect(doctor.out).not.toContain("invalid assistant harness");
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+}, 30000);
+
+test("a startup path STILL rejects an invalid assistant harness, before booting anything", async () => {
+  const base = await mkdtemp(join(tmpdir(), "cli-asst-boot-"));
+  try {
+    const { code, out } = await runMesh(["backend", "--assistant-harness", "bogus", "--port", "1", "--root", base]);
+    expect(code).not.toBe(0); // parse throws before startApiServer
+    expect(out).toContain("invalid assistant harness");
+    expect(out).not.toContain("→ http"); // no server banner
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+}, 30000);
+
+test("deprecated assistant flag warnings print on a startup path but NOT on read-only commands", async () => {
+  const base = await mkdtemp(join(tmpdir(), "cli-asst-dep-"));
+  try {
+    // read-only: --master-harness is just a (consumed) global; status never consults the assistant,
+    // so no deprecation warning is emitted.
+    const ro = await runMesh(["status", "--master-harness", "codex", "--root", base, "--port", "1"]);
+    expect(ro.out).not.toContain("deprecated");
+    // startup path: `up` builds the passthrough → resolveAssistant() prints the deprecation warning,
+    // then the bogus value fails fast (before spawning the backend), so the test never hangs.
+    const startup = await runMesh(["up", "--master-harness", "bogus", "--root", base, "--port", "1"]);
+    expect(startup.out).toContain("--master-harness is deprecated");
+    expect(startup.out).toContain("invalid assistant harness");
+    expect(startup.code).not.toBe(0);
   } finally {
     await rm(base, { recursive: true, force: true });
   }

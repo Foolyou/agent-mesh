@@ -64,9 +64,19 @@ const gb = (k: string): boolean => globals[k] === true;
 const tailHas = (f: string) => commandTail.includes(f);
 
 const fake = gb("fake");
-const noAssistant = noAssistantSelected(process.argv);
-for (const warning of assistantCliDeprecationWarnings(process.argv)) console.warn(warning);
-const assistantHarness = parseAssistantHarness(process.argv);
+
+// Assistant config is resolved LAZILY (memoized): only the control-plane / gateway startup paths
+// consult it, so an invalid --assistant-harness or MESH_ASSISTANT_HARNESS never breaks a read-only
+// command (status/ps/doctor/logs/kill/device/feishu/auth), and the deprecated-flag warnings
+// (--master-* / MESH_MASTER_HARNESS) print only when a startup path actually needs the harness.
+let assistantCfg: { harness: ReturnType<typeof parseAssistantHarness>; noAssistant: boolean } | undefined;
+function resolveAssistant() {
+  if (!assistantCfg) {
+    for (const warning of assistantCliDeprecationWarnings(process.argv)) console.warn(warning);
+    assistantCfg = { harness: parseAssistantHarness(process.argv), noAssistant: noAssistantSelected(process.argv) };
+  }
+  return assistantCfg;
+}
 
 // Derive BOTH the storage root and the base from the resolver's parsed `--root` global (which also
 // handles `--root=<v>`), so they can never disagree. `base` is what we forward as --root to a
@@ -76,6 +86,7 @@ const { base, root } = resolveRootFrom(g("root"));
 const hostname = g("host");
 
 async function buildGateway() {
+  const { harness: assistantHarness, noAssistant } = resolveAssistant();
   const manager: any = fake ? new FakeManager(root) : new MeshManager({ root });
   // Real backend: load whatever the user has defined in their root and nothing more.
   // (We deliberately do NOT seed a sample mesh — the user's storage root stays clean;
@@ -139,16 +150,21 @@ function reapOnExit(stop: () => Promise<void> | void) {
 // ── service management (background backend under a root) ─────────────────────────
 const svcPort = Number(process.env.MESH_PORT) || Number(g("port")) || 10010;
 const svcCold = gb("cold");
-// flags forwarded to the spawned backend (so `mesh up --fake --no-assistant` works)
-const svcPass = [...(fake ? ["--fake"] : []), ...(noAssistant ? ["--no-assistant"] : []), ...assistantHarnessPassthrough(assistantHarness)];
+// flags forwarded to the spawned backend (so `mesh up --fake --no-assistant` works). Built lazily
+// via resolveAssistant() so ONLY up/restart (startup paths) validate the assistant harness — `down`
+// and `status` below never trigger the parse.
+const svcPass = () => {
+  const { harness, noAssistant } = resolveAssistant();
+  return [...(fake ? ["--fake"] : []), ...(noAssistant ? ["--no-assistant"] : []), ...assistantHarnessPassthrough(harness)];
+};
 if (cmd === "up" || cmd === "start") {
-  await service.up(base, root, svcPort, { cold: svcCold, passthrough: svcPass });
+  await service.up(base, root, svcPort, { cold: svcCold, passthrough: svcPass() });
 } else if (cmd === "down" || cmd === "stop") {
   await service.down(root, svcPort, { cold: svcCold });
 } else if (cmd === "status") {
   await service.status(root, svcPort);
 } else if (cmd === "restart") {
-  await service.restart(base, root, svcPort, { cold: svcCold, passthrough: svcPass });
+  await service.restart(base, root, svcPort, { cold: svcCold, passthrough: svcPass() });
 } else if (cmd === "logs") {
   await service.logs(root, { follow: tailHas("-f") || tailHas("--follow") });
 } else if (cmd === "ps") {
