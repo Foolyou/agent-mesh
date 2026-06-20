@@ -95,11 +95,6 @@ style specified in the style guide below.)
 The streamed user message text and agent reply chunks (`appendRouterChunk`, the buffered card body), and
 the `{text}` value flowing through a Category-C frame. Out of scope by rule.
 
-### D. Mirrored conversation content — **DO NOT alter**
-
-The streamed user message text and agent reply chunks (`appendRouterChunk`, the buffered card body). Out
-of scope by rule.
-
 ### Important: KEEP the Chinese **input** aliases
 
 `parseMeshCommand` (feishu-channel.ts:1146-1154) accepts Chinese command aliases for INPUT recognition
