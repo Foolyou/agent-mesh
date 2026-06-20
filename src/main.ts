@@ -72,8 +72,20 @@ const fake = gb("fake");
 let assistantCfg: { harness: ReturnType<typeof parseAssistantHarness>; noAssistant: boolean } | undefined;
 function resolveAssistant() {
   if (!assistantCfg) {
-    for (const warning of assistantCliDeprecationWarnings(process.argv)) console.warn(warning);
-    assistantCfg = { harness: parseAssistantHarness(process.argv), noAssistant: noAssistantSelected(process.argv) };
+    // Feed cli-options the RESOLVER-parsed values (not raw process.argv) normalized back into the
+    // `--flag value` shape it expects, so the `--assistant-harness=<v>` / `--master-harness=<v>` forms
+    // are honored too — not just the space form (parseAssistantHarness uses indexOf and would miss
+    // `=`). cli-options still applies the env fallback + precedence (CLI beats env).
+    const a: string[] = [];
+    const ah = g("assistant-harness");
+    if (ah !== undefined) a.push("--assistant-harness", ah);
+    const mh = g("master-harness");
+    if (mh !== undefined) a.push("--master-harness", mh);
+    if (gb("no-assistant")) a.push("--no-assistant");
+    if (gb("no-mesh-assistant")) a.push("--no-mesh-assistant");
+    if (gb("no-master")) a.push("--no-master");
+    for (const warning of assistantCliDeprecationWarnings(a)) console.warn(warning);
+    assistantCfg = { harness: parseAssistantHarness(a), noAssistant: noAssistantSelected(a) };
   }
   return assistantCfg;
 }

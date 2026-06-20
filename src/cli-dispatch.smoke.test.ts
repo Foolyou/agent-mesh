@@ -116,3 +116,42 @@ test("deprecated assistant flag warnings print on a startup path but NOT on read
     await rm(base, { recursive: true, force: true });
   }
 }, 30000);
+
+// ── Commit 2 follow-up: the = form of assistant flags must be validated on startup, ignored read-only ──
+
+test("startup rejects --assistant-harness=bogus (equals form), before booting anything", async () => {
+  const base = await mkdtemp(join(tmpdir(), "cli-asst-eq-"));
+  try {
+    const { code, out } = await runMesh(["backend", "--assistant-harness=bogus", "--port", "1", "--root", base]);
+    expect(code).not.toBe(0);
+    expect(out).toContain("invalid assistant harness");
+    expect(out).not.toContain("→ http");
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+}, 30000);
+
+test("read-only command ignores the = form of assistant flags (no throw, no warning)", async () => {
+  const base = await mkdtemp(join(tmpdir(), "cli-asst-eq-ro-"));
+  try {
+    const { code, out } = await runMesh(["status", "--assistant-harness=bogus", "--root", base, "--port", "1"]);
+    expect(code).toBe(0);
+    expect(out).toContain("service :");
+    expect(out).not.toContain("invalid assistant harness");
+    expect(out).not.toContain("deprecated");
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+}, 30000);
+
+test("--master-harness=bogus (equals form) on a startup path warns AND rejects", async () => {
+  const base = await mkdtemp(join(tmpdir(), "cli-asst-eq-dep-"));
+  try {
+    const { code, out } = await runMesh(["up", "--master-harness=bogus", "--root", base, "--port", "1"]);
+    expect(out).toContain("--master-harness is deprecated");
+    expect(out).toContain("invalid assistant harness");
+    expect(code).not.toBe(0);
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+}, 30000);

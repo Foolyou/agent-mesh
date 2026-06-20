@@ -76,6 +76,15 @@ test("--key=value form is supported for value globals", () => {
   expect(r.globals.port).toBe("8080");
 });
 
+test("assistant globals are captured (incl. = form) so startup validation can see them", () => {
+  // The bug: parseAssistantHarness used indexOf and missed `--assistant-harness=bogus`. The resolver
+  // captures it into globals, and resolveAssistant() now reads from globals — so the = form is validated.
+  expect(run(["backend", "--assistant-harness=bogus"]).globals["assistant-harness"]).toBe("bogus");
+  expect(run(["--assistant-harness", "codex", "backend"]).globals["assistant-harness"]).toBe("codex");
+  expect(run(["up", "--master-harness=zzz"]).globals["master-harness"]).toBe("zzz");
+  expect(run(["backend", "--no-assistant"]).globals["no-assistant"]).toBe(true);
+});
+
 test("help tokens resolve to help mode (leading and as a flag after a command)", () => {
   for (const argv of [["help"], ["--help"], ["-h"], ["status", "--help"], ["device", "-h"]]) {
     expect(resolveCommand(argv).mode).toBe("help");
