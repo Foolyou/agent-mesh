@@ -134,17 +134,20 @@ function DesktopShell({ view, setView, mesh, setMesh, meshHref }: { view: View; 
       </header>
 
       {/* body: left nav · stage · right context */}
-      <div className="flex min-h-[520px]">
-        <nav aria-label="meshes" className={`${navCollapsed ? "w-[56px]" : "w-[232px]"} shrink-0 border-r border-border bg-surface-raised p-2 transition-[width]`}>
-          <div className="mb-2 flex items-center justify-between">
-            {!navCollapsed ? <span className="px-1 text-xs uppercase tracking-wider text-text-muted">meshes</span> : null}
-            <Button variant="ghost" size="sm" iconOnly aria-label={navCollapsed ? "展开导航" : "收起导航"} onClick={() => setNavCollapsed((c) => !c)}>{navCollapsed ? "»" : "«"}</Button>
+      <div className="relative flex min-h-[520px]">
+        {/* Collapsed → the left nav is hidden ENTIRELY (no rail, no status dots); only a
+            small floating button at the left edge restores it, and the stage takes the
+            freed width. Expanded → the full primary mesh switcher. */}
+        {navCollapsed ? (
+          <div className="absolute left-2 top-2 z-10">
+            <Button data-nav-expand variant="secondary" size="sm" iconOnly aria-label="展开导航" onClick={() => setNavCollapsed(false)}>»</Button>
           </div>
-          {navCollapsed ? (
-            <div className="flex flex-col items-center gap-2 pt-1">
-              {MESHES.map((m) => <StatusChip key={m.id} status={m.status} variant="dot" />)}
+        ) : (
+          <nav aria-label="meshes" className="w-[232px] shrink-0 border-r border-border bg-surface-raised p-2">
+            <div className="mb-2 flex items-center justify-between">
+              <span className="px-1 text-xs uppercase tracking-wider text-text-muted">meshes</span>
+              <Button variant="ghost" size="sm" iconOnly aria-label="收起导航" onClick={() => setNavCollapsed(true)}>«</Button>
             </div>
-          ) : (
             <div className="flex flex-col gap-1">
               {/* Primary mesh switcher: each row is a real link-like affordance (RouteLink <a>). */}
               {MESHES.map((m) => (
@@ -152,10 +155,10 @@ function DesktopShell({ view, setView, mesh, setMesh, meshHref }: { view: View; 
               ))}
               <div className="mt-2"><Button variant="primary" size="sm" className="w-full">+ New mesh</Button></div>
             </div>
-          )}
-        </nav>
+          </nav>
+        )}
 
-        <main className="min-w-0 flex-1 p-3"><StagePlaceholder view={view} /></main>
+        <main className={`min-w-0 flex-1 p-3 ${navCollapsed ? "pl-12" : ""}`}><StagePlaceholder view={view} /></main>
 
         {!ctxCollapsed ? (
           <aside aria-label="context" className="w-[288px] shrink-0 border-l border-border bg-surface-raised p-3">

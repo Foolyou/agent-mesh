@@ -68,6 +68,21 @@ try {
     if (await page.locator('[data-topbar-mesh="label"]').count() !== 0) throw new Error("collapsed nav must NOT show the label");
   });
 
+  await step("collapsed nav is fully hidden (no rail / no status dots) with a floating expand button", async () => {
+    await page.goto(`${BASE}/__ui-mockup?device=desktop`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-mockup="frame"][data-device="desktop"]', { timeout: 8000 });
+    const dotsExpanded = await page.locator('[data-mockup="frame"]').getByRole("img").count();
+    if (dotsExpanded === 0) throw new Error("expanded nav should have status dots (sanity)");
+    await page.getByRole("button", { name: "收起导航" }).click();
+    await sleep(120);
+    if (await page.locator('[aria-label="meshes"]').count() !== 0) throw new Error("collapsed: left nav must be gone");
+    if (await page.locator('[data-mockup="frame"]').getByRole("img").count() !== 0) throw new Error("collapsed: no status dots allowed");
+    if (await page.locator('[data-nav-expand]').count() !== 1) throw new Error("collapsed: floating expand button missing");
+    await page.locator('[data-nav-expand]').click();
+    await sleep(120);
+    if (await page.locator('[aria-label="meshes"]').count() !== 1) throw new Error("expand button should restore the left nav");
+  });
+
   await step("left nav is the primary mesh switcher (real link rows change the active mesh)", async () => {
     await page.goto(`${BASE}/__ui-mockup?device=desktop`, { waitUntil: "domcontentloaded" });
     await page.waitForSelector('[data-topbar-mesh="label"]', { timeout: 8000 });
