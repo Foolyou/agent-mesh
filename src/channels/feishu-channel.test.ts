@@ -569,6 +569,7 @@ function streamingSink() {
   const enqueued: string[] = [];
   const segments: ({ toolName?: string } | undefined)[] = [];
   const annotations: (string | undefined)[] = [];
+  let sealSegments = 0;
   return {
     sink: {
       enqueue: (text: string) => enqueued.push(text),
@@ -577,12 +578,14 @@ function streamingSink() {
       streamCommit: () => { commits++; },
       streamSegmentBreak: (meta?: { toolName?: string }) => segments.push(meta),
       streamToolAnnotation: (text: string | undefined) => annotations.push(text),
+      streamSealSegment: () => { sealSegments++; },
     },
     updates,
     enqueued,
     segments,
     annotations,
     commits: () => commits,
+    sealSegments: () => sealSegments,
     isStopped: () => stopped,
   };
 }
@@ -659,12 +662,11 @@ test("streaming: consecutive tool_call_update for the same call counts once", ()
   expect(s.annotations.filter((a) => a !== undefined)).toEqual(["🔧 Called 1 tool"]); // counted once
 });
 
-test("streaming: a different tool call id counts again", () => {
+test("streaming: a different tool call id counts again (no prose between → same group)", () => {
   const s = setupStreaming();
   s.mesh.emit("feishu-poc", chunk("router", "a"));
   s.mesh.emit("feishu-poc", toolCall("router", "call-1", "bash"));
-  s.mesh.emit("feishu-poc", chunk("router", "b"));
-  s.mesh.emit("feishu-poc", toolCall("router", "call-2", "grep"));
+  s.mesh.emit("feishu-poc", toolCall("router", "call-2", "grep")); // back-to-back, no prose → accumulate
   expect(s.segments).toEqual([]);
   expect(s.annotations.at(-1)).toBe("🔧 Called 2 tools");
 });
@@ -743,6 +745,50 @@ test("streaming off: a pure tool-only turn is silent but still finalizes (R4)", 
   expect(s.updates).toEqual([]); // nothing to show
   expect(s.annotations.filter((a) => a !== undefined)).toEqual([]);
   expect(s.commits()).toBe(1); // turn still sealed (buffer not carried into the next turn)
+});
+
+// ── running tool group: accumulate across card boundaries, reset only on prose / real turn end ──
+// (live feedback fix: 6→3→1→1 fragments — consecutive tool batches with no prose must merge into one
+//  running count; the fallback-timer card seal alone must NOT restart the count.)
+
+test("collapsed: tool batches across a fallback finalize (no prose) accumulate into one running count", () => {
+  const s = setupStreaming();
+  s.mesh.emit("feishu-poc", chunk("router", "working"));
+  s.mesh.emit("feishu-poc", toolCall("router", "c1", "a"));
+  s.mesh.emit("feishu-poc", toolCall("router", "c2", "b"));
+  s.mesh.emit("feishu-poc", toolCall("router", "c3", "c")); // batch 1: 3 tools
+  expect(s.annotations.at(-1)).toBe("🔧 Called 3 tools");
+  s.timers.advance(3000); // fallback finalize seals the card — must NOT reset the running group
+  s.mesh.emit("feishu-poc", toolCall("router", "c4", "d")); // batch 2, no prose between
+  s.mesh.emit("feishu-poc", toolCall("router", "c5", "e"));
+  expect(s.annotations.at(-1)).toBe("🔧 Called 5 tools"); // accumulated, NOT reset to "Called 2 tools"
+  s.timers.advance(3000);
+  s.mesh.emit("feishu-poc", toolCall("router", "c6", "f")); // batch 3
+  expect(s.annotations.at(-1)).toBe("🔧 Called 6 tools");
+  expect(s.sealSegments()).toBe(0); // no prose appeared → never split into prose groups
+});
+
+test("inline: tool batches across a fallback finalize (no prose) merge names into one running list", () => {
+  const s = setupStreaming({ outbound: { minIntervalMs: 0, toolDisplay: "inline" } });
+  s.mesh.emit("feishu-poc", chunk("router", "working"));
+  s.mesh.emit("feishu-poc", toolCall("router", "c1", "bash"));
+  s.mesh.emit("feishu-poc", toolCall("router", "c2", "grep"));
+  expect(s.annotations.at(-1)).toBe("🔧 Tools: bash · grep");
+  s.timers.advance(3000); // fallback finalize — the running name list survives
+  s.mesh.emit("feishu-poc", toolCall("router", "c3", "ls")); // no prose between
+  expect(s.annotations.at(-1)).toBe("🔧 Tools: bash · grep · ls");
+});
+
+test("collapsed: visible prose between tool batches starts a NEW group (count resets + card sealed)", () => {
+  const s = setupStreaming();
+  s.mesh.emit("feishu-poc", chunk("router", "first"));
+  s.mesh.emit("feishu-poc", toolCall("router", "c1", "a"));
+  s.mesh.emit("feishu-poc", toolCall("router", "c2", "b")); // group 1: 2 tools
+  expect(s.annotations.at(-1)).toBe("🔧 Called 2 tools");
+  s.mesh.emit("feishu-poc", chunk("router", " second")); // NEW visible prose → seal group 1, start group 2
+  expect(s.sealSegments()).toBe(1); // the prose-after-tools segment seal happened (group 1 kept its count)
+  s.mesh.emit("feishu-poc", toolCall("router", "c3", "c")); // group 2
+  expect(s.annotations.at(-1)).toBe("🔧 Called 1 tool"); // fresh group, NOT "Called 3 tools"
 });
 
 // ── outbound turn-boundary fallback (feishu-outbound-turn-delay) ─────────────────

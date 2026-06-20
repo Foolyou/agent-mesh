@@ -97,6 +97,19 @@
 - **inline**：累加 `toolNames`（去重，取 `toolSegmentMeta(u).toolName`），注解 = `toolDisplayCopy().inline(toolNames)` → `🔧 Tools: ${toolNames.join(" · ")}`；同样 in-place。
 - **off**：`onRouterToolCall` 仅做 `seenToolCalls` 去重（保持计数器一致性，便于潜在切档），**不调** `streamToolAnnotation`、**不调** `streamSegmentBreak`、不动卡；prose 照常流。
 
+### 3.2.1 运行计数组：跨卡边界累计，仅按 prose 段 / 真实 turn 结束分组（live 反馈修正）
+> 真机反馈：一轮里工具批次碎成 `🔧 Called 6 tools → 3 → 1 → 1`。根因：工具执行有 >`streamCommitDebounceMs`(默认 3s) 的间隙时，**fallback 计时器**会 `streamFinish` 封卡并**重置 `toolCount/toolNames/seenToolCalls`**，使下一批从 0 重数。
+
+**修正：工具计数组（dedupe+count+names）只在"组真正结束"时重置，绝不在单纯封卡时重置。**
+- **组结束 = 真实 turn 边界**（idle / 新 turn agent_turn-started / prompt-resolve / pre-prompt / replay / teardown）**或新 prose 段**。
+- **不重置**：fallback 计时器封卡（`streamFinish(rt, endsGroup=false)`，仅交付卡、不动计数）、size/timeout rollover（在 sender 内、根本不碰 channel 的计数）。
+- 落点：`streamFinish(rt, endsGroup=true)` 默认重置；唯独 fallback 回调传 `false`。`resetToolGroup(rt)` 统一清三件套。
+- **按 prose 段分组**：新可见 prose 到达且当前组已有工具（`rt.toolCount > 0`）→ `streamSealSegment()` 把当前卡**封成该段的最终卡（保留其注解）**+ `resetToolGroup`，新 prose 的工具从 1 重新计。
+- **效果**：无 prose 间隔的连续工具批次累计成一个运行计数（`6→3→1→1` ⇒ 跨卡累计到 `Called 11 tools`，最后一卡显示总数）；prose 段之间各自成组。
+- **sender 侧 `streamSealSegment()`**：`proseSeal` 标志 → driveStream 顶部优先封当前卡（`finalizeCurrentCard("segment_break")`，**保留注解**=该段最终卡）+ 清 `toolAnnotation`，续卡接管。`finalizeCurrentCard` 据 reason 区分：rollover 系（size/timeout/image）**strip**注解（组继续，§3.4），`turn_commit`/`segment_break` **保留**注解（组结束）。
+- **INV-1 不破**：fallback 仍 finalize（卡仍交付，工具收尾轮不卡死）——只是不重置计数。off 不受影响（off 下 `toolCount` 恒 0，永不触发 prose-seal）。
+- **已知局限**：因 INV-1 要求 fallback 封卡，>3s 间隔的批次仍落在不同卡上（各显示累计中的运行计数，最后一卡=总数），而非合并成单卡单条。要真正合并成一张卡需重审"tool-only 轮是否走 fallback finalize"（与 INV-1/现有测试冲突，留待 prdmgr）。
+
 ### 3.3 为何不用方案 B（channel 把注解拼进 `streamUpdate` 文本）
 方案 B（`streamUpdate(rt.buffer + "\n\n" + 注解)`，零 sender 改动）问题：注解会被当成 turn-text 计入偏移/rollover/兜底；`streamUpdate` 语义是"全量单调 turn 文本"，prose 在工具后继续增长会排到注解之后→**顺序错乱**；变化的尾缀可能触发"绝不回退到更短显示"的单调守护（`card-sender.ts:605-615`）→ 误 rollover。**仅 collapsed（纯计数尾注、无顺序）勉强可用，inline 不行。** 故推荐 A。
 

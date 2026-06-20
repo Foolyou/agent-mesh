@@ -54,6 +54,11 @@ export interface OutboundSink {
    *  sink renders it structurally outside open code fences and reserves its bytes in the size budget.
    *  Optional — a sink without it (text fallback) simply does not surface tools. */
   streamToolAnnotation?(text: string | undefined): void;
+  /** Group-by-segment: seal the current card as the FINAL card of the current prose+tools segment
+   *  (keeping its tool annotation) and continue the SAME turn on a fresh card. Used when new visible
+   *  prose arrives after a tool group, so the next prose starts a clean annotation group. Clears the
+   *  sink's running annotation. Optional — a sink without it simply never segments on prose. */
+  streamSealSegment?(): void;
   /** Resolves when the sink has fully drained (no send/edit/commit in flight). The channel awaits
    *  this after a hard commit so the next turn doesn't race an async finalize. Absent => synchronous
    *  sink; the channel needs no commit barrier. */
@@ -777,6 +782,15 @@ export class FeishuChannel implements Channel {
         if (appendRouterChunk(rt, u)) {
           this.tlog(rt, "chunk-append");
           if (this.useStreaming(rt)) {
+            // New visible prose after a tool group starts a NEW annotation group (group-by-segment):
+            // seal the current card (keeping its annotation as that segment's final count), then reset
+            // the running group so this prose's tools count fresh. A card seal WITHOUT new prose (the
+            // fallback timer) must NOT reset — that's what keeps tool-only batches accumulating.
+            if (rt.toolCount > 0 && typeof rt.sender.streamSealSegment === "function") {
+              rt.sender.streamSealSegment();
+              this.resetToolGroup(rt);
+              this.tlog(rt, "prose-after-tools-newgroup");
+            }
             this.streamCurrent(rt);
             this.scheduleStreamFinish(rt); // turn-boundary fallback if idle never arrives
           } else {
@@ -830,15 +844,29 @@ export class FeishuChannel implements Channel {
     rt.cancelStreamFinish = this.setTimer(() => {
       rt.cancelStreamFinish = undefined;
       this.tlog(rt, "stream-fallback-fired");
-      this.streamFinish(rt);
+      // Mid-turn silence seal: deliver the card (INV-1) but KEEP the running tool group — a later tool
+      // batch with no new prose accumulates onto it instead of restarting the count.
+      this.streamFinish(rt, false);
     }, this.streamCommitDebounceMs);
     this.tlog(rt, "stream-fallback-scheduled", ` ms=${this.streamCommitDebounceMs}`);
   }
 
+  /** Reset the running tool-annotation group (dedupe set + count + names). Called when a group truly
+   *  ends — a real turn boundary (idle / new turn / prompt-resolve) or a new prose segment — NOT at a
+   *  mere card seal (fallback finalize / size-rollover). Keeping the group alive across card boundaries
+   *  is what lets consecutive tool batches with no intervening prose accumulate into one running count. */
+  private resetToolGroup(rt: BindingRuntime): void {
+    rt.seenToolCalls.clear();
+    rt.toolCount = 0;
+    rt.toolNames = [];
+  }
+
   /** Turn boundary: flush the final text, seal the live message, reset turn state. Idempotent — a
    *  second call (e.g. a late idle after the fallback timer already fired) is a no-op, so the turn
-   *  is never committed twice. */
-  private streamFinish(rt: BindingRuntime): void {
+   *  is never committed twice. `endsGroup` (default true) resets the running tool group; the fallback
+   *  timer passes false so a mid-turn silence seal does NOT reset the count (the next tool batch keeps
+   *  accumulating until real prose / a real turn boundary). */
+  private streamFinish(rt: BindingRuntime, endsGroup = true): void {
     if (rt.cancelStreamFinish) {
       rt.cancelStreamFinish();
       rt.cancelStreamFinish = undefined;
@@ -851,9 +879,7 @@ export class FeishuChannel implements Channel {
     rt.buffer = "";
     rt.currentMessageId = undefined;
     rt.currentMessageStart = 0;
-    rt.seenToolCalls.clear();
-    rt.toolCount = 0;
-    rt.toolNames = [];
+    if (endsGroup) this.resetToolGroup(rt);
     this.tlog(rt, "stream-finish");
     this.beginCommitBarrier(rt);
   }

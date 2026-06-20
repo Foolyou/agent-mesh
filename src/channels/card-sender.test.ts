@@ -1395,3 +1395,31 @@ test("tool annotation across a SIZE rollover: appears exactly once, only on the 
   expect(finals.at(-1)!).toContain(ann); // annotation rides the final/tail card
   for (const d of finals) expect(byteLen(d)).toBeLessThanOrEqual(byteLen(`aaaa\n\n---\n\n${ann}`) + 4); // every card within budget
 });
+
+test("prose-after-tools seal: group 1 card KEEPS its annotation; group 2 opens a fresh card (no cross-contamination)", async () => {
+  const r = cardRecorder();
+  const fb = fakeFallback();
+  const s = makeSender(r, fb);
+  // group 1: prose "first" + a tool annotation.
+  s.streamUpdate("first");
+  await s.whenIdle();
+  s.streamToolAnnotation("🔧 Called 2 tools");
+  await s.whenIdle();
+  // new visible prose arrives → seal group 1's card (KEEPING its annotation), continue the turn.
+  s.streamSealSegment();
+  await s.whenIdle();
+  // group 2: the buffer grew; the offset advanced past "first", so the new card shows only " second".
+  s.streamUpdate("first second");
+  s.streamToolAnnotation("🔧 Called 1 tool");
+  await s.whenIdle();
+  s.streamCommit();
+  await s.whenIdle();
+  expect(fb.enqueued).toEqual([]); // no fallback
+  const finals = finalDisplays(r);
+  expect(finals.length).toBe(2); // two segments → two cards
+  expect(finals[0]).toContain("first");
+  expect(finals[0]).toContain("🔧 Called 2 tools"); // group 1 card KEPT its annotation (segment-final)
+  expect(finals[0]).not.toContain("🔧 Called 1 tool"); // no contamination from group 2
+  expect(finals[1]).toContain("second");
+  expect(finals[1]).toContain("🔧 Called 1 tool"); // group 2 annotation on its own fresh card
+});

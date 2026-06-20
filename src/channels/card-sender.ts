@@ -209,6 +209,10 @@ export class CardSender implements OutboundSink {
   /** An in-turn segment boundary (tool call) was requested: seal the current card, keep the turn. */
   private streamSegmentBreaking = false;
   private streamBreakMeta?: SegmentBreak;
+  /** Group-by-segment: new prose after a tool group requested a clean seal — finalize the current card
+   *  (KEEP its annotation; it is that segment's final card), drop the running annotation, continue the
+   *  turn on a fresh card. Distinct from `streamSegmentBreaking` (the dormant tool-hint path). */
+  private proseSeal = false;
   /** Tool-call hint shown as the FIRST line of the current segment's card (undefined => no hint, the
    *  turn's opening segment). Cosmetic only: it prefixes the displayed content but is NOT part of the
    *  turn text, so it never affects offsets or what the text fallback re-sends. */
@@ -320,6 +324,20 @@ export class CardSender implements OutboundSink {
     void this.driveStream();
   }
 
+  /** Group-by-segment (de-noising follow-up): new visible prose after a tool group → seal the current
+   *  card as that segment's FINAL card (keeping its tool annotation) and continue the turn on a fresh
+   *  card; the next prose's tools start a clean annotation group. No-op when nothing is live. */
+  streamSealSegment(): void {
+    if (this.stopped) return;
+    if (this.fellBack) {
+      this.forwardFallbackSegmentBreak(); // degraded text: split the message on the prose boundary too
+      this.toolAnnotation = undefined;
+      return;
+    }
+    this.proseSeal = true;
+    void this.driveStream();
+  }
+
   /** Non-streaming one-shot RICH render of a final reply (design §4.7). Opt-2-consistent: it reuses the
    *  SAME card-boundary path as streaming (one update + commit) — prose markdown cards + artifact-image
    *  boundary cards — rather than a same-card multi-element card. With only one update there are no
@@ -382,6 +400,23 @@ export class CardSender implements OutboundSink {
           }
           if (this.streamCommitting) this.forwardFallbackCommit();
           break;
+        }
+
+        // Group-by-segment: seal the current card as the segment's FINAL card (KEEP its annotation) and
+        // continue the turn on a fresh card. Handled up front, BEFORE reading streamPending, so a body
+        // that grew (the new prose) opens the NEXT card and is never rendered onto the sealed one.
+        if (this.proseSeal) {
+          if (this.live) {
+            const waitMs = this.lastEditAt + this.minIntervalMs - this.now();
+            if (waitMs > 0) {
+              await this.wait(waitMs);
+              continue; // proseSeal still set — re-check at the top
+            }
+            await this.finalizeCurrentCard("segment_break"); // keeps the annotation (segment-final card)
+          }
+          this.toolAnnotation = undefined; // the next segment starts without the old running annotation
+          this.proseSeal = false;
+          continue; // the turn keeps going; the next body opens a fresh card
         }
 
         const full = this.streamPending ?? "";
@@ -775,15 +810,16 @@ export class CardSender implements OutboundSink {
    *  confirmed body text, clear it, and drop the consumed segment's hint. Used for every reason a
    *  card ends mid-turn or at the turn boundary, so sequence and fallback accounting stay consistent.
    *
-   *  A tool annotation rides the FINAL (tail) card only. Every NON-`turn_commit` seal (image boundary,
-   *  size/timeout rollover, segment break) is a HEAD card: strip a shown annotation to body-only before
-   *  finalizing so it is never duplicated onto the following card (spec §3.4). `turn_commit` keeps it —
-   *  that IS the tail card. (`sealLiveAndContinue` already strips before calling here; this also covers
-   *  the direct callers, e.g. image boundaries.) */
+   *  Annotation handling depends on whether the SAME running group continues onto the next card:
+   *  - rollover reasons (`size_rollover` / `stream_timeout_rollover` / `image_boundary`): the group
+   *    continues on the tail, so STRIP the annotation to body-only here so it is never duplicated (§3.4).
+   *  - group-ending reasons (`turn_commit`, `segment_break`): this card IS the group's final card, so
+   *    KEEP its annotation (the prose+tools segment's count stays attached to its own card). */
   private async finalizeCurrentCard(reason: FinalizeReason): Promise<void> {
     const live = this.live;
     if (!live) return;
-    if (reason !== "turn_commit" && live.sentAnnotation !== undefined) {
+    const groupContinues = reason === "size_rollover" || reason === "stream_timeout_rollover" || reason === "image_boundary";
+    if (groupContinues && live.sentAnnotation !== undefined) {
       try {
         const seq = this.nextSeq();
         const r = await this.content({ cardId: live.cardId, elementId: this.elementId, content: this.composeDisplay(live.sentText), sequence: seq, uuid: stableCardKey(live.cardId, seq) });
@@ -870,6 +906,7 @@ export class CardSender implements OutboundSink {
     this.streamCommitting = false;
     this.streamSegmentBreaking = false;
     this.streamBreakMeta = undefined;
+    this.proseSeal = false;
     this.currentHint = undefined;
     this.pendingContinuation = undefined;
     this.toolAnnotation = undefined;

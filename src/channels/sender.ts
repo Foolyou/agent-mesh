@@ -176,6 +176,12 @@ export class LarkSender {
     /* intentionally empty */
   }
 
+  /** Group-by-segment: the plain-text sink shows no tool annotations, so a prose boundary needs no
+   *  special seal — the next text simply continues the stream. No-op (the CardKit path handles grouping). */
+  streamSealSegment(): void {
+    /* intentionally empty */
+  }
+
   /** Resolves when the queue has fully drained and nothing is in flight. */
   whenIdle(): Promise<void> {
     if (!this.sending && this.queue.length === 0 && !this.streamBusy) return Promise.resolve();
