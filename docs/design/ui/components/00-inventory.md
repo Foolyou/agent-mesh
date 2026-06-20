@@ -52,6 +52,8 @@ While inventorying, these cross-page one-offs in Step 1 were unified into shared
 | BottomTabs | ✓ M | | | | | | | | | | | |
 | MeshSelector | ✓ | | | | | | | | | | | |
 | Markdown/CodeBlock | | ✓ | | | ✓ | | | | | | ✓ | |
+| Avatar (AssigneeAvatar) | | | ✓ | | | | | | | | | |
+| LabelChip | | | ✓ | | | | | | | | | |
 | Topbar/LeftNav/RightContext (composed regions) | ✓ | | | | | | | | | | | |
 
 ## Coverage summary
@@ -62,11 +64,12 @@ None blocking. One product-boundary note carried from Step 1 (device approve in 
 
 ## Change / review log
 - 2026-06-20 — created (Step 2): inventory + 5 detail docs; 8 backward-consistency unifications applied to Step 1 docs (logged in each).
+- 2026-06-20 — Step 4 cross-review: added Avatar (AssigneeAvatar) + LabelChip to the matrix and promoted them to atoms in `01-primitives.md`; noted LabelChip colors are outside the 19-key token contract. See `../04-cross-review.md`.
 
 ## Step 2 addendum — Board deepening (2026-06-20, prdmgr/user)
 Board raised to **GitHub-Issues** maturity (see `../interaction/03-board-view.md`, deepened). Board-specific parts are inventoried in **`06-board.md`** (added to the detail-doc set): IssueListRow (StatusListRow variant), EpicGroupHeader (grouping/aggregation primitive), FilterQueryBar (extends FilterBar), SortControl, LabelChip, AssigneeAvatar (new shared Avatar primitive), IssueDetailHeader/Body, ActivityTimeline (shares TranscriptItem patterns), BulkActionToolbar, KanbanColumn/Card (desktop; consolidates the abstract `05` Kanban for the board), KeyboardFocus affordances.
 - **Backward consistency held**: board reuses StatusChip / PanelFrame / SegmentedControl(List·Board) / FilterBar / EmptyState·ErrorBanner·Skeleton / ApprovalCard(soft close gate) / Composer(comment box) / RouteLink; the Step 1 board doc was back-edited first (deepened + components-used + change log).
-- **New shared primitives surfaced by board**: `AssigneeAvatar` (small Avatar) and `LabelChip` (label-colored pill, distinct from semantic StatusChip) — usable beyond board later; recorded here as shared. Both are backed by the **existing** assignee/label data.
+- **New shared primitives surfaced by board**: `AssigneeAvatar` (small Avatar) and `LabelChip` (label-colored pill, distinct from semantic StatusChip) — usable beyond board later. **Now catalogued as atoms in `01-primitives.md`** (promoted in Step 4) and listed in the matrix above. Both are backed by the **existing** assignee/label data; LabelChip colors are data-driven, outside the 19-key token contract.
 - **No new data entity**: all board parts map to the existing `board.ts` / `issue-panel.md` model (Epic → Task → Subtask, labels, assignees, lifecycle, comments, priority, deps).
 
 ## Step 2 correction — milestones removed (2026-06-20, prdmgr/user)

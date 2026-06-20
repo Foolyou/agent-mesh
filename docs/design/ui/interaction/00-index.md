@@ -24,7 +24,7 @@ Step 0 inputs (read, treated as settled — not re-litigated): `docs/design/ui-r
 | App shell / chrome | (frame for all) | `01-app-shell.md` |
 | Default landing | `/` → runtime of default mesh | `01-app-shell.md` |
 | Runtime (A) | `/mesh/<m>` · `/mesh/<m>/agent/<a>` | `02-runtime-view.md` |
-| Board (C) | `/mesh/<m>/board` (+ `/task/<id>` ph3) | `03-board-view.md` |
+| Board (C) | `/mesh/<m>/board` · `/mesh/<m>/board/issue/<N>` | `03-board-view.md` |
 | New mesh | `/mesh/new` | `04-new-mesh-builder.md` |
 | Mesh Assistant | `/assistant` | `05-mesh-assistant.md` |
 | Harnesses | `/harnesses` | `06-harnesses.md` |
@@ -41,7 +41,7 @@ Step 0 inputs (read, treated as settled — not re-litigated): `docs/design/ui-r
 |---|---|---|---|---|---|---|---|---|
 | 01 app-shell | ✓ | ✓ | ✓ | ✓ | — | — | ✓ | ✓ |
 | 02 runtime | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
-| 03 board | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ | — |
+| 03 board | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
 | 04 new-mesh | ✓ | — | ✓ | ✓ | — | ✓ | — | — |
 | 05 assistant | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
 | 06 harnesses | — | ✓ | ✓ | ✓ | — | ✓ | ✓ | — |
@@ -65,3 +65,8 @@ None blocking for Step 1 — Step 0 docs + locked rules cover product scope. Any
 
 ## Step 2 addendum (2026-06-20)
 Component vocabulary unified in Step 2 — see `../components/`. The shared-vocabulary section above (status chips, state words) is now backed by concrete component specs; per-page one-offs (mesh/agent/task/device/harness/notification rows, permission/confirm cards, panels, tabs) were unified into StatusListRow / ApprovalCard / PanelFrame / SegmentedControl and each page doc carries a "Components used (Step 2)" cross-link.
+
+## Step 3 + Step 4 addendum (2026-06-20)
+- **Step 3 tokens** live in `../tokens/` (token model, the 3×3 palette values, AA evidence, themed component drafts). Status-chip semantics here map to status tokens (`ready→ok`, `working→info`/`accent`, `blocked→bad`, `idle→off`, `done→good`, `attention→warn`); accent is the brand/"thinking" token.
+- **Board correction** (milestones were a maturity benchmark, not a feature): the board view (`03-board-view.md`) uses GitHub-Issues maturity over the existing data model only, with **Epic** (not milestones) as the grouping primitive. The route map + coverage matrix above were aligned in Step 4 (issue-detail route `/board/issue/<N>`; board has a `permission` state).
+- **Step 4 cross-review record**: `../04-cross-review.md` (Steps 1–3 mutual-consistency pass + the back-edits it triggered).

@@ -5,7 +5,7 @@
 - **Variants** (data differs, structure identical):
   - **mesh-row** (left nav): chip + mesh name + agent count → RouteLink `/mesh/<m>`.
   - **agent-card** (mobile runtime): chip + agent id + activity + pending-approval Badge → focus.
-  - **task-row** (board): chip + task title + assignee + labels + `dispatch▾`.
+  - **task-row** (board): chip + task title + assignee + labels + `dispatch▾`. → specialized as **IssueListRow** (`06-board.md`); "issue" is the GitHub-facing label for a board Task (Epic→Task→Subtask).
   - **harness-row**: chip + label + VersionLine + auth + install/reprobe actions.
   - **device-row** (settings): chip + device label + last-seen + revoke.
   - **channel-row / sender-row**: chip + identity + bind/approve/revoke.
@@ -17,7 +17,7 @@
 ## FilterBar
 - **Purpose**: filter a list by facets.
 - **Variants**: dropdown facets (status/label/assignee), search box; active-filter chips.
-- **Surfaces**: board, notifications (type/read filter). **Reuse**: Select + StatusChip(active filters).
+- **Surfaces**: board, notifications (type/read filter). **Reuse**: Select + StatusChip(active filters). The board extends this as **FilterQueryBar** (full-text `q` + facet chips, `06-board.md`).
 
 ## EmptyState
 - **Purpose**: a list/page with no content → icon + one-line explanation + primary CTA (invitation to act, not mood).
@@ -41,3 +41,4 @@
 
 ## Change / review log
 - 2026-06-20 — created (Step 2). StatusListRow + EmptyState + ErrorBanner unifications back-applied to Step 1.
+- 2026-06-20 — Step 4 cross-review: cross-linked task-row→IssueListRow and FilterBar→FilterQueryBar (`06-board.md`); noted "issue" = GitHub-facing label for a board Task.
