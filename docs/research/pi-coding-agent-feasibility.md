@@ -13,7 +13,7 @@ Evidence is tagged inline:
 ## 1. Summary
 
 Pi (the "Pi Coding Agent") is a **real, open-source** coding-agent CLI by Mario Zechner
-(`@mariozechner/pi-coding-agent`, repo `earendil-works/pi`). It has a native headless
+(current npm `@earendil-works/pi-coding-agent`, repo `earendil-works/pi`). It has a native headless
 **`pi --mode rpc`** integration mode and a **community ACP adapter (`pi-acp`)** that already works
 with Zed; Pi is listed on Zed's ACP agent registry. **[confirmed]**
 
@@ -40,12 +40,13 @@ that today buys us nothing the existing four don't already cover. See §5.
 
 ## 2. Pi surface (what we'd be integrating)
 
-Sources: Pi repo `earendil-works/pi` / mirror `badlogic/pi-mono`, npm `@mariozechner/pi-coding-agent`,
+Sources: Pi repo `earendil-works/pi` / mirror `badlogic/pi-mono`, npm `@earendil-works/pi-coding-agent`,
 Mario Zechner's write-up, and the ACP discussion `earendil-works/pi#4444`. **[confirmed]** unless noted.
 
 **What Pi is**
-- Open-source, MIT-style toolkit: "unified LLM API, agent loop, TUI, coding-agent CLI." Install:
-  `npm install -g @mariozechner/pi-coding-agent`. **[confirmed]**
+- Open-source, MIT-style toolkit: "unified LLM API, agent loop, TUI, coding-agent CLI." Current install:
+  `npm install -g @earendil-works/pi-coding-agent` (current npm `0.79.8`; the older `@mariozechner/
+  pi-coding-agent` `0.73.1` is the historical package name, not the current source). **[confirmed]**
 - Deliberately minimal core: built-in tools `read/write/edit/bash` (+ `grep/find/ls`); everything else
   is added via TypeScript **extensions / skills / "pi packages" / CLI-tools-with-READMEs**. **[confirmed]**
 - Multi-provider (Anthropic, OpenAI, Google, xAI, Groq, …); auth via API keys **or** subscriptions
@@ -209,7 +210,7 @@ Throwaway / flagged; not merged to a release. Roughly per-commit, hours not days
 4. **Advertise + UX.** Map `--model`/`--thinking` to ACP `configOptions` (in the adapter) so model/effort
    pickers + context gauge populate; add Pi to the context-window table; web client harness id plumbing.
 5. **Productionize decision.** Only if 1–4 are clean: full ~28-file `HarnessId` addition, install spec
-   (`@mariozechner/pi-coding-agent` self-install + the vendored `pi-acp`), docs, tests; decide whether we
+   (`@earendil-works/pi-coding-agent` self-install + the vendored `pi-acp`), docs, tests; decide whether we
    own a fork of `pi-acp` or upstream the MCP bridge.
 
 Realistic estimate: steps 1–2 are the bulk (the MCP bridge is unbounded until prototyped); 3–5 are
@@ -232,7 +233,7 @@ mechanical once 2 works. **[inference]**
 - **Image input** through `--mode rpc`/`pi-acp` unverified. **[not found]**
 - **R2.5 precedent:** mesh-managed binary download for self-install harnesses was rejected
   (`project-r25-binary-registry-rejected`); Pi would be **manual self-install** (`npm i -g
-  @mariozechner/pi-coding-agent` + the adapter), consistent with opencode/kimi. **[confirmed, internal]**
+  @earendil-works/pi-coding-agent` + the adapter), consistent with opencode/kimi. **[confirmed, internal]**
 
 ---
 
@@ -261,7 +262,8 @@ External (web):
 - Pi repo: https://github.com/earendil-works/pi (mirror https://github.com/badlogic/pi-mono)
 - Pi coding-agent README: https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/README.md
 - Pi usage docs: https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/usage.md
-- npm `@mariozechner/pi-coding-agent`: https://www.npmjs.com/package/@mariozechner/pi-coding-agent
+- npm `@earendil-works/pi-coding-agent` (current): https://www.npmjs.com/package/@earendil-works/pi-coding-agent
+- npm `@mariozechner/pi-coding-agent` (older/historical name only): https://www.npmjs.com/package/@mariozechner/pi-coding-agent
 - Mario Zechner write-up: https://mariozechner.at/posts/2025-11-30-pi-coding-agent/
 - ACP-in-Pi discussion: https://github.com/earendil-works/pi/discussions/4444
 - `pi-acp` adapter (npm): https://www.npmjs.com/package/pi-acp
