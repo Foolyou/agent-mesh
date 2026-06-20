@@ -8,6 +8,8 @@ import {
   type RawImage,
   type ArtifactRef,
   type ImageLimits,
+  type ImageScaler,
+  type ScaleRequest,
 } from "./card-image";
 import type { ImageBoundary } from "./stream-segmenter";
 import { Jimp } from "jimp";
@@ -43,7 +45,7 @@ test("parseArtifactRef: rejects traversal / empty / non-artifact refs", () => {
 
 // ── resolve: upload, cache, degrade ──
 
-function fakes(over?: { readImage?: (r: ArtifactRef) => Promise<RawImage | null>; upload?: (i: RawImage) => Promise<{ imgKey?: string; error?: string }>; viewerUrl?: (r: ArtifactRef) => string | undefined; limits?: ImageLimits }) {
+function fakes(over?: { readImage?: (r: ArtifactRef) => Promise<RawImage | null>; upload?: (i: RawImage) => Promise<{ imgKey?: string; error?: string }>; viewerUrl?: (r: ArtifactRef) => string | undefined; limits?: ImageLimits; scaler?: ImageScaler }) {
   const uploads: RawImage[] = [];
   const logs: string[] = [];
   const resolver = createImageResolver({
@@ -53,6 +55,7 @@ function fakes(over?: { readImage?: (r: ArtifactRef) => Promise<RawImage | null>
     upload: over?.upload ?? (async (i) => { uploads.push(i); return { imgKey: `img_${uploads.length}` }; }),
     viewerUrl: over?.viewerUrl,
     limits: over?.limits,
+    scaler: over?.scaler,
     log: (m) => logs.push(m),
   });
   return { resolver, uploads, logs };
@@ -126,6 +129,108 @@ test("an image within all bounds (≤1500w, ≤3000h, ≤16:9, ≤10MB) uploads"
   const { resolver, uploads } = fakes({ readImage: async () => raw({ bytes: PNG(1500, 800) }), limits: LIMITS });
   expect((await resolver.resolve(boundary("artifact:ok.png"))).kind).toBe("image");
   expect(uploads).toHaveLength(1);
+});
+
+// ── autoscale decision flow (C2): scaler wired into the resolver, exercised with a FAKE scaler ──
+
+test("autoscale: salvageable oversize (wide PNG, aspect OK) runs the scaler and uploads the SCALED bytes", async () => {
+  const scaledBytes = PNG(1500, 844); // fake scaler output, within limits
+  const calls: ScaleRequest[] = [];
+  const { resolver, uploads } = fakes({
+    readImage: async () => raw({ bytes: PNG(2320, 1466), size: 5000 }), // width 2320 > 1500, aspect OK
+    scaler: async (req) => { calls.push(req); return { bytes: scaledBytes, contentType: "image/png", width: 1500, height: 844 }; },
+    limits: LIMITS,
+  });
+  expect((await resolver.resolve(boundary("artifact:wide.png"))).kind).toBe("image");
+  expect(calls).toHaveLength(1); // scaler consulted
+  expect(calls[0]).toMatchObject({ maxWidth: 1500, maxHeight: 3000, maxBytes: LIMITS.maxBytes });
+  expect(uploads).toHaveLength(1);
+  expect(uploads[0]!.bytes).toBe(scaledBytes); // the SCALED bytes were uploaded, not the original
+});
+
+test("autoscale: aspect too tall degrades WITHOUT consulting the scaler (no crop/reshape)", async () => {
+  let called = 0;
+  const { resolver, uploads } = fakes({
+    readImage: async () => raw({ bytes: PNG(100, 2000) }), // h/w = 20 > 16/9
+    scaler: async () => { called++; return null; },
+    limits: LIMITS,
+  });
+  expect((await resolver.resolve(boundary("artifact:tall.png"))).kind).not.toBe("image");
+  expect(called).toBe(0);
+  expect(uploads).toHaveLength(0);
+});
+
+test("autoscale: an already in-limit image uploads ORIGINAL bytes without calling the scaler", async () => {
+  let called = 0;
+  const orig = PNG(1400, 800);
+  const { resolver, uploads } = fakes({
+    readImage: async () => raw({ bytes: orig }),
+    scaler: async () => { called++; return null; },
+    limits: LIMITS,
+  });
+  expect((await resolver.resolve(boundary("artifact:ok.png"))).kind).toBe("image");
+  expect(called).toBe(0);
+  expect(uploads[0]!.bytes).toBe(orig);
+});
+
+test("autoscale: scaler returns null (unsalvageable) degrades, no upload", async () => {
+  const { resolver, uploads } = fakes({
+    readImage: async () => raw({ bytes: PNG(2320, 1466) }),
+    scaler: async () => null,
+    viewerUrl: (r) => `https://c/${r.file}`,
+    limits: LIMITS,
+  });
+  expect((await resolver.resolve(boundary("artifact:wide.png", "w"))).kind).toBe("link");
+  expect(uploads).toHaveLength(0);
+});
+
+test("autoscale: scaler throws degrades cleanly, no upload", async () => {
+  const { resolver, uploads } = fakes({
+    readImage: async () => raw({ bytes: PNG(2320, 1466) }),
+    scaler: async () => { throw new Error("boom"); },
+    limits: LIMITS,
+  });
+  expect((await resolver.resolve(boundary("artifact:wide.png"))).kind).not.toBe("image");
+  expect(uploads).toHaveLength(0);
+});
+
+test("autoscale: no scaler injected → oversize degrades exactly as before (no regression)", async () => {
+  const { resolver, uploads } = fakes({ readImage: async () => raw({ bytes: PNG(2320, 1466) }), limits: LIMITS });
+  expect((await resolver.resolve(boundary("artifact:wide.png"))).kind).not.toBe("image");
+  expect(uploads).toHaveLength(0);
+});
+
+test("autoscale: scaled output still over WIDTH degrades (re-check after scaling)", async () => {
+  const { resolver, uploads } = fakes({
+    readImage: async () => raw({ bytes: PNG(2320, 1466) }),
+    scaler: async () => ({ bytes: PNG(1600, 900), contentType: "image/png", width: 1600, height: 900 }), // still >1500w
+    limits: LIMITS,
+  });
+  expect((await resolver.resolve(boundary("artifact:wide.png"))).kind).not.toBe("image");
+  expect(uploads).toHaveLength(0);
+});
+
+test("autoscale: scaled output still over maxBytes degrades (re-check after scaling)", async () => {
+  const { resolver, uploads } = fakes({
+    readImage: async () => raw({ bytes: PNG(2320, 1466), size: 50 }),
+    scaler: async () => ({ bytes: PNG(1500, 844), contentType: "image/png", width: 1500, height: 844 }), // dims OK, 24 bytes
+    limits: { ...LIMITS, maxBytes: 10 }, // cap below the scaled output's byte length
+  });
+  expect((await resolver.resolve(boundary("artifact:wide.png"))).kind).not.toBe("image");
+  expect(uploads).toHaveLength(0);
+});
+
+test("autoscale: unknown dims (WebP) skip autoscale and upload the original (current behavior preserved)", async () => {
+  let called = 0;
+  const webp = new Uint8Array([0x52, 0x49, 0x46, 0x46]); // RIFF → imageDims returns null
+  const { resolver, uploads } = fakes({
+    readImage: async () => raw({ bytes: webp, contentType: "image/webp", size: 1000 }),
+    scaler: async () => { called++; return null; },
+    limits: LIMITS,
+  });
+  expect((await resolver.resolve(boundary("artifact:x.webp"))).kind).toBe("image");
+  expect(called).toBe(0);
+  expect(uploads[0]!.bytes).toBe(webp);
 });
 
 test("upload failure degrades to link/text and never throws", async () => {

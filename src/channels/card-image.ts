@@ -89,6 +89,9 @@ export interface ImageResolverDeps {
   readImage: (ref: ArtifactRef) => Promise<RawImage | null>;
   /** Upload bytes to Feishu, returning the image_key (or an error string). Injected for tests. */
   upload: (img: RawImage) => Promise<{ imgKey?: string; error?: string }>;
+  /** Downscale an oversize-but-salvageable image to fit the limits (jimpScaler by default). Optional:
+   *  when absent, oversize images degrade exactly as before (no local autoscale). */
+  scaler?: ImageScaler;
   /** Build a device-auth console URL for the artifact, or undefined when none can be built (→ text). */
   viewerUrl?: (ref: ArtifactRef) => string | undefined;
   limits?: ImageLimits;
@@ -157,25 +160,36 @@ export function createImageResolver(deps: ImageResolverDeps): ImageResolver {
       }
       if (!raw) return degrade(ref, boundary.alt);
 
-      // limits (local, best-effort): byte cap (always), dimensions/aspect when readable → degrade without
-      // uploading. Unknown dimensions skip the dim/aspect check (Feishu's own upload validation backstops).
+      // Source identity for the upload cache is the ORIGINAL file (mesh,owner,file,size,mtime); a cache HIT
+      // short-circuits both scaling and upload for a re-sent image.
+      const key = cacheKey(ref, raw);
+      const cached = cache.get(key);
+      if (cached) return { kind: "image", imgKey: cached };
+
+      // Dimension/aspect policy (local, best-effort). Unknown dims (e.g. WebP) skip these checks entirely
+      // and let Feishu's own upload validation backstop — preserving prior behavior with NO local autoscale.
+      const dims = imageDims(raw.bytes, raw.contentType);
+      if (dims) {
+        if (limits.maxAspect > 0 && dims.h / dims.w > limits.maxAspect) {
+          log("feishu image: aspect out of range; degrading"); // not salvageable here (no crop/reshape)
+          return degrade(ref, boundary.alt);
+        }
+        const dimOver = (limits.maxWidth > 0 && dims.w > limits.maxWidth) || (limits.maxHeight > 0 && dims.h > limits.maxHeight);
+        if (dimOver) {
+          // Salvageable (aspect OK, only too big): proportionally downscale to fit, then re-check
+          // dims + bytes before trusting the (injectable) scaler's output.
+          const scaled = await runScaler(deps.scaler, raw, limits, log);
+          if (!scaled) return degrade(ref, boundary.alt);
+          raw = scaled;
+        }
+      }
+
+      // Byte cap is enforced AFTER any scaling: a scaled image may now fit, while an unscaled image
+      // (in-dims but heavy, or unknown-dims) is capped exactly as before.
       if (raw.size > limits.maxBytes) {
         log("feishu image: over size limit; degrading");
         return degrade(ref, boundary.alt);
       }
-      const dims = imageDims(raw.bytes, raw.contentType);
-      if (dims && (
-        (limits.maxWidth > 0 && dims.w > limits.maxWidth) ||
-        (limits.maxHeight > 0 && dims.h > limits.maxHeight) ||
-        (limits.maxAspect > 0 && dims.h / dims.w > limits.maxAspect)
-      )) {
-        log("feishu image: dimensions/aspect out of range; degrading");
-        return degrade(ref, boundary.alt);
-      }
-
-      const key = cacheKey(ref, raw);
-      const cached = cache.get(key);
-      if (cached) return { kind: "image", imgKey: cached };
 
       let res: { imgKey?: string; error?: string };
       try {
@@ -192,6 +206,38 @@ export function createImageResolver(deps: ImageResolverDeps): ImageResolver {
       return { kind: "image", imgKey: res.imgKey };
     },
   };
+}
+
+/** Run the injectable scaler on an oversize-but-salvageable image and validate its output. Returns the
+ *  scaled RawImage (guaranteed within the dim + byte limits), or null to degrade — when there is no
+ *  scaler, the scaler returns null / throws, or its output is still out of range (never trust an
+ *  injectable scaler blindly). Zero-leak: every log is a generic status, never bytes/ref/path. */
+async function runScaler(scaler: ImageScaler | undefined, raw: RawImage, limits: ImageLimits, log: (m: string) => void): Promise<RawImage | null> {
+  if (!scaler) {
+    log("feishu image: oversize and no scaler; degrading");
+    return null;
+  }
+  let scaled: ScaleResult | null;
+  try {
+    scaled = await scaler({ bytes: raw.bytes, contentType: raw.contentType, maxWidth: limits.maxWidth, maxHeight: limits.maxHeight, maxBytes: limits.maxBytes });
+  } catch {
+    log("feishu image: scale error; degrading");
+    return null;
+  }
+  if (!scaled) {
+    log("feishu image: scale failed; degrading");
+    return null;
+  }
+  const sd = imageDims(scaled.bytes, scaled.contentType) ?? { w: scaled.width, h: scaled.height };
+  const stillOver =
+    (limits.maxWidth > 0 && sd.w > limits.maxWidth) ||
+    (limits.maxHeight > 0 && sd.h > limits.maxHeight) ||
+    scaled.bytes.length > limits.maxBytes;
+  if (stillOver) {
+    log("feishu image: scaled image still out of range; degrading");
+    return null;
+  }
+  return { bytes: scaled.bytes, contentType: scaled.contentType, size: scaled.bytes.length, mtimeMs: raw.mtimeMs };
 }
 
 /** The card `img` element JSON for a resolved image_key. */
