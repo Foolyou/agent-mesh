@@ -18,7 +18,185 @@
  * unchanged. Net-new Tailwind-built UI (Step 5 C2+) opts in by using utility
  * classes; it sits in the layered `utilities`/`components` and reads preflight.
  *
- * NOT in C1: no `@theme` token mapping, no v2 runtime tokens, no component
- * primitives — those land in later Step 5 commits.
+ * C4 adds the `@theme` semantic mapping below + the raw-scale escape hatch
+ * (raw-* utilities, decision 5: exposed but lint-discouraged). Component use of
+ * `raw-*` is guarded by src/web/raw-token-guard.ts (needs a reasoned
+ * `raw-token-allow:` opt-out).
  */
 @import "tailwindcss";
+
+/* Step 5 C4 — map the v2 semantic tokens (themes.ts compose()/applyComposition write
+ * them on :root at runtime) into Tailwind utility colors. `@theme inline` makes the
+ * utilities resolve to `var(--<token>)` LIVE, so switching mode/accent recolors every
+ * utility instantly. Components use these semantic utilities (bg-surface,
+ * text-text-primary, border-border-strong, bg-accent, text-on-accent, text-success,
+ * bg-success-subtle, …) — NEVER raw-* scales. */
+@theme inline {
+  --color-surface: var(--surface);
+  --color-surface-raised: var(--surface-raised);
+  --color-surface-sunken: var(--surface-sunken);
+  --color-surface-overlay: var(--surface-overlay);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-muted: var(--text-muted);
+  --color-text-disabled: var(--text-disabled);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
+  --color-info: var(--info);
+  --color-link: var(--link);
+  --color-idle: var(--idle);
+  --color-success-subtle: var(--success-subtle);
+  --color-warning-subtle: var(--warning-subtle);
+  --color-danger-subtle: var(--danger-subtle);
+  --color-info-subtle: var(--info-subtle);
+  --color-on-success: var(--on-success);
+  --color-on-warning: var(--on-warning);
+  --color-on-danger: var(--on-danger);
+  --color-on-info: var(--on-info);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-active: var(--accent-active);
+  --color-accent-subtle: var(--accent-subtle);
+  --color-on-accent: var(--on-accent);
+  --color-hover: var(--hover);
+  --color-active: var(--active);
+  --color-selected: var(--selected);
+  --color-text-on-selected: var(--text-on-selected);
+  --color-focus-ring: var(--focus-ring);
+  --color-disabled: var(--disabled);
+  --color-syntax-keyword: var(--syntax-keyword);
+  --color-syntax-string: var(--syntax-string);
+  --color-syntax-comment: var(--syntax-comment);
+}
+
+/* Step 5 C4 — raw 11-stop scale escape hatch (decision 5: exposed but lint-discouraged).
+ * `@theme inline` names map to `var(--raw-<ramp>-<stop>)`; the HEX lives ONLY in
+ * themes.ts RAW (written to :root by applyRawScales() at init) — no hex duplication here.
+ * Generates raw-* utilities (bg-raw-slate-500, text-raw-signal-teal-400, …) for rare
+ * escapes; raw-token-guard.ts fails component use without a reasoned opt-out. */
+@theme inline {
+  --color-raw-slate-50: var(--raw-slate-50);
+  --color-raw-slate-100: var(--raw-slate-100);
+  --color-raw-slate-200: var(--raw-slate-200);
+  --color-raw-slate-300: var(--raw-slate-300);
+  --color-raw-slate-400: var(--raw-slate-400);
+  --color-raw-slate-500: var(--raw-slate-500);
+  --color-raw-slate-600: var(--raw-slate-600);
+  --color-raw-slate-700: var(--raw-slate-700);
+  --color-raw-slate-800: var(--raw-slate-800);
+  --color-raw-slate-900: var(--raw-slate-900);
+  --color-raw-slate-950: var(--raw-slate-950);
+  --color-raw-cool-50: var(--raw-cool-50);
+  --color-raw-cool-100: var(--raw-cool-100);
+  --color-raw-cool-200: var(--raw-cool-200);
+  --color-raw-cool-300: var(--raw-cool-300);
+  --color-raw-cool-400: var(--raw-cool-400);
+  --color-raw-cool-500: var(--raw-cool-500);
+  --color-raw-cool-600: var(--raw-cool-600);
+  --color-raw-cool-700: var(--raw-cool-700);
+  --color-raw-cool-800: var(--raw-cool-800);
+  --color-raw-cool-900: var(--raw-cool-900);
+  --color-raw-cool-950: var(--raw-cool-950);
+  --color-raw-warm-50: var(--raw-warm-50);
+  --color-raw-warm-100: var(--raw-warm-100);
+  --color-raw-warm-200: var(--raw-warm-200);
+  --color-raw-warm-300: var(--raw-warm-300);
+  --color-raw-warm-400: var(--raw-warm-400);
+  --color-raw-warm-500: var(--raw-warm-500);
+  --color-raw-warm-600: var(--raw-warm-600);
+  --color-raw-warm-700: var(--raw-warm-700);
+  --color-raw-warm-800: var(--raw-warm-800);
+  --color-raw-warm-900: var(--raw-warm-900);
+  --color-raw-warm-950: var(--raw-warm-950);
+  --color-raw-green-50: var(--raw-green-50);
+  --color-raw-green-100: var(--raw-green-100);
+  --color-raw-green-200: var(--raw-green-200);
+  --color-raw-green-300: var(--raw-green-300);
+  --color-raw-green-400: var(--raw-green-400);
+  --color-raw-green-500: var(--raw-green-500);
+  --color-raw-green-600: var(--raw-green-600);
+  --color-raw-green-700: var(--raw-green-700);
+  --color-raw-green-800: var(--raw-green-800);
+  --color-raw-green-900: var(--raw-green-900);
+  --color-raw-green-950: var(--raw-green-950);
+  --color-raw-amber-50: var(--raw-amber-50);
+  --color-raw-amber-100: var(--raw-amber-100);
+  --color-raw-amber-200: var(--raw-amber-200);
+  --color-raw-amber-300: var(--raw-amber-300);
+  --color-raw-amber-400: var(--raw-amber-400);
+  --color-raw-amber-500: var(--raw-amber-500);
+  --color-raw-amber-600: var(--raw-amber-600);
+  --color-raw-amber-700: var(--raw-amber-700);
+  --color-raw-amber-800: var(--raw-amber-800);
+  --color-raw-amber-900: var(--raw-amber-900);
+  --color-raw-amber-950: var(--raw-amber-950);
+  --color-raw-red-50: var(--raw-red-50);
+  --color-raw-red-100: var(--raw-red-100);
+  --color-raw-red-200: var(--raw-red-200);
+  --color-raw-red-300: var(--raw-red-300);
+  --color-raw-red-400: var(--raw-red-400);
+  --color-raw-red-500: var(--raw-red-500);
+  --color-raw-red-600: var(--raw-red-600);
+  --color-raw-red-700: var(--raw-red-700);
+  --color-raw-red-800: var(--raw-red-800);
+  --color-raw-red-900: var(--raw-red-900);
+  --color-raw-red-950: var(--raw-red-950);
+  --color-raw-blue-50: var(--raw-blue-50);
+  --color-raw-blue-100: var(--raw-blue-100);
+  --color-raw-blue-200: var(--raw-blue-200);
+  --color-raw-blue-300: var(--raw-blue-300);
+  --color-raw-blue-400: var(--raw-blue-400);
+  --color-raw-blue-500: var(--raw-blue-500);
+  --color-raw-blue-600: var(--raw-blue-600);
+  --color-raw-blue-700: var(--raw-blue-700);
+  --color-raw-blue-800: var(--raw-blue-800);
+  --color-raw-blue-900: var(--raw-blue-900);
+  --color-raw-blue-950: var(--raw-blue-950);
+  --color-raw-gray-50: var(--raw-gray-50);
+  --color-raw-gray-100: var(--raw-gray-100);
+  --color-raw-gray-200: var(--raw-gray-200);
+  --color-raw-gray-300: var(--raw-gray-300);
+  --color-raw-gray-400: var(--raw-gray-400);
+  --color-raw-gray-500: var(--raw-gray-500);
+  --color-raw-gray-600: var(--raw-gray-600);
+  --color-raw-gray-700: var(--raw-gray-700);
+  --color-raw-gray-800: var(--raw-gray-800);
+  --color-raw-gray-900: var(--raw-gray-900);
+  --color-raw-gray-950: var(--raw-gray-950);
+  --color-raw-signal-teal-50: var(--raw-signal-teal-50);
+  --color-raw-signal-teal-100: var(--raw-signal-teal-100);
+  --color-raw-signal-teal-200: var(--raw-signal-teal-200);
+  --color-raw-signal-teal-300: var(--raw-signal-teal-300);
+  --color-raw-signal-teal-400: var(--raw-signal-teal-400);
+  --color-raw-signal-teal-500: var(--raw-signal-teal-500);
+  --color-raw-signal-teal-600: var(--raw-signal-teal-600);
+  --color-raw-signal-teal-700: var(--raw-signal-teal-700);
+  --color-raw-signal-teal-800: var(--raw-signal-teal-800);
+  --color-raw-signal-teal-900: var(--raw-signal-teal-900);
+  --color-raw-signal-teal-950: var(--raw-signal-teal-950);
+  --color-raw-ember-50: var(--raw-ember-50);
+  --color-raw-ember-100: var(--raw-ember-100);
+  --color-raw-ember-200: var(--raw-ember-200);
+  --color-raw-ember-300: var(--raw-ember-300);
+  --color-raw-ember-400: var(--raw-ember-400);
+  --color-raw-ember-500: var(--raw-ember-500);
+  --color-raw-ember-600: var(--raw-ember-600);
+  --color-raw-ember-700: var(--raw-ember-700);
+  --color-raw-ember-800: var(--raw-ember-800);
+  --color-raw-ember-900: var(--raw-ember-900);
+  --color-raw-ember-950: var(--raw-ember-950);
+  --color-raw-fleet-azure-50: var(--raw-fleet-azure-50);
+  --color-raw-fleet-azure-100: var(--raw-fleet-azure-100);
+  --color-raw-fleet-azure-200: var(--raw-fleet-azure-200);
+  --color-raw-fleet-azure-300: var(--raw-fleet-azure-300);
+  --color-raw-fleet-azure-400: var(--raw-fleet-azure-400);
+  --color-raw-fleet-azure-500: var(--raw-fleet-azure-500);
+  --color-raw-fleet-azure-600: var(--raw-fleet-azure-600);
+  --color-raw-fleet-azure-700: var(--raw-fleet-azure-700);
+  --color-raw-fleet-azure-800: var(--raw-fleet-azure-800);
+  --color-raw-fleet-azure-900: var(--raw-fleet-azure-900);
+  --color-raw-fleet-azure-950: var(--raw-fleet-azure-950);
+}
