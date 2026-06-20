@@ -42,7 +42,7 @@ Each semantic token is an **alias that maps to a raw stop**; a theme = a mapping
 | borders | `border` (divider/hairline), `border-strong` (control/interactive edge) |
 | text | `text-primary`, `text-secondary`, `text-muted`, `text-disabled`, `text-on-accent`, `text-on-selected`, `link` |
 | status | `success`, `warning`, `danger`, `info` (+ `success-strong`/etc. only if needed for tints) |
-| brand (accent axis) | `accent`, `accent-hover`, `accent-active`, `accent-subtle`, `on-accent` |
+| brand (accent axis) | `accent`, `accent-hover`, `accent-active`, `accent-subtle`, `on-accent` (a.k.a. `text-on-accent`) |
 | syntax | `syntax-keyword`, `syntax-string`, `syntax-comment` (or keep mapping to status/info+good+muted) |
 | interaction states | `hover` (surface wash), `active` (pressed wash), `focus-ring`, `selected` (bg) + `text-on-selected`, `disabled` (surface), plus role state variants `accent-hover`, `accent-active` |
 
@@ -187,7 +187,7 @@ All reference v1 token names. Proposed **old→new semantic map** to apply in th
 ## 5. Artifact plan (for the later APPROVED pass — not produced now)
 1. **Old↔new token comparison** — a mapping table (as §4) + a side-by-side swatch board PNG (v1 19-key vs v2 raw-scales+semantic), in `$AGENT_MESH_ARTIFACTS`.
 2. **Sample renderings across the axes** — the key Step 2 components (StatusListRow, PanelFrame, Button states, IssueListRow, Composer, ApprovalCard) rendered for the **3 background modes**, each shown with **all 3 accents** (a 3×3 board, or 3 mode boards with an accent strip), demonstrating runtime accent switching (rendered via the repo's known-good chromium, as in v1).
-3. **Contrast report with AAA-upgraded pairs, all 9 combinations** — run the rebuilt `AUDIT_PAIRS` (split text, border-strong, focus@4.5, surface-step + accent pairs) over the **9 `compose(mode,accent)` palettes**; table of ratios + pass at the new thresholds per combination, plus the reproduction command. Mirrors v1 `02-aa-evidence.md` but against the upgraded contract and the full 9-state matrix.
+3. **Contrast report with AAA-upgraded pairs, all 9 combinations** — run the rebuilt `AUDIT_PAIRS` (split text, border-strong, focus@4.5, surface-step + accent pairs) over the **9 `compose(mode,accent)` palettes**; table of ratios + pass at the new thresholds per combination, plus the reproduction command. **Each pair is explicitly annotated with whether it moved to AAA / a stronger-than-AA threshold** (vs the v1 contract), so reviewers can see exactly what was upgraded. Mirrors v1 `02-aa-evidence.md` but against the upgraded contract and the full 9-state matrix.
 All PNGs to artifacts only (not committed), filenames reported.
 
 ---
