@@ -1189,3 +1189,72 @@ test("sendOneShot uploads + swaps the image element (C3 path) in non-streaming m
   expect(r.creates.map((c) => c.text)).toEqual(["p ", "🖼 a", " q\n"]);
   expect(JSON.parse(updates[0].element)).toMatchObject({ tag: "img", img_key: "img_one" });
 });
+
+// ── C4 follow-up: NO raw SDK message / Error / ref / image_key in any CardKit log ───────────────
+
+const SECRET_MSG = "artifact://owner/SECRET.png image_key=KK99 leaked";
+const assertClean = (logs: string[]) => {
+  const blob = logs.join("\n");
+  expect(blob).not.toContain("SECRET");
+  expect(blob).not.toContain("artifact:");
+  expect(blob).not.toContain("image_key");
+  expect(blob).not.toContain("KK99");
+};
+
+test("create failure: the secret-laden SDK message is NOT logged (code only)", async () => {
+  const logs: string[] = [];
+  const r = cardRecorder({ createImpl: () => ({ ok: false, code: 1, message: SECRET_MSG }) });
+  const s = makeSender(r, fakeFallback(), { log: (m) => logs.push(m) });
+  s.streamUpdate("hello");
+  s.streamCommit();
+  await s.whenIdle();
+  assertClean(logs);
+  expect(logs.join("\n")).toContain("(code 1)"); // numeric code is allowed
+});
+
+test("a thrown SDK Error during create/send is logged generically (message dropped)", async () => {
+  const logs: string[] = [];
+  const r = cardRecorder({ createImpl: () => { throw new Error(`boom ${SECRET_MSG}`); } });
+  const s = makeSender(r, fakeFallback(), { log: (m) => logs.push(m) });
+  s.streamUpdate("hi");
+  s.streamCommit();
+  await s.whenIdle();
+  assertClean(logs);
+  expect(logs.join("\n")).toContain("create/send error");
+});
+
+test("content + finalize failures never log the SDK message", async () => {
+  const logs: string[] = [];
+  const r = cardRecorder({
+    contentImpl: () => ({ ok: false, code: 2, message: SECRET_MSG }),
+    finalizeImpl: () => ({ ok: false, code: 3, message: SECRET_MSG }),
+  });
+  const s = makeSender(r, fakeFallback(), { log: (m) => logs.push(m) });
+  s.streamUpdate("a");
+  await s.whenIdle();
+  s.streamUpdate("ab"); // forces a content edit (which fails with the secret message)
+  s.streamCommit();
+  await s.whenIdle();
+  assertClean(logs);
+});
+
+test("image element update failure logs code only, never the SDK message", async () => {
+  const logs: string[] = [];
+  const r = cardRecorder();
+  const sender = new CardSender({
+    chatId: "oc_1",
+    create: r.create,
+    send: r.send,
+    content: r.content,
+    finalize: r.finalize,
+    fallback: fakeFallback().sink,
+    now: r.now,
+    wait: r.wait,
+    log: (m) => logs.push(m),
+    resolveImage: { resolve: async () => ({ kind: "image", imgKey: "img_1" }) },
+    updateElement: async () => ({ ok: false, code: 7, message: SECRET_MSG }),
+  });
+  sender.sendOneShot("p ![a](artifact:a.png) q\n");
+  await sender.whenIdle();
+  assertClean(logs);
+});

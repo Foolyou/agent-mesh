@@ -36,8 +36,14 @@ test("outbound.cardkit=false wires the plain text LarkSender", () => {
   expect(sink).toBeInstanceOf(LarkSender);
 });
 
-test("streaming=false uses the text sender regardless of cardkit", () => {
+test("streaming=false + cardkit=true still wires a CardSender (non-streaming rich one-shot via sendOneShot)", () => {
   const sink = createOutboundSender(client, cfg({ streaming: false, cardkit: true }), "oc_1", () => {});
+  expect(sink).toBeInstanceOf(CardSender);
+  expect(typeof sink.sendOneShot).toBe("function"); // the channel routes flush()→sendOneShot for non-streaming
+});
+
+test("cardkit=false wires the plain text LarkSender even when streaming is on", () => {
+  const sink = createOutboundSender(client, cfg({ streaming: true, cardkit: false }), "oc_1", () => {});
   expect(sink).toBeInstanceOf(LarkSender);
 });
 

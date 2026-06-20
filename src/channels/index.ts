@@ -89,9 +89,11 @@ export function createOutboundSender(client: lark.Client, cfg: FeishuChannelConf
     maxEditsPerMessage: cfg.outbound.maxEditsPerMessage,
     log,
   });
-  const streamingOn = cfg.outbound.streaming !== false;
-  const cardkitOn = cfg.outbound.cardkit !== false;
-  if (!streamingOn || !cardkitOn) return textSender;
+  // CardKit is the rich path. Build a CardSender whenever cardkit is enabled — INCLUDING when
+  // outbound.streaming=false: FeishuChannel.useStreaming() then routes the turn to flush()→sendOneShot
+  // (a non-streaming one-shot rich render), so a non-streaming binding still gets markdown + image
+  // cards. Only an explicit cardkit=false falls back to the plain text LarkSender.
+  if (cfg.outbound.cardkit === false) return textSender;
   return new CardSender(cardSenderOptions(client, cfg, chatId, textSender, log, image));
 }
 

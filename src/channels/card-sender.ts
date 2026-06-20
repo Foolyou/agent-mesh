@@ -572,7 +572,7 @@ export class CardSender implements OutboundSink {
         this.liveOpenedAt = this.now();
       } catch (e) {
         this.lastEditAt = this.now();
-        this.log(`feishu card: create/send error: ${String(e)}; falling back to text`);
+        this.log("feishu card: create/send error; falling back to text");
         this.giveUp();
       }
       return;
@@ -592,7 +592,7 @@ export class CardSender implements OutboundSink {
       }
     } catch (e) {
       this.lastEditAt = this.now();
-      this.log(`feishu card: content update error: ${String(e)}; falling back to text`);
+      this.log("feishu card: content update error; falling back to text");
       this.giveUp();
     }
   }
@@ -634,7 +634,7 @@ export class CardSender implements OutboundSink {
         this.liveOpenedAt = this.now();
       } catch (e) {
         this.lastEditAt = this.now();
-        this.log(`feishu card: create/send error: ${String(e)}; falling back to text`);
+        this.log("feishu card: create/send error; falling back to text");
         this.giveUp();
         return;
       }
@@ -651,7 +651,7 @@ export class CardSender implements OutboundSink {
         this.live.sentText = split.headText;
       } catch (e) {
         this.lastEditAt = this.now();
-        this.log(`feishu card: content update error: ${String(e)}; falling back to text`);
+        this.log("feishu card: content update error; falling back to text");
         this.giveUp();
         return;
       }
@@ -681,7 +681,7 @@ export class CardSender implements OutboundSink {
         if (!r.ok) this.log(`feishu card: close-fence edit failed${codeInfo(r)}; sealing card unbalanced`);
       } catch (e) {
         this.lastEditAt = this.now();
-        this.log(`feishu card: close-fence edit error: ${String(e)}; sealing card unbalanced`);
+        this.log("feishu card: close-fence edit error; sealing card unbalanced");
       }
       // A failed close is cosmetic (body already shown) — do not give up or re-send confirmed body.
     }
@@ -739,7 +739,7 @@ export class CardSender implements OutboundSink {
       if (!r.ok) this.log(`feishu card: finalize failed${codeInfo(r)}; card left in streaming state`);
     } catch (e) {
       this.lastEditAt = this.now();
-      this.log(`feishu card: finalize error: ${String(e)}; card left in streaming state`);
+      this.log("feishu card: finalize error; card left in streaming state");
     }
   }
 
@@ -821,8 +821,10 @@ export function defaultImagePlaceholder(image: ImageBoundary): string {
   return image.alt ? `🖼 ${image.alt}` : "🖼 image";
 }
 
+/** Numeric code ONLY for logs — never the SDK `message`/`msg` (which can carry a path/secret/marker).
+ *  The result type keeps `message` internally for callers that need it; it just never reaches a log. */
 function codeInfo(r: { code?: number; message?: string }): string {
-  return `${r.code !== undefined ? ` (code ${r.code})` : ""}${r.message ? `: ${r.message}` : ""}`;
+  return r.code !== undefined ? ` (code ${r.code})` : "";
 }
 
 /** Unique idempotency key for the ONE interactive message that sends a card. Keyed on the card id
