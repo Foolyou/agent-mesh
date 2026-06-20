@@ -133,3 +133,25 @@ test("post-command unknown flag is left to the command, not a top-level error", 
   expect(r.command).toBe("status");
   expect(r.commandTail).toEqual(["--whatever"]); // status ignores it; not an error
 });
+
+// ── single-mesh lifecycle arity/tail (mesh-cli-lifecycle): the resolver keeps the name + command-local
+// flags verbatim in the tail; main.ts decides arity (a positional name → one mesh, none → control plane).
+
+test("start <name> --fresh keeps the name and --fresh verbatim in the tail", () => {
+  const r = run(["start", "demo", "--fresh"]);
+  expect(r.command).toBe("start");
+  expect(r.commandTail).toEqual(["demo", "--fresh"]);
+});
+
+test("restart/status with no name → empty tail (control-plane); with a name → name in tail (one mesh)", () => {
+  expect(run(["restart"]).commandTail).toEqual([]);
+  expect(run(["restart", "demo"]).commandTail).toEqual(["demo"]);
+  expect(run(["status"]).commandTail).toEqual([]);
+  expect(run(["status", "demo"]).commandTail).toEqual(["demo"]);
+});
+
+test("a global flag after status is peeled, never mistaken for the mesh name", () => {
+  const r = run(["status", "--port", "10010"]);
+  expect(r.commandTail).toEqual([]); // --port is a known global → peeled
+  expect(r.globals.port).toBe("10010");
+});

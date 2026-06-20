@@ -20,6 +20,8 @@ import { runAuthCommand } from "./auth-cli";
 import { collectPsDetail, runDoctor, renderPsDetail, renderDoctor, doctorExitCode } from "./diagnostics";
 import { cliPsSources, doctorSources, diagnosticsRunDir } from "./diagnostics-sources";
 import { resolveCommand, isKnownCommand, usageLines, channelsUsageLines, CHANNEL_PROVIDERS } from "./cli-dispatch";
+import { httpMeshControlClient } from "./mesh-control-client";
+import { opStart, opStop, opRestart, opStatus, type OpResult } from "./mesh-cli-ops";
 import { join } from "node:path";
 import * as service from "./service";
 
@@ -60,6 +62,9 @@ const cmd = command ?? "status-help";
 const g = (k: string): string | undefined => (typeof globals[k] === "string" ? (globals[k] as string) : undefined);
 const gb = (k: string): boolean => globals[k] === true;
 const tailHas = (f: string) => commandTail.includes(f);
+// First positional in the command tail (globals are already peeled) — the mesh NAME for the
+// single-mesh lifecycle commands. `-`-prefixed tokens are flags (e.g. `--fresh`), never the name.
+const meshName = commandTail.find((a) => !a.startsWith("-"));
 
 const fake = gb("fake");
 
@@ -198,14 +203,41 @@ const svcPass = () => {
   const { harness, noAssistant } = resolveAssistant();
   return [...(fake ? ["--fake"] : []), ...(noAssistant ? ["--no-assistant"] : []), ...assistantHarnessPassthrough(harness)];
 };
-if (cmd === "up" || cmd === "start") {
+// Single-mesh lifecycle ops go through the running control plane (host-key bearer). `start`/`stop`
+// are single-mesh ONLY; `restart`/`status` overload on arity (a name targets one mesh, no name is the
+// control-plane command). Print the op's out/err and adopt its exit code.
+async function runMeshOp(op: Promise<OpResult>): Promise<void> {
+  const r = await op;
+  for (const line of r.out) console.log(line);
+  for (const line of r.err) console.error(line);
+  process.exitCode = r.exitCode;
+}
+const meshClient = () => httpMeshControlClient(root, svcPort);
+
+if (cmd === "up") {
   await service.up(base, root, svcPort, { cold: svcCold, passthrough: svcPass() });
-} else if (cmd === "down" || cmd === "stop") {
+} else if (cmd === "down") {
   await service.down(root, svcPort, { cold: svcCold });
+} else if (cmd === "start") {
+  if (!meshName) {
+    console.error("usage: mesh start <name> [--fresh]   (use `mesh up` to start the control plane)");
+    process.exitCode = 2;
+  } else {
+    await runMeshOp(opStart(meshClient(), meshName, { fresh: tailHas("--fresh") }));
+  }
+} else if (cmd === "stop") {
+  if (!meshName) {
+    console.error("usage: mesh stop <name>   (use `mesh down` to stop the control plane)");
+    process.exitCode = 2;
+  } else {
+    await runMeshOp(opStop(meshClient(), meshName));
+  }
 } else if (cmd === "status") {
-  await service.status(root, svcPort);
+  if (meshName) await runMeshOp(opStatus(meshClient(), meshName));
+  else await service.status(root, svcPort);
 } else if (cmd === "restart") {
-  await service.restart(base, root, svcPort, { cold: svcCold, passthrough: svcPass() });
+  if (meshName) await runMeshOp(opRestart(meshClient(), meshName));
+  else await service.restart(base, root, svcPort, { cold: svcCold, passthrough: svcPass() });
 } else if (cmd === "logs") {
   await service.logs(root, { follow: tailHas("-f") || tailHas("--follow") });
 } else if (cmd === "ps") {

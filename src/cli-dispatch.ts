@@ -19,7 +19,9 @@ export const GLOBAL_BOOL = new Set(["--fake", "--cold", "--no-assistant", "--no-
 const HELP_LEADING = new Set(["help", "--help", "-h"]);
 const HELP_FLAG = new Set(["--help", "-h"]);
 
-/** Commands the dispatcher recognizes. `start`/`stop` alias `up`/`down`. */
+/** Commands the dispatcher recognizes. `up`/`down` are the control plane; `start`/`stop` are
+ *  single-mesh; `restart`/`status` overload on arity (a `<name>` targets one mesh, no name = control
+ *  plane) — the arity split lives in main.ts, the resolver just keeps the verbatim tail. */
 export const KNOWN_COMMANDS = new Set([
   "run", "up", "start", "down", "stop", "status", "restart", "logs",
   "ps", "doctor", "kill", "channels", "device", "auth",
@@ -117,16 +119,22 @@ export function usageLines(): string[] {
     "  mesh run --port <n>              run on a specific port",
     "  mesh run --no-assistant          skip the Mesh Assistant",
     "",
-    "service:",
-    "  mesh up | start                  background-start the combined control plane",
-    "  mesh down | stop                 stop the control plane; mesh daemons keep running",
+    "control plane:",
+    "  mesh up                          background-start the combined control plane",
+    "  mesh down                        stop the control plane; mesh daemons keep running",
     "  mesh restart                     restart the control plane; mesh daemons keep running",
     "  mesh status                      show service state, port, and running meshes",
     "  mesh logs [-f]                   show or follow the control-plane log",
     "",
+    "one mesh (via the running control plane):",
+    "  mesh start <name> [--fresh]      start a mesh (--fresh = new sessions)",
+    "  mesh stop <name>                 graceful stop of a mesh",
+    "  mesh restart <name>              graceful stop + start of a mesh",
+    "  mesh status <name>               show one mesh's status + agents",
+    "",
     "mesh daemons:",
     "  mesh ps [-v]                     list running mesh daemons",
-    "  mesh kill <name> | --all         stop one or all mesh daemons",
+    "  mesh kill <name> | --all         force-stop one or all mesh daemons",
     "",
     "channels:",
     "  mesh channels feishu list",
