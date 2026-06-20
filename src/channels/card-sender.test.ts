@@ -1058,3 +1058,96 @@ test("a trailing image with no newline is flushed at commit (final)", async () =
   await s.whenIdle();
   expect(r.creates.map((c) => c.text)).toEqual(["see ", "🖼 a"]); // prose card then image card at commit
 });
+
+// ── C3: artifact image upload → swap the placeholder card's element (non-blocking) ──────────────
+
+import type { CardElementUpdateRequest } from "./card-sender";
+import type { ResolvedImage } from "./card-image";
+
+function makeImageSender(
+  r: ReturnType<typeof cardRecorder>,
+  fb: ReturnType<typeof fakeFallback>,
+  resolve: (b: { ref: string; alt: string }) => Promise<ResolvedImage>,
+) {
+  const updates: CardElementUpdateRequest[] = [];
+  const sender = new CardSender({
+    chatId: "oc_1",
+    create: r.create,
+    send: r.send,
+    content: r.content,
+    finalize: r.finalize,
+    fallback: fb.sink,
+    now: r.now,
+    wait: r.wait,
+    resolveImage: { resolve: resolve as any },
+    updateElement: async (req) => {
+      updates.push(req);
+      return { ok: true };
+    },
+  });
+  return { sender, updates };
+}
+
+const tick = async () => {
+  for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0));
+};
+
+test("a successful upload swaps the placeholder element for an img element with the image_key", async () => {
+  const r = cardRecorder();
+  const fb = fakeFallback();
+  const { sender, updates } = makeImageSender(r, fb, async () => ({ kind: "image", imgKey: "img_xyz" }));
+  sender.streamUpdate("p ![a](artifact:a.png) q\n");
+  sender.streamCommit();
+  await sender.whenIdle();
+  expect(r.creates.map((c) => c.text)).toEqual(["p ", "🖼 a", " q\n"]); // prose, placeholder, prose
+  expect(updates).toHaveLength(1);
+  const el = JSON.parse(updates[0].element);
+  expect(el).toMatchObject({ tag: "img", img_key: "img_xyz" });
+  expect(updates[0].element).not.toContain("artifact:"); // no raw ref leaks into the card
+});
+
+test("an over-limit / failed upload degrades that image card to a link/text element; prose continues", async () => {
+  const r = cardRecorder();
+  const fb = fakeFallback();
+  const { sender, updates } = makeImageSender(r, fb, async () => ({ kind: "link", markdown: "[diagram](https://console/x)" }));
+  sender.streamUpdate("before ![d](artifact:d.png) after\n");
+  sender.streamCommit();
+  await sender.whenIdle();
+  // prose cards intact (turn NOT fully fallen back), placeholder swapped to a markdown link element
+  expect(r.creates.map((c) => c.text)).toEqual(["before ", "🖼 d", " after\n"]);
+  expect(fb.streamUpdates).toHaveLength(0); // not a whole-turn text fallback
+  const el = JSON.parse(updates[0].element);
+  expect(el).toMatchObject({ tag: "markdown", content: "[diagram](https://console/x)" });
+});
+
+test("the upload is non-blocking: prose after the image is sent BEFORE the upload resolves", async () => {
+  const r = cardRecorder();
+  const fb = fakeFallback();
+  let release!: (v: ResolvedImage) => void;
+  const gate = new Promise<ResolvedImage>((res) => (release = res));
+  const { sender, updates } = makeImageSender(r, fb, () => gate);
+  sender.streamUpdate("p ![a](artifact:a.png) q\n");
+  await tick(); // driver runs to completion; the image task is parked on `gate`
+  expect(r.creates.map((c) => c.text)).toEqual(["p ", "🖼 a", " q\n"]); // prose-after already sent
+  expect(updates).toHaveLength(0); // upload not resolved → element not swapped yet (non-blocking)
+  release({ kind: "image", imgKey: "img_1" });
+  sender.streamCommit();
+  await sender.whenIdle(); // the commit barrier drains the pending image task
+  expect(updates).toHaveLength(1);
+});
+
+test("whenIdle waits for in-flight image tasks (commit barrier never releases mid-upload)", async () => {
+  const r = cardRecorder();
+  const fb = fakeFallback();
+  let resolved = false;
+  const { sender, updates } = makeImageSender(r, fb, async () => {
+    await new Promise((res) => setTimeout(res, 0));
+    resolved = true;
+    return { kind: "image", imgKey: "k" };
+  });
+  sender.streamUpdate("![a](artifact:a.png)\n");
+  sender.streamCommit();
+  await sender.whenIdle();
+  expect(resolved).toBe(true);
+  expect(updates).toHaveLength(1);
+});

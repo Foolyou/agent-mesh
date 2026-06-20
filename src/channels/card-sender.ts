@@ -21,6 +21,7 @@ import * as lark from "@larksuiteoapi/node-sdk";
 import type { OutboundSink, SegmentBreak } from "./feishu-channel";
 import { safeUuid, defaultIdempotencyKey } from "./sender";
 import { planOutbound, type ImageBoundary } from "./stream-segmenter";
+import { imageElement, markdownElement, type ImageResolver } from "./card-image";
 
 /** Why a card is being finalized. Card finalization is unified through one path so tool-call
  *  boundaries, size rollover, the streaming-window rollover, and the turn boundary all behave
@@ -86,6 +87,23 @@ export type CardSendFn = (req: CardSendRequest) => Promise<CardSendResult>;
 export type CardContentFn = (req: CardContentRequest) => Promise<CardContentResult>;
 export type CardFinalizeFn = (req: CardFinalizeRequest) => Promise<CardFinalizeResult>;
 
+/** Replace a whole element on a card (C3: swap an image placeholder for the uploaded `img`, or a
+ *  degrade link/text). `element` is the full element JSON string; sequence is the shared monotonic
+ *  counter; uuid is the stable idempotency key. */
+export interface CardElementUpdateRequest {
+  cardId: string;
+  elementId: string;
+  element: string;
+  sequence: number;
+  uuid: string;
+}
+export interface CardElementUpdateResult {
+  ok: boolean;
+  code?: number;
+  message?: string;
+}
+export type CardElementUpdateFn = (req: CardElementUpdateRequest) => Promise<CardElementUpdateResult>;
+
 /** Feishu rejects a card op whose sequence is not strictly greater than the last applied one. */
 export const CARD_SEQUENCE_ERROR_CODE = 300317;
 
@@ -129,6 +147,12 @@ export interface CardSenderOptions {
    *  only reserves the position with a placeholder; C3 turns it into the uploaded `img` element.
    *  Default {@link defaultImagePlaceholder}. */
   imagePlaceholder?: (image: ImageBoundary) => string;
+  /** C3: resolve an artifact image boundary to an uploaded image_key (or a degrade link/text). When set
+   *  WITH `updateElement`, the sender posts the placeholder card immediately (non-blocking) and swaps in
+   *  the result asynchronously once the upload resolves. Absent → C2 behavior (placeholder card only). */
+  resolveImage?: ImageResolver;
+  /** C3: replace the placeholder card's element with the resolved `img` (or degrade) element. */
+  updateElement?: CardElementUpdateFn;
   log?: (msg: string) => void;
   wait?: (ms: number) => Promise<void>;
   now?: () => number;
@@ -158,6 +182,11 @@ export class CardSender implements OutboundSink {
   private readonly toolHint: (meta?: SegmentBreak) => string;
   private readonly cardSummary: (body: string) => string;
   private readonly imagePlaceholder: (image: ImageBoundary) => string;
+  private readonly resolveImage?: ImageResolver;
+  private readonly updateElement?: CardElementUpdateFn;
+  /** In-flight async image resolve/upload tasks (C3, non-blocking). whenIdle() drains them so the commit
+   *  barrier waits for the turn's images before releasing. */
+  private readonly pendingImages = new Set<Promise<void>>();
   private readonly maxCardBytes: number;
   private readonly maxCardAgeMs: number;
   private readonly log: (msg: string) => void;
@@ -228,6 +257,8 @@ export class CardSender implements OutboundSink {
     this.toolHint = opts.toolHint ?? defaultToolHint;
     this.cardSummary = opts.cardSummary ?? defaultCardSummary;
     this.imagePlaceholder = opts.imagePlaceholder ?? defaultImagePlaceholder;
+    this.resolveImage = opts.resolveImage;
+    this.updateElement = opts.updateElement;
     this.maxCardBytes = opts.maxCardBytes ?? DEFAULT_MAX_CARD_BYTES;
     this.maxCardAgeMs = opts.maxCardAgeMs ?? DEFAULT_MAX_CARD_AGE_MS;
     this.log = opts.log ?? (() => {});
@@ -281,10 +312,17 @@ export class CardSender implements OutboundSink {
 
   whenIdle(): Promise<void> {
     const mine = this.streamBusy ? new Promise<void>((r) => this.idleResolvers.push(r)) : Promise.resolve();
-    return mine.then(() => {
-      const fb = this.fallback as { whenIdle?: () => Promise<void> };
-      return fb.whenIdle ? fb.whenIdle() : undefined;
-    });
+    return mine
+      .then(() => this.drainImages()) // wait for in-flight C3 image upload/replace tasks too
+      .then(() => {
+        const fb = this.fallback as { whenIdle?: () => Promise<void> };
+        return fb.whenIdle ? fb.whenIdle() : undefined;
+      });
+  }
+
+  /** Await all in-flight image tasks. Loops in case the driver was still adding tasks as we entered. */
+  private async drainImages(): Promise<void> {
+    while (this.pendingImages.size) await Promise.allSettled([...this.pendingImages]);
   }
 
   stop(): void {
@@ -446,6 +484,15 @@ export class CardSender implements OutboundSink {
         this.giveUp();
         return false;
       }
+      // C3: with an image resolver, post the placeholder NOW (above) and swap in the uploaded img (or a
+      // degrade link/text) ASYNCHRONOUSLY — so the upload never blocks the prose that follows. The task
+      // is tracked so the commit barrier (whenIdle) waits for it. Without a resolver this is C2: finalize
+      // the placeholder card immediately.
+      if (this.resolveImage && this.updateElement) {
+        const task = this.replaceImage(cr.cardId, image).finally(() => this.pendingImages.delete(task));
+        this.pendingImages.add(task);
+        return true;
+      }
       const seq = this.nextSeq();
       const r = await this.finalize({ cardId: cr.cardId, sequence: seq, uuid: stableCardKey(cr.cardId, seq), summary: this.cardSummary(text) });
       this.lastEditAt = this.now();
@@ -456,6 +503,34 @@ export class CardSender implements OutboundSink {
       this.log(`feishu card: image placeholder error: ${String(e)}; falling back to text`);
       this.giveUp();
       return false;
+    }
+  }
+
+  /** C3 async task: resolve the artifact image, swap the placeholder card's element for the uploaded
+   *  `img` (or a degrade link/text markdown element), then finalize the card. Best-effort and isolated:
+   *  a failure degrades ONLY this image card (never the turn) and never throws into the driver. */
+  private async replaceImage(cardId: string, image: ImageBoundary): Promise<void> {
+    const elId = this.elementId;
+    let summary = this.imagePlaceholder(image);
+    try {
+      const resolved = await this.resolveImage!.resolve(image);
+      if (this.stopped) return;
+      const el = resolved.kind === "image" ? imageElement(elId, resolved.imgKey, image.alt) : markdownElement(elId, resolved.markdown);
+      if (resolved.kind !== "image") summary = resolved.markdown;
+      const seq = this.nextSeq();
+      const r = await this.updateElement!({ cardId, elementId: elId, element: JSON.stringify(el), sequence: seq, uuid: stableCardKey(cardId, seq) });
+      this.lastEditAt = this.now();
+      if (!r.ok) this.log(`feishu card: image element update failed${codeInfo(r)}; placeholder kept`);
+    } catch (e) {
+      this.log(`feishu card: image resolve/update error: ${String(e)}; placeholder kept`);
+    }
+    if (this.stopped) return;
+    try {
+      const seq = this.nextSeq();
+      await this.finalize({ cardId, sequence: seq, uuid: stableCardKey(cardId, seq), summary: this.cardSummary(summary) });
+      this.lastEditAt = this.now();
+    } catch (e) {
+      this.log(`feishu card: image finalize error: ${String(e)}; left in streaming state`);
     }
   }
 
@@ -1037,6 +1112,19 @@ export function sdkCardFinalize(client: lark.Client): CardFinalizeFn {
         sequence: req.sequence,
         uuid: req.uuid,
       },
+    });
+    const code = res.code ?? 0;
+    return { ok: code === 0, code, message: res.msg };
+  };
+}
+
+/** C3: replace a whole element on a card (swap the image placeholder for the uploaded `img`, or a
+ *  degrade link/text element) via `cardkit.v1.cardElement.update`. */
+export function sdkCardElementUpdate(client: lark.Client): CardElementUpdateFn {
+  return async (req: CardElementUpdateRequest): Promise<CardElementUpdateResult> => {
+    const res = await client.cardkit.v1.cardElement.update({
+      path: { card_id: req.cardId, element_id: req.elementId },
+      data: { element: req.element, sequence: req.sequence, uuid: req.uuid },
     });
     const code = res.code ?? 0;
     return { ok: code === 0, code, message: res.msg };
