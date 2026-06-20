@@ -4,9 +4,11 @@ Status: research only (no code change). Round 1: branch `task/pi-agent-feasibili
 Round 2 (MCP-extension re-evaluation, §10): branch `task/pi-mcp-extension-research` (main `e229b58`).
 Date: 2026-06-20. Author: team2_builder.
 
-Evidence is tagged inline:
-- **[confirmed]** — verified against official docs / repo / our source code (link or path given).
+Evidence is tagged inline (one fixed vocabulary — use exactly these four):
+- **[confirmed]** — verified against official docs / repo / our source code / a test I ran (link or path).
 - **[not found]** — looked for an official source and could not find one; stated as a gap, not a fact.
+- **[not verified]** — a claim I *could* have tested but did **not** in this spike (distinct from [not found]:
+  the source/path is known, it just wasn't exercised). Used mainly for the §10 spike's remaining gates.
 - **[inference]** — my reasoning/risk assessment, not a quoted fact.
 
 > ## ⚠️ UPDATE — Round 2 (2026-06-20, branch `task/pi-mcp-extension-research`, main `e229b58`)
@@ -291,9 +293,14 @@ MCP server:
   tool-exposure toggle (direct → tools appear as `mcp_<server>_<tool>`). **[confirmed: README]**
 - An official MCP-extension example is tracked in the Pi repo (`earendil-works/pi#563`). **[confirmed]**
 
-Our mesh MCP is **Streamable HTTP** (`WebStandardStreamableHTTPServerTransport`, served at
-`http://host:port/mcp`; `src/mcp/mesh-control.ts:6,151,163`). That is exactly the transport
-`pi-mcp-adapter` supports. **[confirmed]**
+The MCP a **member** Pi agent must consume is the per-agent **mesh-services** mailbox/board MCP —
+`src/mcp/mesh-services.ts` (the `this.mcp` injected at `control-plane.ts:1203`): **Streamable HTTP**
+(`WebStandardStreamableHTTPServerTransport`), per-agent URL `**/{agentId}/mcp**`, tools
+`send_mail`/`check_mail`/`board_*` (`mesh-services.ts:7,415,54`). It is **stateless, fresh-transport
+per request** by design (`mesh-services.ts:405` "must be stateless: a single stateful transport rejects
+every initialize after the [first]"). That is exactly the transport `pi-mcp-adapter` supports.
+(`src/mcp/mesh-control.ts` is a *separate*, single control MCP for the Mesh **Assistant** lifecycle —
+not the member mailbox.) **[confirmed]**
 
 ### 10.2 Hands-on validation (done — evidence below)
 
@@ -304,8 +311,9 @@ Setup (fully isolated in a temp `HOME`, real `~/.pi` untouched, all artifacts de
 1. Installed Pi: `npm i -g --prefix <tmp> @earendil-works/pi-coding-agent` → **`pi 0.79.8`** runs. **[confirmed]**
 2. Installed the MCP extension: `pi install npm:pi-mcp-adapter` → **`pi-mcp-adapter 2.10.0`** (`pi list`
    shows it). **[confirmed]**
-3. Stood up a **minimal Streamable-HTTP MCP server** (same SDK + transport class as `mesh-control.ts`,
-   fresh transport per request) exposing one tool `mesh_ping` → returns the marker `PONG-MESH-7f3a9`.
+3. Stood up a **minimal Streamable-HTTP MCP server** (same SDK + transport class as the real
+   `mesh-services.ts` — and, like it, **fresh transport per request**) exposing one tool `mesh_ping`
+   → returns the marker `PONG-MESH-7f3a9`.
    `POST /mcp initialize` → **HTTP 200**. **[confirmed]**
 4. Configured `~/.config/mcp/mcp.json` = `{ "mcpServers": { "mesh": { "url": "http://127.0.0.1:<port>/mcp" } } }`.
 5. Pi noticed it had a `DEEPSEEK_API_KEY` and Pi lists DeepSeek models, so I ran a **real headless turn**
@@ -356,7 +364,8 @@ integration wiring + maintenance, which a focused spike resolves.
 
 **First implementation gate (must pass before any productionization):** a real **Pi *member* in a live
 mesh** can `send_mail` and `check_mail` through its mesh MCP — i.e. reproduce §10.2 but with (i) the real
-`mesh-control`/mailbox MCP URL, (ii) driven through `pi-acp` over ACP (not bare print mode), in a
+**`mesh-services` mailbox MCP URL** (`/{agentId}/mcp`), (ii) driven through `pi-acp` over ACP (not bare
+print mode), in a
 throwaway 2-agent mesh (Pi member ↔ one existing-harness agent). If that round-trips, the rest is the
 mechanical ~28-file harness add.
 
@@ -384,7 +393,7 @@ MVP, breaking-change-prone) **and** `pi-mcp-adapter` (mature but third-party). T
 - **[confirmed]** Mature MCP-consuming extension exists (`pi-mcp-adapter` v2.10.0) supporting our transport
   and project-local `.pi/mcp.json`; our mesh MCP is streamable-HTTP.
 - **[not verified]** `pi-acp` + `pi-mcp-adapter` coexisting in one process; the full ACP-driven path; the
-  real `mesh-control` MCP (vs my toy server); approvals via ACP; model/effort/window advertise through
+  real `mesh-services` mailbox MCP (vs my toy server); approvals via ACP; model/effort/window advertise through
   `pi-acp`. These are the spike's job (gate = §10.4).
 - **[inference]** Net effort is a spike (steps 1–2) then the mechanical harness add; the dependency risk
   shifts from "MCP" (solved) to "owning the `pi-acp` ACP bridge".
@@ -422,7 +431,10 @@ Round-2 hands-on validation (ran locally, isolated temp HOME, artifacts deleted)
   `PONG-MESH-7f3a9` (exit 0). Confirms Pi calls a streamable-HTTP MCP tool headlessly.
 
 Round-2 internal:
-- `src/mcp/mesh-control.ts:6,151,163,169` (mesh MCP = `WebStandardStreamableHTTPServerTransport`, HTTP `/mcp`, `urlFor`)
+- `src/mcp/mesh-services.ts:7,405,415,54` (member mailbox/board MCP = stateless per-request
+  `WebStandardStreamableHTTPServerTransport`, per-agent `/{agentId}/mcp`, `send_mail`/`check_mail`/`board_*`, `urlFor`)
+- `src/control-plane.ts:207,1061,1203` (`this.mcp` = `MeshServicesServer`; injected URL `this.mcp.urlFor(a.id)`)
+- `src/mcp/mesh-control.ts` (separate Mesh **Assistant** control MCP — not the member mailbox)
 
 Internal (code paths read):
 - `src/harness.ts` (registry + `spawnConfigFor`)
