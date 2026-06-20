@@ -3,7 +3,7 @@
 Pipeline `ui-design-pipeline` SKILL **Step 2 only** (parts/components inventory + backward consistency). Branch `task/ui-redesign-pipeline`. Derived from the 12 Step 1 interaction docs in `../interaction/`.
 This is the **Step 2 gate artifact**. Fidelity stays low (what the part is + where it's reused), not pixels/tokens (tokens = Step 3). No code.
 
-Detail docs: `01-primitives.md` · `02-surfaces-and-layout.md` · `03-lists-and-data.md` · `04-conversation.md` · `05-domain.md`.
+Detail docs: `01-primitives.md` · `02-surfaces-and-layout.md` · `03-lists-and-data.md` · `04-conversation.md` · `05-domain.md` · `06-board.md` (GitHub-Issues depth).
 
 ## Backward-consistency findings (this is the point of Step 2)
 While inventorying, these cross-page one-offs in Step 1 were unified into shared components; **Step 1 docs were back-edited first** to reference the unified part (see each component's "Step-1 fix" + the Step 1 docs' change logs):
@@ -64,10 +64,14 @@ None blocking. One product-boundary note carried from Step 1 (device approve in 
 - 2026-06-20 — created (Step 2): inventory + 5 detail docs; 8 backward-consistency unifications applied to Step 1 docs (logged in each).
 
 ## Step 2 addendum — Board deepening (2026-06-20, prdmgr/user)
-Board raised to **GitHub Issues + Milestones** maturity (see `../interaction/03-board-view.md`, deepened). Board-specific parts are inventoried in **`06-board.md`** (added to the detail-doc set): IssueListRow (StatusListRow variant), FilterQueryBar (extends FilterBar), SortControl, LabelChip, AssigneeAvatar (new shared Avatar primitive), MilestonePill / MilestoneProgressRow / MilestoneCard, IssueDetailHeader/Body, ActivityTimeline (shares TranscriptItem patterns), BulkActionToolbar, KanbanColumn/Card (desktop; consolidates the abstract `05` Kanban for the board), KeyboardFocus affordances.
-- **Backward consistency held**: board reuses StatusChip / PanelFrame / SegmentedControl(List·Board·Milestones) / FilterBar / EmptyState·ErrorBanner·Skeleton / ApprovalCard(soft close gate) / Composer(comment box) / RouteLink; the Step 1 board doc was back-edited first (deepened + components-used + change log).
-- **New shared primitives surfaced by board**: `AssigneeAvatar` (small Avatar) and `LabelChip` (label-colored pill, distinct from semantic StatusChip) — usable beyond board later; recorded here as shared.
-- **New data entity flagged** (not a component decision): `BoardMilestone {id,title,due?,description?}` + `Task.milestoneId?` — additive/migration-safe, deferred to Step 3+/impl; raised as the one real new product surface (issue-panel.md had excluded milestones).
+Board raised to **GitHub-Issues** maturity (see `../interaction/03-board-view.md`, deepened). Board-specific parts are inventoried in **`06-board.md`** (added to the detail-doc set): IssueListRow (StatusListRow variant), EpicGroupHeader (grouping/aggregation primitive), FilterQueryBar (extends FilterBar), SortControl, LabelChip, AssigneeAvatar (new shared Avatar primitive), IssueDetailHeader/Body, ActivityTimeline (shares TranscriptItem patterns), BulkActionToolbar, KanbanColumn/Card (desktop; consolidates the abstract `05` Kanban for the board), KeyboardFocus affordances.
+- **Backward consistency held**: board reuses StatusChip / PanelFrame / SegmentedControl(List·Board) / FilterBar / EmptyState·ErrorBanner·Skeleton / ApprovalCard(soft close gate) / Composer(comment box) / RouteLink; the Step 1 board doc was back-edited first (deepened + components-used + change log).
+- **New shared primitives surfaced by board**: `AssigneeAvatar` (small Avatar) and `LabelChip` (label-colored pill, distinct from semantic StatusChip) — usable beyond board later; recorded here as shared. Both are backed by the **existing** assignee/label data.
+- **No new data entity**: all board parts map to the existing `board.ts` / `issue-panel.md` model (Epic → Task → Subtask, labels, assignees, lifecycle, comments, priority, deps).
+
+## Step 2 correction — milestones removed (2026-06-20, prdmgr/user)
+GitHub *Milestones* was a **maturity benchmark, not a feature request**. Corrected: removed `BoardMilestone {id,title,due?,description?}` / `Task.milestoneId?`, the milestone components (MilestonePill / MilestoneProgressRow / MilestoneCard), the Milestones sub-view + `/board/milestone/<id>` route, and all milestone grouping/aggregation/progress/due/overdue flows. **Epic** is now the grouping/aggregation primitive (`EpicGroupHeader`). SegmentedControl reduced to `List/Board`; FilterQueryBar/SortControl/IssueDetail facets dropped `milestone`. GH-Issues maturity preserved over the existing data model. Preserved mature parts: IssueListRow, FilterQueryBar, SortControl, LabelChip, AssigneeAvatar, IssueDetailHeader/Body, ActivityTimeline, BulkActionToolbar, KanbanColumn/Card, keyboard affordances.
 
 ## Change / review log — Board addendum
-- 2026-06-20 — Step 2 board deepening: added `06-board.md`; Step 1 `03-board-view.md` deepened first (GH Issues + Milestones); inventory + matrix extended.
+- 2026-06-20 — Step 2 board deepening: added `06-board.md`; Step 1 `03-board-view.md` deepened first; inventory + matrix extended.
+- 2026-06-20 — Step 2 correction: milestones removed (benchmark, not feature); EpicGroupHeader added as the grouping/aggregation part; back-applied to `03-board-view.md` + `06-board.md`.
