@@ -288,6 +288,36 @@ try {
     if (await page.getByText("File not found").count() === 0) throw new Error("404 state not rendered");
   });
 
+  await step("7.4-A.2b-ii device-auth gate: unauth /bnw shows mockup-12 gate (code/bootstrap/remembered/?next)", async () => {
+    // A fresh context with NO device token → bootAuthorized() probe (GET /api/state) 401s → the
+    // /bnw BnwBoot replaces the console with the device-auth gate (real device/start issues a code).
+    const anon = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    try {
+      const ap = await anon.newPage();
+      await ap.goto(`${BASE}/bnw/channels`, { waitUntil: "domcontentloaded" });
+      await ap.waitForSelector('[data-device-auth="gate"]', { timeout: 8000 });
+      await ap.waitForSelector('[data-device-code]', { timeout: 8000 });   // real device/start code
+      await ap.waitForSelector('[data-bootstrap]', { timeout: 8000 });     // body-only bootstrap form
+      await ap.waitForSelector('[data-remembered]', { timeout: 8000 });
+      if (await ap.getByText("mesh device approve").count() === 0) throw new Error("host-CLI approve instruction missing");
+      if (await ap.getByText("/bnw/channels").count() === 0) throw new Error("remembered deep-link not preserved");
+      await sleep(120); await ap.screenshot({ path: `${SHOTS}/bnw-device-auth-desktop.png`, fullPage: true });
+      // ?next is honored (open-redirect-guarded to /bnw)
+      await ap.goto(`${BASE}/bnw/device-auth?next=/bnw/mesh/demo`, { waitUntil: "domcontentloaded" });
+      await ap.waitForSelector('[data-remembered]', { timeout: 8000 });
+      if (await ap.getByText("/bnw/mesh/demo").count() === 0) throw new Error("?next not remembered");
+      // open-redirect guard: a non-/bnw ?next must NOT be honored (falls back to the current path)
+      await ap.goto(`${BASE}/bnw/device-auth?next=https://evil.example/x`, { waitUntil: "domcontentloaded" });
+      await ap.waitForSelector('[data-remembered]', { timeout: 8000 });
+      if (await ap.getByText("evil.example").count() !== 0) throw new Error("open-redirect: non-/bnw ?next must be rejected");
+      // mobile shot
+      await ap.setViewportSize({ width: 390, height: 844 });
+      await ap.goto(`${BASE}/bnw/`, { waitUntil: "domcontentloaded" });
+      await ap.waitForSelector('[data-device-code]', { timeout: 8000 });
+      await sleep(120); await ap.screenshot({ path: `${SHOTS}/bnw-device-auth-mobile.png`, fullPage: true });
+    } finally { await anon.close(); }
+  });
+
   await step("7.1-C canvas: real edges + recent highlight + toolbar; add-edge/add-agent reach gateway", async () => {
     await page.goto(`${BASE}/bnw/mesh/demo/canvas`, { waitUntil: "domcontentloaded" });
     await page.waitForSelector('[data-bnw-canvas]', { timeout: 8000 });

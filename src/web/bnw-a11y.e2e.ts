@@ -131,6 +131,12 @@ try {
   await page.route("**/api/agents/router/files/report.md", (r) => r.fulfill({ status: 200, contentType: "text/markdown", body: "# Gate summary\n\nThe device-auth gate is ready for review.\n" }));
   await page.goto(`${BASE}/bnw/`, { waitUntil: "domcontentloaded" }); // establish origin for localStorage
 
+  // A separate UNAUTHENTICATED page (no device token) so the /bnw device-auth gate (mockup 12)
+  // renders for the contrast crawl — the gate replaces the console until a device is approved.
+  const anonCtx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const anonPage = await anonCtx.newPage();
+  await anonPage.goto(`${BASE}/bnw/`, { waitUntil: "domcontentloaded" });
+
   for (const mode of MODES) {
     for (const accent of ACCENTS) {
       const combo = `${mode} × ${accent}`;
@@ -185,6 +191,11 @@ try {
         await page.goto(`${BASE}/bnw/mesh/demo/agent/router/file/report.md`, { waitUntil: "domcontentloaded" });
         await page.waitForSelector('[data-artifact-kind="markdown"]', { timeout: 8000 });
         await sleep(60); await crawl(page, `${combo} · file-viewer`);
+        // 7.4-A.2b-ii — device-auth gate (unauthenticated page; mockup 12)
+        await anonPage.evaluate(([m, a]) => { localStorage.setItem("mesh.theme.mode", m); localStorage.setItem("mesh.theme.accent", a); localStorage.removeItem("mesh.theme"); }, [mode, accent]);
+        await anonPage.goto(`${BASE}/bnw/`, { waitUntil: "domcontentloaded" });
+        await anonPage.waitForSelector('[data-device-code]', { timeout: 8000 });
+        await sleep(60); await crawl(anonPage, `${combo} · device-auth`);
         pass++; console.log(`  ✓ ${combo}`);
       } catch (e: any) {
         fails.push(combo); console.log(`  ✗ ${combo} — ${String(e?.message ?? e).split("\n")[0]}`);
