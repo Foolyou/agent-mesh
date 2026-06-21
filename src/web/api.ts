@@ -79,11 +79,22 @@ export async function handleApi(
       if (method === "POST" && p[2] === "start") {
         // Coarse, non-PII origin class for `mesh device list` (loopback/remote). It is advisory only —
         // loopback is no longer a trust signal, so this never affects authorization.
-        return ok(await deviceStart(ctx.root, {
+        const started = await deviceStart(ctx.root, {
           existingToken: bearerToken(headers),
           userAgentClass: coarseUserAgentClass(headers),
           remoteHint: classifyRemoteAddress(ctx.remoteAddress),
-        }));
+        });
+        // Producer (7.4-C): a new device is requesting approval — informational only; approval stays
+        // host-CLI authoritative (no web approve seam). Dedup per deviceId so polling never re-nags.
+        // Best-effort: a notification failure must NEVER break device enrollment.
+        try {
+          await gw.emitNotification?.({
+            type: "device-auth", severity: "info", title: "新设备申请授权",
+            body: `设备 ${started.deviceId} 待批准（宿主端：mesh device approve）`,
+            source: { surface: "settings", tab: "devices" }, dedupKey: `device-auth:${started.deviceId}`,
+          });
+        } catch { /* notifications are best-effort */ }
+        return ok(started);
       }
       if (method === "GET" && p[2] === "status") {
         return ok({ status: await deviceStatus(ctx.root, bearerToken(headers)) });
@@ -105,9 +116,20 @@ export async function handleApi(
       if (!csrf.ok) return { status: 403, body: { error: { message: "forbidden" } } };
     }
     if (method === "GET" && p.length === 1 && p[0] === "state") return ok(gw.snapshot());
-    if (method === "GET" && p.length === 1 && p[0] === "harnesses") return ok(await harnessProbe({
-      runningAgentsUsingOldVersion: (id, latest) => gw.runningAgentsUsingOldVersion(id, latest),
-    }));
+    if (method === "GET" && p.length === 1 && p[0] === "harnesses") {
+      const rows = await harnessProbe({ runningAgentsUsingOldVersion: (id, latest) => gw.runningAgentsUsingOldVersion(id, latest) });
+      // Producer (7.4-C): surface an outdated-harness upgrade notice. dedupKey encodes the latest
+      // version, so re-detecting the same version is idempotent (never re-nags an already-read row).
+      // Best-effort: a notification failure must never break the harness probe response.
+      await Promise.all((rows as any[])
+        .filter((r) => r.outdated && r.latest && r.version)
+        .map((r) => gw.emitNotification?.({
+          type: "harness-upgrade", severity: "warning", title: `${r.id} 有更新 v${r.version} → v${r.latest}`,
+          body: "在 Harnesses 面板更新并重启旧版本 agent", source: { surface: "harnesses" },
+          dedupKey: `harness-upgrade:${r.id}:${r.latest}`,
+        }))).catch(() => {});
+      return ok(rows);
+    }
     if (method === "POST" && p.length === 3 && p[0] === "harnesses" && p[2] === "install") {
       const harness = str(p[1]) as AgentConfig["harness"];
       if (!Object.hasOwn(HARNESSES, harness)) return fail(400, `unknown harness: ${harness}`);
@@ -180,6 +202,32 @@ export async function handleApi(
       const { reaped } = await reapLeaks(diagnosticsRunDir(ctx.root), names);
       const ps = await collectPsDetail(diagnosticsRunDir(ctx.root), webPsSources(ctx.root, safeSnapshot(gw)));
       return ok({ reaped, ps });
+    }
+
+    // Notification center (Step 7.4-C). GATED (sits below the device-auth block) + CSRF on POST.
+    // Structured source only, no web approve/revoke seam; read state is global.
+    if (p[0] === "notifications") {
+      if (method === "GET" && p.length === 1) {
+        const limit = Number(query.get("limit"));
+        return ok(gw.listNotifications({
+          unread: query.get("unread") === "1",
+          limit: Number.isFinite(limit) && limit > 0 ? limit : undefined,
+          cursor: query.get("cursor") ?? undefined,
+        }));
+      }
+      const mut = () => sameOriginCheck(ctx.headers, ctx.expectedOrigin);
+      if (method === "POST" && p.length === 2 && p[1] === "read-all") {
+        if (!mut().ok) return { status: 403, body: { error: { message: "forbidden" } } };
+        return ok(await gw.markAllNotificationsRead());
+      }
+      if (method === "POST" && p.length === 2 && p[1] === "cleanup") {
+        if (!mut().ok) return { status: 403, body: { error: { message: "forbidden" } } };
+        return ok(await gw.cleanupNotifications());
+      }
+      if (method === "POST" && p.length === 3 && p[2] === "read") {
+        if (!mut().ok) return { status: 403, body: { error: { message: "forbidden" } } };
+        return ok(await gw.markNotificationRead(str(p[1])));
+      }
     }
 
     if (p[0] === "channels" && p[1] === "feishu") {

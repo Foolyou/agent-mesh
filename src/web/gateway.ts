@@ -13,6 +13,10 @@ import { readUpload, storeUploads, uploadPath, type UploadFileLike } from "./upl
 import { AgentFileError, resolveAgentFile } from "./agent-files";
 import { resolveArtifactFile } from "./artifacts";
 import { defaultAppVersion } from "./version";
+import {
+  emptyNotifications, notificationsView, pageList, mutateEmit, mutateMarkRead, mutateMarkAll, mutateCleanup,
+  readNotificationsSync, updateNotifications, type NotificationsFile, type NotificationDraft, type NotificationsPage,
+} from "../notifications";
 import type {
   GatewayState,
   ServerMsg,
@@ -139,6 +143,9 @@ export class WebGateway {
   private uidc = 0;
   private unsubMgr?: () => void;
   private unsubAssistant?: () => void;
+  // Step 7.4-C — notification center: in-memory cache (the gateway is the single writer);
+  // <root>/notifications.json is the persistence. Loaded async at construction.
+  private notif: NotificationsFile = emptyNotifications();
 
   constructor(
     private manager: ManagerLike,
@@ -154,6 +161,53 @@ export class WebGateway {
     this.refreshMeshes();
     this.unsubMgr = manager.on((name, e) => this.ingest(name, e));
     if (assistant) this.unsubAssistant = assistant.on((u) => this.ingestAssistant(u));
+    // Deterministic: load persisted notifications synchronously so the FIRST snapshot/list/
+    // subscription after a restart already reflects them (no empty-then-fills race).
+    if (this.opts.root) this.notif = readNotificationsSync(this.opts.root);
+  }
+
+  // ── Notification center (Step 7.4-C) ─────────────────────────────────────────
+  /** Producer entry point: emit (or idempotently refresh) a notification. Persists under lock
+   *  when a root is configured, updates the cache, then broadcasts a protocol-clean delta:
+   *  `notification.add` for a newly allocated record, `notification.update` for a same-key
+   *  content refresh (readAt preserved), and nothing for an identical re-emit. */
+  async emitNotification(draft: NotificationDraft, at: number = Date.now()): Promise<void> {
+    let changed = false, created = false, recordId = "";
+    const apply = (f: NotificationsFile) => { const r = mutateEmit(f, draft, at); changed = r.changed; created = r.created; recordId = r.record.id; };
+    this.notif = this.opts.root ? await updateNotifications(this.opts.root, apply, at) : (apply(this.notif), mutateCleanup(this.notif, at), this.notif);
+    if (!changed) return;
+    const v = notificationsView(this.notif);
+    const item = this.notif.notifications.find((n) => n.id === recordId);
+    if (!item) return;
+    if (created) this.broadcast({ t: "notification.add", item, unreadCount: v.unreadCount, revision: v.revision });
+    else this.broadcast({ t: "notification.update", id: item.id, patch: { title: item.title, body: item.body, severity: item.severity, source: item.source }, unreadCount: v.unreadCount, revision: v.revision });
+  }
+  listNotifications(opts: { unread?: boolean; limit?: number; cursor?: string } = {}): NotificationsPage {
+    return pageList(this.notif, opts);
+  }
+  async markNotificationRead(id: string, at: number = Date.now()): Promise<NotificationsPage> {
+    let changed = false;
+    const apply = (f: NotificationsFile) => { changed = mutateMarkRead(f, id, at); };
+    this.notif = this.opts.root ? await updateNotifications(this.opts.root, apply, at) : (apply(this.notif), this.notif);
+    const v = notificationsView(this.notif);
+    if (changed) this.broadcast({ t: "notification.update", id, patch: { readAt: this.notif.notifications.find((n) => n.id === id)?.readAt }, unreadCount: v.unreadCount, revision: v.revision });
+    return pageList(this.notif);
+  }
+  async markAllNotificationsRead(at: number = Date.now()): Promise<NotificationsPage> {
+    let n = 0;
+    const apply = (f: NotificationsFile) => { n = mutateMarkAll(f, at); };
+    this.notif = this.opts.root ? await updateNotifications(this.opts.root, apply, at) : (apply(this.notif), this.notif);
+    const v = notificationsView(this.notif);
+    if (n) this.broadcast({ t: "notification.unread", unreadCount: v.unreadCount, revision: v.revision });
+    return pageList(this.notif);
+  }
+  async cleanupNotifications(at: number = Date.now()): Promise<{ removed: number; revision: number }> {
+    const before = this.notif.notifications.length;
+    this.notif = this.opts.root ? await updateNotifications(this.opts.root, () => {}, at) : (mutateCleanup(this.notif, at), this.notif);
+    const removed = before - this.notif.notifications.length;
+    const v = notificationsView(this.notif);
+    if (removed) this.broadcast({ t: "notification.unread", unreadCount: v.unreadCount, revision: v.revision });
+    return { removed, revision: v.revision };
   }
 
   feishuChannel(): FeishuChannelControl | undefined {
@@ -225,6 +279,7 @@ export class WebGateway {
         pm.transcripts[agent.id] = transcriptSnapshot([], existing ? existing.items.length > 0 || existing.hasMore : true);
       }
     }
+    snapshot.notifications = notificationsView(this.notif); // Step 7.4-C — snapshot-first
     return snapshot;
   }
 

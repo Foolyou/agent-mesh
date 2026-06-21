@@ -99,6 +99,13 @@ mkdirSync(RUN_DIR, { recursive: true });
 await writeRecord(RUN_DIR, { name: "dev-mesh", pid: process.pid, socketPath: join(RUN_DIR, "dev-mesh.sock"), proto: 2, startedAt: new Date(Date.now() - 3_600_000).toISOString() });
 writeFileSync(join(RUN_DIR, "dev-mesh.sock"), "");
 writeFileSync(join(RUN_DIR, "old-mesh.sock"), ""); // orphan socket → leak row
+// Seed the notification center so /bnw/notifications paints a populated list for the crawl.
+writeFileSync(join(auth.authRoot, "notifications.json"), JSON.stringify({
+  version: 1, revision: 2, seq: 2, notifications: [
+    { id: "ntf-2", type: "harness-upgrade", severity: "warning", title: "codex 有更新 v1.2.3 → v1.2.5", body: "在 Harnesses 面板更新", createdAt: new Date().toISOString(), dedupKey: "h", source: { surface: "harnesses" } },
+    { id: "ntf-1", type: "system-alert", severity: "info", title: "auto-compact 已触发", createdAt: new Date(Date.now() - 3600000).toISOString(), readAt: new Date().toISOString(), dedupKey: "s" },
+  ],
+}));
 const gw = new WebGateway(fake, undefined, { root: auth.authRoot });
 const handle = startWebServer({ gateway: gw, port: 0, dev: false });
 const BASE = handle.url;
@@ -195,6 +202,10 @@ try {
         await page.goto(`${BASE}/bnw/settings`, { waitUntil: "domcontentloaded" });
         await page.waitForSelector('[data-theme-matrix] [data-theme-cell]', { timeout: 8000 });
         await sleep(60); await crawl(page, `${combo} · settings`);
+        // 7.4-C.2 — notifications center (unread + history split + category chips)
+        await page.goto(`${BASE}/bnw/notifications`, { waitUntil: "domcontentloaded" });
+        await page.waitForSelector('[data-notif-type="harness-upgrade"]', { timeout: 8000 });
+        await sleep(60); await crawl(page, `${combo} · notifications`);
         // 7.4-A.2b-ii — device-auth gate (unauthenticated page; mockup 12)
         await anonPage.evaluate(([m, a]) => { localStorage.setItem("mesh.theme.mode", m); localStorage.setItem("mesh.theme.accent", a); localStorage.removeItem("mesh.theme"); }, [mode, accent]);
         await anonPage.goto(`${BASE}/bnw/`, { waitUntil: "domcontentloaded" });

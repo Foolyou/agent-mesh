@@ -104,6 +104,9 @@ function store(state: GatewayState): Store {
     fetchPsDetail: async () => ({ running: [], leaks: [] }),
     reapLeaks: async () => ({ reaped: [], ps: { running: [], leaks: [] } }),
     restartDaemon: async () => {},
+    markNotificationRead: async () => ({}),
+    markAllNotificationsRead: async () => ({}),
+    refreshNotifications: async () => {},
   };
 }
 

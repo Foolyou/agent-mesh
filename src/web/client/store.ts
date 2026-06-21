@@ -138,6 +138,14 @@ export function applyMsg(state: GatewayState, msg: ServerMsg): GatewayState {
     case "board":
       // Full board snapshot (no deltas): replace the folded copy wholesale.
       return withPerMesh(state, msg.name, (pm) => ({ ...pm, board: msg.board }));
+    // Notification center (7.4-C): snapshot rides `snapshot.state.notifications`; these deltas
+    // keep it live. Each carries the authoritative unreadCount + revision.
+    case "notification.add":
+      return { ...state, notifications: { items: [msg.item, ...(state.notifications?.items ?? [])], unreadCount: msg.unreadCount, revision: msg.revision } };
+    case "notification.update":
+      return { ...state, notifications: { items: (state.notifications?.items ?? []).map((n) => (n.id === msg.id ? { ...n, ...msg.patch } : n)), unreadCount: msg.unreadCount, revision: msg.revision } };
+    case "notification.unread":
+      return { ...state, notifications: { items: state.notifications?.items ?? [], unreadCount: msg.unreadCount, revision: msg.revision } };
     case "permission.add":
       return withPerMesh(state, msg.name, (pm) => ({ ...pm, pending: [...pm.pending, msg.req] }));
     case "permission.remove":
@@ -231,6 +239,12 @@ export interface Store {
   reapLeaks(names?: string[]): Promise<{ reaped: string[]; ps: PsDetail }>;
   /** Restart a single mesh-host daemon = stop then start (existing approved lifecycle APIs). */
   restartDaemon(name: string): Promise<void>;
+  // Notification center (7.4-C). Reads ride the folded snapshot/deltas (state.notifications); these
+  // are the mutations. The WS delta the server broadcasts also reaches this client and re-folds.
+  markNotificationRead(id: string): Promise<any>;
+  markAllNotificationsRead(): Promise<any>;
+  /** Re-fetch the list (newest 200) and re-fold — used for an explicit error retry. */
+  refreshNotifications(): Promise<void>;
 }
 
 export function createStore(): Store {
@@ -662,6 +676,13 @@ export function createStore(): Store {
     fetchPsDetail: () => guard(send("GET", "/api/diagnostics/ps"), "process detail"),
     reapLeaks: (names) => guard(post("/api/diagnostics/reap", names && names.length ? { names } : {}), names && names.length === 1 ? `reap ${names[0]}` : "reap orphans"),
     restartDaemon: async (n) => { await guard(post(`/api/meshes/${enc(n)}/stop`), `restart ${n}`); await guard(post(`/api/meshes/${enc(n)}/start`), `restart ${n}`); },
+    // The server re-broadcasts the resulting notification.* delta to this client too → state re-folds.
+    markNotificationRead: (id) => guard(post(`/api/notifications/${enc(id)}/read`), "mark notification read"),
+    markAllNotificationsRead: () => guard(post("/api/notifications/read-all"), "mark all read"),
+    refreshNotifications: () => guard((async () => {
+      const v = await send("GET", "/api/notifications?limit=200");
+      set({ ...state, notifications: { items: v.items, unreadCount: v.unreadCount, revision: v.revision } });
+    })(), "load notifications"),
   };
 }
 

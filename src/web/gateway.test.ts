@@ -1,6 +1,10 @@
 import { test, expect } from "bun:test";
 import { MAX_SNAPSHOT_TRANSCRIPT_ITEMS, WebGateway } from "./gateway";
 import { uploadPath } from "./uploads";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { updateNotifications, mutateEmit } from "../notifications";
 import type { MeshEvent, MeshConfig } from "../acp/types";
 
 const CFG: MeshConfig = {
@@ -967,4 +971,79 @@ test("distinct publishes (distinct ts) yield distinct attachment cards", () => {
   m.emit("demo", { kind: "attachment_published", agent: "codex-1", path: "report.md", contentType: "text/markdown", ts: "T2" });
   const items = transcriptItems(gw, "codex-1");
   expect(items.filter((it: any) => it.kind === "attachment")).toHaveLength(2);
+});
+
+// ── Step 7.4-C — notification center (in-memory; no root) ─────────────────────────
+test("emitNotification broadcasts notification.add + folds into the snapshot", async () => {
+  const m = fakeManager();
+  const gw = new WebGateway(m as any);
+  const seen: any[] = [];
+  const unsub = gw.subscribe((msg) => seen.push(msg));
+  await gw.emitNotification({ type: "system-alert", severity: "warning", title: "auto-compact", dedupKey: "system:compact:demo" });
+  const add = seen.find((x) => x.t === "notification.add");
+  expect(add).toBeTruthy();
+  expect(add.item.title).toBe("auto-compact");
+  expect(add.unreadCount).toBe(1);
+  expect(gw.snapshot().notifications?.items[0].title).toBe("auto-compact");
+  expect(gw.snapshot().notifications?.unreadCount).toBe(1);
+  unsub();
+});
+
+test("emitNotification dedup: same key idempotent → no second add, no re-nag", async () => {
+  const m = fakeManager();
+  const gw = new WebGateway(m as any);
+  await gw.emitNotification({ type: "harness-upgrade", title: "codex v1.2.5", dedupKey: "harness-upgrade:codex:1.2.5" });
+  await gw.markAllNotificationsRead();
+  const seen: any[] = [];
+  const unsub = gw.subscribe((msg) => seen.push(msg));
+  await gw.emitNotification({ type: "harness-upgrade", title: "codex v1.2.5", dedupKey: "harness-upgrade:codex:1.2.5" });
+  expect(seen.some((x) => x.t === "notification.add")).toBe(false); // idempotent — no duplicate, no re-surface
+  expect(gw.snapshot().notifications?.unreadCount).toBe(0);
+  unsub();
+});
+
+test("markNotificationRead broadcasts notification.update; markAll → unread 0", async () => {
+  const m = fakeManager();
+  const gw = new WebGateway(m as any);
+  await gw.emitNotification({ type: "device-auth", title: "new device", dedupKey: "device-auth:dev-x" });
+  const id = gw.listNotifications().items[0].id;
+  const seen: any[] = [];
+  const unsub = gw.subscribe((msg) => seen.push(msg));
+  await gw.markNotificationRead(id);
+  const upd = seen.find((x) => x.t === "notification.update");
+  expect(upd?.id).toBe(id);
+  expect(upd?.patch.readAt).toBeTruthy();
+  expect(upd?.unreadCount).toBe(0);
+  unsub();
+});
+
+test("emitNotification same-key content change → notification.update (not add), readAt preserved", async () => {
+  const m = fakeManager();
+  const gw = new WebGateway(m as any);
+  await gw.emitNotification({ type: "harness-upgrade", title: "old", dedupKey: "k1" });
+  const id = gw.listNotifications().items[0].id;
+  await gw.markNotificationRead(id);
+  const seen: any[] = [];
+  const unsub = gw.subscribe((msg) => seen.push(msg));
+  await gw.emitNotification({ type: "harness-upgrade", title: "new content", dedupKey: "k1" });
+  expect(seen.some((x) => x.t === "notification.add")).toBe(false); // existing record → not an add
+  const upd = seen.find((x) => x.t === "notification.update");
+  expect(upd?.id).toBe(id);
+  expect(upd?.patch.title).toBe("new content");
+  expect(gw.listNotifications().items.length).toBe(1);              // no duplicate
+  expect(gw.snapshot().notifications?.unreadCount).toBe(0);          // readAt preserved (not re-nagged)
+  unsub();
+});
+
+test("deterministic load: persisted notifications appear in the FIRST snapshot/list (no await)", async () => {
+  const root = await mkdtemp(join(tmpdir(), "gw-notif-"));
+  try {
+    await updateNotifications(root, (f) => { mutateEmit(f, { type: "system-alert", title: "persisted", dedupKey: "k1" }, Date.now()); });
+    const gw = new WebGateway(fakeManager() as any, undefined, { root }); // sync-loads in constructor
+    expect(gw.listNotifications().items[0]?.title).toBe("persisted");
+    expect(gw.snapshot().notifications?.items[0]?.title).toBe("persisted");
+    expect(gw.snapshot().notifications?.unreadCount).toBe(1);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });

@@ -12,6 +12,9 @@ export type { FeishuChannelStatus, FeishuMeshChatEnsureResult, FeishuProvisionJo
 // shared model without pulling diagnostics' node:fs runtime into the browser build.
 import type { AgentDetail, DoctorCheck, DoctorReport, MeshProcDetail, ProcLeak, PsDetail, Severity } from "../diagnostics";
 export type { AgentDetail, DoctorCheck, DoctorReport, MeshProcDetail, ProcLeak, PsDetail, Severity };
+// Notifications center (Step 7.4-C). Type-only re-export — keeps node:fs out of the client bundle.
+import type { NotificationRecord, NotificationSource, NotificationType, NotificationSeverity, NotificationsView } from "../notifications";
+export type { NotificationRecord, NotificationSource, NotificationType, NotificationSeverity, NotificationsView };
 export type { SessionMode };
 export type { SessionModel };
 export type { PromptImageRef };
@@ -256,6 +259,8 @@ export interface GatewayState {
   meshes: MeshSummary[];
   assistant: { status: AssistantStatus; working?: boolean; transcript: TranscriptItem[]; capabilities?: AgentCapabilities & { harness?: HarnessId } };
   perMesh: Record<string, PerMeshState>;
+  /** Notification center snapshot (Step 7.4-C) — folded so the first WS frame carries it. */
+  notifications?: NotificationsView;
 }
 
 export type ServerMsg =
@@ -281,6 +286,9 @@ export type ServerMsg =
   | { t: "permission.add"; name: string; req: PermissionReq }
   | { t: "permission.remove"; name: string; resolved: ResolvedPermission }
   | { t: "assistant.status"; status: AssistantStatus; working?: boolean }
-  | { t: "harnesses-changed"; harnessId: HarnessId };
+  | { t: "harnesses-changed"; harnessId: HarnessId }
+  | { t: "notification.add"; item: NotificationRecord; unreadCount: number; revision: number }
+  | { t: "notification.update"; id: string; patch: Partial<NotificationRecord>; unreadCount: number; revision: number }
+  | { t: "notification.unread"; unreadCount: number; revision: number };
 
 export type { MeshConfig, MeshEdge, AgentId, AgentStatus, AgentActivity, AgentRole, HarnessId };
