@@ -28,10 +28,12 @@
 //   - Doctor / system (08-doctor-system.md): doctor findings (host-key/port/deps/config/
 //     service) + ps daemon table + leak recovery (reap orphan / restart daemon) + copy
 //     diagnostics + app/build version.
+//   - Settings (09-settings.md): appearance (mode×accent 3×3 + custom palette) + language +
+//     default-view/default-device prefs + device authorization (approve/revoke/bootstrap).
 //   - navigation index (?index=1): a directory of every surface + state/device deep links.
 //
 // Query deep links for deterministic screenshots: ?device=desktop|mobile,
-// ?surface=shell|runtime|board|new-mesh|assistant|harnesses|channels|doctor, ?runtime=overview|focus|full|canvas,
+// ?surface=shell|runtime|board|new-mesh|assistant|harnesses|channels|doctor|settings, ?runtime=overview|focus|full|canvas,
 // ?board=list|detail|kanban, ?state=<shell-state>, ?index=1, ?view=runtime|board,
 // ?mesh=<id>, ?mode=<mode>, ?accent=<accent>. No raw-* utilities (passes
 // `bun run lint:tokens`); all classes literal so Tailwind emits them.
@@ -53,7 +55,7 @@ const ACCENT_SET = new Set<Accent>(ACCENTS);
 
 type Device = "desktop" | "mobile";
 type View = "runtime" | "board";
-type Surface = "shell" | "runtime" | "board" | "new-mesh" | "assistant" | "harnesses" | "channels" | "doctor";
+type Surface = "shell" | "runtime" | "board" | "new-mesh" | "assistant" | "harnesses" | "channels" | "doctor" | "settings";
 // overview/focus = the two in-shell runtime states; full/canvas = desktop-only standalone
 // frames (session fullscreen / zoomable topology canvas) reached from the focus / overview.
 type RuntimeState = "overview" | "focus" | "full" | "canvas";
@@ -237,7 +239,7 @@ function readSel(): Sel {
   const a = p.get("accent");
   const mesh = p.get("mesh");
   const sfc = p.get("surface");
-  const surface: Surface = sfc === "runtime" ? "runtime" : sfc === "board" ? "board" : sfc === "new-mesh" ? "new-mesh" : sfc === "assistant" ? "assistant" : sfc === "harnesses" ? "harnesses" : sfc === "channels" ? "channels" : sfc === "doctor" ? "doctor" : "shell";
+  const surface: Surface = sfc === "runtime" ? "runtime" : sfc === "board" ? "board" : sfc === "new-mesh" ? "new-mesh" : sfc === "assistant" ? "assistant" : sfc === "harnesses" ? "harnesses" : sfc === "channels" ? "channels" : sfc === "doctor" ? "doctor" : sfc === "settings" ? "settings" : "shell";
   const bs = p.get("board");
   const rt = p.get("runtime") as RuntimeState | null;
   const st = p.get("state") as ShellState | null;
@@ -1785,6 +1787,160 @@ function DoctorFrame({ state, device }: { state: ShellState; device: Device }) {
   );
 }
 
+// ── Settings (09) — appearance(mode×accent + palette) / language / prefs / devices ──
+// Mirrors themes.ts (MODES×ACCENTS compose + custom palette), i18n.ts (Lang en/zh), and
+// device-auth (DeviceAuthPhase pending/approved/revoked; submitBootstrap; host-CLI
+// authoritative approve, WebUI review/revoke). default-view/default-device are [N] prefs.
+const PALETTE_TOKENS: { key: string; hex: string }[] = [
+  { key: "bg", hex: "#0f172a" }, { key: "fg", hex: "#e2e8f0" }, { key: "accent", hex: "#2dd4bf" },
+  { key: "ok", hex: "#4ec97a" }, { key: "warn", hex: "#e2b341" }, { key: "bad", hex: "#f0584b" },
+];
+type DevPhase = "this" | "approved" | "pending" | "revoked";
+const DEV_TONE: Record<DevPhase, Status> = { this: "ready", approved: "ready", pending: "attention", revoked: "blocked" };
+interface DeviceRow { id: string; label: string; phase: DevPhase; lastSeen: string }
+const DEVICES: DeviceRow[] = [
+  { id: "dev-this", label: "this device · Chrome / WSL", phase: "this", lastSeen: "now" },
+  { id: "dev-2", label: "MacBook · Safari", phase: "approved", lastSeen: "2h" },
+  { id: "dev-3", label: "iPhone · Feishu webview", phase: "pending", lastSeen: "3m" },
+  { id: "dev-4", label: "old laptop", phase: "revoked", lastSeen: "5d" },
+];
+const DEVICES_MANY: DeviceRow[] = [
+  ...DEVICES,
+  { id: "dev-5", label: "iPad · Safari", phase: "approved", lastSeen: "1d" },
+  { id: "dev-6", label: "work desktop", phase: "approved", lastSeen: "4h" },
+  { id: "dev-7", label: "android · Feishu", phase: "pending", lastSeen: "9m" },
+  { id: "dev-8", label: "kiosk", phase: "revoked", lastSeen: "12d" },
+];
+
+function SettingsGroup({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section className="flex flex-col gap-2 rounded-lg border border-border bg-surface-raised p-3">
+      <span className="text-xs uppercase tracking-wider text-text-muted">{title}</span>
+      {children}
+    </section>
+  );
+}
+
+function AppearanceGroup({ state, mode, accent, onMode, onAccent }: { state: ShellState; mode: Mode; accent: Accent; onMode: (m: Mode) => void; onAccent: (a: Accent) => void }) {
+  const errHex = state === "error"; // invalid-hex tolerated (no throw)
+  return (
+    <SettingsGroup title="外观 · 主题">
+      <div className="flex flex-col gap-1">
+        <span className="text-xs text-text-muted">背景模式</span>
+        <SegmentedControl ariaLabel="theme mode" value={mode} onChange={(m) => onMode(m as Mode)} options={MODES.map((m) => ({ value: m, label: MODE_LABEL[m] }))} size="sm" />
+      </div>
+      <div className="flex flex-col gap-1">
+        <span className="text-xs text-text-muted">强调色 Accent</span>
+        <SegmentedControl ariaLabel="accent" value={accent} onChange={(a) => onAccent(a as Accent)} options={ACCENTS.map((a) => ({ value: a, label: ACCENT_LABEL[a] }))} size="sm" />
+      </div>
+      {state === "boundary" ? (
+        <div data-theme-matrix className="flex flex-col gap-1">
+          <span className="text-xs text-text-muted">9 组 mode × accent 预览</span>
+          <div className="grid grid-cols-3 gap-1">
+            {MODES.flatMap((m) => ACCENTS.map((a) => {
+              const c = compose(m, a);
+              return <div key={`${m}-${a}`} className="flex items-center gap-1 rounded border border-border px-1.5 py-1 text-[10px] text-text-muted" style={{ background: c.surface }}><span className="h-3 w-3 rounded-full" style={{ background: c.accent }} /> {m.slice(0, 4)}·{a.slice(0, 4)}</div>;
+            }))}
+          </div>
+        </div>
+      ) : null}
+      {/* Custom palette editor (advanced) — tolerant of transient invalid hex (no throw). */}
+      <details data-custom-palette className="rounded-lg border border-border bg-surface-sunken px-2.5 py-1.5">
+        <summary className="cursor-pointer text-xs text-text-muted">自定义调色板（高级）</summary>
+        <div className="mt-2 flex flex-col gap-1.5">
+          {PALETTE_TOKENS.map((t, i) => {
+            const invalid = errHex && i === 0;
+            return (
+              <div key={t.key} className="flex items-center gap-2">
+                <span className="w-16 font-mono text-xs text-text-secondary">{t.key}</span>
+                <span className="h-5 w-5 rounded border border-border-strong" style={{ background: invalid ? "transparent" : t.hex }} aria-hidden="true" />
+                <Input defaultValue={invalid ? "#zz" : t.hex} error={invalid} aria-label={`palette ${t.key}`} className="w-28 font-mono" />
+                {invalid ? <span className="text-xs text-text-muted">无效 hex — 已忽略（不抛错）</span> : null}
+              </div>
+            );
+          })}
+        </div>
+      </details>
+    </SettingsGroup>
+  );
+}
+
+function DeviceGroup({ state }: { state: ShellState }) {
+  const disabled = state === "offline"; // offline disables device mutations
+  const perm = state === "permission"; // approve is host-CLI authoritative
+  const busy = state === "busy";
+  const devices = state === "boundary" ? DEVICES_MANY : state === "empty" ? [DEVICES[0]] : DEVICES;
+  return (
+    <SettingsGroup title="设备授权 · device management">
+      {perm ? <p className="text-xs text-text-muted">approve 由宿主 CLI 授权（authoritative）；WebUI 可复核待批与撤销。</p> : null}
+      {state === "error" ? <ErrorBanner title="Action failed" onRetry={() => {}}>approve/revoke 失败 — 重试。</ErrorBanner> : null}
+      <div className="flex flex-col gap-1.5">
+        {devices.map((d) => (
+          <div key={d.id} data-device-row className="flex flex-wrap items-center gap-2 text-sm">
+            <StatusChip status={DEV_TONE[d.phase]} variant="dot" />
+            <span className="font-medium text-text-primary">{d.label}</span>
+            <StatusChip status={DEV_TONE[d.phase]} variant="soft" label={d.phase === "this" ? "this device" : d.phase} />
+            <span className="text-xs text-text-muted">seen {d.lastSeen}</span>
+            <span className="flex-1" aria-hidden="true" />
+            {busy ? <Spinner size={12} label="resolving" /> : null}
+            {d.phase === "pending" ? <Button size="sm" variant="primary" disabled={disabled || perm} busy={busy} aria-label={`approve device ${d.id}`}>批准</Button> : null}
+            {d.phase !== "this" && d.phase !== "revoked" ? <Button size="sm" variant="ghost" disabled={disabled} aria-label={`revoke device ${d.id}`}>撤销</Button> : null}
+          </div>
+        ))}
+      </div>
+      <div className="flex items-center gap-2">
+        <Button size="sm" variant="secondary" disabled={disabled || perm} aria-label="mint bootstrap token">铸造 bootstrap token</Button>
+        <span className="text-xs text-text-muted">首台设备引导（host-side echo）。</span>
+      </div>
+    </SettingsGroup>
+  );
+}
+
+function SettingsFrame({ state, device, mode, accent, onMode, onAccent }: { state: ShellState; device: Device; mode: Mode; accent: Accent; onMode: (m: Mode) => void; onAccent: (a: Accent) => void }) {
+  const mobile = device === "mobile";
+  const offline = state === "offline";
+  return (
+    <div data-mockup="frame" data-device={device} data-settings="panel"
+      className={`flex ${mobile ? "h-[760px] w-[390px] rounded-[28px]" : "h-[720px] w-[1280px] rounded-xl"} max-w-full flex-col overflow-hidden border border-border bg-surface text-text-primary shadow-sm`}>
+      <header className="flex items-center gap-2 border-b border-border bg-surface-raised px-4 py-2.5">
+        <Brand /><span className="text-text-muted">·</span>
+        <span className="text-sm font-semibold">设置 Settings</span>
+        <span className="flex-1" aria-hidden="true" />
+        <span className="text-xs text-text-muted">本地偏好即时生效</span>
+      </header>
+      {offline ? <div role="status" className="flex items-center gap-2 border-b border-border bg-warning-subtle px-4 py-1.5 text-xs text-warning"><Spinner size={12} label="reconnecting" /> 连接已断开 — 外观/语言仍可改（本地）；设备管理与默认偏好已禁用。</div> : null}
+      <div className="min-h-0 flex-1 overflow-auto p-4">
+        <div className={`mx-auto flex flex-col gap-4 ${mobile ? "" : "max-w-[860px]"}`}>
+          {state === "loading" ? (
+            <div className="flex flex-col gap-3"><Skeleton variant="line" /><Skeleton variant="row" /><Skeleton variant="card" /></div>
+          ) : (
+            <>
+              <AppearanceGroup state={state} mode={mode} accent={accent} onMode={onMode} onAccent={onAccent} />
+              <SettingsGroup title="语言 · language">
+                <SegmentedControl ariaLabel="language" value="zh" onChange={() => {}} options={[{ value: "en", label: "English" }, { value: "zh", label: "中文" }]} size="sm" />
+                <span className="text-xs text-text-muted">技术名词（mesh / router / agent / harness）两种语言均保留英文。</span>
+              </SettingsGroup>
+              <SettingsGroup title="偏好 · preferences">
+                <div className="flex flex-wrap items-center gap-4">
+                  {/* default prefs are server-persisted → disabled offline (matrix △). */}
+                  <label className="flex flex-col gap-1 text-xs text-text-muted">默认落地视图
+                    <SegmentedControl ariaLabel="default landing view" value="runtime" onChange={() => {}} options={[{ value: "runtime", label: "运行态", disabled: offline }, { value: "board", label: "看板", disabled: offline }]} size="sm" />
+                  </label>
+                  <label className="flex flex-col gap-1 text-xs text-text-muted">默认设备布局
+                    <SegmentedControl ariaLabel="default device" value="desktop" onChange={() => {}} options={[{ value: "desktop", label: "桌面", disabled: offline }, { value: "mobile", label: "移动", disabled: offline }]} size="sm" />
+                  </label>
+                  {offline ? <span className="text-xs text-text-muted">（离线时偏好保存已禁用）</span> : null}
+                </div>
+              </SettingsGroup>
+              <DeviceGroup state={state} />
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── new-mesh builder (04) fixtures + frame ───────────────────────────────────────
 interface AgentRow { id: string; harness: string; project: string; role: "router" | "member"; model?: string; effort?: string; lazy?: boolean; opencodePermission?: "ask" | "allow"; instructions?: string }
 const HARNESSES = ["claude", "codex", "opencode", "kimi"];
@@ -2274,6 +2430,9 @@ const INDEX_SECTIONS: { title: string; note: string; rows: IndexRow[] }[] = [
   { title: "08 · Doctor / 系统", note: "doctor 检查(host-key/port/deps/config/orphan/service) · ps daemon 表 · 恢复(reap 孤儿/restart daemon) · copy 诊断", rows: [
     { label: "panel", base: "surface=doctor", states: SHELL_STATES, mobile: true },
   ] },
+  { title: "09 · Settings", note: "外观(mode×accent 3×3 + 自定义调色板) · 语言 · 默认视图/设备偏好 · 设备授权(approve/revoke/bootstrap)", rows: [
+    { label: "panel", base: "surface=settings", states: SHELL_STATES, mobile: true },
+  ] },
 ];
 
 function MockupIndex({ backHref }: { backHref: string }) {
@@ -2419,7 +2578,7 @@ export function UiMockup() {
     <div data-mockup="root" className="min-h-screen bg-surface text-text-primary font-sans p-6">
       {/* mockup tool chrome (outside the mocked app frame) */}
       <header className="mb-5">
-        <h1 className="mb-1 text-xl font-semibold">Agent Mesh — 终稿 mockup（{index ? "导航索引" : surface === "runtime" ? `运行态 A · ${runtime}` : surface === "board" ? "看板 C" : surface === "new-mesh" ? "新建 mesh" : surface === "assistant" ? "Mesh Assistant B" : surface === "harnesses" ? "Harnesses" : surface === "channels" ? "Channels" : surface === "doctor" ? "Doctor / 系统" : "应用外壳"}{index ? "" : ` · ${state} · ${device === "mobile" ? "移动" : "桌面"}`}）</h1>
+        <h1 className="mb-1 text-xl font-semibold">Agent Mesh — 终稿 mockup（{index ? "导航索引" : surface === "runtime" ? `运行态 A · ${runtime}` : surface === "board" ? "看板 C" : surface === "new-mesh" ? "新建 mesh" : surface === "assistant" ? "Mesh Assistant B" : surface === "harnesses" ? "Harnesses" : surface === "channels" ? "Channels" : surface === "doctor" ? "Doctor / 系统" : surface === "settings" ? "Settings" : "应用外壳"}{index ? "" : ` · ${state} · ${device === "mobile" ? "移动" : "桌面"}`}）</h1>
         <p className="mb-3 text-xs text-text-muted">真实 C5–C7 组件 + v2 compose 运行时 · fixture 数据 · 不连后端。Live: <code className="text-syntax-string">MESH_UI_PREVIEW=1 … /__ui-mockup</code></p>
         <div className="mb-3">
           <SegmentedControl ariaLabel="View mode" value={index ? "index" : "mockup"} onChange={(v) => nav({ index: v === "index" })} options={[{ value: "mockup", label: "Mockup" }, { value: "index", label: "▤ 索引" }]} size="sm" />
@@ -2439,7 +2598,7 @@ export function UiMockup() {
           </div>
           <div>
             <div className="mb-1.5 text-xs uppercase tracking-wider text-text-muted">Surface</div>
-            <SegmentedControl ariaLabel="Surface" value={surface} onChange={(s) => { const next = s as Surface; nav({ surface: next }); if (next === "board") setMobileTab("board"); else if (next === "runtime") setMobileTab("runtime"); }} options={[{ value: "shell", label: "外壳" }, { value: "runtime", label: "运行态 A" }, { value: "board", label: "看板 C" }, { value: "assistant", label: "助手 B" }, { value: "harnesses", label: "Harness" }, { value: "channels", label: "渠道" }, { value: "doctor", label: "Doctor" }, { value: "new-mesh", label: "新建" }]} size="sm" />
+            <SegmentedControl ariaLabel="Surface" value={surface} onChange={(s) => { const next = s as Surface; nav({ surface: next }); if (next === "board") setMobileTab("board"); else if (next === "runtime") setMobileTab("runtime"); }} options={[{ value: "shell", label: "外壳" }, { value: "runtime", label: "运行态 A" }, { value: "board", label: "看板 C" }, { value: "assistant", label: "助手 B" }, { value: "harnesses", label: "Harness" }, { value: "channels", label: "渠道" }, { value: "doctor", label: "Doctor" }, { value: "settings", label: "设置" }, { value: "new-mesh", label: "新建" }]} size="sm" />
           </div>
           {surface === "runtime" ? (
             <div>
@@ -2469,7 +2628,7 @@ export function UiMockup() {
               />
             </div>
           ) : null}
-          {surface === "shell" || surface === "runtime" || surface === "board" || surface === "new-mesh" || surface === "assistant" || surface === "harnesses" || surface === "channels" || surface === "doctor" ? (
+          {surface === "shell" || surface === "runtime" || surface === "board" || surface === "new-mesh" || surface === "assistant" || surface === "harnesses" || surface === "channels" || surface === "doctor" || surface === "settings" ? (
             <div>
               <div className="mb-1.5 text-xs uppercase tracking-wider text-text-muted">State</div>
               <SegmentedControl
@@ -2509,6 +2668,8 @@ export function UiMockup() {
           ? <ChannelsFrame state={state} device={device} />
           : surface === "doctor"
           ? <DoctorFrame state={state} device={device} />
+          : surface === "settings"
+          ? <SettingsFrame state={state} device={device} mode={mode} accent={accent} onMode={(m) => nav({ mode: m })} onAccent={(a) => nav({ accent: a })} />
           : surface === "new-mesh"
           ? <NewMeshFrame state={state} device={device} nmEditor={nmEditor} />
           : surface === "runtime" && device === "desktop" && runtime === "full"

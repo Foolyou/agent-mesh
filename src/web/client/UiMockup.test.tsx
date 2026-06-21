@@ -343,10 +343,12 @@ test("index skeleton · lists every surface with state/device deep links", () =>
   expect(out).toContain("06 · Harnesses");
   expect(out).toContain("07 · Channels");
   expect(out).toContain("08 · Doctor");
+  expect(out).toContain("09 · Settings");
   expect(out).toContain("surface=assistant"); // assistant deep links
   expect(out).toContain("surface=harnesses"); // harnesses deep links
   expect(out).toContain("surface=channels"); // channels deep links
   expect(out).toContain("surface=doctor"); // doctor deep links
+  expect(out).toContain("surface=settings"); // settings deep links
   expect(out).toContain("runtime=canvas"); // a runtime补漏 deep link (& is HTML-escaped in href)
   expect(out).toContain("boardManage=1"); // board补漏 deep link
   expect(out).toContain("boardFs=1");
@@ -659,6 +661,88 @@ test("doctor · mobile: read-only summary + findings; recovery/restart deferred 
   expect(out.includes("data-recovery")).toBe(false); // recovery deferred (△)
   expect(out.includes('aria-label="restart daemon dev-mesh"')).toBe(false);
   expect(out.includes('aria-label="run doctor"')).toBe(false); // run is desktop-only here
+});
+
+// ── Settings (09) ────────────────────────────────────────────────────────────
+test("settings · populated: appearance(mode/accent/palette) + language + prefs + device mgmt", () => {
+  const out = renderAt("?surface=settings&state=populated&device=desktop");
+  expect(out).toContain('data-settings="panel"');
+  expect(out).toContain('aria-label="theme mode"'); // mode (3)
+  expect(out).toContain('aria-label="accent"'); // accent (3)
+  expect(out).toContain("data-custom-palette"); // custom palette editor
+  expect(out).toContain('aria-label="palette bg"');
+  expect(out).toContain('aria-label="language"'); // i18n
+  expect(out).toContain('aria-label="default landing view"'); // [N] pref
+  expect(out).toContain('aria-label="default device"'); // [N] pref
+  expect(out).toContain("data-device-row"); // device management
+  expect(out).toContain('aria-label="approve device dev-3"'); // pending → approve
+  expect(out).toContain('aria-label="revoke device dev-2"'); // approved → revoke
+  expect(out).toContain('aria-label="mint bootstrap token"');
+});
+
+test("settings · empty: device list shows only this device", () => {
+  const out = renderAt("?surface=settings&state=empty&device=desktop");
+  expect(out).toContain("this device");
+  expect(out.includes('aria-label="approve device dev-3"')).toBe(false); // no other devices
+});
+
+test("settings · loading skeleton (no groups)", () => {
+  const out = renderAt("?surface=settings&state=loading&device=desktop");
+  expect(out).toContain("animate-pulse");
+  expect(out.includes("data-custom-palette")).toBe(false);
+});
+
+test("settings · error: invalid custom-palette hex tolerated (aria-invalid, no throw) + device action failed", () => {
+  const out = renderAt("?surface=settings&state=error&device=desktop");
+  expect(out).toContain("无效 hex"); // tolerated invalid hex note
+  expect(out).toContain('aria-invalid="true"');
+  expect(out).toContain("Action failed"); // device approve/revoke failed
+});
+
+test("settings · permission: approve is host-CLI authoritative (approve disabled) + note", () => {
+  const out = renderAt("?surface=settings&state=permission&device=desktop");
+  expect(out).toContain("由宿主 CLI 授权");
+  expect(out).toContain('aria-label="approve device dev-3" disabled=""');
+});
+
+// `disabled:`-prefixed utility classes are always on the button; assert the real
+// `disabled=""` *attribute* (slicing each control's window) to prove option-level disable.
+const prefWindow = (out: string, label: string) => {
+  const start = out.indexOf(`aria-label="${label}"`);
+  const end = label === "default landing view" ? out.indexOf('aria-label="default device"') : out.indexOf("设备授权");
+  return out.slice(start, end);
+};
+test("settings · offline: local appearance works; device mgmt + default prefs disabled + banner", () => {
+  const out = renderAt("?surface=settings&state=offline&device=desktop");
+  expect(out).toContain("外观/语言仍可改"); // local still works
+  expect(out).toContain('aria-label="revoke device dev-2" disabled=""');
+  expect(out).toContain('aria-label="theme mode"'); // appearance still present
+  // default-view/device prefs are server-persisted → option buttons disabled offline (matrix △)
+  expect(prefWindow(out, "default landing view")).toContain('disabled=""');
+  expect(prefWindow(out, "default device")).toContain('disabled=""');
+  // theme-mode option buttons stay enabled (local) — no disabled="" attribute
+  const tm = out.slice(out.indexOf('aria-label="theme mode"'), out.indexOf('aria-label="accent"'));
+  expect(tm.includes('disabled=""')).toBe(false);
+});
+
+test("settings · populated: default-pref options are NOT disabled (sanity vs offline)", () => {
+  const out = renderAt("?surface=settings&state=populated&device=desktop");
+  expect(prefWindow(out, "default landing view").includes('disabled=""')).toBe(false);
+  expect(prefWindow(out, "default device").includes('disabled=""')).toBe(false);
+});
+
+test("settings · boundary: 9 mode×accent matrix + many devices", () => {
+  const out = renderAt("?surface=settings&state=boundary&device=desktop");
+  expect(out).toContain("data-theme-matrix"); // 3×3 preview grid
+  expect((out.match(/data-device-row/g) ?? []).length).toBe(DEVICES_MANY_COUNT);
+});
+const DEVICES_MANY_COUNT = 8;
+
+test("settings · mobile: stacked groups render", () => {
+  const out = renderAt("?surface=settings&state=populated&device=mobile");
+  expect(out).toContain('data-device="mobile"');
+  expect(out).toContain('data-settings="panel"');
+  expect(out).toContain('aria-label="theme mode"');
 });
 
 test("mockup uses v2 semantic utilities and emits no raw-* class", () => {

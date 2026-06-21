@@ -592,6 +592,50 @@ try {
     }
   }
 
+  // ── Settings (09): assertions + state × device screenshots ──
+  await step("settings: appearance(mode/accent/palette) + language + prefs + device mgmt", async () => {
+    await page.goto(`${BASE}/__ui-mockup?surface=settings&state=populated&device=desktop`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-mockup="frame"][data-settings="panel"]', { timeout: 8000 });
+    for (const lbl of ["theme mode", "accent", "palette bg", "language", "default landing view", "default device", "approve device dev-3", "revoke device dev-2", "mint bootstrap token"]) {
+      if (await page.locator(`[aria-label="${lbl}"]`).count() === 0) throw new Error(`settings control missing: ${lbl}`);
+    }
+    if (await page.locator("[data-custom-palette]").count() === 0) throw new Error("custom palette editor missing");
+    // theme mode change applies live via compose()
+    await page.locator('[aria-label="theme mode"]').getByRole("radio", { name: "Light·Cool" }).click();
+    await sleep(120);
+    const expected = compose("light-cool", "signal-teal");
+    if ((await cssVar("--surface")) !== expected.surface) throw new Error("settings theme mode did not apply live");
+  });
+  await step("settings: error→invalid hex tolerated; permission→approve host-CLI; empty→this device only", async () => {
+    await page.goto(`${BASE}/__ui-mockup?surface=settings&state=error&device=desktop`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-settings="panel"]', { timeout: 8000 });
+    if (await page.getByText("无效 hex", { exact: false }).count() === 0) throw new Error("invalid-hex tolerance missing");
+    await page.goto(`${BASE}/__ui-mockup?surface=settings&state=permission&device=desktop`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-settings="panel"]', { timeout: 8000 });
+    if (!(await page.locator('[aria-label="approve device dev-3"]').isDisabled())) throw new Error("permission must disable approve (host-CLI authoritative)");
+    await page.goto(`${BASE}/__ui-mockup?surface=settings&state=empty&device=desktop`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-settings="panel"]', { timeout: 8000 });
+    if (await page.locator("[data-device-row]").count() !== 1) throw new Error("empty should show only this device");
+  });
+  await step("settings offline: default prefs disabled while theme mode stays enabled (matrix △)", async () => {
+    await page.goto(`${BASE}/__ui-mockup?surface=settings&state=offline&device=desktop`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-settings="panel"]', { timeout: 8000 });
+    if (await page.locator('[aria-label="default landing view"] button:disabled').count() === 0) throw new Error("offline must disable default landing view options");
+    if (await page.locator('[aria-label="default device"] button:disabled').count() === 0) throw new Error("offline must disable default device options");
+    if (await page.locator('[aria-label="theme mode"] button:disabled').count() !== 0) throw new Error("theme mode must stay enabled offline (local)");
+  });
+  const SETTINGS_STATES = ["empty", "loading", "populated", "error", "permission", "busy", "offline", "boundary"];
+  for (const device of ["desktop", "mobile"]) {
+    for (const st of SETTINGS_STATES) {
+      await step(`screenshot settings-${st}-${device}`, async () => {
+        await page.goto(`${BASE}/__ui-mockup?surface=settings&state=${st}&device=${device}&mode=dark-slate&accent=signal-teal`, { waitUntil: "domcontentloaded" });
+        await page.waitForSelector(`[data-mockup="frame"][data-device="${device}"][data-settings="panel"]`, { timeout: 8000 });
+        await sleep(130);
+        await shotFrame(`${SHOTS}/settings-${st}-${device}-dark-slate-signal-teal.png`);
+      });
+    }
+  }
+
   // ── shell (01) state × device screenshots (Phase B; default Dark·Slate × Signal Teal) ──
   const SHELL_STATES = ["empty", "loading", "populated", "error", "permission", "busy", "offline", "boundary"];
   for (const device of ["desktop", "mobile"]) {
