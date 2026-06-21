@@ -293,3 +293,64 @@ test("board mobile · list + detail states usable; kanban degrades to list", () 
   expect(renderAt("?surface=board&board=detail&state=populated&device=mobile")).toContain("Activity");
   expect(renderAt("?surface=board&board=kanban&state=populated&device=mobile")).toContain('data-board="list"');
 });
+
+// ── new-mesh builder (04) states (Phase B) ───────────────────────────────────
+test("new-mesh · builder frame: name/agents/edges/charter + Save/Cancel", () => {
+  const out = renderAt("?surface=new-mesh&state=populated&device=desktop");
+  expect(out).toContain('data-newmesh="builder"');
+  expect(out).toContain("New mesh");
+  expect(out).toContain('aria-label="mesh name"');
+  expect(out).toContain('aria-label="agent 1 id"');
+  expect(out).toContain("+ Add agent");
+  expect(out).toContain("+ Add edge");
+  expect(out).toContain('aria-label="charter"');
+  expect(out).toContain("Save");
+  expect(out).toContain("Cancel");
+});
+
+test("new-mesh · empty: blank form, one router row, no edges", () => {
+  const out = renderAt("?surface=new-mesh&state=empty&device=desktop");
+  expect(out).toContain("no edges yet");
+  expect(out).toContain("agents · 1");
+  expect(out).toContain("disabled"); // Save disabled when invalid
+});
+
+test("new-mesh · error: dup-name + missing-id validation + ErrorBanner", () => {
+  const out = renderAt("?surface=new-mesh&state=error&device=desktop");
+  expect(out).toContain('role="alert"');
+  expect(out).toContain("already exists"); // dup name field error
+  expect(out).toContain('aria-invalid="true"'); // error fields
+});
+
+test("new-mesh · permission: unauthorized banner + form disabled", () => {
+  const out = renderAt("?surface=new-mesh&state=permission&device=desktop");
+  expect(out).toContain("设备未授权");
+  expect(out).toContain("disabled");
+});
+
+test("new-mesh · busy: Save shows busy spinner", () => {
+  expect(renderAt("?surface=new-mesh&state=busy&device=desktop")).toContain('aria-busy="true"');
+});
+
+test("new-mesh · offline: reconnecting banner + fields/Save disabled (Cancel stays)", () => {
+  const out = renderAt("?surface=new-mesh&state=offline&device=desktop");
+  expect(out).toContain("正在重连"); // offline banner
+  expect(out).toContain("disabled"); // mutating fields/Save disabled
+  expect(out).toContain("Cancel"); // local nav stays
+  // mobile offline too
+  expect(renderAt("?surface=new-mesh&state=offline&device=mobile")).toContain("正在重连");
+});
+
+test("new-mesh · boundary: many agents + many edges + long name/id", () => {
+  const out = renderAt("?surface=new-mesh&state=boundary&device=desktop");
+  expect(out).toContain("a-very-long-agent-identifier-for-truncation");
+  expect(out).toContain("agents · 10");
+  expect(out).toContain("release-candidate-2026-q3-extended-pipeline");
+});
+
+test("new-mesh · mobile: simplified builder (from/to edge pickers)", () => {
+  const out = renderAt("?surface=new-mesh&state=populated&device=mobile");
+  expect(out).toContain('data-device="mobile"');
+  expect(out).toContain('data-newmesh="builder"');
+  expect(out).toContain("from / to pickers");
+});

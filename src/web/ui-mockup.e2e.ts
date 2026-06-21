@@ -266,6 +266,34 @@ try {
     }
   }
 
+  // ── new-mesh (04) builder: assertions + state × device screenshots (loading N/A; offline covered) ──
+  await step("new-mesh builder: form present; error validation; permission disables", async () => {
+    await page.goto(`${BASE}/__ui-mockup?surface=new-mesh&state=populated`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-mockup="frame"] [data-newmesh="builder"], [data-mockup="frame"][data-newmesh="builder"]', { timeout: 8000 });
+    if (await page.locator('[aria-label="mesh name"]').count() === 0) throw new Error("mesh name field missing");
+    await page.goto(`${BASE}/__ui-mockup?surface=new-mesh&state=error`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-newmesh="builder"]', { timeout: 8000 });
+    if (await page.getByText("already exists", { exact: false }).count() === 0) throw new Error("dup-name validation missing");
+    await page.goto(`${BASE}/__ui-mockup?surface=new-mesh&state=permission`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-newmesh="builder"]', { timeout: 8000 });
+    if (await page.getByText("设备未授权", { exact: false }).count() === 0) throw new Error("permission banner missing");
+    await page.goto(`${BASE}/__ui-mockup?surface=new-mesh&state=offline`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-newmesh="builder"]', { timeout: 8000 });
+    if (await page.getByText("正在重连", { exact: false }).count() === 0) throw new Error("offline banner missing");
+    if (!(await page.getByRole("textbox", { name: "mesh name" }).isDisabled())) throw new Error("mesh name should be disabled offline");
+  });
+  const NM_STATES = ["empty", "populated", "error", "permission", "busy", "offline", "boundary"];
+  for (const device of ["desktop", "mobile"]) {
+    for (const st of NM_STATES) {
+      await step(`screenshot new-mesh-${st}-${device}`, async () => {
+        await page.goto(`${BASE}/__ui-mockup?surface=new-mesh&state=${st}&device=${device}&mode=dark-slate&accent=signal-teal`, { waitUntil: "domcontentloaded" });
+        await page.waitForSelector(`[data-mockup="frame"][data-device="${device}"][data-newmesh="builder"]`, { timeout: 8000 });
+        await sleep(130);
+        await shotFrame(`${SHOTS}/new-mesh-${st}-${device}-dark-slate-signal-teal.png`);
+      });
+    }
+  }
+
   // ── shell (01) state × device screenshots (Phase B; default Dark·Slate × Signal Teal) ──
   const SHELL_STATES = ["empty", "loading", "populated", "error", "permission", "busy", "offline", "boundary"];
   for (const device of ["desktop", "mobile"]) {

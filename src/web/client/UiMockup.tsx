@@ -22,7 +22,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { MODES, ACCENTS, type Mode, type Accent, compose, applyComposition } from "./themes";
 import {
   Button, StatusChip, Badge, SegmentedControl, StatusListRow, PanelFrame, ApprovalCard, Composer, ActionBar, Cluster,
-  ProgressBar, AssigneeTag, Spinner, Skeleton, EmptyState, ErrorBanner,
+  ProgressBar, AssigneeTag, Spinner, Skeleton, EmptyState, ErrorBanner, Input, Textarea, Select,
   type Status,
 } from "./ui/index";
 
@@ -33,7 +33,7 @@ const ACCENT_SET = new Set<Accent>(ACCENTS);
 
 type Device = "desktop" | "mobile";
 type View = "runtime" | "board";
-type Surface = "shell" | "runtime" | "board";
+type Surface = "shell" | "runtime" | "board" | "new-mesh";
 type RuntimeState = "overview" | "focus";
 type BoardState = "list" | "detail" | "kanban";
 const VIEW_LABEL: Record<View, string> = { runtime: "运行态", board: "看板" };
@@ -181,7 +181,7 @@ function readSel(): Sel {
   const a = p.get("accent");
   const mesh = p.get("mesh");
   const sfc = p.get("surface");
-  const surface: Surface = sfc === "runtime" ? "runtime" : sfc === "board" ? "board" : "shell";
+  const surface: Surface = sfc === "runtime" ? "runtime" : sfc === "board" ? "board" : sfc === "new-mesh" ? "new-mesh" : "shell";
   const bs = p.get("board");
   const st = p.get("state") as ShellState | null;
   return {
@@ -752,6 +752,130 @@ function BoardDetailMobile({ state = "populated" }: { state?: ShellState }) {
   );
 }
 
+// ── new-mesh builder (04) fixtures + frame ───────────────────────────────────────
+interface AgentRow { id: string; harness: string; project: string; role: "router" | "member" }
+const HARNESSES = ["claude", "codex", "opencode", "kimi"];
+const NM_AGENTS: AgentRow[] = [
+  { id: "router", harness: "claude", project: "~/projects/mesh", role: "router" },
+  { id: "codex-1", harness: "codex", project: "~/projects/app", role: "member" },
+  { id: "reviewer", harness: "claude", project: "~/projects/app", role: "member" },
+];
+const NM_EDGES = [{ from: "router", to: "codex-1" }, { from: "router", to: "reviewer" }, { from: "codex-1", to: "reviewer" }];
+const NM_MANY_AGENTS: AgentRow[] = [
+  ...NM_AGENTS,
+  { id: "codex-2", harness: "codex", project: "~/projects/app", role: "member" },
+  { id: "claude-2", harness: "claude", project: "~/projects/docs", role: "member" },
+  { id: "opencode-1", harness: "opencode", project: "~/projects/infra", role: "member" },
+  { id: "kimi-1", harness: "kimi", project: "~/projects/research", role: "member" },
+  { id: "a-very-long-agent-identifier-for-truncation", harness: "claude", project: "~/projects/a/very/long/nested/project/path/that/wraps", role: "member" },
+  { id: "reviewer-2", harness: "claude", project: "~/projects/app", role: "member" },
+  { id: "security-1", harness: "codex", project: "~/projects/security", role: "member" },
+];
+const NM_MANY_EDGES = [
+  ...NM_EDGES, { from: "router", to: "codex-2" }, { from: "router", to: "claude-2" }, { from: "router", to: "opencode-1" },
+  { from: "router", to: "kimi-1" }, { from: "codex-1", to: "reviewer-2" }, { from: "codex-2", to: "reviewer-2" },
+  { from: "claude-2", to: "security-1" }, { from: "security-1", to: "reviewer" },
+];
+
+// Per-state form shape (loading is N/A for a local create form; offline locks the
+// retained draft — disables mutating fields/actions/Save, keeps Cancel — see 04 coverage).
+function nmForm(state: ShellState) {
+  const boundary = state === "boundary";
+  const agents = state === "empty" ? [NM_AGENTS[0]] : boundary ? NM_MANY_AGENTS : NM_AGENTS;
+  const edges = state === "empty" ? [] : boundary ? NM_MANY_EDGES : NM_EDGES;
+  const name = state === "empty" ? "" : boundary ? "release-candidate-2026-q3-extended-pipeline" : "dev-mesh";
+  const nameError = state === "error" ? "a mesh named “dev-mesh” already exists" : undefined;
+  const disabled = state === "permission" || state === "offline"; // unauthorized can't create; offline locks edits
+  const busy = state === "busy";
+  const valid = state === "populated" || state === "boundary"; // save enabled only when valid
+  return { agents, edges, name, nameError, disabled, busy, valid, boundary };
+}
+
+function NewMeshFrame({ state, device }: { state: ShellState; device: Device }) {
+  const f = nmForm(state);
+  const mobile = device === "mobile";
+  const ctrlDisabled = f.disabled || f.busy;
+  return (
+    <div data-mockup="frame" data-device={device} data-newmesh="builder" className={`${mobile ? "flex h-[760px] w-[390px] flex-col rounded-[28px]" : "w-[1280px] rounded-xl"} max-w-full overflow-hidden border border-border bg-surface text-text-primary shadow-sm`}>
+      <header className="flex items-center gap-2 border-b border-border bg-surface-raised px-4 py-2.5">
+        <Brand />
+        <span className="text-text-muted">·</span>
+        <span className="text-sm font-semibold">New mesh</span>
+        <span className="flex-1" aria-hidden="true" />
+        {/* Cancel stays enabled even offline — it is purely local navigation (no mutation). */}
+        <Button variant="ghost" size="sm">Cancel</Button>
+        <Button variant="primary" size="sm" disabled={!f.valid || f.disabled} busy={f.busy}>Save</Button>
+      </header>
+      {state === "permission" ? <div role="status" className="border-b border-border bg-danger-subtle px-4 py-1.5 text-xs text-danger">设备未授权 — 无法创建 mesh；请在「设置」批准本设备。</div> : null}
+      {state === "offline" ? <div role="status" className="flex items-center gap-2 border-b border-border bg-warning-subtle px-4 py-1.5 text-xs text-warning"><Spinner size={12} label="reconnecting" /> 连接已断开 — 正在重连…（草稿保留，编辑与保存已禁用）</div> : null}
+      <div className="min-h-0 flex-1 overflow-auto p-4">
+        <div className={`mx-auto flex flex-col gap-5 ${mobile ? "" : "max-w-[760px]"}`}>
+          {state === "error" ? <ErrorBanner title="Fix 2 errors to save">Duplicate mesh name and one agent is missing an id.</ErrorBanner> : null}
+
+          <section className="flex flex-col gap-1.5">
+            <label className="text-xs uppercase tracking-wider text-text-muted">mesh name</label>
+            <Input defaultValue={f.name} placeholder="my-mesh" error={!!f.nameError} disabled={ctrlDisabled} aria-label="mesh name" className={mobile ? "w-full" : "max-w-sm"} />
+            {f.nameError ? <span className="text-xs text-danger">{f.nameError}</span> : <span className="text-xs text-text-muted">unique; lowercase recommended</span>}
+          </section>
+
+          <section className="flex flex-col gap-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs uppercase tracking-wider text-text-muted">agents · {f.agents.length}</span>
+              <Button variant="secondary" size="sm" disabled={ctrlDisabled}>+ Add agent</Button>
+            </div>
+            <div className="flex flex-col gap-2">
+              {f.agents.map((a, i) => {
+                const missingId = state === "error" && i === f.agents.length - 1; // last row missing id in error state
+                return mobile ? (
+                  <div key={i} className="flex flex-col gap-1.5 rounded-lg border border-border bg-surface-raised p-2">
+                    <Input defaultValue={missingId ? "" : a.id} error={missingId} disabled={ctrlDisabled} aria-label={`agent ${i + 1} id`} placeholder="agent id" />
+                    <div className="flex gap-1.5">
+                      <Select defaultValue={a.harness} disabled={ctrlDisabled} aria-label={`agent ${i + 1} harness`} className="flex-1">{HARNESSES.map((h) => <option key={h}>{h}</option>)}</Select>
+                      <Select defaultValue={a.role} disabled={ctrlDisabled} aria-label={`agent ${i + 1} role`} className="flex-1"><option>router</option><option>member</option></Select>
+                    </div>
+                    <Input defaultValue={a.project} disabled={ctrlDisabled} aria-label={`agent ${i + 1} project`} placeholder="project path" />
+                  </div>
+                ) : (
+                  <div key={i} className="flex items-center gap-2">
+                    <Input defaultValue={missingId ? "" : a.id} error={missingId} disabled={ctrlDisabled} aria-label={`agent ${i + 1} id`} placeholder="agent id" className="w-40" />
+                    <Select defaultValue={a.harness} disabled={ctrlDisabled} aria-label={`agent ${i + 1} harness`} className="w-32">{HARNESSES.map((h) => <option key={h}>{h}</option>)}</Select>
+                    <Input defaultValue={a.project} disabled={ctrlDisabled} aria-label={`agent ${i + 1} project`} placeholder="project path" className="min-w-0 flex-1" />
+                    <Select defaultValue={a.role} disabled={ctrlDisabled} aria-label={`agent ${i + 1} role`} className="w-28"><option>router</option><option>member</option></Select>
+                    <Button variant="ghost" size="sm" iconOnly aria-label={`remove agent ${i + 1}`} disabled={ctrlDisabled || a.role === "router"}>×</Button>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+
+          <section className="flex flex-col gap-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs uppercase tracking-wider text-text-muted">mail edges · {f.edges.length}</span>
+              <Button variant="secondary" size="sm" disabled={ctrlDisabled}>+ Add edge</Button>
+            </div>
+            <p className="text-xs text-text-muted">{mobile ? "from / to pickers (drawing is desktop-only)" : "declare or draw who can mail whom"}</p>
+            <div className="flex flex-col gap-1.5">
+              {f.edges.length === 0 ? <span className="text-xs text-text-muted">no edges yet</span> : f.edges.map((e, i) => (
+                <div key={i} className="flex items-center gap-2 text-sm">
+                  <Select defaultValue={e.from} disabled={ctrlDisabled} aria-label={`edge ${i + 1} from`} className="flex-1">{f.agents.map((a) => <option key={a.id}>{a.id}</option>)}</Select>
+                  <span aria-hidden="true" className="text-text-muted">→</span>
+                  <Select defaultValue={e.to} disabled={ctrlDisabled} aria-label={`edge ${i + 1} to`} className="flex-1">{f.agents.map((a) => <option key={a.id}>{a.id}</option>)}</Select>
+                  <Button variant="ghost" size="sm" iconOnly aria-label={`remove edge ${i + 1}`} disabled={ctrlDisabled}>×</Button>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <section className="flex flex-col gap-1.5">
+            <label className="text-xs uppercase tracking-wider text-text-muted">charter (optional)</label>
+            <Textarea defaultValue={state === "empty" ? "" : "Ship the device-auth page and keep the gate fail-closed."} disabled={ctrlDisabled} rows={mobile ? 3 : 2} aria-label="charter" />
+          </section>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── desktop shell ────────────────────────────────────────────────────────────
 interface ShellChrome {
   connection?: Connection;
@@ -1074,7 +1198,7 @@ export function UiMockup() {
     <div data-mockup="root" className="min-h-screen bg-surface text-text-primary font-sans p-6">
       {/* mockup tool chrome (outside the mocked app frame) */}
       <header className="mb-5">
-        <h1 className="mb-1 text-xl font-semibold">Agent Mesh — 终稿 mockup（{surface === "runtime" ? "运行态 A" : surface === "board" ? "看板 C" : `应用外壳 · ${state}`} · {device === "mobile" ? "移动" : "桌面"}）</h1>
+        <h1 className="mb-1 text-xl font-semibold">Agent Mesh — 终稿 mockup（{surface === "runtime" ? "运行态 A" : surface === "board" ? "看板 C" : surface === "new-mesh" ? "新建 mesh" : "应用外壳"} · {state} · {device === "mobile" ? "移动" : "桌面"}）</h1>
         <p className="mb-3 text-xs text-text-muted">真实 C5–C7 组件 + v2 compose 运行时 · fixture 数据 · 不连后端。Live: <code className="text-syntax-string">MESH_UI_PREVIEW=1 … /__ui-mockup</code></p>
         <div className="flex flex-wrap items-start gap-5">
           <div>
@@ -1091,7 +1215,7 @@ export function UiMockup() {
           </div>
           <div>
             <div className="mb-1.5 text-xs uppercase tracking-wider text-text-muted">Surface</div>
-            <SegmentedControl ariaLabel="Surface" value={surface} onChange={(s) => { const next = s as Surface; nav({ surface: next }); if (next === "board") setMobileTab("board"); else if (next === "runtime") setMobileTab("runtime"); }} options={[{ value: "shell", label: "外壳" }, { value: "runtime", label: "运行态 A" }, { value: "board", label: "看板 C" }]} size="sm" />
+            <SegmentedControl ariaLabel="Surface" value={surface} onChange={(s) => { const next = s as Surface; nav({ surface: next }); if (next === "board") setMobileTab("board"); else if (next === "runtime") setMobileTab("runtime"); }} options={[{ value: "shell", label: "外壳" }, { value: "runtime", label: "运行态 A" }, { value: "board", label: "看板 C" }, { value: "new-mesh", label: "新建" }]} size="sm" />
           </div>
           {surface === "runtime" ? (
             <div>
@@ -1113,17 +1237,25 @@ export function UiMockup() {
               />
             </div>
           ) : null}
-          {surface === "shell" || surface === "runtime" || surface === "board" ? (
+          {surface === "shell" || surface === "runtime" || surface === "board" || surface === "new-mesh" ? (
             <div>
               <div className="mb-1.5 text-xs uppercase tracking-wider text-text-muted">State</div>
-              <SegmentedControl ariaLabel="State" value={state} onChange={(s) => nav({ state: s as ShellState })} options={SHELL_STATES.map((s) => ({ value: s, label: s }))} size="sm" />
+              <SegmentedControl
+                ariaLabel="State"
+                value={state}
+                onChange={(s) => nav({ state: s as ShellState })}
+                options={(surface === "new-mesh" ? (["empty", "populated", "error", "permission", "busy", "offline", "boundary"] as ShellState[]) : SHELL_STATES).map((s) => ({ value: s, label: s }))}
+                size="sm"
+              />
             </div>
           ) : null}
         </div>
       </header>
 
       <div className="flex justify-center">
-        {device === "mobile"
+        {surface === "new-mesh"
+          ? <NewMeshFrame state={state} device={device} />
+          : device === "mobile"
           ? <MobileShell tab={mobileTab} setTab={(t) => { setMobileTab(t); if (t === "runtime" || t === "board") nav({ view: t }); }} mesh={mesh} setMesh={setMesh} stage={mobileStage} stageTab={mobileStageTab} {...shellChrome} />
           : <DesktopShell view={view} setView={setView} mesh={mesh} setMesh={setMesh} meshHref={meshHref} stage={desktopStage} contextTitle={contextTitle} context={desktopContext} {...shellChrome} />}
       </div>
