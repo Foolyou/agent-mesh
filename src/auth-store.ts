@@ -355,6 +355,17 @@ export function isFeishuAllowed(file: FeishuAuthFile, channelKey: string, openId
   return file.allow[feishuAllowKey(channelKey, openId)]?.status === "approved";
 }
 
+/** The distinct approved openIds for `channelKey` in the registry — the device-auth source of truth for
+ *  who may use this bot. Used to seed a newly-created mesh chat's member list (replacing the deprecated
+ *  `cfg.allowSenders`). Excludes pending/revoked entries and any other channelKey. */
+export function approvedFeishuOpenIds(file: FeishuAuthFile, channelKey: string): string[] {
+  const seen = new Set<string>();
+  for (const e of Object.values(file.allow)) {
+    if (e.channelKey === channelKey && e.status === "approved") seen.add(e.openId);
+  }
+  return [...seen];
+}
+
 /** True iff a live (unconsumed, unexpired) bootstrap token matches. */
 export function bootstrapTokenValid(file: DevicesFile, token: string, now: number = Date.now()): boolean {
   const b = file.bootstrap;

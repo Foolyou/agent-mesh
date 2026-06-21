@@ -352,3 +352,69 @@ test("meshes watcher: stop() closes the watcher — a later mesh-file write does
     expect(timer.hasPending()).toBe(false); // closed watcher → no schedule
   } finally { cleanup(); }
 });
+
+// ── Bug 2: new chats invite device-auth approved users, not legacy cfg.allowSenders ──
+
+function writeAuthRegistry(root: string, entries: { channelKey: string; openId: string; status: string }[]): void {
+  mkdirSync(join(root, "auth"), { recursive: true });
+  const allow: Record<string, unknown> = {};
+  entries.forEach((e, i) => { allow[`k${i}`] = { ...e, approvedAt: new Date().toISOString() }; });
+  writeFileSync(join(root, "auth", "feishu.json"), JSON.stringify({ version: 1, allow, pending: {} }), "utf8");
+}
+
+test("ensureMeshChat seeds a new chat with device-auth approved openIds (not cfg.allowSenders)", async () => {
+  const { dir, cleanup } = root();
+  try {
+    // legacy allowSenders is present but MUST be ignored; the registry holds the real authorized users
+    writeConfig(dir, { enabled: true, appId: "cli_1", appSecret: "secret", allowSenders: ["ou_LEGACY"], requireMention: false });
+    writeAuthRegistry(dir, [
+      { channelKey: "feishu:cli_1", openId: "ou_1", status: "approved" },
+      { channelKey: "feishu:cli_1", openId: "ou_2", status: "approved" },
+      { channelKey: "feishu:cli_1", openId: "ou_r", status: "revoked" },        // excluded
+      { channelKey: "feishu:cli_other", openId: "ou_x", status: "approved" },    // other app excluded
+    ]);
+    let seenUserIds: string[] | undefined;
+    const ctl = new FeishuChannelController(mesh, {
+      root: dir, watch: false,
+      buildChannel: () => ({ start() {}, stop() {} }),
+      createChat: async (_cfg, name, userIds) => { seenUserIds = userIds; return { chatId: `oc_${name}` }; },
+    });
+    const res = await ctl.ensureMeshChat("m");
+    expect(res).toMatchObject({ mesh: "m", chatId: "oc_m", created: true, ok: true });
+    expect(seenUserIds?.sort()).toEqual(["ou_1", "ou_2"]); // approved registry users; never ou_LEGACY
+  } finally { cleanup(); }
+});
+
+test("ensureMeshChat with no approved users creates a bot-only chat (empty user list, no error)", async () => {
+  const { dir, cleanup } = root();
+  try {
+    writeConfig(dir, { enabled: true, appId: "cli_1", appSecret: "secret", allowSenders: ["ou_LEGACY"], requireMention: false });
+    // no auth/feishu.json → empty registry
+    let seenUserIds: string[] | undefined;
+    const ctl = new FeishuChannelController(mesh, {
+      root: dir, watch: false,
+      buildChannel: () => ({ start() {}, stop() {} }),
+      createChat: async (_cfg, name, userIds) => { seenUserIds = userIds; return { chatId: `oc_${name}` }; },
+    });
+    const res = await ctl.ensureMeshChat("m");
+    expect(res).toMatchObject({ mesh: "m", created: true, ok: true });
+    expect(seenUserIds).toEqual([]); // bot-only, no legacy allowSenders leak
+  } finally { cleanup(); }
+});
+
+test("ensureMeshChat skips createChat for an already-bound mesh (idempotent; no invite/recreate)", async () => {
+  const { dir, cleanup } = root();
+  try {
+    writeConfig(dir, { enabled: true, appId: "cli_1", appSecret: "secret", allowSenders: [], bindings: [{ mesh: "m", chatId: "oc_existing", name: "m", source: "auto", createdAt: new Date().toISOString() }] });
+    writeAuthRegistry(dir, [{ channelKey: "feishu:cli_1", openId: "ou_1", status: "approved" }]);
+    let createCalls = 0;
+    const ctl = new FeishuChannelController(mesh, {
+      root: dir, watch: false,
+      buildChannel: () => ({ start() {}, stop() {} }),
+      createChat: async (_cfg, name) => { createCalls++; return { chatId: `oc_${name}` }; },
+    });
+    const res = await ctl.ensureMeshChat("m");
+    expect(res).toMatchObject({ mesh: "m", chatId: "oc_existing", created: false, ok: true });
+    expect(createCalls).toBe(0); // existing binding → no createChat, no invite
+  } finally { cleanup(); }
+});

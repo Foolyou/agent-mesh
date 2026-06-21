@@ -11,9 +11,11 @@ import { hostname } from "node:os";
 import type { Channel, FeishuChannelConfig, FeishuChannelControl, FeishuChannelStatus, FeishuMeshBinding, FeishuMeshChatEnsureResult, FeishuProvisionJobPublic, FeishuProvisionStartRequest, MeshGateway } from "./types";
 import type { AssistantGateway } from "./assistant-gateway";
 import { feishuConfigPath, readFeishuConfig } from "./config";
+import { feishuChannelKey } from "./gating";
 import { FeishuProvisionRegistry } from "./provision";
 import { createFeishuClient } from "./consumer";
 import { defaultIdempotencyKey } from "./sender";
+import { approvedFeishuOpenIds, readFeishuAuth } from "../auth-store";
 
 export interface BuildFeishuChannelOpts {
   root: string;
@@ -25,7 +27,7 @@ export interface BuildFeishuChannelOpts {
 export interface FeishuChannelControllerOptions extends BuildFeishuChannelOpts {
   watch?: boolean;
   buildChannel?: (mesh: MeshGateway, opts: BuildFeishuChannelOpts) => Channel | undefined;
-  createChat?: (cfg: FeishuChannelConfig, meshName: string) => Promise<{ chatId: string; name?: string }>;
+  createChat?: (cfg: FeishuChannelConfig, meshName: string, userIds: string[]) => Promise<{ chatId: string; name?: string }>;
   setTimer?: (fn: () => void, ms: number) => () => void;
 }
 
@@ -36,7 +38,7 @@ export class FeishuChannelController implements FeishuChannelControl {
   private readonly watchEnabled: boolean;
   private readonly buildChannel: (mesh: MeshGateway, opts: BuildFeishuChannelOpts) => Channel | undefined;
   private readonly assistant?: AssistantGateway;
-  private readonly createChat: (cfg: FeishuChannelConfig, meshName: string) => Promise<{ chatId: string; name?: string }>;
+  private readonly createChat: (cfg: FeishuChannelConfig, meshName: string, userIds: string[]) => Promise<{ chatId: string; name?: string }>;
   private readonly setTimer: (fn: () => void, ms: number) => () => void;
   private readonly provision: FeishuProvisionRegistry;
   private chatQueue: Promise<unknown> = Promise.resolve();
@@ -280,7 +282,10 @@ export class FeishuChannelController implements FeishuChannelControl {
     const existing = loaded.config.bindings.find((b) => b.mesh === mesh);
     if (existing) return { mesh, chatId: existing.chatId, name: existing.name, created: false, ok: true };
 
-    const created = await this.createChat(loaded.config, mesh);
+    // Seed the new chat with the device-auth approved users (NOT the deprecated cfg.allowSenders, which
+    // is empty after the device-auth migration). Bot-only when there are no approved users.
+    const userIds = approvedFeishuOpenIds(await readFeishuAuth(this.root), feishuChannelKey(loaded.config.appId));
+    const created = await this.createChat(loaded.config, mesh, userIds);
     const binding: FeishuMeshBinding = {
       mesh,
       chatId: created.chatId,
@@ -347,7 +352,7 @@ export function feishuMeshChatName(meshName: string, host: string = hostname()):
 const FEISHU_CHAT_NAME_MAX = 60;
 const FEISHU_CHAT_HOST_MAX = 30;
 
-async function sdkCreateMeshChat(cfg: FeishuChannelConfig, meshName: string): Promise<{ chatId: string; name?: string }> {
+async function sdkCreateMeshChat(cfg: FeishuChannelConfig, meshName: string, userIds: string[]): Promise<{ chatId: string; name?: string }> {
   const client = createFeishuClient(cfg);
   const name = feishuMeshChatName(meshName);
   const res = await client.im.v1.chat.create({
@@ -359,7 +364,7 @@ async function sdkCreateMeshChat(cfg: FeishuChannelConfig, meshName: string): Pr
     data: {
       name,
       description: `Agent Mesh group for ${meshName}`,
-      ...(cfg.allowSenders.length ? { user_id_list: cfg.allowSenders } : {}),
+      ...(userIds.length ? { user_id_list: userIds } : {}), // device-auth approved openIds; bot-only when empty
       group_message_type: "chat",
     },
   });

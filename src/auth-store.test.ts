@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { generateToken, hashToken } from "./auth-codes";
 import {
+  approvedFeishuOpenIds,
   bootstrapTokenValid,
   devicesPath,
   emptyDevices,
@@ -306,4 +307,29 @@ test("readDevices / readFeishuAuth fall back to empty on a corrupt file", async 
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+// ── approvedFeishuOpenIds (feishu-mesh-watch-sync Bug 2) ──
+test("approvedFeishuOpenIds returns distinct approved openIds for the channelKey only", () => {
+  const file = sanitizeFeishuAuth({
+    allow: {
+      a: { channelKey: "feishu:cli_x", openId: "ou_1", status: "approved", approvedAt: future(1) },
+      b: { channelKey: "feishu:cli_x", openId: "ou_2", status: "approved", approvedAt: future(1) },
+      c: { channelKey: "feishu:cli_x", openId: "ou_3", status: "revoked", approvedAt: future(1) },   // revoked → excluded
+      d: { channelKey: "feishu:cli_other", openId: "ou_9", status: "approved", approvedAt: future(1) }, // other app → excluded
+    },
+  }, NOW);
+  expect(approvedFeishuOpenIds(file, "feishu:cli_x").sort()).toEqual(["ou_1", "ou_2"]);
+  expect(approvedFeishuOpenIds(file, "feishu:cli_other")).toEqual(["ou_9"]);
+  expect(approvedFeishuOpenIds(file, "feishu:cli_absent")).toEqual([]);
+});
+
+test("approvedFeishuOpenIds ignores pending entries and an empty registry", () => {
+  expect(approvedFeishuOpenIds(emptyFeishuAuth(), "feishu:cli_x")).toEqual([]);
+  // pending lives in file.pending, never file.allow → never returned
+  const file = sanitizeFeishuAuth({
+    allow: {},
+    pending: { P1: { encryptedToken: "E", channelKey: "feishu:cli_x", openId: "ou_p", appId: "cli_x", firstSeenAt: future(0), expiresAt: future(60_000) } },
+  }, NOW);
+  expect(approvedFeishuOpenIds(file, "feishu:cli_x")).toEqual([]);
 });
