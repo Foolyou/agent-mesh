@@ -95,6 +95,25 @@ const SEED_CANVAS = {
   perMesh: { demo: { ...SEED_FOCUS.perMesh.demo, mail: [{ id: "m1", ts: "1", from: "router", to: "codex-1", body: "go" }] } },
 };
 
+// A board snapshot so /bnw board list/kanban/detail render real rows (the fake manager has
+// no readBoard; we inject the snapshot client-side like the runtime seeds).
+const mkTask = (id: number, o: Record<string, unknown> = {}) => ({ id, title: `task ${id}`, status: "todo", priority: "normal", deps: [], subtasks: [], subtaskSeq: 0, revision: 1, createdBy: "router", createdAt: "", updatedAt: "", comments: [], mailEventIds: [], ...o });
+const SEED_BOARD_DOC = {
+  mesh: "demo", revision: 4, epicSeq: 1, taskSeq: 12, labelSeq: 2,
+  epics: [{ id: "epic-1", seq: 1, title: "Onboarding", status: "in_progress", revision: 1, createdBy: "router", createdAt: "", updatedAt: "", comments: [] }],
+  labels: [{ id: "label-1", name: "ui", color: "#bae6fd" }, { id: "label-2", name: "auth", color: "#e9d5ff" }],
+  tasks: [
+    mkTask(12, { epicId: "epic-1", title: "Add device-auth page", status: "in_review", assignee: "codex-1", priority: "high", labelIds: ["label-1", "label-2"], subtasks: [{ id: "12.1", title: "gate", status: "done", revision: 1, createdBy: "x", createdAt: "", updatedAt: "", comments: [] }], lifecycleEvents: [{ kind: "dispatched", by: "router", at: "" }], comments: [{ author: "router", text: "dispatched", ts: "" }] }),
+    mkTask(9, { epicId: "epic-1", title: "Token contrast audit", status: "todo", assignee: "claude-1", deps: [12], labelIds: ["label-1"] }),
+    mkTask(5, { title: "Drop legacy theme", status: "done", priority: "low" }),
+  ],
+};
+const SEED_BOARD = {
+  meshes: [{ name: "demo", defined: true, status: "running", router: "router", agents: [{ id: "router", harness: "claude", role: "router", status: "ready", activity: "idle" }], edges: [] }],
+  assistant: { status: "absent", transcript: [] },
+  perMesh: { demo: { ...SEED_FOCUS.perMesh.demo, board: SEED_BOARD_DOC } },
+};
+
 const auth = await provisionE2eAuth();
 const gw = new WebGateway(fakeManager() as any, undefined, { root: auth.authRoot });
 const handle = startWebServer({ gateway: gw, port: 0, dev: false }); // no HMR (prod-like serving)
@@ -249,6 +268,37 @@ try {
     await waitCall("addAgent:demo:reviewer-1");
   });
 
+  await step("7.2-A board: real read list/kanban/detail + C4 filter shell + filter nav", async () => {
+    await page.goto(`${BASE}/bnw/mesh/demo/board`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-bnw-surface="board"]', { timeout: 8000 });
+    await page.waitForFunction(() => Boolean((window as any).__meshStore), { timeout: 8000 });
+    await page.evaluate((s) => (window as any).__meshStore.apply({ t: "snapshot", state: s }), SEED_BOARD);
+    await page.waitForSelector('[data-bnw-board-list]', { timeout: 8000 });
+    // C4 filter shell present + real row from the board snapshot
+    for (const sel of ['[data-bnw-board-filters]', '[aria-label="search issues"]', '[data-bnw-filter-toggle]', '[aria-label="Board view"]', '[aria-label="sort"]']) {
+      if (await page.locator(sel).count() === 0) throw new Error(`board filter element missing: ${sel}`);
+    }
+    if (await page.getByText("Add device-auth page").count() === 0) throw new Error("store-fed issue missing in /bnw board list");
+    // open 筛选▾ and filter by status=open via the menu → URL nav + chip
+    await page.locator('[data-bnw-filter-toggle]').click();
+    await page.waitForSelector('[data-bnw-filter-menu]', { timeout: 8000 });
+    await page.locator('[aria-label="status filter"]').selectOption("open");
+    await page.waitForSelector('[data-bnw-chip]', { timeout: 8000 });
+    if (!new URL(page.url()).search.includes("status=open")) throw new Error("status filter not reflected in URL");
+    if (await page.getByText("Drop legacy theme").count() !== 0) throw new Error("done issue should be filtered out by status=open");
+    // view switch → kanban (URL-driven)
+    await page.goto(`${BASE}/bnw/mesh/demo/board?view=kanban`, { waitUntil: "domcontentloaded" });
+    await page.waitForFunction(() => Boolean((window as any).__meshStore), { timeout: 8000 });
+    await page.evaluate((s) => (window as any).__meshStore.apply({ t: "snapshot", state: s }), SEED_BOARD);
+    await page.waitForSelector('[data-bnw-board-kanban]', { timeout: 8000 });
+    // detail deep link
+    await page.goto(`${BASE}/bnw/mesh/demo/board/issue/12`, { waitUntil: "domcontentloaded" });
+    await page.waitForFunction(() => Boolean((window as any).__meshStore), { timeout: 8000 });
+    await page.evaluate((s) => (window as any).__meshStore.apply({ t: "snapshot", state: s }), SEED_BOARD);
+    await page.waitForSelector('[data-bnw-board-detail]', { timeout: 8000 });
+    if (await page.getByText("Add device-auth page").count() === 0) throw new Error("board detail missing the issue title");
+  });
+
   // ── user-review screenshots (<=1500 wide, in artifacts) ──
   await step("7.1 focus-layout correction: single `<agent> · activity` context, queue chip, no stub", async () => {
     // overview must NOT render the old generic context stub
@@ -285,11 +335,26 @@ try {
     await page.evaluate((s) => (window as any).__meshStore.apply({ t: "snapshot", state: s }), SEED_CANVAS);
     await page.waitForSelector('[data-edge-recent="true"]', { state: "attached", timeout: 8000 });
     await sleep(150); await page.screenshot({ path: `${SHOTS}/bnw-runtime-canvas-desktop.png`, fullPage: true });
-    // mobile overview
+    // board list / kanban / detail (seed the board snapshot)
+    const seedBoard = async () => { await page.waitForFunction(() => Boolean((window as any).__meshStore), { timeout: 8000 }); await page.evaluate((s) => (window as any).__meshStore.apply({ t: "snapshot", state: s }), SEED_BOARD); };
+    await page.goto(`${BASE}/bnw/mesh/demo/board`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-bnw-surface="board"]', { timeout: 8000 }); await seedBoard();
+    await page.waitForSelector('[data-bnw-board-list]', { timeout: 8000 });
+    await sleep(120); await page.screenshot({ path: `${SHOTS}/bnw-board-list-desktop.png`, fullPage: true });
+    await page.goto(`${BASE}/bnw/mesh/demo/board?view=kanban`, { waitUntil: "domcontentloaded" }); await seedBoard();
+    await page.waitForSelector('[data-bnw-board-kanban]', { timeout: 8000 });
+    await sleep(120); await page.screenshot({ path: `${SHOTS}/bnw-board-kanban-desktop.png`, fullPage: true });
+    await page.goto(`${BASE}/bnw/mesh/demo/board/issue/12`, { waitUntil: "domcontentloaded" }); await seedBoard();
+    await page.waitForSelector('[data-bnw-board-detail]', { timeout: 8000 });
+    await sleep(120); await page.screenshot({ path: `${SHOTS}/bnw-board-detail-desktop.png`, fullPage: true });
+    // mobile overview + mobile board list
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(`${BASE}/bnw/mesh/demo`, { waitUntil: "domcontentloaded" });
     await page.waitForSelector('[data-bnw-surface="runtime"]', { timeout: 8000 });
     await sleep(120); await page.screenshot({ path: `${SHOTS}/bnw-runtime-overview-mobile.png`, fullPage: true });
+    await page.goto(`${BASE}/bnw/mesh/demo/board`, { waitUntil: "domcontentloaded" }); await seedBoard();
+    await page.waitForSelector('[data-bnw-board-list]', { timeout: 8000 });
+    await sleep(120); await page.screenshot({ path: `${SHOTS}/bnw-board-list-mobile.png`, fullPage: true });
   });
 
   if (errors.length) throw new Error(`page errors:\n${errors.join("\n")}`);

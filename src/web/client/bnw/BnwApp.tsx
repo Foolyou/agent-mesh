@@ -13,6 +13,7 @@ import type { MeshStatus } from "../../types";
 import { useRoute, navigate, bnwHref, type BnwRoute } from "../router";
 import { RuntimeOverview, RuntimeFocus } from "./runtime";
 import { MeshCanvas } from "./canvas";
+import { BnwBoard } from "./board";
 
 // Map the gateway MeshStatus → the C5 StatusChip vocabulary used by the component library.
 function meshDot(s: MeshStatus): Status {
@@ -108,6 +109,8 @@ export function BnwApp() {
   else if (route.k === "runtime" && route.canvas) body = <MeshCanvas store={store} state={state} mesh={route.mesh} />;
   else if (route.k === "runtime" && route.agent) body = <RuntimeFocus store={store} state={state} mesh={route.mesh} agent={route.agent} full={!!route.full} />;
   else if (route.k === "runtime") body = <RuntimeOverview store={store} state={state} mesh={route.mesh} />;
+  // 7.2 — Board C wired to the real store.board (list/kanban/detail + C4 filter shell).
+  else if (route.k === "board") body = <BnwBoard store={store} state={state} mesh={route.mesh} route={route} />;
   else body = <SurfacePlaceholder route={route} />;
 
   return (
@@ -160,7 +163,7 @@ export function BnwApp() {
             <div className="mb-3">
               <Cluster>
                 <RouteLink href={bnwHref({ k: "runtime", mesh: activeMesh })} active={route.k === "runtime"} className="text-sm">运行态</RouteLink>
-                <RouteLink href={bnwHref({ k: "board", mesh: activeMesh, view: "list" })} active={route.k === "board"} className="text-sm">看板</RouteLink>
+                <RouteLink href={bnwHref({ k: "board", mesh: activeMesh, view: "list", filters: {} })} active={route.k === "board"} className="text-sm">看板</RouteLink>
                 <RouteLink href={bnwHref({ k: "runtime", mesh: activeMesh, canvas: true })} active={route.k === "runtime" && (route as any).canvas} className="text-sm">画布</RouteLink>
               </Cluster>
             </div>
