@@ -184,13 +184,17 @@ try {
     await page.waitForSelector('[data-runtime="focus"]', { timeout: 8000 });
   });
 
-  await step("runtime A desktop focus: transcript + inline approval + composer + activity/mail", async () => {
+  await step("runtime A desktop focus: transcript + docked approval bar + composer + activity/mail", async () => {
     await page.goto(`${BASE}/__ui-mockup?device=desktop&surface=runtime&runtime=focus`, { waitUntil: "domcontentloaded" });
     await page.waitForSelector('[data-runtime="focus"]', { timeout: 8000 });
     if (await page.getByText("restart the alpha mesh").count() === 0) throw new Error("transcript fixture missing");
-    if (await page.getByRole("button", { name: "Approve" }).count() === 0) throw new Error("inline ApprovalCard missing");
+    // C2: approval is a docked bar (not inline), with a FIFO queue count, above the composer.
+    if (await page.locator("[data-approval-bar]").count() === 0) throw new Error("docked approval bar missing");
+    if (await page.getByRole("button", { name: "Approve" }).count() === 0) throw new Error("oldest ApprovalCard missing");
+    if (await page.locator("[data-approval-queue]").count() === 0) throw new Error("FIFO queue count missing");
     if (await page.locator('[aria-label="Message composer"]').count() === 0) throw new Error("composer shell missing");
     if (await page.locator('[aria-label="context"]').getByText("mail").count() === 0) throw new Error("activity/mail context missing");
+    if (await page.locator("[data-context-approvals]").count() === 0) throw new Error("right-context approval-queue badge missing");
   });
 
   await step("runtime A mobile overview: agent card list with pending approvals pinned", async () => {
@@ -234,6 +238,24 @@ try {
     if (await page.locator("[data-canvas-window]").count() === 0) throw new Error("canvas windows missing");
     for (const lbl of ["stop codex-1", "wake kimi-cold", "codex-1 actions", "close canvas", "zoom in"]) {
       if (await page.locator(`[aria-label="${lbl}"]`).count() === 0) throw new Error(`canvas control missing: ${lbl}`);
+    }
+  });
+
+  await step("canvas C5: directed edges + recent-traffic pulse + force-directed toolbar + pinned node", async () => {
+    await page.goto(`${BASE}/__ui-mockup?surface=runtime&runtime=canvas&state=populated&device=desktop`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-mockup="frame"][data-runtime="canvas"]', { timeout: 8000 });
+    if (await page.locator('[data-canvas-edges]').count() === 0) throw new Error("SVG edge layer missing");
+    if (await page.locator('[data-canvas-edge]').count() < 3) throw new Error("directed edges missing");
+    if (await page.locator('[data-edge-recent="true"]').count() === 0) throw new Error("recent-traffic edge highlight missing");
+    if (await page.locator('marker#arrow').count() === 0) throw new Error("arrowhead marker missing");
+    for (const lbl of ["force-directed layout", "重新布局"]) {
+      if (await page.locator(`[aria-label="${lbl}"]`).count() === 0) throw new Error(`canvas layout control missing: ${lbl}`);
+    }
+    if (!(await page.locator('[aria-label="force-directed layout"]').isChecked())) throw new Error("force-directed must default ON");
+    if (await page.locator('[data-canvas-pinned="true"]').count() === 0) throw new Error("pinned (dragged) node missing");
+    // no regression: existing per-window controls still present
+    for (const lbl of ["stop codex-1", "wake kimi-cold", "close canvas"]) {
+      if (await page.locator(`[aria-label="${lbl}"]`).count() === 0) throw new Error(`regressed canvas control: ${lbl}`);
     }
   });
 
@@ -288,7 +310,8 @@ try {
 
   // ── board补漏 — audited [E] capabilities (audit #22–#25) ────────────────────────
   await step("board list补漏: group-by-epic + create epic/task + reopen terminal + 管理标签 toggle → manager", async () => {
-    await page.goto(`${BASE}/__ui-mockup?surface=board&board=list&state=populated&device=desktop`, { waitUntil: "domcontentloaded" });
+    // C4: group-by-epic now lives in the 筛选▾ dropdown — open it via boardFilters=1.
+    await page.goto(`${BASE}/__ui-mockup?surface=board&board=list&state=populated&boardFilters=1&device=desktop`, { waitUntil: "domcontentloaded" });
     await page.waitForSelector('[data-board="list"]', { timeout: 8000 });
     for (const lbl of ["group by epic", "new epic", "new task", "reopen #7", "reopen #5", "管理标签", "全屏"]) {
       if (await page.locator(`[aria-label="${lbl}"]`).count() === 0) throw new Error(`board control missing: ${lbl}`);
@@ -403,6 +426,62 @@ try {
     });
   }
 
+  // ── C4: board filter area redesign (GH-Issues) — assertions + proof screenshots ──
+  await step("board C4: GH-Issues filter (search + 筛选▾ + applied chips); boundary no overflow", async () => {
+    await page.goto(`${BASE}/__ui-mockup?surface=board&board=list&state=populated&device=desktop&mode=dark-slate&accent=signal-teal`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-mockup="frame"][data-device="desktop"] [data-board="list"]', { timeout: 8000 });
+    for (const sel of ['[data-board-filters]', '[aria-label="search issues"]', '[data-board-filter-toggle]', '[data-board-applied-filters]', '[data-filter-chip]', '[aria-label="clear all filters"]', '[aria-label="Board view"]', '[aria-label="sort"]']) {
+      if (await page.locator(sel).count() === 0) throw new Error(`C4 filter element missing: ${sel}`);
+    }
+    if (await page.locator('[data-board-filter-menu]').count() !== 0) throw new Error("筛选▾ menu must be closed by default");
+    // Boundary: secondary controls collapse into 筛选▾; the filter row must not overflow horizontally.
+    await page.goto(`${BASE}/__ui-mockup?surface=board&board=list&state=boundary&device=desktop&mode=dark-slate&accent=signal-teal`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-board="list"]', { timeout: 8000 });
+    const row = page.locator('[data-board-filters] [role="toolbar"][aria-label="board filters"]');
+    const overflow = await row.evaluate((el) => el.scrollWidth - el.clientWidth);
+    if (overflow > 1) throw new Error(`board filter row overflows horizontally on boundary: ${overflow}px`);
+    if (await page.getByRole("button", { name: "Dispatch ▾" }).count() !== 0) throw new Error("boundary must collapse Dispatch ▾ out of the row");
+  });
+  await step("screenshot board-list-filtermenu-boundary-desktop (筛选▾ open, collapsed secondary)", async () => {
+    await page.goto(`${BASE}/__ui-mockup?surface=board&board=list&state=boundary&boardFilters=1&device=desktop&mode=dark-slate&accent=signal-teal`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-board-filter-menu]', { timeout: 8000 });
+    if (await page.locator('[data-board-filter-menu] [data-board-manage-labels]').count() === 0) throw new Error("collapsed manage-labels not in the boundary 筛选▾ menu");
+    await sleep(130);
+    await shotFrame(`${SHOTS}/board-list-filtermenu-boundary-desktop-dark-slate-signal-teal.png`);
+  });
+  await step("screenshot board-list-boundary-collapsed-desktop (left nav + right panel collapsed → wider list)", async () => {
+    await page.goto(`${BASE}/__ui-mockup?surface=board&board=list&state=boundary&device=desktop&mode=dark-slate&accent=signal-teal`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-board="list"]', { timeout: 8000 });
+    await page.getByRole("button", { name: "收起导航" }).click();
+    await page.getByRole("button", { name: "收起上下文" }).click();
+    await sleep(150);
+    if (await page.locator('[aria-label="meshes"]').count() !== 0) throw new Error("left nav should be collapsed");
+    if (await page.locator('[data-nav-expand]').count() !== 1) throw new Error("floating expand button missing after nav collapse");
+    await shotFrame(`${SHOTS}/board-list-boundary-collapsed-desktop-dark-slate-signal-teal.png`);
+  });
+  // C4 follow-up: high-resolution element screenshots of ONLY the board filter toolbar
+  // region (not the full frame) so the user can inspect details without compression.
+  await step("screenshot board-filter-toolbar-boundary (default + menu) — high-res element shots", async () => {
+    const hi = await browser.newContext({ viewport: { width: 1440, height: 1000 }, deviceScaleFactor: 3 });
+    const hp = await hi.newPage();
+    hp.on("pageerror", (e) => errors.push(String(e)));
+    // default (menu closed)
+    await hp.goto(`${BASE}/__ui-mockup?surface=board&board=list&state=boundary&device=desktop&mode=dark-slate&accent=signal-teal`, { waitUntil: "domcontentloaded" });
+    await hp.waitForSelector('[data-board-filters]', { timeout: 8000 });
+    await sleep(140);
+    const f1 = `${SHOTS}/board-filter-toolbar-boundary-default.png`;
+    await hp.locator('[data-board-filters]').screenshot({ path: f1 });
+    shots.push(f1);
+    // 筛选▾ menu open (collapsed secondary controls visible)
+    await hp.goto(`${BASE}/__ui-mockup?surface=board&board=list&state=boundary&boardFilters=1&device=desktop&mode=dark-slate&accent=signal-teal`, { waitUntil: "domcontentloaded" });
+    await hp.waitForSelector('[data-board-filter-menu]', { timeout: 8000 });
+    await sleep(140);
+    const f2 = `${SHOTS}/board-filter-toolbar-boundary-menu.png`;
+    await hp.locator('[data-board-filters]').screenshot({ path: f2 });
+    shots.push(f2);
+    await hi.close();
+  });
+
   // ── new-mesh (04) builder: assertions + state × device screenshots (loading N/A; offline covered) ──
   await step("new-mesh builder: form present; error validation; permission disables", async () => {
     await page.goto(`${BASE}/__ui-mockup?surface=new-mesh&state=populated`, { waitUntil: "domcontentloaded" });
@@ -428,6 +507,23 @@ try {
     await page.goto(`${BASE}/__ui-mockup?surface=new-mesh&state=populated&nmEditor=charter&device=desktop`, { waitUntil: "domcontentloaded" });
     await page.waitForSelector('[data-newmesh-editor="charter"][role="dialog"]', { timeout: 8000 });
   });
+  await step("new-mesh C3: 12-agent long form — sticky action bar, fixed mobile Save, add-flow", async () => {
+    // Desktop boundary: 12 agents all reachable (no nested fixed-height trap), sticky bar.
+    await page.goto(`${BASE}/__ui-mockup?surface=new-mesh&state=boundary&device=desktop`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-newmesh="builder"]', { timeout: 8000 });
+    if (await page.locator('[aria-label="agent 12 id"]').count() === 0) throw new Error("12th agent row not present");
+    if (await page.locator('[data-newmesh-actionbar="sticky"]').count() === 0) throw new Error("desktop sticky action bar missing");
+    if (await page.locator('[data-newmesh-actionbar="footer"]').count() !== 0) throw new Error("desktop must not show the mobile footer");
+    // last agent row must be reachable in normal page flow (scrollIntoView resolves, no trap)
+    await page.locator('[data-newmesh-newest="true"]').scrollIntoViewIfNeeded();
+    if (await page.locator('[data-newmesh-newest="true"] [aria-label="agent 12 id"]').count() === 0) throw new Error("newest (just-added) row must be the 12th");
+    if (await page.locator('[data-newmesh-addflow]').count() === 0) throw new Error("+ Add agent add-flow affordance missing");
+    // Mobile: Save fixed in a bottom footer; body scrolls above.
+    await page.goto(`${BASE}/__ui-mockup?surface=new-mesh&state=populated&device=mobile`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-newmesh="builder"]', { timeout: 8000 });
+    if (await page.locator('[data-newmesh-actionbar="footer"]').count() === 0) throw new Error("mobile fixed Save footer missing");
+    if (await page.locator('[data-newmesh-actionbar="footer"]').getByRole("button", { name: "Save" }).count() === 0) throw new Error("mobile footer must carry Save");
+  });
   const NM_STATES = ["empty", "populated", "error", "permission", "busy", "offline", "boundary"];
   for (const device of ["desktop", "mobile"]) {
     for (const st of NM_STATES) {
@@ -439,6 +535,16 @@ try {
       });
     }
   }
+  // C3 proof: mobile boundary scrolled to the newest (12th) agent row, fixed Save footer still visible.
+  await step("screenshot new-mesh-boundary-mobile-newest (scroll to 12th row, footer pinned)", async () => {
+    await page.goto(`${BASE}/__ui-mockup?surface=new-mesh&state=boundary&device=mobile&mode=dark-slate&accent=signal-teal`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-mockup="frame"][data-device="mobile"][data-newmesh="builder"]', { timeout: 8000 });
+    await page.locator('[data-newmesh-newest="true"]').scrollIntoViewIfNeeded();
+    await sleep(130);
+    if (!(await page.locator('[data-newmesh-newest="true"] [aria-label="agent 12 id"]').isVisible())) throw new Error("12th agent id not visible after scroll");
+    if (!(await page.locator('[data-newmesh-actionbar="footer"]').isVisible())) throw new Error("fixed Save footer not visible while scrolled to the newest row");
+    await shotFrame(`${SHOTS}/new-mesh-boundary-mobile-newest-dark-slate-signal-teal.png`);
+  });
   // expanded text editor: charter (desktop modal) + instructions (mobile sheet)
   for (const [q, file] of [
     ["surface=new-mesh&state=populated&nmEditor=charter&device=desktop", "new-mesh-editor-charter-desktop-dark-slate-signal-teal.png"],
@@ -457,6 +563,8 @@ try {
     await page.goto(`${BASE}/__ui-mockup?surface=assistant&state=populated&device=desktop`, { waitUntil: "domcontentloaded" });
     await page.waitForSelector('[data-mockup="frame"][data-assistant="chat"]', { timeout: 8000 });
     if (await page.locator("[data-assistant-tool]").count() === 0) throw new Error("tool-call card missing");
+    // C2: delete-confirm is in a docked approval bar (composer-adjacent), not inline.
+    if (await page.locator("[data-approval-bar]").count() === 0) throw new Error("docked approval bar missing");
     if (await page.getByRole("button", { name: "Delete" }).count() === 0) throw new Error("delete-confirm missing");
     if (await page.locator('[aria-label="Message composer"]').count() === 0) throw new Error("composer missing");
     if (await page.locator('[data-assistant-p2p]').count() === 0) throw new Error("p2p DM entry missing");

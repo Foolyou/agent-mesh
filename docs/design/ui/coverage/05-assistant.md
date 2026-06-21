@@ -52,3 +52,5 @@ via 更多 → Assistant (works well); mesh-builder hand-offs use the mobile new
   `store.ts` assistant scope (status/capabilities/interruptAssistant) + the tool set from
   `mesh-assistant-tools.check.ts`. No additional [E] capability beyond the checklist found.
   Index (`?index=1`) gains the 05 row. Fixture-only, true C5–C8, v2 tokens.
+- 2026-06-21 — Phase B user-review C1 (global mobile rule, see `00-index.md`): header wraps on mobile (p2p DM / status chip drop to their own line). Mockup-layer only (UiMockup.tsx).
+- 2026-06-21 — Phase B user-review C2: the destructive delete-mesh confirmation moved OUT of the inline conversation into the same composer-adjacent **docked ApprovalBar** (above the composer), matching runtime. Long content capped (max-h + scroll). Shared pattern in `00-index.md`. Mockup-layer only (UiMockup.tsx).

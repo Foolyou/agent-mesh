@@ -50,3 +50,4 @@ allowSenders enrollment (auth-store/auth-codes; see `12`).
   `src/channels` (FeishuChannelStatus / FeishuMeshBinding / provision states / allowSenders)
   + `store.ts` feishu endpoints. No additional [E] capability beyond the checklist found.
   Index (`?index=1`) gains the 07 row. Fixture-only, true C5–C8, v2 tokens.
+- 2026-06-21 — Phase B user-review C1 (global mobile rule, see `00-index.md`): mobile pending-senders header splits title / 设备授权↗; pending items stack meta + approve/reject action row. Mockup-layer only (UiMockup.tsx).

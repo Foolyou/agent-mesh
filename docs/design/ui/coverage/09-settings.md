@@ -64,3 +64,4 @@ custom-palette advanced editor simplified (△).
   (server-persisted prefs can't save offline), while appearance/theme and language stay
   enabled (local). SSR + e2e assert the offline pref options are disabled and theme mode
   stays enabled.
+- 2026-06-21 — Phase B user-review C1 (global mobile rule, see `00-index.md`): mobile device rows stack label/phase + approve/revoke action row. Mockup-layer only (UiMockup.tsx).

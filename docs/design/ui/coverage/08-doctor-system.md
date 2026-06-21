@@ -51,3 +51,4 @@ surface + any in-UI recovery actions ([N] where not already wired).
   DoctorCheck/PsDetail/MeshProcDetail/ProcLeak) + `store.ts` fetchDoctor/fetchPsDetail. No
   additional [E] capability beyond the checklist found. Index (`?index=1`) gains the 08 row.
   Fixture-only, true C5–C8, v2 tokens.
+- 2026-06-21 — Phase B user-review C1 (global mobile rule, see `00-index.md`): mobile summary = counts line + copy/run action row + folded version line; findings stack id+severity / message / fixHint (never two-column). Mockup-layer only (UiMockup.tsx).

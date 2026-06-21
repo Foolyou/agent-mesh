@@ -81,3 +81,21 @@ repo: `src/board.ts` (model/lifecycle), `src/web/client/BoardPanel.tsx`
   issue rows + detail expose 「↺ reopen」 (#25). Mobile keeps group-by-epic in the filter
   row; fullscreen/manager stay desktop-only (matrix △). Index (`?index=1`) 03 row synced
   with the new deep links. All prior board all-state desktop/mobile coverage intact.
+- 2026-06-21 — Phase B user-review **C4 (board filter area redesign · GH-Issues direction)**:
+  the desktop list filter area (`BoardFilterBar` in `UiMockup.tsx`, `data-board-filters`)
+  is redesigned toward GitHub Issues. A **persistent 🔍 search** accepts query tokens
+  (placeholder `搜索 issue… 例如 status:open label:bug`) and a **筛选▾** dropdown
+  (`data-board-filter-toggle` → `?boardFilters=1`, `data-board-filter-menu` `role=menu`)
+  now **owns** the status/label/assignee/epic pickers + 按 Epic 分组 (moved out of the
+  inline row). Applied filters render as **removable `×` chips** beneath the row
+  (`data-board-applied-filters` / `data-filter-chip` + 清除全部). The **right-side action
+  group** holds the List/Board view-switch + sort + 新建 (+ 管理标签/Dispatch when room).
+  **Boundary**: secondary controls (管理标签, Dispatch) **collapse into the 筛选▾ menu**
+  instead of squeezing the row — the filter toolbar has **no horizontal overflow**
+  (e2e asserts `scrollWidth ≤ clientWidth`); applied chips wrap. To give the central
+  list more width, the **left nav** (收起导航 → floating expand) and the **right
+  Epic/dispatch panel** (收起上下文) both collapse (proof shot
+  `board-list-boundary-collapsed-desktop`). Mobile list keeps its own simplified filter
+  row (C4 is desktop-scoped) — unchanged. Direction ① only (no alternate variant).
+  New proof screenshots: `board-list-filtermenu-boundary-desktop` (menu open, collapsed
+  secondary) + `board-list-boundary-collapsed-desktop`; `board-list-*-desktop` re-rendered.

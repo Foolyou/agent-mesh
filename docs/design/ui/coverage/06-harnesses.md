@@ -55,3 +55,4 @@ harness cards (status + dual version) + reprobe/install + install progress in a 
   SelfInstallerGuide/OldVersionAgents) + `store.ts` install/reprobe/respawnAgent. No
   additional [E] capability beyond the checklist found. Index (`?index=1`) gains the 06
   row. Fixture-only, true C5–C8, v2 semantic tokens.
+- 2026-06-21 — Phase B user-review C1 (global mobile rule, see `00-index.md`): mobile rows stack: name+status chip / version / reprobe·update·auth actions on their own wrapping row; self-install guide stacked. Mockup-layer only (UiMockup.tsx).

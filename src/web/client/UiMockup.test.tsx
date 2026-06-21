@@ -81,14 +81,16 @@ test("runtime A · mobile overview: agent card list with pending approvals pinne
   expect(out).toContain("codex-1");
 });
 
-test("runtime A · mobile focus: approval pinned above transcript + composer", () => {
+test("runtime A · mobile focus (C2): approval is a docked bar below transcript, above composer", () => {
   const out = renderAt("?device=mobile&surface=runtime&runtime=focus");
   expect(out).toContain('data-runtime="focus"');
-  expect(out).toContain("Allow"); // ApprovalCard above transcript
+  expect(out).toContain("data-approval-bar"); // docked approval bar (not inline)
+  expect(out).toContain("Allow");
   expect(out).toContain("Transcript");
   expect(out).toContain('aria-label="Message composer"');
-  // approval markup appears before the transcript panel
-  expect(out.indexOf("Allow")).toBeLessThan(out.indexOf("Transcript"));
+  // C2: approval docks BELOW the transcript and ABOVE the composer
+  expect(out.indexOf("Transcript")).toBeLessThan(out.indexOf("data-approval-bar"));
+  expect(out.indexOf("data-approval-bar")).toBeLessThan(out.indexOf('aria-label="Message composer"'));
 });
 
 test("board C · desktop list: filter/sort bar, bulk toolbar, epic groups, rich issue rows", () => {
@@ -250,13 +252,15 @@ test("runtime boundary · many agents (overview) + long transcript (focus)", () 
   expect(fo).toContain("exercise wrapping and truncation"); // long transcript line
 });
 
-test("runtime mobile · list pins approvals; focus pins approval above transcript", () => {
+test("runtime mobile · list pins approvals; focus docks approval below transcript (C2)", () => {
   const list = renderAt("?surface=runtime&runtime=overview&state=populated&device=mobile");
   expect(list).toContain('data-device="mobile"');
-  expect(list).toContain("待审批");
+  expect(list).toContain("待审批"); // overview still pins the pending-approval section on top
   const focus = renderAt("?surface=runtime&runtime=focus&state=populated&device=mobile");
   expect(focus).toContain("Transcript");
-  expect(focus.indexOf("Allow")).toBeLessThan(focus.indexOf("Transcript"));
+  expect(focus).toContain("data-approval-bar");
+  // C2: focus approval is docked AFTER the transcript (no longer pinned above it)
+  expect(focus.indexOf("Transcript")).toBeLessThan(focus.indexOf("data-approval-bar"));
 });
 
 // ── runtime补漏 — audited [E] capabilities (audit #9–#18) ─────────────────────
@@ -320,6 +324,47 @@ test("runtime canvas补漏 · zoomable canvas: windows + per-window stop/wake/ac
   expect(out).toContain('aria-label="zoom in"');
 });
 
+// ── C5: canvas information-flow edges + force-directed layout ──────────────────
+test("canvas C5 · directed mail edges with arrowheads; recent traffic highlighted", () => {
+  const out = renderAt("?surface=runtime&runtime=canvas&state=populated&device=desktop");
+  expect(out).toContain("data-canvas-edges"); // SVG edge layer
+  expect(out).toContain("data-canvas-edge"); // an edge line
+  expect(out).toContain('id="arrow"'); // arrowhead marker (direction)
+  expect(out).toContain('id="arrow-recent"'); // recent-edge arrowhead
+  expect(out).toContain('data-edge-recent="true"'); // recent-mail edge highlighted
+  expect(out).toContain("animate-pulse"); // recent edges pulse
+  expect(out).toContain('marker-end="url(#arrow-recent)"'); // recent edge points its arrow
+});
+
+test("canvas C5 · force-directed toolbar (default-on) + 重新布局; existing controls intact", () => {
+  const out = renderAt("?surface=runtime&runtime=canvas&state=populated&device=desktop");
+  expect(out).toContain("data-canvas-autolayout"); // 力导向 toggle
+  expect(out).toContain('aria-label="force-directed layout"');
+  expect(out).toContain('checked=""'); // default-on
+  expect(out).toContain("data-canvas-relayout"); // 重新布局
+  expect(out).toContain('aria-label="重新布局"');
+  // do not regress existing canvas controls
+  for (const lbl of ["stop codex-1", "wake kimi-cold", "codex-1 actions", "close canvas", "zoom in"]) {
+    expect(out).toContain(`aria-label="${lbl}"`);
+  }
+  expect(out).toContain("data-resize-handle");
+});
+
+test("canvas C5 · a dragged node is pinned (kept out of force-layout)", () => {
+  const out = renderAt("?surface=runtime&runtime=canvas&state=populated&device=desktop");
+  expect(out).toContain('data-canvas-pinned="true"'); // pinned node state
+  expect(out).toContain("data-canvas-pin"); // 📌 marker
+  expect(out).toContain('aria-label="codex-1 pinned"'); // the pinned (dragged) agent
+});
+
+test("canvas C5 · boundary scales edges + nodes (information flow stays legible)", () => {
+  const out = renderAt("?surface=runtime&runtime=canvas&state=boundary&device=desktop");
+  expect(out).toContain("data-canvas-edges");
+  expect(out).toContain('data-edge-recent="true"'); // recent traffic still highlighted at scale
+  // more nodes than the populated set
+  expect(out).toContain('aria-label="reviewer-1 actions"'); // a boundary-only agent window
+});
+
 test("runtime补漏 mobile · full degrades to focus, canvas to list; controls present", () => {
   expect(renderAt("?surface=runtime&runtime=full&state=populated&device=mobile")).toContain('data-runtime="focus"');
   expect(renderAt("?surface=runtime&runtime=canvas&state=populated&device=mobile")).toContain('data-runtime="overview"');
@@ -329,6 +374,49 @@ test("runtime补漏 mobile · full degrades to focus, canvas to list; controls p
   const ov = renderAt("?surface=runtime&runtime=overview&state=populated&device=mobile");
   expect(ov).toContain('aria-label="wake kimi-cold"'); // cold agent wake in mobile list
   expect(ov).toContain('aria-label="start strategy"');
+});
+
+// ── C2: approvals are a fixed composer-adjacent docked bar (FIFO + sticky + max-height) ──
+test("C2 runtime focus desktop · docked approval bar below transcript, above composer; FIFO queue", () => {
+  const out = renderAt("?surface=runtime&runtime=focus&state=populated&device=desktop");
+  expect(out).toContain("data-approval-bar");
+  expect(out).toContain("Approve"); // the oldest approval renders in the bar
+  expect(out).toContain("data-approval-queue"); // FIFO: count of the rest
+  expect(out).toContain("还有 2 个待授权"); // PENDING_APPROVALS(3) - 1
+  // transcript content sits BEFORE the docked bar; composer AFTER it
+  expect(out.indexOf("restart the alpha mesh")).toBeLessThan(out.indexOf("data-approval-bar"));
+  expect(out.indexOf("data-approval-bar")).toBeLessThan(out.indexOf('aria-label="Message composer"'));
+  // jump-to-latest is in the docked region (so the fixed bar+composer never hides it)
+  expect(out.indexOf("data-jump-bottom")).toBeLessThan(out.indexOf("data-approval-bar"));
+  // right-context approval-queue badge mirrors the FIFO count
+  expect(out).toContain("data-context-approvals");
+});
+
+test("C2 runtime focus · long approval (boundary) is capped with internal scroll (no offscreen composer)", () => {
+  const out = renderAt("?surface=runtime&runtime=focus&state=boundary&device=desktop");
+  expect(out).toContain("data-approval-bar");
+  expect(out).toContain("max-h-44"); // bar caps long content + overflow-auto
+  expect(out).toContain("overflow-auto");
+  expect(out).toContain("a long config.json change"); // LONG_APPROVAL_DIFF content
+  // composer still present after the (capped) approval bar
+  expect(out.indexOf("data-approval-bar")).toBeLessThan(out.indexOf('aria-label="Message composer"'));
+});
+
+test("C2 assistant · delete-confirm docks above composer (not inline); empty has none", () => {
+  const out = renderAt("?surface=assistant&state=populated&device=desktop");
+  expect(out).toContain("data-approval-bar");
+  expect(out).toContain("Delete"); // delete-confirm inside the docked bar
+  // docked bar sits after the conversation and before the composer
+  expect(out.indexOf("now delete the scratch-del mesh")).toBeLessThan(out.indexOf("data-approval-bar"));
+  expect(out.indexOf("data-approval-bar")).toBeLessThan(out.indexOf('aria-label="Message composer"'));
+  // empty (suggestions) state has no approval bar
+  expect(renderAt("?surface=assistant&state=empty&device=desktop").includes("data-approval-bar")).toBe(false);
+});
+
+test("C2 assistant mobile · docked confirm above composer", () => {
+  const out = renderAt("?surface=assistant&state=populated&device=mobile");
+  expect(out).toContain("data-approval-bar");
+  expect(out.indexOf("data-approval-bar")).toBeLessThan(out.indexOf('aria-label="Message composer"'));
 });
 
 // ── navigation / index skeleton ──────────────────────────────────────────────
@@ -370,8 +458,9 @@ test("index skeleton · lists every surface with state/device deep links", () =>
 
 // ── board补漏 — audited [E] capabilities (audit #22–#25) ───────────────────────
 test("board list补漏 · group-by-epic + 管理标签 toggle + create epic/task + 全屏 toggle + reopen terminal", () => {
-  const out = renderAt("?surface=board&board=list&state=populated&device=desktop");
-  expect(out).toContain('aria-label="group by epic"'); // group-by-epic (#23)
+  // C4: group-by-epic moved into the 筛选▾ dropdown — open it to assert.
+  const out = renderAt("?surface=board&board=list&state=populated&boardFilters=1&device=desktop");
+  expect(out).toContain('aria-label="group by epic"'); // group-by-epic (#23, now in 筛选▾ menu)
   expect(out).toContain('data-board-manage-labels'); // 管理标签 toggle (#24)
   expect(out).toContain('data-board-create'); // create epic/task row (#25)
   expect(out).toContain('aria-label="new epic"');
@@ -413,9 +502,9 @@ test("board detail补漏 · fs toggle present; reopen replaces close for termina
 });
 
 test("board补漏 · permission disables label manager + create + group-by-epic; offline too", () => {
-  const perm = renderAt("?surface=board&board=list&state=permission&boardManage=1&device=desktop");
+  const perm = renderAt("?surface=board&board=list&state=permission&boardManage=1&boardFilters=1&device=desktop");
   expect(perm).toContain('disabled="" aria-label="new label name"'); // create-label input disabled
-  expect(perm).toContain('disabled="" aria-label="group by epic"'); // checkbox disabled
+  expect(perm).toContain('disabled="" aria-label="group by epic"'); // checkbox disabled (in 筛选▾ menu)
   expect(renderAt("?surface=board&board=list&state=offline&device=desktop")).toContain('disabled="" aria-label="new epic"');
 });
 
@@ -424,6 +513,58 @@ test("board补漏 mobile · group-by-epic in the filter row (fullscreen/manager 
   expect(out).toContain('aria-label="group by epic"');
   // fullscreen flag is ignored on mobile (no standalone frame)
   expect(renderAt("?surface=board&board=list&state=populated&boardFs=1&device=mobile").includes('data-board-fs="1"')).toBe(false);
+});
+
+// ── C4: board filter area redesign (GH-Issues direction, desktop list) ─────────
+test("board C4 · persistent search + 筛选▾ toggle + right-side action group (view/sort/新建)", () => {
+  const out = renderAt("?surface=board&board=list&state=populated&device=desktop");
+  expect(out).toContain('data-board-filters'); // filter area container
+  expect(out).toContain('aria-label="search issues"'); // persistent search (token-style)
+  expect(out).toContain("status:open label:bug"); // query-token hint in placeholder
+  expect(out).toContain('data-board-filter-toggle'); // 筛选▾ dropdown affordance
+  expect(out).toContain('aria-label="Board view"'); // view switch in the right action group
+  expect(out).toContain('aria-label="sort"'); // sort in the right action group
+  expect(out).toContain("+ 新建"); // 新建 in the right action group
+  // status/label/assignee/epic pickers are NOT inline — they live in the closed 筛选▾ menu
+  expect(out.includes('data-board-filter-menu')).toBe(false);
+  expect(out.includes('aria-label="status filter"')).toBe(false);
+});
+
+test("board C4 · applied filters render as removable (×) chips with clear-all", () => {
+  const out = renderAt("?surface=board&board=list&state=populated&device=desktop");
+  expect(out).toContain('data-board-applied-filters');
+  expect(out).toContain('data-filter-chip');
+  expect(out).toContain("status:open"); // a chip token
+  expect(out).toContain('aria-label="remove filter status"'); // per-chip × remove
+  expect(out).toContain('aria-label="clear all filters"'); // clear-all
+});
+
+test("board C4 · 筛选▾ menu (?boardFilters=1) owns status/label/assignee/epic + group-by-epic", () => {
+  const out = renderAt("?surface=board&board=list&state=populated&boardFilters=1&device=desktop");
+  expect(out).toContain('data-board-filter-menu');
+  expect(out).toContain('role="menu"');
+  for (const lbl of ["status filter", "label filter", "assignee filter", "epic filter", "group by epic"]) {
+    expect(out).toContain(`aria-label="${lbl}"`);
+  }
+  // off by default
+  expect(renderAt("?surface=board&board=list&state=populated&device=desktop").includes('data-board-filter-menu')).toBe(false);
+});
+
+test("board C4 · boundary collapses secondary controls into 筛选▾ (no row overflow)", () => {
+  // Closed menu on boundary: manage-labels + Dispatch are NOT squeezed into the row.
+  const closed = renderAt("?surface=board&board=list&state=boundary&device=desktop");
+  expect(closed).toContain('data-board-filters');
+  expect(closed.includes('data-board-manage-labels')).toBe(false); // collapsed away from the row
+  expect(closed.includes("Dispatch ▾")).toBe(false);
+  expect(closed).toContain("+ 新建"); // primary action stays reachable
+  // more applied chips in boundary (wrap, never overflow)
+  expect(closed).toContain("assignee:claude-1");
+  expect(closed).toContain("epic:infra");
+  // Open the boundary menu: the collapsed secondary controls live inside it.
+  const open = renderAt("?surface=board&board=list&state=boundary&boardFilters=1&device=desktop");
+  expect(open).toContain('data-board-filter-menu');
+  expect(open).toContain('data-board-manage-labels'); // collapsed into the dropdown
+  expect(open).toContain("Dispatch ▾");
 });
 
 // ── Mesh Assistant (05) ──────────────────────────────────────────────────────
@@ -669,8 +810,34 @@ test("doctor · mobile: read-only summary + findings; recovery/restart deferred 
   expect(out).toContain('data-device="mobile"');
   expect(out).toContain("data-doctor-findings");
   expect(out.includes("data-recovery")).toBe(false); // recovery deferred (△)
-  expect(out.includes('aria-label="restart daemon dev-mesh"')).toBe(false);
-  expect(out.includes('aria-label="run doctor"')).toBe(false); // run is desktop-only here
+  expect(out.includes('aria-label="restart daemon dev-mesh"')).toBe(false); // per-daemon restart still desktop-only
+  // C1: copy/run doctor now sit in a compact mobile action row (summary header fits 1–2 lines)
+  expect(out).toContain('aria-label="run doctor"');
+  expect(out).toContain('aria-label="copy diagnostics"');
+});
+
+// ── C1 global mobile rule: actions stack onto their own row (no crammed single row) ──
+test("C1 mobile · doctor summary stacks counts/actions/version; findings never two-column", () => {
+  const out = renderAt("?surface=doctor&state=populated&device=mobile");
+  // summary version folds to its own line (not crammed with counts)
+  expect(out).toContain("agent-mesh v0.42.0");
+  // findings: detail renders as its own line on mobile (no flex-1 inline column)
+  expect(out).toContain("opencode not installed");
+});
+
+test("C1 mobile · harness rows put reprobe/update on their own row (nowrap buttons)", () => {
+  const out = renderAt("?surface=harnesses&state=populated&device=mobile");
+  expect((out.match(/whitespace-nowrap/g) ?? []).length).toBeGreaterThan(0);
+  expect(out).toContain('aria-label="reprobe claude"');
+  expect(out).toContain('aria-label="update codex"');
+});
+
+test("C1 mobile · channels pending header splits title / 设备授权 entry; desktop stays single-row", () => {
+  const mob = renderAt("?surface=channels&state=populated&device=mobile");
+  expect(mob).toContain("data-pending-senders");
+  expect(mob).toContain("data-channel-enroll");
+  // mobile pending card stacks (flex-col), desktop keeps the justify-between single row
+  expect(mob).toContain('aria-label="approve sender ou_77c…e2"');
 });
 
 // ── Settings (09) ────────────────────────────────────────────────────────────
@@ -1108,8 +1275,42 @@ test("new-mesh · offline: reconnecting banner + fields/Save disabled (Cancel st
 test("new-mesh · boundary: many agents + many edges + long name/id", () => {
   const out = renderAt("?surface=new-mesh&state=boundary&device=desktop");
   expect(out).toContain("a-very-long-agent-identifier-for-truncation");
-  expect(out).toContain("agents · 10");
+  expect(out).toContain("agents · 12"); // C3: 12-agent long-form target
   expect(out).toContain("release-candidate-2026-q3-extended-pipeline");
+  expect(out).toContain('aria-label="agent 12 id"'); // 12th row present/reachable
+});
+
+// ── C3: new-mesh long-form scrolling (sticky action bar / fixed Save / add-flow) ──
+test("new-mesh C3 · desktop: sticky action bar holds Cancel/Save; no mobile footer", () => {
+  const out = renderAt("?surface=new-mesh&state=boundary&device=desktop");
+  expect(out).toContain('data-newmesh-actionbar="sticky"');
+  expect(out).toContain("sticky top-0"); // pinned while the long form scrolls
+  expect(out).not.toContain('data-newmesh-actionbar="footer"'); // desktop keeps actions in the bar
+  // name echoed in the reachable action bar
+  expect(out).toContain("release-candidate-2026-q3-extended-pipeline");
+});
+
+test("new-mesh C3 · mobile: Save fixed at the bottom footer; whole body scrolls", () => {
+  const out = renderAt("?surface=new-mesh&state=populated&device=mobile");
+  expect(out).toContain('data-newmesh-actionbar="footer"'); // Save fixed at bottom
+  expect(out).toContain("flex-1 overflow-auto"); // body scrolls above the footer
+  // footer carries the Save action
+  const footerIdx = out.indexOf('data-newmesh-actionbar="footer"');
+  expect(out.slice(footerIdx)).toContain("Save");
+});
+
+test("new-mesh C3 · add-agent flow: + Add agent marked; newest row scrolls-in + focuses id", () => {
+  const out = renderAt("?surface=new-mesh&state=boundary&device=desktop");
+  expect(out).toContain("data-newmesh-addflow"); // + Add agent affordance
+  expect(out).toContain('data-newmesh-newest="true"'); // the just-added row highlighted
+  expect(out).toContain("已滚动入视并聚焦"); // add-flow caption
+  // newest marker + focus visual live on the LAST (12th) agent row
+  const newestIdx = out.indexOf('data-newmesh-newest="true"');
+  expect(out.slice(newestIdx)).toContain('aria-label="agent 12 id"');
+});
+
+test("new-mesh C3 · add-flow highlight only in boundary (not in plain populated)", () => {
+  expect(renderAt("?surface=new-mesh&state=populated&device=desktop")).not.toContain('data-newmesh-newest="true"');
 });
 
 test("new-mesh · mobile: simplified builder (from/to edge pickers)", () => {

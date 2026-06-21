@@ -93,6 +93,25 @@ const AGENTS: RuntimeAgent[] = [
 ];
 const FOCUS_AGENT = "codex-1"; // the agent whose transcript the focus state shows
 
+// Directed mail edges between agents (who can mail whom). `recent` = edge has live mail
+// traffic right now → highlighted/pulsing on the topology canvas to show information flow.
+type RuntimeEdge = { from: string; to: string; recent?: boolean };
+const EDGES: RuntimeEdge[] = [
+  { from: "router", to: "codex-1", recent: true },
+  { from: "router", to: "claude-1", recent: true },
+  { from: "router", to: "opencode-1" },
+  { from: "router", to: "kimi-cold" },
+  { from: "codex-1", to: "claude-1" },
+];
+const MANY_EDGES: RuntimeEdge[] = [
+  ...EDGES,
+  { from: "router", to: "claude-2" }, { from: "router", to: "codex-2", recent: true },
+  { from: "router", to: "opencode-2" }, { from: "router", to: "router-2" },
+  { from: "codex-2", to: "reviewer-1", recent: true }, { from: "claude-2", to: "kimi-1" },
+  { from: "claude-3", to: "reviewer-1" }, { from: "codex-3", to: "reviewer-1" },
+  { from: "router-2", to: "claude-3" },
+];
+
 // Queued turns waiting behind the in-flight one (pending-turn queue, audit #13).
 const QUEUED_TURNS = [
   { text: "after the gate, bump the harness versions and re-probe" },
@@ -232,6 +251,7 @@ interface Sel {
   nmEditor: NmEditor;
   boardFs: boolean;
   boardManage: boolean;
+  boardFilters: boolean;
   asstFs: boolean;
   lb: boolean;
   index: boolean;
@@ -264,6 +284,7 @@ function readSel(): Sel {
     nmEditor: p.get("nmEditor") === "charter" ? "charter" : p.get("nmEditor") === "instructions" ? "instructions" : "off",
     boardFs: p.get("boardFs") === "1",
     boardManage: p.get("boardManage") === "1",
+    boardFilters: p.get("boardFilters") === "1",
     asstFs: p.get("asstFs") === "1",
     lb: p.get("lb") === "1",
     index: p.get("index") === "1",
@@ -349,16 +370,38 @@ function MessageBubble({ who, text }: { who: "user" | "agent" | "tool"; text: st
 }
 
 // `busy` → ApprovalCard busy (spinner + options disabled); resolved → resolvedLabel.
-function ApprovalFixture({ busy = false, resolved }: { busy?: boolean; resolved?: string }) {
+// Total pending approvals for the focused agent (FIFO) — the bar shows the oldest, the
+// rest are counted in the queue badge ("还有 N 个待授权").
+const PENDING_APPROVALS = 3;
+const LONG_APPROVAL_DIFF = Array.from({ length: 10 }, (_, i) => `+ line ${i + 1}: a long config.json change the agent wants to write, exercising the bar's max-height + internal scroll so the composer is never pushed offscreen`).join("\n");
+
+function ApprovalFixture({ busy = false, resolved, long = false }: { busy?: boolean; resolved?: string; long?: boolean }) {
   return (
     <ApprovalCard
       title={`${FOCUS_AGENT} · write file`}
-      question={<>Allow <b>{FOCUS_AGENT}</b> to write <code className="text-syntax-string">config.json</code>?</>}
+      question={<>Allow <b>{FOCUS_AGENT}</b> to write <code className="text-syntax-string">config.json</code>?{long ? <pre className="mt-1.5 whitespace-pre-wrap rounded bg-surface-sunken px-2 py-1 text-xs font-mono text-text-secondary">{LONG_APPROVAL_DIFF}</pre> : null}</>}
       options={[{ id: "allow", label: "Approve", kind: "approve" }, { id: "once", label: "Just once" }, { id: "deny", label: "Deny", kind: "reject" }]}
       onResolve={() => {}}
       busy={busy}
       resolvedLabel={resolved}
     />
+  );
+}
+
+// C2 — approvals are a FIXED, composer-adjacent docked bar (NOT inline in the transcript).
+// FIFO: render only the oldest approval + a "还有 N 个待授权" count for the rest. Long content
+// is capped with internal scroll so it can never push the composer offscreen. Shared by the
+// runtime focus (write-file approval) and the assistant (delete-mesh confirm).
+function ApprovalBar({ children, queue = 0, long = false, label = "⚠ 待授权（最早一条）" }: { children: ReactNode; queue?: number; long?: boolean; label?: string }) {
+  return (
+    <div data-approval-bar className="flex flex-col gap-1.5 border-t border-border bg-surface-raised px-3 py-2">
+      <div className="flex items-center justify-between">
+        <span className="text-xs text-text-muted">{label}</span>
+        {queue > 0 ? <span data-approval-queue className="rounded-full bg-warning-subtle px-2 py-0.5 text-xs font-medium text-warning">还有 {queue} 个待授权</span> : null}
+      </div>
+      {/* max-height + internal scroll: long approval content never shoves the composer offscreen. */}
+      <div className={long ? "max-h-44 overflow-auto" : ""}>{children}</div>
+    </div>
   );
 }
 
@@ -375,12 +418,12 @@ function ComposerFixture({ disabled = false, busy = false }: { disabled?: boolea
   );
 }
 
-function Transcript({ long = false, busy = false, disabled = false }: { long?: boolean; busy?: boolean; disabled?: boolean }) {
+// C2 — transcript is pure conversation now; the approval moved to the docked ApprovalBar.
+function Transcript({ long = false }: { long?: boolean; busy?: boolean; disabled?: boolean }) {
   const rows = long ? LONG_TRANSCRIPT : TRANSCRIPT;
   return (
     <div className="flex flex-col gap-2">
       {rows.map((m, i) => <MessageBubble key={i} who={m.who} text={m.text} />)}
-      <ApprovalFixture busy={busy || disabled} resolved={undefined} />
     </div>
   );
 }
@@ -460,12 +503,24 @@ function RuntimeOverviewDesktop({ focusHref, canvasHref = "#", state = "populate
   );
 }
 
-// Desktop runtime — focus: header + runtime selectors + context/health + queue +
-// transcript (with expanders / load-older / jump) + inline approval + composer.
+// Desktop runtime — focus: scrolling transcript ABOVE; a docked region (jump-to-latest +
+// FIFO ApprovalBar + Composer) pinned at the bottom so the approval never scrolls away and
+// never pushes the composer offscreen (C2).
 function RuntimeFocusDesktop({ state = "populated", fullHref = "#" }: { state?: ShellState; fullHref?: string }) {
   const panel = runtimeStatePanel(state, `运行态 · ${FOCUS_AGENT}`, "No messages yet", "Send the first instruction to start the conversation.");
   if (panel) return <div data-runtime="focus" className="h-full">{panel}</div>;
   const disabled = state === "permission" || state === "offline";
+  // total pending approvals (FIFO) — show the oldest in the bar, count the rest.
+  const dockedFooter = (
+    <>
+      {/* jump-to-latest sits in the docked region so the fixed approval+composer never hides it. */}
+      <div className="flex justify-end pb-1"><JumpToBottom disabled={disabled} /></div>
+      <ApprovalBar queue={PENDING_APPROVALS - 1} long={state === "boundary"}>
+        <ApprovalFixture busy={state === "busy" || disabled} long={state === "boundary"} />
+      </ApprovalBar>
+      <div className="pt-2"><ComposerFixture disabled={disabled} busy={state === "busy"} /></div>
+    </>
+  );
   return (
     <div data-runtime="focus" className="flex h-full flex-col">
       <PanelFrame
@@ -474,16 +529,15 @@ function RuntimeFocusDesktop({ state = "populated", fullHref = "#" }: { state?: 
         actions={<Cluster><StatusChip status="working" variant="soft" /><LinkButton href={fullHref} label="enter fullscreen" dataKey="full-enter">⊞ full</LinkButton><Button size="sm" variant="ghost" disabled={disabled} busy={state === "busy"}>Interrupt</Button><Button size="sm" variant="ghost" disabled={disabled}>Restart</Button></Cluster>}
         className="flex-1"
         bodyClassName="flex flex-col gap-3"
-        footer={<ComposerFixture disabled={disabled} busy={state === "busy"} />}
+        footer={dockedFooter}
       >
         {runtimeNote(state)}
         <RuntimeControls disabled={disabled} busy={state === "busy"} />
         <ContextHealth near={state === "boundary"} />
         <PendingTurnQueue disabled={disabled} />
         <LoadOlderBar />
-        <Transcript long={state === "boundary"} busy={state === "busy"} disabled={disabled} />
+        <Transcript long={state === "boundary"} />
         <TranscriptExpanders />
-        <JumpToBottom disabled={disabled} />
       </PanelFrame>
     </div>
   );
@@ -538,31 +592,41 @@ function RuntimeListMobile({ focusHref, state = "populated" }: { focusHref: (id:
   );
 }
 
-// Mobile runtime — focus: approval pinned ABOVE the transcript, then composer.
+// Mobile runtime — focus (C2): transcript scrolls; the FIFO ApprovalBar + Composer dock at
+// the bottom (above the keyboard zone, higher priority than the text input). Ordinary input
+// stays available while an approval is pending. Approval is no longer pinned above transcript.
 function RuntimeFocusMobile({ state = "populated" }: { state?: ShellState }) {
   const panel = runtimeStatePanel(state, `${FOCUS_AGENT}`, "No messages yet", "Send the first instruction.");
   if (panel) return <div data-runtime="focus">{panel}</div>;
   const disabled = state === "permission" || state === "offline";
   return (
-    <div data-runtime="focus" className="flex flex-col gap-3">
-      <ActionBar ariaLabel={`${FOCUS_AGENT} actions`} end={<Button size="sm" variant="ghost" disabled={disabled} busy={state === "busy"}>Interrupt</Button>}>
-        <StatusChip status="working" variant="soft" />
-        <span className="text-sm text-text-secondary">{FOCUS_AGENT}</span>
-      </ActionBar>
-      {runtimeNote(state)}
-      <ApprovalFixture busy={state === "busy" || disabled} />
-      <RuntimeControls disabled={disabled} busy={state === "busy"} />
-      <ContextHealth near={state === "boundary"} />
-      <PendingTurnQueue disabled={disabled} />
-      <PanelFrame title="Transcript">
-        <div className="flex flex-col gap-2">
-          <LoadOlderBar />
-          {(state === "boundary" ? LONG_TRANSCRIPT : TRANSCRIPT).map((m, i) => <MessageBubble key={i} who={m.who} text={m.text} />)}
-          <TranscriptExpanders />
-          <JumpToBottom disabled={disabled} />
-        </div>
-      </PanelFrame>
-      <ComposerFixture disabled={disabled} busy={state === "busy"} />
+    <div data-runtime="focus" className="flex h-full flex-col">
+      {/* scrolling conversation region */}
+      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-auto">
+        <ActionBar ariaLabel={`${FOCUS_AGENT} actions`} end={<Button size="sm" variant="ghost" disabled={disabled} busy={state === "busy"}>Interrupt</Button>}>
+          <StatusChip status="working" variant="soft" />
+          <span className="text-sm text-text-secondary">{FOCUS_AGENT}</span>
+        </ActionBar>
+        {runtimeNote(state)}
+        <RuntimeControls disabled={disabled} busy={state === "busy"} />
+        <ContextHealth near={state === "boundary"} />
+        <PendingTurnQueue disabled={disabled} />
+        <PanelFrame title="Transcript">
+          <div className="flex flex-col gap-2">
+            <LoadOlderBar />
+            {(state === "boundary" ? LONG_TRANSCRIPT : TRANSCRIPT).map((m, i) => <MessageBubble key={i} who={m.who} text={m.text} />)}
+            <TranscriptExpanders />
+          </div>
+        </PanelFrame>
+      </div>
+      {/* docked: jump-to-latest + FIFO approval bar + composer (stay above the keyboard zone) */}
+      <div className="shrink-0">
+        <div className="flex justify-end pb-1"><JumpToBottom disabled={disabled} /></div>
+        <ApprovalBar queue={PENDING_APPROVALS - 1} long={state === "boundary"}>
+          <ApprovalFixture busy={state === "busy" || disabled} long={state === "boundary"} />
+        </ApprovalBar>
+        <div className="pt-2"><ComposerFixture disabled={disabled} busy={state === "busy"} /></div>
+      </div>
     </div>
   );
 }
@@ -709,38 +773,111 @@ function RuntimeFullFrame({ state, backHref }: { state: ShellState; backHref: st
 
 // Zoomable topology canvas (audit #16) — standalone desktop overlay frame: draggable /
 // resizable agent windows, per-window stop / wake / actions (⋯), zoom toolbar, Esc close.
-function CanvasWindow({ a, index, disabled }: { a: RuntimeAgent; index: number; disabled: boolean }) {
-  const left = 16 + (index % 3) * 392;
-  const top = 16 + Math.floor(index / 3) * 176;
+// C5: force-directed layout + directed mail edges (arrowheads) + recent-traffic pulse +
+// a pinned (manually-dragged) node.
+const CANVAS_WIN_W = 264; // narrower nodes on the canvas so the graph + edges read clearly
+const CANVAS_WIN_H = 84;
+// Force-directed result for the populated set: router central, members radiating out (a
+// decluttered static layout — no live physics needed in the mockup).
+const CANVAS_LAYOUT: Record<string, { x: number; y: number }> = {
+  router: { x: 560, y: 350 },
+  "codex-1": { x: 140, y: 110 },
+  "opencode-1": { x: 950, y: 110 },
+  "claude-1": { x: 950, y: 560 },
+  "kimi-cold": { x: 140, y: 560 },
+};
+// Boundary: a staggered organic spread (decluttered, overlap-free) for many nodes.
+function canvasPositions(agents: RuntimeAgent[], boundary: boolean) {
+  if (!boundary) return agents.map((a) => ({ a, ...(CANVAS_LAYOUT[a.id] ?? { x: 200, y: 200 }) }));
+  return agents.map((a, i) => {
+    const col = i % 4, row = Math.floor(i / 4);
+    return { a, x: 40 + col * 300 + (row % 2) * 70, y: 30 + row * 168 };
+  });
+}
+const PINNED_AGENT = "codex-1"; // a node the operator dragged → pinned (kept out of force-layout)
+function canvasCenter(p: { x: number; y: number }) { return { cx: p.x + CANVAS_WIN_W / 2, cy: p.y + CANVAS_WIN_H / 2 }; }
+
+function CanvasWindow({ a, x, y, pinned, disabled }: { a: RuntimeAgent; x: number; y: number; pinned: boolean; disabled: boolean }) {
   return (
     <div
       data-canvas-window
-      className="absolute flex w-[372px] flex-col rounded-lg border border-border-strong bg-surface-raised shadow-sm"
-      style={{ left, top }}
+      data-canvas-pinned={pinned ? "true" : undefined}
+      className={`absolute flex flex-col rounded-lg border bg-surface-raised shadow-sm ${pinned ? "border-accent ring-1 ring-accent" : "border-border-strong"}`}
+      style={{ left: x, top: y, width: CANVAS_WIN_W }}
     >
       <div data-canvas-drag className="flex cursor-move items-center gap-1.5 border-b border-border px-2 py-1.5">
         <StatusChip status={a.status} variant="dot" />
         <span className="min-w-0 flex-1 truncate text-sm font-medium text-text-primary">{a.id}</span>
+        {pinned ? <span data-canvas-pin title="已固定（手动拖拽位置，不参与力导向）" aria-label={`${a.id} pinned`} className="text-xs text-accent">📌</span> : null}
         {a.cold
           ? <Button size="sm" variant="secondary" disabled={disabled} aria-label={`wake ${a.id}`}>Wake</Button>
           : <Button size="sm" variant="ghost" iconOnly disabled={disabled} aria-label={`stop ${a.id}`}>■</Button>}
         <Button size="sm" variant="ghost" iconOnly disabled={disabled} aria-label={`${a.id} actions`}>⋯</Button>
       </div>
-      <div className="px-2 py-2 text-xs text-text-muted">{a.cold ? "cold — wake to resume" : `${a.status} · ${a.pending} 待审批`}</div>
+      <div className="px-2 py-1.5 text-xs text-text-muted">{a.cold ? "cold — wake to resume" : `${a.status} · ${a.pending} 待审批`}{pinned ? " · 已固定" : ""}</div>
       <span data-resize-handle aria-hidden="true" className="absolute bottom-0 right-0 cursor-nwse-resize p-1 text-text-muted">⌟</span>
     </div>
   );
 }
+
+// Directed edge layer (SVG) — arrowheads point from→to; recent-mail edges pulse in accent.
+function CanvasEdges({ positions, edges }: { positions: { a: RuntimeAgent; x: number; y: number }[]; edges: RuntimeEdge[] }) {
+  const at = new Map(positions.map((p) => [p.a.id, canvasCenter(p)]));
+  const maxX = Math.max(...positions.map((p) => p.x)) + CANVAS_WIN_W + 60;
+  const maxY = Math.max(...positions.map((p) => p.y)) + CANVAS_WIN_H + 60;
+  return (
+    <svg data-canvas-edges width={maxX} height={maxY} className="pointer-events-none absolute left-0 top-0" aria-hidden="true">
+      <defs>
+        <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" className="fill-text-muted" />
+        </marker>
+        <marker id="arrow-recent" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" className="fill-accent" />
+        </marker>
+      </defs>
+      {edges.map((e, i) => {
+        const s = at.get(e.from), t = at.get(e.to);
+        if (!s || !t) return null;
+        // shorten the segment so the arrowhead lands at the node border, not its center
+        const dx = t.cx - s.cx, dy = t.cy - s.cy; const len = Math.hypot(dx, dy) || 1;
+        const ux = dx / len, uy = dy / len; const pad = 46;
+        const x1 = s.cx + ux * pad, y1 = s.cy + uy * pad, x2 = t.cx - ux * pad, y2 = t.cy - uy * pad;
+        return (
+          <line
+            key={i}
+            data-canvas-edge
+            data-edge-recent={e.recent ? "true" : undefined}
+            x1={x1} y1={y1} x2={x2} y2={y2}
+            className={e.recent ? "stroke-accent animate-pulse" : "stroke-border-strong"}
+            strokeWidth={e.recent ? 2.5 : 1.5}
+            markerEnd={e.recent ? "url(#arrow-recent)" : "url(#arrow)"}
+          />
+        );
+      })}
+    </svg>
+  );
+}
+
 function MeshCanvasFrame({ state, backHref }: { state: ShellState; backHref: string }) {
-  const agents = state === "boundary" ? MANY_AGENTS : AGENTS;
+  const boundary = state === "boundary";
+  const agents = boundary ? MANY_AGENTS : AGENTS;
+  const edges = boundary ? MANY_EDGES : EDGES;
   const disabled = state === "permission" || state === "offline";
+  const positions = canvasPositions(agents, boundary);
+  const recentCount = edges.filter((e) => e.recent).length;
+  const contentW = Math.max(...positions.map((p) => p.x)) + CANVAS_WIN_W + 60;
+  const contentH = Math.max(...positions.map((p) => p.y)) + CANVAS_WIN_H + 60;
   return (
     <div data-mockup="frame" data-device="desktop" data-runtime="canvas" className="flex h-[720px] w-[1280px] max-w-full flex-col overflow-hidden rounded-xl border border-border bg-surface text-text-primary shadow-sm">
       <header className="flex items-center gap-2 border-b border-border bg-surface-raised px-4 py-2.5">
         <Brand /><span className="text-text-muted">·</span>
         <span className="text-sm font-semibold">Topology canvas</span>
-        <span className="text-xs text-text-muted">{agents.length} windows · drag / resize</span>
+        <span className="text-xs text-text-muted">{agents.length} agents · {edges.length} edges · {recentCount} 活跃</span>
         <span className="flex-1" aria-hidden="true" />
+        {/* C5 layout controls: force-directed default-on + re-run layout. */}
+        <label className="inline-flex items-center gap-1.5 text-xs text-text-secondary"><input type="checkbox" defaultChecked disabled={disabled} aria-label="force-directed layout" data-canvas-autolayout className="accent-accent" /> 力导向</label>
+        <Button size="sm" variant="ghost" disabled={disabled} aria-label="重新布局" data-canvas-relayout>重新布局</Button>
+        <span className="mx-1 h-5 w-px bg-border" aria-hidden="true" />
         <Button size="sm" variant="ghost" iconOnly aria-label="zoom out">－</Button>
         <span className="text-xs text-text-muted tabular-nums">100%</span>
         <Button size="sm" variant="ghost" iconOnly aria-label="zoom in">＋</Button>
@@ -749,8 +886,17 @@ function MeshCanvasFrame({ state, backHref }: { state: ShellState; backHref: str
       </header>
       {state === "permission" ? PermBanner : null}
       {state === "offline" ? OfflineBanner : null}
+      {/* edge legend: arrowhead = mail direction; pulsing accent = recent traffic */}
+      <div className="flex items-center gap-3 border-b border-border bg-surface-sunken px-4 py-1 text-xs text-text-muted">
+        <span className="inline-flex items-center gap-1"><span className="text-accent">▶</span> 信息流方向（mail）</span>
+        <span className="inline-flex items-center gap-1"><span className="text-accent">●</span> 高亮 = 近期有 mail 流动</span>
+        <span className="inline-flex items-center gap-1"><span className="text-accent">📌</span> 已固定（手动拖拽）</span>
+      </div>
       <div data-canvas className="relative min-h-0 flex-1 overflow-auto bg-surface-sunken">
-        {agents.map((a, i) => <CanvasWindow key={a.id} a={a} index={i} disabled={disabled} />)}
+        <div className="relative" style={{ width: contentW, height: contentH }}>
+          <CanvasEdges positions={positions} edges={edges} />
+          {positions.map(({ a, x, y }) => <CanvasWindow key={a.id} a={a} x={x} y={y} pinned={a.id === PINNED_AGENT} disabled={disabled} />)}
+        </div>
       </div>
     </div>
   );
@@ -809,26 +955,78 @@ function EpicGroupHeader({ epicId }: { epicId: string }) {
   );
 }
 
-function BoardFilterBar({ disabled = false, manageHref = "#", manage = false }: { disabled?: boolean; manageHref?: string; manage?: boolean }) {
+// GH-Issues filter area (C4). A persistent 🔍 search (accepts query tokens like
+// `status:open label:bug`) + a 筛选▾ dropdown that owns the status/label/assignee/epic
+// pickers and group-by-epic; applied filters render as removable chips beneath the row.
+// The right-side action group holds view-switch + sort + 新建 (+ secondary actions).
+// On boundary, secondary controls collapse INTO the 筛选▾ menu rather than overflowing
+// the row horizontally (the row keeps only search + 筛选▾ … view-switch + sort + 新建).
+function BoardFilterBar({ disabled = false, manageHref = "#", manage = false, filtersOpen = false, filtersHref = "#", boundary = false, viewSwitch }: { disabled?: boolean; manageHref?: string; manage?: boolean; filtersOpen?: boolean; filtersHref?: string; boundary?: boolean; viewSwitch?: ReactNode }) {
+  const selCls = "rounded-lg border border-border-strong bg-surface-sunken px-2 py-1 text-sm text-text-primary disabled:cursor-not-allowed disabled:text-text-disabled";
+  // Applied filters as removable chips (boundary shows more, exercising wrap/overflow).
+  const applied = [
+    { key: "status", token: "status:open" },
+    { key: "label", token: "label:ui" },
+    ...(boundary ? [
+      { key: "assignee", token: "assignee:claude-1" },
+      { key: "epic", token: "epic:infra" },
+      { key: "blocked", token: "is:blocked" },
+    ] : []),
+  ];
   return (
-    <ActionBar
-      ariaLabel="board filters"
-      end={<Cluster>
-        {/* 管理标签 toggle → label CRUD/palette panel (audit #24). */}
-        <LinkButton href={manageHref} label="管理标签" dataKey="board-manage-labels">{manage ? "✓ 标签" : "🏷 标签"}</LinkButton>
-        <Button size="sm" variant="secondary" disabled={disabled}>Dispatch ▾</Button>
-        <Button size="sm" variant="primary" disabled={disabled}>+ Issue</Button>
-      </Cluster>}
-    >
-      <input aria-label="search issues" placeholder="search…" className="rounded-lg border border-border-strong bg-surface-sunken px-2 py-1 text-sm text-text-primary placeholder:text-text-muted" />
-      <select aria-label="status filter" className="rounded-lg border border-border-strong bg-surface-sunken px-2 py-1 text-sm text-text-primary"><option>status</option></select>
-      <select aria-label="label filter" className="rounded-lg border border-border-strong bg-surface-sunken px-2 py-1 text-sm text-text-primary"><option>label</option></select>
-      <select aria-label="assignee filter" className="rounded-lg border border-border-strong bg-surface-sunken px-2 py-1 text-sm text-text-primary"><option>assignee</option></select>
-      <select aria-label="epic filter" className="rounded-lg border border-border-strong bg-surface-sunken px-2 py-1 text-sm text-text-primary"><option>epic</option></select>
-      <select aria-label="sort" className="rounded-lg border border-border-strong bg-surface-sunken px-2 py-1 text-sm text-text-primary"><option>updated</option></select>
-      {/* Group-by-epic toggle (audit #23). */}
-      <label className="inline-flex items-center gap-1.5 text-xs text-text-secondary"><input type="checkbox" defaultChecked disabled={disabled} aria-label="group by epic" className="accent-accent" /> 按 Epic 分组</label>
-    </ActionBar>
+    <div data-board-filters className="flex flex-col gap-2">
+      <ActionBar
+        ariaLabel="board filters"
+        end={<Cluster>
+          {viewSwitch}
+          <select aria-label="sort" disabled={disabled} className={`${selCls} shrink-0`}><option>updated</option><option>created</option><option>priority</option><option>number</option></select>
+          {/* Non-boundary keeps secondary actions in the row; boundary collapses them into 筛选▾. */}
+          {!boundary ? <LinkButton href={manageHref} label="管理标签" dataKey="board-manage-labels">{manage ? "✓ 标签" : "🏷 标签"}</LinkButton> : null}
+          {!boundary ? <Button size="sm" variant="secondary" disabled={disabled}>Dispatch ▾</Button> : null}
+          <Button size="sm" variant="primary" disabled={disabled}>+ 新建</Button>
+        </Cluster>}
+      >
+        {/* persistent search (query tokens) — flexes/truncates, never pushes the row wide */}
+        <span className="relative flex min-w-0 flex-1 items-center">
+          <span aria-hidden="true" className="pointer-events-none absolute left-2 text-text-muted">🔍</span>
+          <input aria-label="search issues" placeholder="搜索 issue… 例如 status:open label:bug" className="w-full min-w-0 rounded-lg border border-border-strong bg-surface-sunken py-1 pl-7 pr-2 text-sm text-text-primary placeholder:text-text-muted" />
+        </span>
+        <LinkButton href={filtersHref} label="筛选" dataKey="board-filter-toggle">{filtersOpen ? "▾ 筛选 ·" : "筛选 ▾"}{filtersOpen ? "" : null}</LinkButton>
+      </ActionBar>
+
+      {/* 筛选▾ dropdown menu: status/label/assignee/epic pickers + group-by-epic moved here
+          out of the inline row; on boundary the collapsed secondary actions live here too. */}
+      {filtersOpen ? (
+        <div role="menu" data-board-filter-menu className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-surface-raised p-2 shadow-sm">
+          <select aria-label="status filter" disabled={disabled} className={selCls}><option>status: any</option><option>open</option><option>in_progress</option><option>in_review</option><option>done</option><option>cancelled</option></select>
+          <select aria-label="label filter" disabled={disabled} className={selCls}><option>label: any</option><option>ui</option><option>auth</option><option>infra</option><option>a11y</option></select>
+          <select aria-label="assignee filter" disabled={disabled} className={selCls}><option>assignee: any</option><option>router</option><option>codex-1</option><option>claude-1</option></select>
+          <select aria-label="epic filter" disabled={disabled} className={selCls}><option>epic: any</option><option>onboarding</option><option>infra</option><option>security</option></select>
+          <label className="inline-flex items-center gap-1.5 text-xs text-text-secondary"><input type="checkbox" defaultChecked disabled={disabled} aria-label="group by epic" className="accent-accent" /> 按 Epic 分组</label>
+          {boundary ? (
+            <>
+              <span className="mx-1 h-5 w-px bg-border" aria-hidden="true" />
+              <LinkButton href={manageHref} label="管理标签" dataKey="board-manage-labels">{manage ? "✓ 标签" : "🏷 标签"}</LinkButton>
+              <Button size="sm" variant="secondary" disabled={disabled}>Dispatch ▾</Button>
+            </>
+          ) : null}
+        </div>
+      ) : null}
+
+      {/* Applied filters as removable (×) chips beneath the search/filter row. */}
+      {applied.length ? (
+        <div data-board-applied-filters className="flex flex-wrap items-center gap-1.5">
+          <span className="text-xs text-text-muted">已筛选</span>
+          {applied.map((a) => (
+            <span key={a.key} data-filter-chip className="inline-flex items-center gap-1 rounded-full border border-border bg-surface-sunken px-2 py-0.5 text-xs text-text-secondary">
+              <span className="tabular-nums">{a.token}</span>
+              <button type="button" aria-label={`remove filter ${a.key}`} disabled={disabled} className="rounded-full px-0.5 text-text-muted hover:text-text-primary disabled:cursor-not-allowed">×</button>
+            </span>
+          ))}
+          <button type="button" aria-label="clear all filters" disabled={disabled} className="ml-1 text-xs text-accent hover:underline disabled:cursor-not-allowed disabled:text-text-disabled">清除全部</button>
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -883,10 +1081,10 @@ function BoardFsToggle({ href, fs }: { href: string; fs: boolean }) {
 }
 // Board fullscreen (audit #22) — the board panel expanded to a standalone desktop frame
 // (more rows/cards visible); 🗕 in the subview header restores the split shell.
-function BoardFullFrame({ board, state, backHref, manage = false, manageHref = "#" }: { board: BoardState; state: ShellState; backHref: string; manage?: boolean; manageHref?: string }) {
+function BoardFullFrame({ board, state, backHref, manage = false, manageHref = "#", filters = false, filtersHref = "#" }: { board: BoardState; state: ShellState; backHref: string; manage?: boolean; manageHref?: string; filters?: boolean; filtersHref?: string }) {
   const sub = board === "detail" ? <BoardDetailDesktop state={state} fs fsHref={backHref} />
     : board === "kanban" ? <BoardKanbanDesktop state={state} fs fsHref={backHref} />
-    : <BoardListDesktop state={state} fs fsHref={backHref} manage={manage} manageHref={manageHref} />;
+    : <BoardListDesktop state={state} fs fsHref={backHref} manage={manage} manageHref={manageHref} filters={filters} filtersHref={filtersHref} />;
   return (
     <div data-mockup="frame" data-device="desktop" data-board-fs="1" className="flex h-[720px] w-[1280px] max-w-full flex-col overflow-hidden rounded-xl border border-border bg-surface text-text-primary shadow-sm">
       <div className="min-h-0 flex-1 overflow-auto p-3">{sub}</div>
@@ -911,17 +1109,20 @@ function BoardBulkToolbar({ disabled = false }: { disabled?: boolean }) {
 }
 
 // Desktop board — List (GitHub-Issues maturity).
-function BoardListDesktop({ state = "populated", fs = false, fsHref = "#", manage = false, manageHref = "#" }: { state?: ShellState; fs?: boolean; fsHref?: string; manage?: boolean; manageHref?: string }) {
+function BoardListDesktop({ state = "populated", fs = false, fsHref = "#", manage = false, manageHref = "#", filters = false, filtersHref = "#" }: { state?: ShellState; fs?: boolean; fsHref?: string; manage?: boolean; manageHref?: string; filters?: boolean; filtersHref?: string }) {
   const panel = boardStatePanel(state, "Board · Issues", "No issues", "Create the first issue or dispatch from runtime.");
   if (panel) return <div data-board="list" className="h-full">{panel}</div>;
   const editable = boardEditable(state);
-  const epics = state === "boundary" ? MANY_EPICS : EPICS;
-  const issues = state === "boundary" ? MANY_ISSUES : ISSUES;
+  const boundary = state === "boundary";
+  const epics = boundary ? MANY_EPICS : EPICS;
+  const issues = boundary ? MANY_ISSUES : ISSUES;
+  // View-switch moves into the filter area's right-side action group (C4).
+  const viewSwitch = <SegmentedControl ariaLabel="Board view" value="list" onChange={() => {}} size="sm" options={[{ value: "list", label: "List" }, { value: "kanban", label: "Board" }]} />;
   return (
     <div data-board="list" className="h-full">
-      <PanelFrame title="Board · Issues" actions={<Cluster><BoardFsToggle href={fsHref} fs={fs} /><SegmentedControl ariaLabel="Board view" value="list" onChange={() => {}} size="sm" options={[{ value: "list", label: "List" }, { value: "kanban", label: "Board" }]} /></Cluster>} className="h-full" bodyClassName="flex flex-col gap-2">
+      <PanelFrame title="Board · Issues" actions={<BoardFsToggle href={fsHref} fs={fs} />} className="h-full" bodyClassName="flex flex-col gap-2">
         {boardNote(state)}
-        <BoardFilterBar disabled={!editable} manage={manage} manageHref={manageHref} />
+        <BoardFilterBar disabled={!editable} manage={manage} manageHref={manageHref} filtersOpen={filters} filtersHref={filtersHref} boundary={boundary} viewSwitch={viewSwitch} />
         {manage ? <BoardLabelManager disabled={!editable} /> : null}
         <BoardCreateRow disabled={!editable} />
         <BoardBulkToolbar disabled={!editable} />
@@ -1222,14 +1423,15 @@ function AssistantFrame({ state, device, fs = false, fsHref = "#" }: { state: Sh
   return (
     <div data-mockup="frame" data-device={device} data-assistant="chat" data-assistant-fs={fs ? "1" : undefined}
       className={`flex ${mobile ? "h-[760px] w-[390px] rounded-[28px]" : fs ? "h-[760px] w-[1280px] rounded-xl" : "h-[640px] w-[1280px] rounded-xl"} max-w-full flex-col overflow-hidden border border-border bg-surface text-text-primary shadow-sm`}>
-      <header className="flex items-center gap-2 border-b border-border bg-surface-raised px-4 py-2.5">
+      {/* Mobile (global rule): header wraps instead of cramming brand+chip+p2p+interrupt into one row. */}
+      <header className={`border-b border-border bg-surface-raised px-4 py-2.5 ${mobile ? "flex flex-wrap items-center gap-2" : "flex items-center gap-2"}`}>
         <Brand /><span className="text-text-muted">·</span>
         <span className="text-sm font-semibold">Mesh Assistant</span>
         {statusChip}
-        <span className="flex-1" aria-hidden="true" />
+        {!mobile ? <span className="flex-1" aria-hidden="true" /> : null}
         {/* p2p DM → Mesh Assistant is folded here (device-auth ⑤ / channels). */}
         <LinkButton href="#" label="p2p DM 入口" dataKey="assistant-p2p">✉ p2p DM</LinkButton>
-        {working ? <Button size="sm" variant="ghost" aria-label="interrupt assistant">Interrupt</Button> : null}
+        {working ? <Button size="sm" variant="ghost" aria-label="interrupt assistant" className="whitespace-nowrap">Interrupt</Button> : null}
         {!mobile ? <LinkButton href={fsHref} label={fs ? "退出全屏" : "全屏"} dataKey="assistant-fs">{fs ? "⊟" : "⊞"}</LinkButton> : null}
       </header>
       {perm ? <div role="status" className="border-b border-border bg-danger-subtle px-4 py-1.5 text-xs text-danger">设备未授权 — 只读；启用 / 管理需已授权设备。</div> : null}
@@ -1257,12 +1459,19 @@ function AssistantFrame({ state, device, fs = false, fsHref = "#" }: { state: Sh
               {long ? ASSISTANT_TOOLS_MANY.map((tc, i) => <AssistantToolCard key={i} {...tc} />) : null}
               <AssistantBubble who="agent" text="Done — mesh “app” created. Start it from the runtime view." />
               <AssistantBubble who="user" text="now delete the scratch-del mesh" />
-              <AssistantDeleteConfirm busy={working || disabled} />
+              {/* C2: the destructive delete-confirm is NOT inline here — it docks above the composer. */}
             </>
           )}
         </div>
       </div>
-      {showChat ? <div className="border-t border-border bg-surface-raised p-3"><AssistantComposer disabled={disabled} busy={working} imageEnabled={imageEnabled} /></div> : null}
+      {/* C2: docked approval region — delete-confirm uses the same composer-adjacent ApprovalBar
+          treatment as runtime, above the composer (never inline in the conversation). */}
+      {showChat ? (
+        <div className="bg-surface-raised">
+          {state !== "empty" ? <ApprovalBar long={long} label="⚠ Mesh Assistant · 待确认"><AssistantDeleteConfirm busy={working || disabled} /></ApprovalBar> : null}
+          <div className={`p-3 ${state === "empty" ? "border-t border-border" : ""}`}><AssistantComposer disabled={disabled} busy={working} imageEnabled={imageEnabled} /></div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -1295,20 +1504,34 @@ const OLD_AGENTS_MANY: OldAgent[] = [
 ];
 
 // Self-install guide for npm-locked harnesses: copy command + docs + reprobe-to-detect (audit #27).
-function SelfInstallerGuide({ id, command, disabled = false }: { id: string; command: string; disabled?: boolean }) {
+function SelfInstallerGuide({ id, command, disabled = false, mobile = false }: { id: string; command: string; disabled?: boolean; mobile?: boolean }) {
+  // Mobile: command line full-width on top, the 3 actions on their own wrapping row.
+  const actions = (
+    <>
+      <Button size="sm" variant="ghost" disabled={disabled} aria-label={`copy install command for ${id}`} className="whitespace-nowrap">copy command</Button>
+      <Button size="sm" variant="ghost" disabled={disabled} aria-label={`open ${id} docs`} className="whitespace-nowrap">docs ↗</Button>
+      <Button size="sm" variant="ghost" disabled={disabled} aria-label={`reprobe ${id}`} className="whitespace-nowrap">reprobe to detect</Button>
+    </>
+  );
   return (
-    <div data-self-installer className="mt-1.5 flex flex-wrap items-center gap-2 rounded-lg border border-border bg-surface-sunken px-2.5 py-1.5 text-xs">
-      <span className="text-text-muted">自助安装：</span>
-      <code className="rounded bg-surface px-1.5 py-0.5 font-mono text-text-secondary">{command}</code>
-      <Button size="sm" variant="ghost" disabled={disabled} aria-label={`copy install command for ${id}`}>copy command</Button>
-      <Button size="sm" variant="ghost" disabled={disabled} aria-label={`open ${id} docs`}>docs ↗</Button>
-      <Button size="sm" variant="ghost" disabled={disabled} aria-label={`reprobe ${id}`}>reprobe to detect</Button>
+    <div data-self-installer className={`mt-1.5 rounded-lg border border-border bg-surface-sunken px-2.5 py-1.5 text-xs ${mobile ? "flex flex-col gap-1.5" : "flex flex-wrap items-center gap-2"}`}>
+      <span className={mobile ? "flex flex-wrap items-center gap-2" : "contents"}><span className="text-text-muted">自助安装：</span>
+      <code className="rounded bg-surface px-1.5 py-0.5 font-mono text-text-secondary">{command}</code></span>
+      {mobile ? <div className="flex flex-wrap gap-2">{actions}</div> : actions}
     </div>
   );
 }
 
 // One harness row: status + dual version + auth + reprobe + install/update (or self-install).
-function HarnessRow({ row, disabled = false }: { row: HarnessRowData; disabled?: boolean }) {
+function HarnessRow({ row, disabled = false, mobile = false }: { row: HarnessRowData; disabled?: boolean; mobile?: boolean }) {
+  // Mobile (global rule): name + status chip on line 1, version on its own line, reprobe/
+  // update/auth actions on their own wrapping row (buttons never wrap internally).
+  const actions = (
+    <>
+      <Button size="sm" variant="ghost" disabled={disabled} aria-label={`reprobe ${row.id}`} className="whitespace-nowrap">reprobe</Button>
+      {!row.selfInstall && (row.kind === "bad" || row.kind === "warn") ? <Button size="sm" variant="secondary" disabled={disabled} aria-label={`${row.kind === "warn" ? "update" : "install"} ${row.id}`} className="whitespace-nowrap">{row.kind === "warn" ? "update" : "install"}</Button> : null}
+    </>
+  );
   return (
     <div data-harness-row className="flex flex-col gap-1 border-b border-border px-3 py-2.5">
       <div className="flex flex-wrap items-center gap-2">
@@ -1316,13 +1539,11 @@ function HarnessRow({ row, disabled = false }: { row: HarnessRowData; disabled?:
         <span className="text-sm font-medium text-text-primary">{row.label}</span>
         <StatusChip status={HARNESS_TONE[row.kind]} variant="soft" label={row.statusText} />
         {row.auth ? <StatusChip status="attention" variant="soft" label="auth required" /> : null}
-        <span className="flex-1" aria-hidden="true" />
-        <Button size="sm" variant="ghost" disabled={disabled} aria-label={`reprobe ${row.id}`}>reprobe</Button>
-        {/* npm install/update only for missing(bad)/outdated(warn); installed-ok shows none. */}
-        {!row.selfInstall && (row.kind === "bad" || row.kind === "warn") ? <Button size="sm" variant="secondary" disabled={disabled} aria-label={`${row.kind === "warn" ? "update" : "install"} ${row.id}`}>{row.kind === "warn" ? "update" : "install"}</Button> : null}
+        {!mobile ? <><span className="flex-1" aria-hidden="true" />{actions}</> : null}
       </div>
       <div className="truncate font-mono text-xs text-text-muted">{row.line}</div>
-      {row.selfInstall ? <SelfInstallerGuide id={row.id} command={`npm i -g ${row.id}`} disabled={disabled} /> : null}
+      {mobile ? <div className="flex flex-wrap gap-2">{actions}</div> : null}
+      {row.selfInstall ? <SelfInstallerGuide id={row.id} command={`npm i -g ${row.id}`} disabled={disabled} mobile={mobile} /> : null}
     </div>
   );
 }
@@ -1346,30 +1567,34 @@ function InstallProgressCard({ status, long = false }: { status: "running" | "do
 }
 
 // Agents still on an older adapter — restart after-idle / force (two-click) / cancel (audit #28).
-function OldVersionAgentsCard({ rows, disabled = false }: { rows: OldAgent[]; disabled?: boolean }) {
+function OldVersionAgentsCard({ rows, disabled = false, mobile = false }: { rows: OldAgent[]; disabled?: boolean; mobile?: boolean }) {
   return (
     <div data-old-agents className="flex flex-col gap-2 rounded-lg border border-border bg-surface-raised p-3">
       <span className="text-xs uppercase tracking-wider text-text-muted">旧版本 agent · 重启以采用新适配器 ({rows.length})</span>
       <div className="flex flex-col gap-1.5">
         {rows.map((a) => {
           const entry = `${a.mesh}/${a.agent}`;
+          // Mobile: agent + from on their own lines, restart actions on a separate wrapping row.
+          const actions = a.pending ? (
+            <>
+              <span className="text-xs text-text-muted">restart pending…</span>
+              <Button size="sm" variant="ghost" disabled={disabled} aria-label={`cancel restart ${entry}`} className="whitespace-nowrap">cancel</Button>
+            </>
+          ) : (
+            <>
+              <Button size="sm" variant="secondary" disabled={disabled} aria-label={`restart ${entry} after idle`} className="whitespace-nowrap">after current turn</Button>
+              <ConfirmButton size="sm" variant="danger" disabled={disabled} aria-label={`force restart ${entry}`} confirmLabel="确认?（丢失 ACP 会话）" onConfirm={() => {}} className="whitespace-nowrap">force</ConfirmButton>
+            </>
+          );
           return (
-            <div key={entry} className="flex flex-wrap items-center gap-2 text-sm">
-              <StatusChip status={a.pending ? "working" : "attention"} variant="dot" />
-              <span className="font-medium text-text-primary">{entry}</span>
-              <span className="font-mono text-xs text-text-muted">{a.from}</span>
-              <span className="flex-1" aria-hidden="true" />
-              {a.pending ? (
-                <>
-                  <span className="text-xs text-text-muted">restart pending…</span>
-                  <Button size="sm" variant="ghost" disabled={disabled} aria-label={`cancel restart ${entry}`}>cancel</Button>
-                </>
-              ) : (
-                <>
-                  <Button size="sm" variant="secondary" disabled={disabled} aria-label={`restart ${entry} after idle`}>after current turn</Button>
-                  <ConfirmButton size="sm" variant="danger" disabled={disabled} aria-label={`force restart ${entry}`} confirmLabel="确认?（丢失 ACP 会话）" onConfirm={() => {}}>force</ConfirmButton>
-                </>
-              )}
+            <div key={entry} className={`text-sm ${mobile ? "flex flex-col items-start gap-1.5 border-b border-border pb-1.5 last:border-0" : "flex flex-wrap items-center gap-2"}`}>
+              <div className="flex flex-wrap items-center gap-2">
+                <StatusChip status={a.pending ? "working" : "attention"} variant="dot" />
+                <span className="font-medium text-text-primary">{entry}</span>
+                <span className="font-mono text-xs text-text-muted">{a.from}</span>
+              </div>
+              {!mobile ? <span className="flex-1" aria-hidden="true" /> : null}
+              {mobile ? <div className="flex flex-wrap items-center gap-2">{actions}</div> : actions}
             </div>
           );
         })}
@@ -1406,10 +1631,10 @@ function HarnessesFrame({ state, device }: { state: ShellState; device: Device }
           <div className="flex flex-col rounded-lg border border-border bg-surface-raised">
             {loading
               ? [0, 1, 2, 3].map((i) => <div key={i} className="border-b border-border px-3 py-2.5"><div className="flex items-center gap-2"><StatusChip status="idle" variant="dot" /><span className="text-sm text-text-muted">loading status…</span></div><div className="mt-1"><Skeleton variant="line" /></div></div>)
-              : HARNESS_ROWS.map((r) => <HarnessRow key={r.id} row={r} disabled={disabled} />)}
+              : HARNESS_ROWS.map((r) => <HarnessRow key={r.id} row={r} disabled={disabled} mobile={mobile} />)}
           </div>
           {installCard}
-          {!loading ? <OldVersionAgentsCard rows={oldAgents} disabled={disabled} /> : null}
+          {!loading ? <OldVersionAgentsCard rows={oldAgents} disabled={disabled} mobile={mobile} /> : null}
         </div>
       </div>
     </div>
@@ -1538,31 +1763,42 @@ function ChannelBindingsCard({ state, mobile }: { state: ShellState; mobile: boo
 }
 
 // Pending sender auth-codes → approve/revoke (dynamic-authz inbox; device-auth ⑤ overlap).
-function PendingSendersCard({ state }: { state: ShellState }) {
+function PendingSendersCard({ state, mobile = false }: { state: ShellState; mobile?: boolean }) {
   const disabled = state === "permission" || state === "offline";
   const busy = state === "busy";
   const pending = state === "empty" ? [] : state === "boundary" ? CH_PENDING_MANY : CH_PENDING;
   return (
     <div data-pending-senders className="flex flex-col gap-2 rounded-lg border border-border bg-surface-raised p-3">
-      <div className="flex items-center justify-between">
+      {/* Mobile (global rule): title owns its own line; the 设备授权↗ entry drops to the next
+          line (right-aligned) instead of being crushed onto the header row. */}
+      <div className={mobile ? "flex flex-col gap-1.5" : "flex items-center justify-between"}>
         <span className="text-xs uppercase tracking-wider text-text-muted">待审批发送者 · authcode 入册 ({pending.length})</span>
         {/* enrollment overlaps device-auth — entry to the device/auth surface (#12). */}
-        <LinkButton href="#" label="设备授权" dataKey="channel-enroll">设备授权 ↗</LinkButton>
+        <span className={mobile ? "flex justify-end" : "contents"}><LinkButton href="#" label="设备授权" dataKey="channel-enroll">设备授权 ↗</LinkButton></span>
       </div>
       {state === "error" ? <ErrorBanner title="Action failed" onRetry={() => {}}>approve/revoke 失败 — 重试。</ErrorBanner> : null}
       {pending.length === 0 ? <span className="text-xs text-text-muted">暂无待审批发送者。</span> : (
         <div className="flex flex-col gap-1.5">
-          {pending.map((p) => (
-            <div key={p.openId} className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-surface-sunken px-2.5 py-1.5 text-sm">
-              <StatusChip status="attention" variant="dot" />
-              <code className="font-mono text-xs text-text-primary">{p.openId}</code>
-              <span className="text-xs text-text-muted">authcode {p.authcode} · {p.when}</span>
-              <span className="flex-1" aria-hidden="true" />
-              {busy ? <Spinner size={12} label="resolving" /> : null}
-              <Button size="sm" variant="primary" disabled={disabled} busy={busy} aria-label={`approve sender ${p.openId}`}>批准</Button>
-              <Button size="sm" variant="ghost" disabled={disabled} aria-label={`revoke pending ${p.openId}`}>拒绝</Button>
-            </div>
-          ))}
+          {pending.map((p) => {
+            const actions = (
+              <>
+                {busy ? <Spinner size={12} label="resolving" /> : null}
+                <Button size="sm" variant="primary" disabled={disabled} busy={busy} aria-label={`approve sender ${p.openId}`} className="whitespace-nowrap">批准</Button>
+                <Button size="sm" variant="ghost" disabled={disabled} aria-label={`revoke pending ${p.openId}`} className="whitespace-nowrap">拒绝</Button>
+              </>
+            );
+            return (
+              <div key={p.openId} className={`rounded-lg border border-border bg-surface-sunken px-2.5 py-1.5 text-sm ${mobile ? "flex flex-col gap-1.5" : "flex flex-wrap items-center gap-2"}`}>
+                <div className="flex flex-wrap items-center gap-2">
+                  <StatusChip status="attention" variant="dot" />
+                  <code className="font-mono text-xs text-text-primary">{p.openId}</code>
+                  <span className="text-xs text-text-muted">authcode {p.authcode} · {p.when}</span>
+                </div>
+                {!mobile ? <span className="flex-1" aria-hidden="true" /> : null}
+                {mobile ? <div className="flex flex-wrap gap-2">{actions}</div> : actions}
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
@@ -1615,7 +1851,7 @@ function ChannelsFrame({ state, device }: { state: ShellState; device: Device })
               <ChannelStatusCard state={state} />
               {/* Mobile = read-only status + the actionable pending-sender inbox; binding/registry desktop-only (△). */}
               {!mobile ? <ChannelBindingsCard state={state} mobile={mobile} /> : null}
-              <PendingSendersCard state={state} />
+              <PendingSendersCard state={state} mobile={mobile} />
               {!mobile && state !== "empty" ? <AuthorizedSendersCard state={state} /> : null}
               {mobile ? <p className="text-xs text-text-muted">绑定 / 已授权注册表在桌面端管理（移动端聚焦待审批收件箱）。</p> : null}
             </>
@@ -1678,6 +1914,23 @@ const LEAKS_MANY: Leak[] = [
 function DoctorSummaryBar({ state, mobile }: { state: ShellState; mobile: boolean }) {
   const disabled = state === "offline";
   const s = state === "boundary" ? { total: 13, ok: 8, warnings: 3, errors: 2, worst: "error" as Sev } : DOCTOR_SUMMARY;
+  // Mobile (global rule): line 1 = worst chip + counts only; the build version folds to its
+  // own muted line; copy/run become a compact action row that fits within 1–2 lines.
+  if (mobile) {
+    return (
+      <div data-doctor-summary className="flex flex-col gap-1.5 rounded-lg border border-border bg-surface-raised p-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <StatusChip status={SEV_TONE[s.worst]} variant="soft" label={`worst: ${s.worst}`} />
+          <span className="text-xs text-text-muted">{s.ok} ok · {s.warnings} warn · {s.errors} error · {s.total} 总计</span>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button size="sm" variant="ghost" disabled={disabled} aria-label="copy diagnostics" className="whitespace-nowrap">copy 诊断</Button>
+          <Button size="sm" variant="secondary" disabled={disabled} busy={state === "busy"} aria-label="run doctor" className="whitespace-nowrap">{state === "busy" ? "running…" : "run doctor"}</Button>
+        </div>
+        <span className="text-xs text-text-muted">{DOCTOR_VERSION}{state === "offline" ? "（cached）" : ""}</span>
+      </div>
+    );
+  }
   return (
     <div data-doctor-summary className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-surface-raised p-3">
       <StatusChip status={SEV_TONE[s.worst]} variant="soft" label={`worst: ${s.worst}`} />
@@ -1685,24 +1938,26 @@ function DoctorSummaryBar({ state, mobile }: { state: ShellState; mobile: boolea
       <span className="text-xs text-text-muted">· {DOCTOR_VERSION}{state === "offline" ? "（cached）" : ""}</span>
       <span className="flex-1" aria-hidden="true" />
       <Button size="sm" variant="ghost" disabled={disabled} aria-label="copy diagnostics">copy 诊断</Button>
-      {!mobile ? <Button size="sm" variant="secondary" disabled={disabled} busy={state === "busy"} aria-label="run doctor">{state === "busy" ? "running…" : "run doctor"}</Button> : null}
+      <Button size="sm" variant="secondary" disabled={disabled} busy={state === "busy"} aria-label="run doctor">{state === "busy" ? "running…" : "run doctor"}</Button>
     </div>
   );
 }
 
-function DoctorFindings({ state }: { state: ShellState }) {
+function DoctorFindings({ state, mobile = false }: { state: ShellState; mobile?: boolean }) {
   const checks = state === "boundary" ? DOCTOR_CHECKS_MANY : DOCTOR_CHECKS;
   return (
     <div data-doctor-findings className="flex flex-col gap-1.5 rounded-lg border border-border bg-surface-raised p-3">
       <span className="text-xs uppercase tracking-wider text-text-muted">doctor findings ({checks.length})</span>
       {checks.map((c) => (
         <div key={c.id} className="flex flex-col gap-0.5 border-b border-border py-1.5 last:border-0">
+          {/* Mobile: never two-column — line 1 status/id/severity, line 2 full message, line 3 fixHint. */}
           <div className="flex flex-wrap items-center gap-2">
             <StatusChip status={SEV_TONE[c.severity]} variant="dot" />
             <code className="font-mono text-xs text-text-secondary">{c.id}</code>
             <StatusChip status={SEV_TONE[c.severity]} variant="soft" label={c.severity} />
-            <span className="min-w-0 flex-1 text-sm text-text-primary">{c.detail}</span>
+            {!mobile ? <span className="min-w-0 flex-1 text-sm text-text-primary">{c.detail}</span> : null}
           </div>
+          {mobile ? <span className="text-sm text-text-primary">{c.detail}</span> : null}
           {c.fixHint ? <span className="pl-6 text-xs text-text-muted">↳ {c.fixHint}</span> : null}
         </div>
       ))}
@@ -1786,7 +2041,7 @@ function DoctorFrame({ state, device }: { state: ShellState; device: Device }) {
             <>
               <DoctorSummaryBar state={state} mobile={mobile} />
               {state === "error" ? <ErrorBanner title="Doctor probe failed" onRetry={() => {}}>诊断请求失败 — backend 仍在线则可重试。</ErrorBanner> : null}
-              <DoctorFindings state={state} />
+              <DoctorFindings state={state} mobile={mobile} />
               <DaemonTable state={state} mobile={mobile} />
               {/* Recovery actions deferred to desktop on mobile (matrix △). */}
               {!mobile && state !== "empty" ? <DoctorRecovery state={state} /> : null}
@@ -1877,7 +2132,7 @@ function AppearanceGroup({ state, mode, accent, onMode, onAccent }: { state: She
   );
 }
 
-function DeviceGroup({ state }: { state: ShellState }) {
+function DeviceGroup({ state, mobile = false }: { state: ShellState; mobile?: boolean }) {
   const disabled = state === "offline"; // offline disables device mutations
   const perm = state === "permission"; // approve is host-CLI authoritative
   const busy = state === "busy";
@@ -1887,21 +2142,33 @@ function DeviceGroup({ state }: { state: ShellState }) {
       {perm ? <p className="text-xs text-text-muted">approve 由宿主 CLI 授权（authoritative）；WebUI 可复核待批与撤销。</p> : null}
       {state === "error" ? <ErrorBanner title="Action failed" onRetry={() => {}}>approve/revoke 失败 — 重试。</ErrorBanner> : null}
       <div className="flex flex-col gap-1.5">
-        {devices.map((d) => (
-          <div key={d.id} data-device-row className="flex flex-wrap items-center gap-2 text-sm">
-            <StatusChip status={DEV_TONE[d.phase]} variant="dot" />
-            <span className="font-medium text-text-primary">{d.label}</span>
-            <StatusChip status={DEV_TONE[d.phase]} variant="soft" label={d.phase === "this" ? "this device" : d.phase} />
-            <span className="text-xs text-text-muted">seen {d.lastSeen}</span>
-            <span className="flex-1" aria-hidden="true" />
-            {busy ? <Spinner size={12} label="resolving" /> : null}
-            {d.phase === "pending" ? <Button size="sm" variant="primary" disabled={disabled || perm} busy={busy} aria-label={`approve device ${d.id}`}>批准</Button> : null}
-            {d.phase !== "this" && d.phase !== "revoked" ? <Button size="sm" variant="ghost" disabled={disabled} aria-label={`revoke device ${d.id}`}>撤销</Button> : null}
-          </div>
-        ))}
+        {devices.map((d) => {
+          // Mobile (global rule): device label/phase on their own line(s), approve/revoke on
+          // a separate wrapping action row.
+          const actions = (
+            <>
+              {busy ? <Spinner size={12} label="resolving" /> : null}
+              {d.phase === "pending" ? <Button size="sm" variant="primary" disabled={disabled || perm} busy={busy} aria-label={`approve device ${d.id}`} className="whitespace-nowrap">批准</Button> : null}
+              {d.phase !== "this" && d.phase !== "revoked" ? <Button size="sm" variant="ghost" disabled={disabled} aria-label={`revoke device ${d.id}`} className="whitespace-nowrap">撤销</Button> : null}
+            </>
+          );
+          const hasActions = d.phase === "pending" || (d.phase !== "this" && d.phase !== "revoked");
+          return (
+            <div key={d.id} data-device-row className={`text-sm ${mobile ? "flex flex-col items-start gap-1.5 border-b border-border pb-1.5 last:border-0" : "flex flex-wrap items-center gap-2"}`}>
+              <div className="flex flex-wrap items-center gap-2">
+                <StatusChip status={DEV_TONE[d.phase]} variant="dot" />
+                <span className="font-medium text-text-primary">{d.label}</span>
+                <StatusChip status={DEV_TONE[d.phase]} variant="soft" label={d.phase === "this" ? "this device" : d.phase} />
+                <span className="text-xs text-text-muted">seen {d.lastSeen}</span>
+              </div>
+              {!mobile ? <span className="flex-1" aria-hidden="true" /> : null}
+              {mobile ? (hasActions ? <div className="flex flex-wrap gap-2">{actions}</div> : null) : actions}
+            </div>
+          );
+        })}
       </div>
-      <div className="flex items-center gap-2">
-        <Button size="sm" variant="secondary" disabled={disabled || perm} aria-label="mint bootstrap token">铸造 bootstrap token</Button>
+      <div className="flex flex-wrap items-center gap-2">
+        <Button size="sm" variant="secondary" disabled={disabled || perm} aria-label="mint bootstrap token" className="whitespace-nowrap">铸造 bootstrap token</Button>
         <span className="text-xs text-text-muted">首台设备引导（host-side echo）。</span>
       </div>
     </SettingsGroup>
@@ -1944,7 +2211,7 @@ function SettingsFrame({ state, device, mode, accent, onMode, onAccent }: { stat
                   {offline ? <span className="text-xs text-text-muted">（离线时偏好保存已禁用）</span> : null}
                 </div>
               </SettingsGroup>
-              <DeviceGroup state={state} />
+              <DeviceGroup state={state} mobile={mobile} />
             </>
           )}
         </div>
@@ -2016,13 +2283,14 @@ function NotificationsFrame({ state, device, mode, accent }: { state: ShellState
   return (
     <div data-mockup="frame" data-device={device} data-notifications="center"
       className={`flex ${mobile ? "h-[760px] w-[390px] rounded-[28px]" : "h-[700px] w-[1280px] rounded-xl"} max-w-full flex-col overflow-hidden border border-border bg-surface text-text-primary shadow-sm`}>
-      <header className="flex items-center gap-2 border-b border-border bg-surface-raised px-4 py-2.5">
+      {/* Mobile (global rule): header wraps so 全部已读 drops to its own line vs cramming. */}
+      <header className={`border-b border-border bg-surface-raised px-4 py-2.5 ${mobile ? "flex flex-wrap items-center gap-2" : "flex items-center gap-2"}`}>
         <Brand /><span className="text-text-muted">·</span>
         <span className="text-sm font-semibold">通知 Notifications</span>
         <span className="text-xs text-text-muted">{mobile ? "全屏列表" : "抽屉"}</span>
         {unreadCount > 0 && state !== "empty" ? <Badge count={unreadCount} max={99} tone="urgent" /> : null}
         <span className="flex-1" aria-hidden="true" />
-        <Button size="sm" variant="ghost" disabled={disabled || state === "empty"} busy={busy} aria-label="mark all read">全部已读</Button>
+        <Button size="sm" variant="ghost" disabled={disabled || state === "empty"} busy={busy} aria-label="mark all read" className="whitespace-nowrap">全部已读</Button>
       </header>
       {offline ? <div role="status" className="flex items-center gap-2 border-b border-border bg-warning-subtle px-4 py-1.5 text-xs text-warning"><Spinner size={12} label="reconnecting" /> 连接已断开 — 显示最近已知通知；标记已读已禁用。</div> : null}
       <div className="min-h-0 flex-1 overflow-auto p-4">
@@ -2365,6 +2633,8 @@ const NM_AGENTS: AgentRow[] = [
   { id: "reviewer", harness: "opencode", project: "~/projects/app", role: "member", model: "(default)", lazy: true, opencodePermission: "ask" },
 ];
 const NM_EDGES = [{ from: "router", to: "codex-1" }, { from: "router", to: "reviewer" }, { from: "codex-1", to: "reviewer" }];
+// Boundary = 12 agents (the long-form scrolling verification target, C3): the whole
+// page scrolls and every row stays reachable; the last row is the "just added" one.
 const NM_MANY_AGENTS: AgentRow[] = [
   ...NM_AGENTS,
   { id: "codex-2", harness: "codex", project: "~/projects/app", role: "member" },
@@ -2374,11 +2644,14 @@ const NM_MANY_AGENTS: AgentRow[] = [
   { id: "a-very-long-agent-identifier-for-truncation", harness: "claude", project: "~/projects/a/very/long/nested/project/path/that/wraps", role: "member" },
   { id: "reviewer-2", harness: "claude", project: "~/projects/app", role: "member" },
   { id: "security-1", harness: "codex", project: "~/projects/security", role: "member" },
+  { id: "docs-2", harness: "claude", project: "~/projects/docs", role: "member" },
+  { id: "infra-2", harness: "opencode", project: "~/projects/infra", role: "member" },
 ];
 const NM_MANY_EDGES = [
   ...NM_EDGES, { from: "router", to: "codex-2" }, { from: "router", to: "claude-2" }, { from: "router", to: "opencode-1" },
   { from: "router", to: "kimi-1" }, { from: "codex-1", to: "reviewer-2" }, { from: "codex-2", to: "reviewer-2" },
   { from: "claude-2", to: "security-1" }, { from: "security-1", to: "reviewer" },
+  { from: "router", to: "docs-2" }, { from: "router", to: "infra-2" },
 ];
 
 // Per-state form shape (loading is N/A for a local create form; offline locks the
@@ -2429,20 +2702,33 @@ function NewMeshFrame({ state, device, nmEditor = "off" }: { state: ShellState; 
   const f = nmForm(state);
   const mobile = device === "mobile";
   const ctrlDisabled = f.disabled || f.busy;
+  const saveDisabled = !f.valid || f.disabled;
+  // Action area (mesh name echo + Cancel/Save). C3: it must stay reachable while the
+  // long form scrolls. Desktop → sticky top action bar; mobile → fixed bottom footer.
+  // Cancel stays enabled even offline — it is purely local navigation (no mutation).
+  const actions = (
+    <Cluster>
+      <Button variant="ghost" size="sm">Cancel</Button>
+      <Button variant="primary" size="sm" disabled={saveDisabled} busy={f.busy}>Save</Button>
+    </Cluster>
+  );
   return (
-    <div data-mockup="frame" data-device={device} data-newmesh="builder" className={`relative ${mobile ? "flex h-[760px] w-[390px] flex-col rounded-[28px]" : "w-[1280px] rounded-xl"} max-w-full overflow-hidden border border-border bg-surface text-text-primary shadow-sm`}>
-      <header className="flex items-center gap-2 border-b border-border bg-surface-raised px-4 py-2.5">
+    <div data-mockup="frame" data-device={device} data-newmesh="builder" className={`relative flex flex-col ${mobile ? "h-[760px] w-[390px] rounded-[28px]" : "w-[1280px] rounded-xl"} max-w-full overflow-hidden border border-border bg-surface text-text-primary shadow-sm`}>
+      <header data-newmesh-actionbar={mobile ? "header" : "sticky"} className={`flex items-center gap-2 border-b border-border bg-surface-raised px-4 py-2.5 ${mobile ? "" : "sticky top-0 z-10"}`}>
         <Brand />
         <span className="text-text-muted">·</span>
         <span className="text-sm font-semibold">New mesh</span>
+        {!mobile && f.name ? <span className="max-w-[260px] truncate text-sm text-text-muted">· {f.name}</span> : null}
         <span className="flex-1" aria-hidden="true" />
-        {/* Cancel stays enabled even offline — it is purely local navigation (no mutation). */}
-        <Button variant="ghost" size="sm">Cancel</Button>
-        <Button variant="primary" size="sm" disabled={!f.valid || f.disabled} busy={f.busy}>Save</Button>
+        {/* Desktop keeps the actions in the sticky bar; mobile moves them to a fixed footer. */}
+        {!mobile ? actions : null}
       </header>
       {state === "permission" ? <div role="status" className="border-b border-border bg-danger-subtle px-4 py-1.5 text-xs text-danger">设备未授权 — 无法创建 mesh；请在「设置」批准本设备。</div> : null}
       {state === "offline" ? <div role="status" className="flex items-center gap-2 border-b border-border bg-warning-subtle px-4 py-1.5 text-xs text-warning"><Spinner size={12} label="reconnecting" /> 连接已断开 — 正在重连…（草稿保留，编辑与保存已禁用）</div> : null}
-      <div className="min-h-0 flex-1 overflow-auto p-4">
+      {/* Body: full-page scroll. Desktop grows so every agent stays reachable (no nested
+          fixed-height overflow trap); mobile scrolls within the phone frame above the
+          fixed Save footer. The agent list is NEVER its own scroll region. */}
+      <div className={`min-h-0 ${mobile ? "flex-1 overflow-auto" : ""} p-4`}>
         <div className={`mx-auto flex flex-col gap-5 ${mobile ? "" : "max-w-[820px]"}`}>
           {state === "error" ? <ErrorBanner title="Fix 2 errors to save">Duplicate mesh name and one agent is missing an id.</ErrorBanner> : null}
 
@@ -2453,18 +2739,22 @@ function NewMeshFrame({ state, device, nmEditor = "off" }: { state: ShellState; 
           </section>
 
           <section className="flex flex-col gap-2">
-            <div className="flex items-center justify-between">
+            <div className={`flex gap-1.5 ${mobile ? "flex-col" : "items-center justify-between"}`}>
               <span className="text-xs uppercase tracking-wider text-text-muted">agents · {f.agents.length}</span>
-              <Button variant="secondary" size="sm" disabled={ctrlDisabled}>+ Add agent</Button>
+              {/* C3: adding an agent scrolls the new row into view + focuses its first field.
+                  Represented statically by the highlighted "just-added" row below. */}
+              <Button variant="secondary" size="sm" disabled={ctrlDisabled} data-newmesh-addflow title="新增后自动滚动入视并聚焦 agent id" className={mobile ? "self-start whitespace-nowrap" : "whitespace-nowrap"}>+ Add agent</Button>
             </div>
             <div className="flex flex-col gap-2">
               {f.agents.map((a, i) => {
                 const missingId = state === "error" && i === f.agents.length - 1; // last row missing id in error state
+                const newest = f.boundary && i === f.agents.length - 1; // "just added" row (C3 add-flow demo)
                 return (
-                  <div key={i} className="flex flex-col gap-1.5 rounded-lg border border-border bg-surface-raised p-2.5">
+                  <div key={i} data-newmesh-newest={newest ? "true" : undefined} className={`flex scroll-mt-16 flex-col gap-1.5 rounded-lg border bg-surface-raised p-2.5 ${newest ? "border-accent ring-1 ring-accent" : "border-border"}`}>
+                    {newest ? <span data-newmesh-addhint className="text-xs font-medium text-accent">↳ 新增 agent · 已滚动入视并聚焦 agent id</span> : null}
                     {/* line 1: id · harness · role · delete */}
                     <div className={`flex gap-1.5 ${mobile ? "flex-wrap" : "items-center"}`}>
-                      <Input defaultValue={missingId ? "" : a.id} error={missingId} disabled={ctrlDisabled} aria-label={`agent ${i + 1} id`} placeholder="agent id" className={mobile ? "w-full" : "w-40"} />
+                      <Input defaultValue={missingId ? "" : a.id} error={missingId} disabled={ctrlDisabled} aria-label={`agent ${i + 1} id`} placeholder="agent id" className={`${mobile ? "w-full" : "w-40"} ${newest ? "ring-2 ring-accent" : ""}`} />
                       <Select defaultValue={a.harness} disabled={ctrlDisabled} aria-label={`agent ${i + 1} harness`} className={mobile ? "flex-1" : "w-32"}>{HARNESSES.map((h) => <option key={h}>{h}</option>)}</Select>
                       <Select defaultValue={a.role} disabled={ctrlDisabled} aria-label={`agent ${i + 1} role`} className={mobile ? "flex-1" : "w-28"}><option>router</option><option>member</option></Select>
                       {!mobile ? <span className="flex-1" aria-hidden="true" /> : null}
@@ -2545,6 +2835,13 @@ function NewMeshFrame({ state, device, nmEditor = "off" }: { state: ShellState; 
           </section>
         </div>
       </div>
+      {/* Mobile: Save fixed at the bottom (whole screen scrolls above it) — C3. */}
+      {mobile ? (
+        <div data-newmesh-actionbar="footer" className="flex shrink-0 items-center justify-between gap-2 border-t border-border bg-surface-raised px-4 py-2.5">
+          <span className="min-w-0 flex-1 truncate text-xs text-text-muted">{f.name || "未命名 mesh"}</span>
+          {actions}
+        </div>
+      ) : null}
       {nmEditor !== "off" ? <NmTextEditor kind={nmEditor} mobile={mobile} /> : null}
     </div>
   );
@@ -2751,6 +3048,7 @@ function selQuery(s: Sel): string {
   p.set("nmEditor", s.nmEditor);
   if (s.boardFs) p.set("boardFs", "1");
   if (s.boardManage) p.set("boardManage", "1");
+  if (s.boardFilters) p.set("boardFilters", "1");
   if (s.asstFs) p.set("asstFs", "1");
   if (s.lb) p.set("lb", "1");
   if (s.index) p.set("index", "1");
@@ -2905,7 +3203,7 @@ function MockupIndex({ backHref }: { backHref: string }) {
 
 export function UiMockup() {
   const [sel, setSel] = useState<Sel>(readSel);
-  const { device, view, surface, runtime, board, state, nmEditor, boardFs, boardManage, asstFs, lb, index, mesh, mode, accent } = sel;
+  const { device, view, surface, runtime, board, state, nmEditor, boardFs, boardManage, boardFilters, asstFs, lb, index, mesh, mode, accent } = sel;
   const [mobileTab, setMobileTab] = useState<MobileTab>(surface === "board" || view === "board" ? "board" : "runtime");
 
   useEffect(() => {
@@ -2937,6 +3235,7 @@ export function UiMockup() {
   const boardFsHref = `/__ui-mockup?${selQuery({ ...sel, surface: "board", boardFs: true })}`;
   const boardExitFsHref = `/__ui-mockup?${selQuery({ ...sel, surface: "board", boardFs: false })}`;
   const boardManageHref = `/__ui-mockup?${selQuery({ ...sel, surface: "board", boardManage: !boardManage })}`;
+  const boardFiltersHref = `/__ui-mockup?${selQuery({ ...sel, surface: "board", boardFilters: !boardFilters })}`;
   // Assistant chat fullscreen enter/exit (audit #21).
   const asstFsHref = `/__ui-mockup?${selQuery({ ...sel, surface: "assistant", asstFs: !asstFs })}`;
   // Artifact viewer: lightbox enter/exit + back-to-conversation.
@@ -2957,7 +3256,7 @@ export function UiMockup() {
   const desktopStage = surface === "runtime"
     ? (runtime === "focus" ? <RuntimeFocusDesktop state={state} fullHref={fullHref} /> : <RuntimeOverviewDesktop focusHref={focusHref} canvasHref={canvasHref} state={state} />)
     : surface === "board"
-    ? (board === "detail" ? <BoardDetailDesktop state={state} fsHref={boardFsHref} /> : board === "kanban" ? <BoardKanbanDesktop state={state} fsHref={boardFsHref} /> : <BoardListDesktop state={state} fsHref={boardFsHref} manage={boardManage} manageHref={boardManageHref} />)
+    ? (board === "detail" ? <BoardDetailDesktop state={state} fsHref={boardFsHref} /> : board === "kanban" ? <BoardKanbanDesktop state={state} fsHref={boardFsHref} /> : <BoardListDesktop state={state} fsHref={boardFsHref} manage={boardManage} manageHref={boardManageHref} filters={boardFilters} filtersHref={boardFiltersHref} />)
     : <ShellStage state={state} view={view} />;
   // Runtime + board share the same chrome-by-state behavior (mesh nav stays populated).
   const shellChrome: ShellChrome = surface === "shell" ? shellChromeFor(state) : (surface === "runtime" || surface === "board") ? runtimeChromeFor(state) : {};
@@ -2967,6 +3266,11 @@ export function UiMockup() {
   const desktopContext = surface === "runtime"
     ? (runtime === "focus" ? (
         <div className="flex flex-col gap-3 text-sm">
+          {/* C2: right-context approval-queue badge mirrors the docked bar's FIFO count. */}
+          <div data-context-approvals className="flex items-center justify-between rounded-lg border border-border bg-surface-sunken px-2.5 py-1.5">
+            <span className="text-xs text-text-muted">待授权队列</span>
+            <Badge count={PENDING_APPROVALS} tone="urgent" />
+          </div>
           <div>
             <div className="mb-1 text-xs uppercase tracking-wider text-text-muted">activity</div>
             <div className="flex flex-col gap-1">
@@ -3127,7 +3431,7 @@ export function UiMockup() {
           : surface === "runtime" && device === "desktop" && runtime === "canvas"
           ? <MeshCanvasFrame state={state} backHref={overviewHref} />
           : surface === "board" && device === "desktop" && boardFs
-          ? <BoardFullFrame board={board} state={state} backHref={boardExitFsHref} manage={boardManage} manageHref={boardManageHref} />
+          ? <BoardFullFrame board={board} state={state} backHref={boardExitFsHref} manage={boardManage} manageHref={boardManageHref} filters={boardFilters} filtersHref={boardFiltersHref} />
           : device === "mobile"
           ? <MobileShell tab={mobileTab} setTab={(t) => { setMobileTab(t); if (t === "runtime" || t === "board") nav({ view: t }); }} mesh={mesh} setMesh={setMesh} stage={mobileStage} stageTab={mobileStageTab} {...shellChrome} />
           : <DesktopShell view={view} setView={setView} mesh={mesh} setMesh={setMesh} meshHref={meshHref} stage={desktopStage} contextTitle={contextTitle} context={desktopContext} {...shellChrome} />}
