@@ -1222,14 +1222,15 @@ function AssistantFrame({ state, device, fs = false, fsHref = "#" }: { state: Sh
   return (
     <div data-mockup="frame" data-device={device} data-assistant="chat" data-assistant-fs={fs ? "1" : undefined}
       className={`flex ${mobile ? "h-[760px] w-[390px] rounded-[28px]" : fs ? "h-[760px] w-[1280px] rounded-xl" : "h-[640px] w-[1280px] rounded-xl"} max-w-full flex-col overflow-hidden border border-border bg-surface text-text-primary shadow-sm`}>
-      <header className="flex items-center gap-2 border-b border-border bg-surface-raised px-4 py-2.5">
+      {/* Mobile (global rule): header wraps instead of cramming brand+chip+p2p+interrupt into one row. */}
+      <header className={`border-b border-border bg-surface-raised px-4 py-2.5 ${mobile ? "flex flex-wrap items-center gap-2" : "flex items-center gap-2"}`}>
         <Brand /><span className="text-text-muted">·</span>
         <span className="text-sm font-semibold">Mesh Assistant</span>
         {statusChip}
-        <span className="flex-1" aria-hidden="true" />
+        {!mobile ? <span className="flex-1" aria-hidden="true" /> : null}
         {/* p2p DM → Mesh Assistant is folded here (device-auth ⑤ / channels). */}
         <LinkButton href="#" label="p2p DM 入口" dataKey="assistant-p2p">✉ p2p DM</LinkButton>
-        {working ? <Button size="sm" variant="ghost" aria-label="interrupt assistant">Interrupt</Button> : null}
+        {working ? <Button size="sm" variant="ghost" aria-label="interrupt assistant" className="whitespace-nowrap">Interrupt</Button> : null}
         {!mobile ? <LinkButton href={fsHref} label={fs ? "退出全屏" : "全屏"} dataKey="assistant-fs">{fs ? "⊟" : "⊞"}</LinkButton> : null}
       </header>
       {perm ? <div role="status" className="border-b border-border bg-danger-subtle px-4 py-1.5 text-xs text-danger">设备未授权 — 只读；启用 / 管理需已授权设备。</div> : null}
@@ -1295,20 +1296,34 @@ const OLD_AGENTS_MANY: OldAgent[] = [
 ];
 
 // Self-install guide for npm-locked harnesses: copy command + docs + reprobe-to-detect (audit #27).
-function SelfInstallerGuide({ id, command, disabled = false }: { id: string; command: string; disabled?: boolean }) {
+function SelfInstallerGuide({ id, command, disabled = false, mobile = false }: { id: string; command: string; disabled?: boolean; mobile?: boolean }) {
+  // Mobile: command line full-width on top, the 3 actions on their own wrapping row.
+  const actions = (
+    <>
+      <Button size="sm" variant="ghost" disabled={disabled} aria-label={`copy install command for ${id}`} className="whitespace-nowrap">copy command</Button>
+      <Button size="sm" variant="ghost" disabled={disabled} aria-label={`open ${id} docs`} className="whitespace-nowrap">docs ↗</Button>
+      <Button size="sm" variant="ghost" disabled={disabled} aria-label={`reprobe ${id}`} className="whitespace-nowrap">reprobe to detect</Button>
+    </>
+  );
   return (
-    <div data-self-installer className="mt-1.5 flex flex-wrap items-center gap-2 rounded-lg border border-border bg-surface-sunken px-2.5 py-1.5 text-xs">
-      <span className="text-text-muted">自助安装：</span>
-      <code className="rounded bg-surface px-1.5 py-0.5 font-mono text-text-secondary">{command}</code>
-      <Button size="sm" variant="ghost" disabled={disabled} aria-label={`copy install command for ${id}`}>copy command</Button>
-      <Button size="sm" variant="ghost" disabled={disabled} aria-label={`open ${id} docs`}>docs ↗</Button>
-      <Button size="sm" variant="ghost" disabled={disabled} aria-label={`reprobe ${id}`}>reprobe to detect</Button>
+    <div data-self-installer className={`mt-1.5 rounded-lg border border-border bg-surface-sunken px-2.5 py-1.5 text-xs ${mobile ? "flex flex-col gap-1.5" : "flex flex-wrap items-center gap-2"}`}>
+      <span className={mobile ? "flex flex-wrap items-center gap-2" : "contents"}><span className="text-text-muted">自助安装：</span>
+      <code className="rounded bg-surface px-1.5 py-0.5 font-mono text-text-secondary">{command}</code></span>
+      {mobile ? <div className="flex flex-wrap gap-2">{actions}</div> : actions}
     </div>
   );
 }
 
 // One harness row: status + dual version + auth + reprobe + install/update (or self-install).
-function HarnessRow({ row, disabled = false }: { row: HarnessRowData; disabled?: boolean }) {
+function HarnessRow({ row, disabled = false, mobile = false }: { row: HarnessRowData; disabled?: boolean; mobile?: boolean }) {
+  // Mobile (global rule): name + status chip on line 1, version on its own line, reprobe/
+  // update/auth actions on their own wrapping row (buttons never wrap internally).
+  const actions = (
+    <>
+      <Button size="sm" variant="ghost" disabled={disabled} aria-label={`reprobe ${row.id}`} className="whitespace-nowrap">reprobe</Button>
+      {!row.selfInstall && (row.kind === "bad" || row.kind === "warn") ? <Button size="sm" variant="secondary" disabled={disabled} aria-label={`${row.kind === "warn" ? "update" : "install"} ${row.id}`} className="whitespace-nowrap">{row.kind === "warn" ? "update" : "install"}</Button> : null}
+    </>
+  );
   return (
     <div data-harness-row className="flex flex-col gap-1 border-b border-border px-3 py-2.5">
       <div className="flex flex-wrap items-center gap-2">
@@ -1316,13 +1331,11 @@ function HarnessRow({ row, disabled = false }: { row: HarnessRowData; disabled?:
         <span className="text-sm font-medium text-text-primary">{row.label}</span>
         <StatusChip status={HARNESS_TONE[row.kind]} variant="soft" label={row.statusText} />
         {row.auth ? <StatusChip status="attention" variant="soft" label="auth required" /> : null}
-        <span className="flex-1" aria-hidden="true" />
-        <Button size="sm" variant="ghost" disabled={disabled} aria-label={`reprobe ${row.id}`}>reprobe</Button>
-        {/* npm install/update only for missing(bad)/outdated(warn); installed-ok shows none. */}
-        {!row.selfInstall && (row.kind === "bad" || row.kind === "warn") ? <Button size="sm" variant="secondary" disabled={disabled} aria-label={`${row.kind === "warn" ? "update" : "install"} ${row.id}`}>{row.kind === "warn" ? "update" : "install"}</Button> : null}
+        {!mobile ? <><span className="flex-1" aria-hidden="true" />{actions}</> : null}
       </div>
       <div className="truncate font-mono text-xs text-text-muted">{row.line}</div>
-      {row.selfInstall ? <SelfInstallerGuide id={row.id} command={`npm i -g ${row.id}`} disabled={disabled} /> : null}
+      {mobile ? <div className="flex flex-wrap gap-2">{actions}</div> : null}
+      {row.selfInstall ? <SelfInstallerGuide id={row.id} command={`npm i -g ${row.id}`} disabled={disabled} mobile={mobile} /> : null}
     </div>
   );
 }
@@ -1346,30 +1359,34 @@ function InstallProgressCard({ status, long = false }: { status: "running" | "do
 }
 
 // Agents still on an older adapter — restart after-idle / force (two-click) / cancel (audit #28).
-function OldVersionAgentsCard({ rows, disabled = false }: { rows: OldAgent[]; disabled?: boolean }) {
+function OldVersionAgentsCard({ rows, disabled = false, mobile = false }: { rows: OldAgent[]; disabled?: boolean; mobile?: boolean }) {
   return (
     <div data-old-agents className="flex flex-col gap-2 rounded-lg border border-border bg-surface-raised p-3">
       <span className="text-xs uppercase tracking-wider text-text-muted">旧版本 agent · 重启以采用新适配器 ({rows.length})</span>
       <div className="flex flex-col gap-1.5">
         {rows.map((a) => {
           const entry = `${a.mesh}/${a.agent}`;
+          // Mobile: agent + from on their own lines, restart actions on a separate wrapping row.
+          const actions = a.pending ? (
+            <>
+              <span className="text-xs text-text-muted">restart pending…</span>
+              <Button size="sm" variant="ghost" disabled={disabled} aria-label={`cancel restart ${entry}`} className="whitespace-nowrap">cancel</Button>
+            </>
+          ) : (
+            <>
+              <Button size="sm" variant="secondary" disabled={disabled} aria-label={`restart ${entry} after idle`} className="whitespace-nowrap">after current turn</Button>
+              <ConfirmButton size="sm" variant="danger" disabled={disabled} aria-label={`force restart ${entry}`} confirmLabel="确认?（丢失 ACP 会话）" onConfirm={() => {}} className="whitespace-nowrap">force</ConfirmButton>
+            </>
+          );
           return (
-            <div key={entry} className="flex flex-wrap items-center gap-2 text-sm">
-              <StatusChip status={a.pending ? "working" : "attention"} variant="dot" />
-              <span className="font-medium text-text-primary">{entry}</span>
-              <span className="font-mono text-xs text-text-muted">{a.from}</span>
-              <span className="flex-1" aria-hidden="true" />
-              {a.pending ? (
-                <>
-                  <span className="text-xs text-text-muted">restart pending…</span>
-                  <Button size="sm" variant="ghost" disabled={disabled} aria-label={`cancel restart ${entry}`}>cancel</Button>
-                </>
-              ) : (
-                <>
-                  <Button size="sm" variant="secondary" disabled={disabled} aria-label={`restart ${entry} after idle`}>after current turn</Button>
-                  <ConfirmButton size="sm" variant="danger" disabled={disabled} aria-label={`force restart ${entry}`} confirmLabel="确认?（丢失 ACP 会话）" onConfirm={() => {}}>force</ConfirmButton>
-                </>
-              )}
+            <div key={entry} className={`text-sm ${mobile ? "flex flex-col items-start gap-1.5 border-b border-border pb-1.5 last:border-0" : "flex flex-wrap items-center gap-2"}`}>
+              <div className="flex flex-wrap items-center gap-2">
+                <StatusChip status={a.pending ? "working" : "attention"} variant="dot" />
+                <span className="font-medium text-text-primary">{entry}</span>
+                <span className="font-mono text-xs text-text-muted">{a.from}</span>
+              </div>
+              {!mobile ? <span className="flex-1" aria-hidden="true" /> : null}
+              {mobile ? <div className="flex flex-wrap items-center gap-2">{actions}</div> : actions}
             </div>
           );
         })}
@@ -1406,10 +1423,10 @@ function HarnessesFrame({ state, device }: { state: ShellState; device: Device }
           <div className="flex flex-col rounded-lg border border-border bg-surface-raised">
             {loading
               ? [0, 1, 2, 3].map((i) => <div key={i} className="border-b border-border px-3 py-2.5"><div className="flex items-center gap-2"><StatusChip status="idle" variant="dot" /><span className="text-sm text-text-muted">loading status…</span></div><div className="mt-1"><Skeleton variant="line" /></div></div>)
-              : HARNESS_ROWS.map((r) => <HarnessRow key={r.id} row={r} disabled={disabled} />)}
+              : HARNESS_ROWS.map((r) => <HarnessRow key={r.id} row={r} disabled={disabled} mobile={mobile} />)}
           </div>
           {installCard}
-          {!loading ? <OldVersionAgentsCard rows={oldAgents} disabled={disabled} /> : null}
+          {!loading ? <OldVersionAgentsCard rows={oldAgents} disabled={disabled} mobile={mobile} /> : null}
         </div>
       </div>
     </div>
@@ -1538,31 +1555,42 @@ function ChannelBindingsCard({ state, mobile }: { state: ShellState; mobile: boo
 }
 
 // Pending sender auth-codes → approve/revoke (dynamic-authz inbox; device-auth ⑤ overlap).
-function PendingSendersCard({ state }: { state: ShellState }) {
+function PendingSendersCard({ state, mobile = false }: { state: ShellState; mobile?: boolean }) {
   const disabled = state === "permission" || state === "offline";
   const busy = state === "busy";
   const pending = state === "empty" ? [] : state === "boundary" ? CH_PENDING_MANY : CH_PENDING;
   return (
     <div data-pending-senders className="flex flex-col gap-2 rounded-lg border border-border bg-surface-raised p-3">
-      <div className="flex items-center justify-between">
+      {/* Mobile (global rule): title owns its own line; the 设备授权↗ entry drops to the next
+          line (right-aligned) instead of being crushed onto the header row. */}
+      <div className={mobile ? "flex flex-col gap-1.5" : "flex items-center justify-between"}>
         <span className="text-xs uppercase tracking-wider text-text-muted">待审批发送者 · authcode 入册 ({pending.length})</span>
         {/* enrollment overlaps device-auth — entry to the device/auth surface (#12). */}
-        <LinkButton href="#" label="设备授权" dataKey="channel-enroll">设备授权 ↗</LinkButton>
+        <span className={mobile ? "flex justify-end" : "contents"}><LinkButton href="#" label="设备授权" dataKey="channel-enroll">设备授权 ↗</LinkButton></span>
       </div>
       {state === "error" ? <ErrorBanner title="Action failed" onRetry={() => {}}>approve/revoke 失败 — 重试。</ErrorBanner> : null}
       {pending.length === 0 ? <span className="text-xs text-text-muted">暂无待审批发送者。</span> : (
         <div className="flex flex-col gap-1.5">
-          {pending.map((p) => (
-            <div key={p.openId} className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-surface-sunken px-2.5 py-1.5 text-sm">
-              <StatusChip status="attention" variant="dot" />
-              <code className="font-mono text-xs text-text-primary">{p.openId}</code>
-              <span className="text-xs text-text-muted">authcode {p.authcode} · {p.when}</span>
-              <span className="flex-1" aria-hidden="true" />
-              {busy ? <Spinner size={12} label="resolving" /> : null}
-              <Button size="sm" variant="primary" disabled={disabled} busy={busy} aria-label={`approve sender ${p.openId}`}>批准</Button>
-              <Button size="sm" variant="ghost" disabled={disabled} aria-label={`revoke pending ${p.openId}`}>拒绝</Button>
-            </div>
-          ))}
+          {pending.map((p) => {
+            const actions = (
+              <>
+                {busy ? <Spinner size={12} label="resolving" /> : null}
+                <Button size="sm" variant="primary" disabled={disabled} busy={busy} aria-label={`approve sender ${p.openId}`} className="whitespace-nowrap">批准</Button>
+                <Button size="sm" variant="ghost" disabled={disabled} aria-label={`revoke pending ${p.openId}`} className="whitespace-nowrap">拒绝</Button>
+              </>
+            );
+            return (
+              <div key={p.openId} className={`rounded-lg border border-border bg-surface-sunken px-2.5 py-1.5 text-sm ${mobile ? "flex flex-col gap-1.5" : "flex flex-wrap items-center gap-2"}`}>
+                <div className="flex flex-wrap items-center gap-2">
+                  <StatusChip status="attention" variant="dot" />
+                  <code className="font-mono text-xs text-text-primary">{p.openId}</code>
+                  <span className="text-xs text-text-muted">authcode {p.authcode} · {p.when}</span>
+                </div>
+                {!mobile ? <span className="flex-1" aria-hidden="true" /> : null}
+                {mobile ? <div className="flex flex-wrap gap-2">{actions}</div> : actions}
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
@@ -1615,7 +1643,7 @@ function ChannelsFrame({ state, device }: { state: ShellState; device: Device })
               <ChannelStatusCard state={state} />
               {/* Mobile = read-only status + the actionable pending-sender inbox; binding/registry desktop-only (△). */}
               {!mobile ? <ChannelBindingsCard state={state} mobile={mobile} /> : null}
-              <PendingSendersCard state={state} />
+              <PendingSendersCard state={state} mobile={mobile} />
               {!mobile && state !== "empty" ? <AuthorizedSendersCard state={state} /> : null}
               {mobile ? <p className="text-xs text-text-muted">绑定 / 已授权注册表在桌面端管理（移动端聚焦待审批收件箱）。</p> : null}
             </>
@@ -1678,6 +1706,23 @@ const LEAKS_MANY: Leak[] = [
 function DoctorSummaryBar({ state, mobile }: { state: ShellState; mobile: boolean }) {
   const disabled = state === "offline";
   const s = state === "boundary" ? { total: 13, ok: 8, warnings: 3, errors: 2, worst: "error" as Sev } : DOCTOR_SUMMARY;
+  // Mobile (global rule): line 1 = worst chip + counts only; the build version folds to its
+  // own muted line; copy/run become a compact action row that fits within 1–2 lines.
+  if (mobile) {
+    return (
+      <div data-doctor-summary className="flex flex-col gap-1.5 rounded-lg border border-border bg-surface-raised p-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <StatusChip status={SEV_TONE[s.worst]} variant="soft" label={`worst: ${s.worst}`} />
+          <span className="text-xs text-text-muted">{s.ok} ok · {s.warnings} warn · {s.errors} error · {s.total} 总计</span>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button size="sm" variant="ghost" disabled={disabled} aria-label="copy diagnostics" className="whitespace-nowrap">copy 诊断</Button>
+          <Button size="sm" variant="secondary" disabled={disabled} busy={state === "busy"} aria-label="run doctor" className="whitespace-nowrap">{state === "busy" ? "running…" : "run doctor"}</Button>
+        </div>
+        <span className="text-xs text-text-muted">{DOCTOR_VERSION}{state === "offline" ? "（cached）" : ""}</span>
+      </div>
+    );
+  }
   return (
     <div data-doctor-summary className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-surface-raised p-3">
       <StatusChip status={SEV_TONE[s.worst]} variant="soft" label={`worst: ${s.worst}`} />
@@ -1685,24 +1730,26 @@ function DoctorSummaryBar({ state, mobile }: { state: ShellState; mobile: boolea
       <span className="text-xs text-text-muted">· {DOCTOR_VERSION}{state === "offline" ? "（cached）" : ""}</span>
       <span className="flex-1" aria-hidden="true" />
       <Button size="sm" variant="ghost" disabled={disabled} aria-label="copy diagnostics">copy 诊断</Button>
-      {!mobile ? <Button size="sm" variant="secondary" disabled={disabled} busy={state === "busy"} aria-label="run doctor">{state === "busy" ? "running…" : "run doctor"}</Button> : null}
+      <Button size="sm" variant="secondary" disabled={disabled} busy={state === "busy"} aria-label="run doctor">{state === "busy" ? "running…" : "run doctor"}</Button>
     </div>
   );
 }
 
-function DoctorFindings({ state }: { state: ShellState }) {
+function DoctorFindings({ state, mobile = false }: { state: ShellState; mobile?: boolean }) {
   const checks = state === "boundary" ? DOCTOR_CHECKS_MANY : DOCTOR_CHECKS;
   return (
     <div data-doctor-findings className="flex flex-col gap-1.5 rounded-lg border border-border bg-surface-raised p-3">
       <span className="text-xs uppercase tracking-wider text-text-muted">doctor findings ({checks.length})</span>
       {checks.map((c) => (
         <div key={c.id} className="flex flex-col gap-0.5 border-b border-border py-1.5 last:border-0">
+          {/* Mobile: never two-column — line 1 status/id/severity, line 2 full message, line 3 fixHint. */}
           <div className="flex flex-wrap items-center gap-2">
             <StatusChip status={SEV_TONE[c.severity]} variant="dot" />
             <code className="font-mono text-xs text-text-secondary">{c.id}</code>
             <StatusChip status={SEV_TONE[c.severity]} variant="soft" label={c.severity} />
-            <span className="min-w-0 flex-1 text-sm text-text-primary">{c.detail}</span>
+            {!mobile ? <span className="min-w-0 flex-1 text-sm text-text-primary">{c.detail}</span> : null}
           </div>
+          {mobile ? <span className="text-sm text-text-primary">{c.detail}</span> : null}
           {c.fixHint ? <span className="pl-6 text-xs text-text-muted">↳ {c.fixHint}</span> : null}
         </div>
       ))}
@@ -1786,7 +1833,7 @@ function DoctorFrame({ state, device }: { state: ShellState; device: Device }) {
             <>
               <DoctorSummaryBar state={state} mobile={mobile} />
               {state === "error" ? <ErrorBanner title="Doctor probe failed" onRetry={() => {}}>诊断请求失败 — backend 仍在线则可重试。</ErrorBanner> : null}
-              <DoctorFindings state={state} />
+              <DoctorFindings state={state} mobile={mobile} />
               <DaemonTable state={state} mobile={mobile} />
               {/* Recovery actions deferred to desktop on mobile (matrix △). */}
               {!mobile && state !== "empty" ? <DoctorRecovery state={state} /> : null}
@@ -1877,7 +1924,7 @@ function AppearanceGroup({ state, mode, accent, onMode, onAccent }: { state: She
   );
 }
 
-function DeviceGroup({ state }: { state: ShellState }) {
+function DeviceGroup({ state, mobile = false }: { state: ShellState; mobile?: boolean }) {
   const disabled = state === "offline"; // offline disables device mutations
   const perm = state === "permission"; // approve is host-CLI authoritative
   const busy = state === "busy";
@@ -1887,21 +1934,33 @@ function DeviceGroup({ state }: { state: ShellState }) {
       {perm ? <p className="text-xs text-text-muted">approve 由宿主 CLI 授权（authoritative）；WebUI 可复核待批与撤销。</p> : null}
       {state === "error" ? <ErrorBanner title="Action failed" onRetry={() => {}}>approve/revoke 失败 — 重试。</ErrorBanner> : null}
       <div className="flex flex-col gap-1.5">
-        {devices.map((d) => (
-          <div key={d.id} data-device-row className="flex flex-wrap items-center gap-2 text-sm">
-            <StatusChip status={DEV_TONE[d.phase]} variant="dot" />
-            <span className="font-medium text-text-primary">{d.label}</span>
-            <StatusChip status={DEV_TONE[d.phase]} variant="soft" label={d.phase === "this" ? "this device" : d.phase} />
-            <span className="text-xs text-text-muted">seen {d.lastSeen}</span>
-            <span className="flex-1" aria-hidden="true" />
-            {busy ? <Spinner size={12} label="resolving" /> : null}
-            {d.phase === "pending" ? <Button size="sm" variant="primary" disabled={disabled || perm} busy={busy} aria-label={`approve device ${d.id}`}>批准</Button> : null}
-            {d.phase !== "this" && d.phase !== "revoked" ? <Button size="sm" variant="ghost" disabled={disabled} aria-label={`revoke device ${d.id}`}>撤销</Button> : null}
-          </div>
-        ))}
+        {devices.map((d) => {
+          // Mobile (global rule): device label/phase on their own line(s), approve/revoke on
+          // a separate wrapping action row.
+          const actions = (
+            <>
+              {busy ? <Spinner size={12} label="resolving" /> : null}
+              {d.phase === "pending" ? <Button size="sm" variant="primary" disabled={disabled || perm} busy={busy} aria-label={`approve device ${d.id}`} className="whitespace-nowrap">批准</Button> : null}
+              {d.phase !== "this" && d.phase !== "revoked" ? <Button size="sm" variant="ghost" disabled={disabled} aria-label={`revoke device ${d.id}`} className="whitespace-nowrap">撤销</Button> : null}
+            </>
+          );
+          const hasActions = d.phase === "pending" || (d.phase !== "this" && d.phase !== "revoked");
+          return (
+            <div key={d.id} data-device-row className={`text-sm ${mobile ? "flex flex-col items-start gap-1.5 border-b border-border pb-1.5 last:border-0" : "flex flex-wrap items-center gap-2"}`}>
+              <div className="flex flex-wrap items-center gap-2">
+                <StatusChip status={DEV_TONE[d.phase]} variant="dot" />
+                <span className="font-medium text-text-primary">{d.label}</span>
+                <StatusChip status={DEV_TONE[d.phase]} variant="soft" label={d.phase === "this" ? "this device" : d.phase} />
+                <span className="text-xs text-text-muted">seen {d.lastSeen}</span>
+              </div>
+              {!mobile ? <span className="flex-1" aria-hidden="true" /> : null}
+              {mobile ? (hasActions ? <div className="flex flex-wrap gap-2">{actions}</div> : null) : actions}
+            </div>
+          );
+        })}
       </div>
-      <div className="flex items-center gap-2">
-        <Button size="sm" variant="secondary" disabled={disabled || perm} aria-label="mint bootstrap token">铸造 bootstrap token</Button>
+      <div className="flex flex-wrap items-center gap-2">
+        <Button size="sm" variant="secondary" disabled={disabled || perm} aria-label="mint bootstrap token" className="whitespace-nowrap">铸造 bootstrap token</Button>
         <span className="text-xs text-text-muted">首台设备引导（host-side echo）。</span>
       </div>
     </SettingsGroup>
@@ -1944,7 +2003,7 @@ function SettingsFrame({ state, device, mode, accent, onMode, onAccent }: { stat
                   {offline ? <span className="text-xs text-text-muted">（离线时偏好保存已禁用）</span> : null}
                 </div>
               </SettingsGroup>
-              <DeviceGroup state={state} />
+              <DeviceGroup state={state} mobile={mobile} />
             </>
           )}
         </div>
@@ -2016,13 +2075,14 @@ function NotificationsFrame({ state, device, mode, accent }: { state: ShellState
   return (
     <div data-mockup="frame" data-device={device} data-notifications="center"
       className={`flex ${mobile ? "h-[760px] w-[390px] rounded-[28px]" : "h-[700px] w-[1280px] rounded-xl"} max-w-full flex-col overflow-hidden border border-border bg-surface text-text-primary shadow-sm`}>
-      <header className="flex items-center gap-2 border-b border-border bg-surface-raised px-4 py-2.5">
+      {/* Mobile (global rule): header wraps so 全部已读 drops to its own line vs cramming. */}
+      <header className={`border-b border-border bg-surface-raised px-4 py-2.5 ${mobile ? "flex flex-wrap items-center gap-2" : "flex items-center gap-2"}`}>
         <Brand /><span className="text-text-muted">·</span>
         <span className="text-sm font-semibold">通知 Notifications</span>
         <span className="text-xs text-text-muted">{mobile ? "全屏列表" : "抽屉"}</span>
         {unreadCount > 0 && state !== "empty" ? <Badge count={unreadCount} max={99} tone="urgent" /> : null}
         <span className="flex-1" aria-hidden="true" />
-        <Button size="sm" variant="ghost" disabled={disabled || state === "empty"} busy={busy} aria-label="mark all read">全部已读</Button>
+        <Button size="sm" variant="ghost" disabled={disabled || state === "empty"} busy={busy} aria-label="mark all read" className="whitespace-nowrap">全部已读</Button>
       </header>
       {offline ? <div role="status" className="flex items-center gap-2 border-b border-border bg-warning-subtle px-4 py-1.5 text-xs text-warning"><Spinner size={12} label="reconnecting" /> 连接已断开 — 显示最近已知通知；标记已读已禁用。</div> : null}
       <div className="min-h-0 flex-1 overflow-auto p-4">

@@ -98,6 +98,32 @@ multi-pane, full new-mesh builder, deep harness install) — each marked △ wit
 
 ---
 
+## Global mobile layout rule (Phase B user-review · C1)
+
+A cross-cutting rule applied across **all 13** `/__ui-mockup` surfaces (documented centrally
+here because it is global, not surface-specific; the mockup drives it off the explicit
+`device==="mobile"` prop, **not** Tailwind `sm:` — the mobile frame is a fixed 390px element,
+not a narrow viewport, so responsive prefixes evaluate against the tool's wide viewport):
+
+1. On mobile, never force `primary label + status chip + trailing actions` into one row.
+2. Mobile rows **stack**: row 1 = status dot/name/chip, row 2 = secondary info full-width,
+   row 3 = actions in their own wrapping row.
+3. Buttons never wrap internally (`whitespace-nowrap`); they move to a new row instead.
+4. Section/frame headers with trailing actions **split** on mobile: title line first, actions
+   on a separate line (right-aligned or full-width).
+
+**C1 audit (all 13 mobile surfaces).** Touched: **06 harnesses** (rows: name+chip / version /
+actions own row; self-install stacked), **08 doctor** (summary = counts line / copy+run action
+row / version line; findings = id+severity / message / fixHint, never two-column), **07 channels**
+(pending-senders header splits title / 设备授权↗; pending items stack + action row), **09 settings**
+(device rows stack approve/revoke), **05 assistant** & **10 notifications** (headers wrap so
+p2p/全部已读 drop to their own line). Audited-OK without change: 01 shell, 02 runtime (ops row +
+focus controls already wrap), 03 board (cards/detail already stack), 04 new-mesh (already
+mobile-aware), 11 file-viewer (header truncates), 12 device-auth (single centered card),
+13 global-states (catalog stacked). No newly-discovered [E] capability/layout gaps.
+
+---
+
 ## Open coverage questions (for prdmgr/user)
 
 - **Notifications (10)** is designed but **not yet implemented [N]** — confirm it stays

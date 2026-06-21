@@ -53,3 +53,4 @@ notifications-center module/endpoint found; `HarnessPanel.tsx` is the only curre
   `state="permission"` the device-auth notice is surfaced as unread so its mark-read renders
   disabled (gated), while a non-device unread item's mark-read stays enabled. SSR + e2e now
   assert `mark read n4` is disabled and `mark read n1` is not.
+- 2026-06-21 — Phase B user-review C1 (global mobile rule, see `00-index.md`): header wraps on mobile (全部已读 drops to its own line). Mockup-layer only (UiMockup.tsx).

@@ -669,8 +669,34 @@ test("doctor · mobile: read-only summary + findings; recovery/restart deferred 
   expect(out).toContain('data-device="mobile"');
   expect(out).toContain("data-doctor-findings");
   expect(out.includes("data-recovery")).toBe(false); // recovery deferred (△)
-  expect(out.includes('aria-label="restart daemon dev-mesh"')).toBe(false);
-  expect(out.includes('aria-label="run doctor"')).toBe(false); // run is desktop-only here
+  expect(out.includes('aria-label="restart daemon dev-mesh"')).toBe(false); // per-daemon restart still desktop-only
+  // C1: copy/run doctor now sit in a compact mobile action row (summary header fits 1–2 lines)
+  expect(out).toContain('aria-label="run doctor"');
+  expect(out).toContain('aria-label="copy diagnostics"');
+});
+
+// ── C1 global mobile rule: actions stack onto their own row (no crammed single row) ──
+test("C1 mobile · doctor summary stacks counts/actions/version; findings never two-column", () => {
+  const out = renderAt("?surface=doctor&state=populated&device=mobile");
+  // summary version folds to its own line (not crammed with counts)
+  expect(out).toContain("agent-mesh v0.42.0");
+  // findings: detail renders as its own line on mobile (no flex-1 inline column)
+  expect(out).toContain("opencode not installed");
+});
+
+test("C1 mobile · harness rows put reprobe/update on their own row (nowrap buttons)", () => {
+  const out = renderAt("?surface=harnesses&state=populated&device=mobile");
+  expect((out.match(/whitespace-nowrap/g) ?? []).length).toBeGreaterThan(0);
+  expect(out).toContain('aria-label="reprobe claude"');
+  expect(out).toContain('aria-label="update codex"');
+});
+
+test("C1 mobile · channels pending header splits title / 设备授权 entry; desktop stays single-row", () => {
+  const mob = renderAt("?surface=channels&state=populated&device=mobile");
+  expect(mob).toContain("data-pending-senders");
+  expect(mob).toContain("data-channel-enroll");
+  // mobile pending card stacks (flex-col), desktop keeps the justify-between single row
+  expect(mob).toContain('aria-label="approve sender ou_77c…e2"');
 });
 
 // ── Settings (09) ────────────────────────────────────────────────────────────
