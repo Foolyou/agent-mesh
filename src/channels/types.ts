@@ -24,6 +24,10 @@ export interface MeshGateway {
   newAllSessions(name: string): Promise<void>;
   routerOf(name: string): string;
   listMeshes(): { name: string; status: string }[];
+  /** Make file-created meshes (CLI / hand-edited `meshes/<name>.json`) visible to the manager by adding
+   *  only the missing ones (stopped), without touching existing/live entries. Optional — the Feishu
+   *  mesh-directory watcher calls it before syncing chats; absent on managers that don't support it. */
+  mergeDefinitionsFromDisk?(): Promise<void>;
 }
 
 export type FeishuDomain = "feishu" | "lark" | string;

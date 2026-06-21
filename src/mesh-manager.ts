@@ -111,6 +111,18 @@ export class MeshManager {
     }
   }
 
+  /** Load persisted definitions and add ONLY meshes not already in memory (as stopped). Existing
+   *  entries — running, starting, dead, or stopped — are left fully untouched (config, status, and
+   *  client preserved), so a live mesh is never clobbered. Lets a file-created mesh (CLI / hand-edited
+   *  `meshes/<name>.json`) become visible to the manager without a disruptive full reload. */
+  async mergeDefinitionsFromDisk(): Promise<void> {
+    for (const config of await this.store.load()) {
+      if (!config?.name || this.entries.has(config.name)) continue; // preserve live/known entries; skip nameless junk
+      validateArtifactNames(config);
+      this.entries.set(config.name, { config, status: "stopped" });
+    }
+  }
+
   async defineMesh(config: MeshConfig): Promise<void> {
     validateArtifactNames(config);
     const existing = this.entries.get(config.name);

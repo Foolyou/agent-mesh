@@ -615,3 +615,34 @@ hostTest("startMesh resets status to stopped when the host fails to start", asyn
   // and it can be retried (not stuck on "already running")
   await expect(bad.startMesh("echo")).rejects.toThrow();
 }, HOST_TEST_TIMEOUT);
+
+// ── mergeDefinitionsFromDisk (feishu-mesh-watch-sync Blocker 2) ──
+
+test("mergeDefinitionsFromDisk adds only missing meshes and never replaces an existing entry", async () => {
+  await mgr.defineMesh(cfg); // "echo" in memory (stopped) + persisted to disk (harness claude)
+  // a NEW mesh appears only on disk (CLI / hand-edit)
+  await writeFile(join(dir, "meshes", "extra.json"), JSON.stringify({ name: "extra", agents: [{ id: "r", harness: "claude", project: "test_mesh_0", role: "router" }], edges: [] }));
+  // the EXISTING mesh's file is changed on disk — merge must NOT pick it up (skip existing)
+  await writeFile(join(dir, "meshes", "echo.json"), JSON.stringify({ name: "echo", agents: [{ id: "r", harness: "codex", project: "test_mesh_0", role: "router" }], edges: [] }));
+  await mgr.mergeDefinitionsFromDisk();
+  expect(mgr.listMeshes().map((m) => m.name).sort()).toEqual(["echo", "extra"]); // missing "extra" added
+  expect(mgr.configOf("echo").agents[0].harness).toBe("claude"); // existing entry untouched (not the disk's codex)
+});
+
+hostTest("mergeDefinitionsFromDisk preserves an existing RUNNING mesh's status and adds the new one stopped", async () => {
+  await mgr.defineMesh(cfg);
+  await mgr.startMesh("echo");
+  expect(mgr.listMeshes()[0].status).toBe("running");
+  await writeFile(join(dir, "meshes", "extra.json"), JSON.stringify({ name: "extra", agents: [{ id: "r", harness: "claude", project: "test_mesh_0", role: "router" }], edges: [] }));
+  await mgr.mergeDefinitionsFromDisk();
+  const list = mgr.listMeshes();
+  expect(list.find((m) => m.name === "echo")!.status).toBe("running"); // live entry NOT clobbered to stopped
+  expect(list.find((m) => m.name === "extra")!.status).toBe("stopped"); // new file-only mesh added stopped
+}, HOST_TEST_TIMEOUT);
+
+test("mergeDefinitionsFromDisk ignores a DIRECTORY named like a mesh config", async () => {
+  await mgr.defineMesh(cfg); // "echo"
+  await mkdir(join(dir, "meshes", "dir-mesh.json"), { recursive: true }); // a directory, not a file
+  await mgr.mergeDefinitionsFromDisk();
+  expect(mgr.listMeshes().map((m) => m.name)).toEqual(["echo"]); // dir-mesh NOT added; no EISDIR throw
+});

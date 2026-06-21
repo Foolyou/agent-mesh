@@ -44,15 +44,18 @@ export class MeshStore {
   }
 
   async load(): Promise<MeshConfig[]> {
-    let files: string[];
+    let entries: import("node:fs").Dirent[];
     try {
-      files = await readdir(this.dir);
+      entries = await readdir(this.dir, { withFileTypes: true });
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
       throw err;
     }
+    // FILES only — a directory named `<name>.json` is not a mesh config (and reading it as a file would
+    // throw EISDIR). The watcher relies on this to never provision a group for a directory.
+    const names = entries.filter((e) => e.isFile() && e.name.endsWith(".json")).map((e) => e.name).sort();
     const out: MeshConfig[] = [];
-    for (const f of files.filter((f) => f.endsWith(".json")).sort()) {
+    for (const f of names) {
       const parsed = JSON.parse(await readFile(join(this.dir, f), "utf8")) as MeshConfig;
       out.push({ ...parsed, edges: normalizeMeshEdges((parsed as any).edges) });
     }
