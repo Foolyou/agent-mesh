@@ -10,6 +10,7 @@ tmp-acp-test/
 AGENTS.md
 CLAUDE.md
 dist/
+dist-dssync/
 
 # secrets / credentials (defensive)
 .env
