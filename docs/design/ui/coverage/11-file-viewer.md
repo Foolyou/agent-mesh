@@ -38,3 +38,18 @@ not permitted folds into error per design.)
 - 2026-06-21 — created (Phase A commit 3). Sources: `../interaction/11-file-viewer.md`;
   `FileViewer.tsx`, `AuthedImage.tsx` (isSameOriginApiUrl/useAuthorizedMedia),
   `Markdown.tsx`, `Transcript.tsx` (inline image + lightbox), composer pending-image tray.
+- 2026-06-21 — Phase B Step 2 mockup (`UiMockup.tsx`): the File/artifact viewer built in the
+  guarded `/__ui-mockup` (`?surface=artifact`) — a standalone frame at the artifact route
+  (`mesh/<m>/agent/<a>/artifact/<file>`, shown in the header path; back-to-conversation is a
+  real `<a>`, URL-addressable / new-tab friendly). Renders the FileViewer LoadState kinds:
+  markdown + highlighted code block + inline image (AuthedImage stand-in) that opens an image
+  lightbox (`?lb=1` overlay: desktop zoom −/100%/+ controls, mobile pinch-zoom presentation,
+  Esc close). Plus the composer pending-image tray (attach / preview thumbs / remove) across
+  ALL 8 states. Viewer states: empty→N/A note (route targets a file) + tray empty, loading→
+  Bearer-fetch spinner, populated, error→404 "File not found"+back, permission→401 "Not
+  permitted" (folds into error), offline→alt image + cached note, boundary→long code lines +
+  many images. Tray states: empty/loading(uploading)/populated(thumbs)/error(upload failed+
+  remove)/permission(capability-gated attach)/busy(sending)/offline(disabled)/boundary(many+
+  large file). Desktop + mobile. Grounded in `FileViewer.tsx`/`AuthedImage.tsx`/lightbox/
+  pending tray. No additional [E] capability beyond the checklist found. Index (`?index=1`)
+  gains the 11 row (viewer + lightbox deep links). Fixture-only, true C5–C8, v2 tokens.

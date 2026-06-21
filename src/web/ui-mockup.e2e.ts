@@ -676,6 +676,51 @@ try {
     }
   }
 
+  // ── File / artifact viewer (11): assertions + state × device screenshots + lightbox ──
+  await step("file-viewer: md/code/image + back + pending tray; image → lightbox", async () => {
+    await page.goto(`${BASE}/__ui-mockup?surface=artifact&state=populated&device=desktop`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-mockup="frame"][data-artifact="viewer"]', { timeout: 8000 });
+    for (const sel of ['[data-artifact-back]', '[data-artifact-kind="markdown"]', '[data-artifact-kind="code"]', "[data-artifact-image]", "[data-pending-tray]", "[data-tray-thumb]"]) {
+      if (await page.locator(sel).count() === 0) throw new Error(`artifact section missing: ${sel}`);
+    }
+    if (await page.locator('[aria-label="attach image"]').count() === 0) throw new Error("attach control missing");
+    // inline image opens the lightbox overlay
+    await page.locator('[data-artifact-image]').first().click();
+    await page.waitForSelector("[data-artifact-lightbox]", { timeout: 8000 });
+    if (await page.locator('[aria-label="close lightbox"]').count() === 0) throw new Error("lightbox close missing");
+  });
+  await step("file-viewer: error 404 + back; permission 401; offline alt + attach disabled", async () => {
+    await page.goto(`${BASE}/__ui-mockup?surface=artifact&state=error&device=desktop`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-artifact="viewer"]', { timeout: 8000 });
+    if (await page.getByText("File not found", { exact: false }).count() === 0) throw new Error("404 error missing");
+    await page.goto(`${BASE}/__ui-mockup?surface=artifact&state=permission&device=desktop`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-artifact="viewer"]', { timeout: 8000 });
+    if (await page.getByText("Not permitted", { exact: false }).count() === 0) throw new Error("401 not-permitted missing");
+    await page.goto(`${BASE}/__ui-mockup?surface=artifact&state=offline&device=desktop`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-artifact="viewer"]', { timeout: 8000 });
+    if (await page.locator('[data-artifact-image="alt"]').count() === 0) throw new Error("offline alt image missing");
+    if (await page.locator('[aria-label="attach image"]:disabled').count() === 0) throw new Error("attach must be disabled offline");
+  });
+  const ARTIFACT_STATES = ["empty", "loading", "populated", "error", "permission", "busy", "offline", "boundary"];
+  for (const device of ["desktop", "mobile"]) {
+    for (const st of ARTIFACT_STATES) {
+      await step(`screenshot artifact-${st}-${device}`, async () => {
+        await page.goto(`${BASE}/__ui-mockup?surface=artifact&state=${st}&device=${device}&mode=dark-slate&accent=signal-teal`, { waitUntil: "domcontentloaded" });
+        await page.waitForSelector(`[data-mockup="frame"][data-device="${device}"][data-artifact="viewer"]`, { timeout: 8000 });
+        await sleep(130);
+        await shotFrame(`${SHOTS}/artifact-${st}-${device}-dark-slate-signal-teal.png`);
+      });
+    }
+  }
+  for (const device of ["desktop", "mobile"]) {
+    await step(`screenshot artifact-lightbox-${device}`, async () => {
+      await page.goto(`${BASE}/__ui-mockup?surface=artifact&state=populated&lb=1&device=${device}&mode=dark-slate&accent=signal-teal`, { waitUntil: "domcontentloaded" });
+      await page.waitForSelector(`[data-mockup="frame"][data-device="${device}"] [data-artifact-lightbox]`, { timeout: 8000 });
+      await sleep(130);
+      await shotFrame(`${SHOTS}/artifact-lightbox-${device}-dark-slate-signal-teal.png`);
+    });
+  }
+
   // ── shell (01) state × device screenshots (Phase B; default Dark·Slate × Signal Teal) ──
   const SHELL_STATES = ["empty", "loading", "populated", "error", "permission", "busy", "offline", "boundary"];
   for (const device of ["desktop", "mobile"]) {

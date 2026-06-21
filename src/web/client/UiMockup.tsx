@@ -33,10 +33,12 @@
 //   - Notifications (10-notifications.md): app-level cross-mesh notice center ([N]) — unread
 //     badge + list/drawer + read/mark-read/mark-all + history + follow-actions targeting the
 //     [E] surfaces (harnesses/doctor/settings). NOT transcript / mesh-local mail.
+//   - File/artifact viewer (11-file-viewer.md): rendered markdown/code/image at an artifact
+//     route + back-to-conversation + image lightbox (?lb=1) + composer pending-image tray.
 //   - navigation index (?index=1): a directory of every surface + state/device deep links.
 //
 // Query deep links for deterministic screenshots: ?device=desktop|mobile,
-// ?surface=shell|runtime|board|new-mesh|assistant|harnesses|channels|doctor|settings|notifications, ?runtime=overview|focus|full|canvas,
+// ?surface=shell|runtime|board|new-mesh|assistant|harnesses|channels|doctor|settings|notifications|artifact, ?runtime=overview|focus|full|canvas,
 // ?board=list|detail|kanban, ?state=<shell-state>, ?index=1, ?view=runtime|board,
 // ?mesh=<id>, ?mode=<mode>, ?accent=<accent>. No raw-* utilities (passes
 // `bun run lint:tokens`); all classes literal so Tailwind emits them.
@@ -58,7 +60,7 @@ const ACCENT_SET = new Set<Accent>(ACCENTS);
 
 type Device = "desktop" | "mobile";
 type View = "runtime" | "board";
-type Surface = "shell" | "runtime" | "board" | "new-mesh" | "assistant" | "harnesses" | "channels" | "doctor" | "settings" | "notifications";
+type Surface = "shell" | "runtime" | "board" | "new-mesh" | "assistant" | "harnesses" | "channels" | "doctor" | "settings" | "notifications" | "artifact";
 // overview/focus = the two in-shell runtime states; full/canvas = desktop-only standalone
 // frames (session fullscreen / zoomable topology canvas) reached from the focus / overview.
 type RuntimeState = "overview" | "focus" | "full" | "canvas";
@@ -226,6 +228,7 @@ interface Sel {
   boardFs: boolean;
   boardManage: boolean;
   asstFs: boolean;
+  lb: boolean;
   index: boolean;
   mesh: string;
   mode: Mode;
@@ -242,7 +245,7 @@ function readSel(): Sel {
   const a = p.get("accent");
   const mesh = p.get("mesh");
   const sfc = p.get("surface");
-  const surface: Surface = sfc === "runtime" ? "runtime" : sfc === "board" ? "board" : sfc === "new-mesh" ? "new-mesh" : sfc === "assistant" ? "assistant" : sfc === "harnesses" ? "harnesses" : sfc === "channels" ? "channels" : sfc === "doctor" ? "doctor" : sfc === "settings" ? "settings" : sfc === "notifications" ? "notifications" : "shell";
+  const surface: Surface = sfc === "runtime" ? "runtime" : sfc === "board" ? "board" : sfc === "new-mesh" ? "new-mesh" : sfc === "assistant" ? "assistant" : sfc === "harnesses" ? "harnesses" : sfc === "channels" ? "channels" : sfc === "doctor" ? "doctor" : sfc === "settings" ? "settings" : sfc === "notifications" ? "notifications" : sfc === "artifact" ? "artifact" : "shell";
   const bs = p.get("board");
   const rt = p.get("runtime") as RuntimeState | null;
   const st = p.get("state") as ShellState | null;
@@ -257,6 +260,7 @@ function readSel(): Sel {
     boardFs: p.get("boardFs") === "1",
     boardManage: p.get("boardManage") === "1",
     asstFs: p.get("asstFs") === "1",
+    lb: p.get("lb") === "1",
     index: p.get("index") === "1",
     mesh: mesh && MESH_IDS.has(mesh) ? mesh : MESHES[0].id,
     mode: MODE_SET.has(m as Mode) ? (m as Mode) : "dark-slate",
@@ -2042,6 +2046,127 @@ function NotificationsFrame({ state, device, mode, accent }: { state: ShellState
   );
 }
 
+// ── File / artifact viewer (11) — rendered md/code/image + lightbox + pending tray ──────
+// Mirrors FileViewer.tsx LoadState (loading/error[status]/markdown/image/text[code]) at route
+// /mesh/<m>/agent/<a>/artifact/<file>, AuthedImage (bearer fetch → object URL, alt on fail),
+// the image lightbox, and the composer pending-image tray. Empty N/A (route targets a file);
+// permission (401) folds into the error treatment.
+const ARTIFACT_PATH = "mesh/dev-mesh/agent/codex-1/artifact/reports/gate-summary.md";
+const ARTIFACT_MD = "# Gate summary\n\nAll gates green for the device-auth page. See the run log below.";
+const ARTIFACT_CODE = "$ bun test\n  1647 pass / 0 fail\n$ bun run a11y\n  19 passed, 0 failed";
+const ARTIFACT_CODE_LONG = ARTIFACT_CODE + "\n" + "// a very long line that should scroll horizontally without breaking the reader layout on desktop or the narrow mobile frame, exercising overflow-x in the code block".repeat(1);
+const TRAY_IMAGES = ["shot-board.png", "topology.png"];
+const TRAY_MANY = [...TRAY_IMAGES, "diagram-flow.png", "before.png", "after.png", "perf-trace.png", "huge-render-4k.png (8.2 MB)"];
+
+// Inline image stand-in (AuthedImage) → opens the lightbox. `broken` shows the alt fallback.
+function ArtifactImage({ lbHref, broken = false, label = "topology.png" }: { lbHref: string; broken?: boolean; label?: string }) {
+  if (broken) {
+    return <div data-artifact-image="alt" className="flex h-40 items-center justify-center rounded-lg border border-dashed border-border-strong bg-surface-sunken text-xs text-text-muted">⊘ {label}（图片不可用，显示 alt）</div>;
+  }
+  return (
+    <a href={lbHref} data-artifact-image aria-label={`zoom ${label}`} className="block overflow-hidden rounded-lg border border-border no-underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus-ring">
+      <div className="flex h-40 items-center justify-center bg-surface-sunken text-3xl text-text-muted">🖼 <span className="ml-2 text-xs">{label} · 点击放大</span></div>
+    </a>
+  );
+}
+
+// Composer pending-image tray — attach / preview / remove before send (covers all 8 states).
+function PendingImageTray({ state }: { state: ShellState }) {
+  const offline = state === "offline";
+  const perm = state === "permission";
+  const busy = state === "busy";
+  const disabled = offline || perm; // capability-gated (perm) / disabled offline
+  const imgs = state === "empty" ? [] : state === "boundary" ? TRAY_MANY : TRAY_IMAGES;
+  const uploading = state === "loading";
+  return (
+    <div data-pending-tray className="flex flex-col gap-1.5 border-t border-border bg-surface-raised p-3">
+      <div className="flex items-center gap-2">
+        <span className="text-xs uppercase tracking-wider text-text-muted">待发送图片 ({imgs.length})</span>
+        {busy ? <span className="inline-flex items-center gap-1 text-xs text-text-secondary"><Spinner size={12} label="sending" /> 发送中…</span> : null}
+        <span className="flex-1" aria-hidden="true" />
+        <Button size="sm" variant="ghost" disabled={disabled || busy} aria-label="attach image" title={perm ? "harness 未声明图片输入" : "attach"}>📎 添加</Button>
+      </div>
+      {perm ? <span className="text-xs text-text-muted">该 harness 未声明图片输入 — 附件已禁用。</span> : null}
+      {offline ? <span className="text-xs text-text-muted">离线 — 附件已禁用。</span> : null}
+      {imgs.length === 0 && !uploading ? <span className="text-xs text-text-muted">无待发送图片。</span> : (
+        <div className="flex flex-wrap gap-2">
+          {uploading ? <div className="flex h-16 w-16 items-center justify-center rounded-lg border border-border bg-surface-sunken"><Spinner size={14} label="uploading" /></div> : null}
+          {imgs.map((img, i) => {
+            const failed = state === "error" && i === 0;
+            return (
+              <div key={i} data-tray-thumb className="relative flex h-16 w-16 flex-col items-center justify-center rounded-lg border border-border bg-surface-sunken px-1 text-center">
+                <span className="text-lg text-text-muted" aria-hidden="true">{failed ? "⚠" : "🖼"}</span>
+                <span className="w-full truncate text-[9px] text-text-muted">{img}</span>
+                {failed ? <span className="text-[9px] text-danger">上传失败</span> : null}
+                <button type="button" disabled={disabled || busy} aria-label={`remove image ${i + 1}`} className="absolute -right-1.5 -top-1.5 flex h-4 w-4 items-center justify-center rounded-full border border-border-strong bg-surface text-[10px] text-text-secondary disabled:cursor-not-allowed disabled:text-text-disabled">×</button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function FileViewerFrame({ state, device, lb, lbHref, exitLbHref, backHref }: { state: ShellState; device: Device; lb: boolean; lbHref: string; exitLbHref: string; backHref: string }) {
+  const mobile = device === "mobile";
+  const boundary = state === "boundary";
+  const offline = state === "offline";
+  const err = state === "error";
+  const perm = state === "permission"; // 401 → folds into error
+  return (
+    <div data-mockup="frame" data-device={device} data-artifact="viewer"
+      className={`relative flex ${mobile ? "h-[760px] w-[390px] rounded-[28px]" : "h-[700px] w-[1280px] rounded-xl"} max-w-full flex-col overflow-hidden border border-border bg-surface text-text-primary shadow-sm`}>
+      <header className="flex items-center gap-2 border-b border-border bg-surface-raised px-4 py-2.5">
+        {/* Back to conversation — a real link (URL-addressable, new-tab friendly). */}
+        <a href={backHref} data-artifact-back aria-label="back to conversation" className="inline-flex items-center gap-1 rounded-lg border border-border-strong bg-surface-sunken px-2 py-1 text-xs text-text-primary no-underline hover:bg-hover">← 返回对话</a>
+        <span className="text-text-muted">·</span>
+        <span className="min-w-0 flex-1 truncate font-mono text-xs text-text-muted" data-artifact-path>{ARTIFACT_PATH}</span>
+        <StatusChip status="idle" variant="soft" label="artifact" />
+      </header>
+      <div className="min-h-0 flex-1 overflow-auto p-4">
+        <div className={`mx-auto flex flex-col gap-3 ${mobile ? "" : "max-w-[820px]"}`}>
+          {state === "empty" ? (
+            <p className="text-sm text-text-muted">file-viewer 路由总是指向具体文件 — 无空态（N/A）。下方为 pending 图片托盘的空态。</p>
+          ) : state === "loading" ? (
+            <div className="flex items-center gap-2 text-sm text-text-secondary"><Spinner size={14} label="loading" /> Bearer 拉取中…</div>
+          ) : err || perm ? (
+            <ErrorBanner title={perm ? "Not permitted" : "File not found"} onRetry={perm ? undefined : () => {}}>
+              {perm ? "401 — 该 artifact 不允许本设备访问（权限不足折叠为错误态）。" : "404 — 未找到该 artifact；坏 ref 会降级为纯文本。"} 用上方「返回对话」回到会话。
+            </ErrorBanner>
+          ) : (
+            <>
+              {offline ? <p className="text-xs text-text-muted">显示最近已知内容；图片显示 alt / 缓存。</p> : null}
+              {/* markdown */}
+              <div data-artifact-kind="markdown" className="flex flex-col gap-1">
+                <h1 className="text-lg font-semibold text-text-primary">Gate summary</h1>
+                <p className="text-sm text-text-primary">{ARTIFACT_MD.split("\n\n")[1]}</p>
+              </div>
+              {/* highlighted code */}
+              <pre data-artifact-kind="code" className="overflow-x-auto rounded-lg bg-surface-sunken px-3 py-2 text-xs font-mono text-text-secondary">{boundary ? ARTIFACT_CODE_LONG : ARTIFACT_CODE}</pre>
+              {/* inline image(s) → lightbox; offline shows alt */}
+              <ArtifactImage lbHref={lbHref} broken={offline} label="topology.png" />
+              {boundary ? <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">{TRAY_MANY.slice(0, 6).map((n, i) => <ArtifactImage key={i} lbHref={lbHref} label={n} />)}</div> : null}
+            </>
+          )}
+        </div>
+      </div>
+      <PendingImageTray state={state} />
+      {/* Image lightbox overlay (zoom; mobile = pinch-zoom presentation). */}
+      {lb ? (
+        <div data-artifact-lightbox role="dialog" aria-modal="true" aria-label="image lightbox" className="absolute inset-0 z-20 flex flex-col" style={{ background: "rgba(0,0,0,0.85)" }}>
+          <div className="flex items-center gap-2 px-4 py-2.5 text-xs text-text-on-selected">
+            <span className="flex-1 truncate font-mono text-text-on-selected">topology.png</span>
+            {!mobile ? <><Button size="sm" variant="ghost" aria-label="zoom out">－</Button><span className="tabular-nums text-text-on-selected">100%</span><Button size="sm" variant="ghost" aria-label="zoom in">＋</Button></> : <span className="text-text-on-selected">双指缩放</span>}
+            <a href={exitLbHref} aria-label="close lightbox" className="rounded-lg border border-border-strong bg-surface px-2 py-1 text-text-primary no-underline">✕ Esc</a>
+          </div>
+          <div className="flex min-h-0 flex-1 items-center justify-center text-6xl text-text-on-selected">🖼</div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 // ── new-mesh builder (04) fixtures + frame ───────────────────────────────────────
 interface AgentRow { id: string; harness: string; project: string; role: "router" | "member"; model?: string; effort?: string; lazy?: boolean; opencodePermission?: "ask" | "allow"; instructions?: string }
 const HARNESSES = ["claude", "codex", "opencode", "kimi"];
@@ -2440,6 +2565,7 @@ function selQuery(s: Sel): string {
   if (s.boardFs) p.set("boardFs", "1");
   if (s.boardManage) p.set("boardManage", "1");
   if (s.asstFs) p.set("asstFs", "1");
+  if (s.lb) p.set("lb", "1");
   if (s.index) p.set("index", "1");
   p.set("mesh", s.mesh);
   p.set("mode", s.mode);
@@ -2537,6 +2663,10 @@ const INDEX_SECTIONS: { title: string; note: string; rows: IndexRow[] }[] = [
   { title: "10 · Notifications", note: "跨 mesh 通知中心 · 未读徽标 · 抽屉/列表 · 标记已读/全部 · 历史 · 跟随动作(→harnesses/doctor/settings)", rows: [
     { label: "center", base: "surface=notifications", states: SHELL_STATES, mobile: true },
   ] },
+  { title: "11 · File / Artifact viewer", note: "渲染 md/code/image · 返回对话 · 图片 lightbox 缩放 · composer 待发送图片托盘", rows: [
+    { label: "viewer", base: "surface=artifact", states: SHELL_STATES, mobile: true },
+    { label: "viewer · lightbox", base: "surface=artifact&lb=1", states: ["populated", "boundary", "offline"], mobile: true },
+  ] },
 ];
 
 function MockupIndex({ backHref }: { backHref: string }) {
@@ -2579,7 +2709,7 @@ function MockupIndex({ backHref }: { backHref: string }) {
 
 export function UiMockup() {
   const [sel, setSel] = useState<Sel>(readSel);
-  const { device, view, surface, runtime, board, state, nmEditor, boardFs, boardManage, asstFs, index, mesh, mode, accent } = sel;
+  const { device, view, surface, runtime, board, state, nmEditor, boardFs, boardManage, asstFs, lb, index, mesh, mode, accent } = sel;
   const [mobileTab, setMobileTab] = useState<MobileTab>(surface === "board" || view === "board" ? "board" : "runtime");
 
   useEffect(() => {
@@ -2613,6 +2743,10 @@ export function UiMockup() {
   const boardManageHref = `/__ui-mockup?${selQuery({ ...sel, surface: "board", boardManage: !boardManage })}`;
   // Assistant chat fullscreen enter/exit (audit #21).
   const asstFsHref = `/__ui-mockup?${selQuery({ ...sel, surface: "assistant", asstFs: !asstFs })}`;
+  // Artifact viewer: lightbox enter/exit + back-to-conversation.
+  const artifactLbHref = `/__ui-mockup?${selQuery({ ...sel, surface: "artifact", lb: true })}`;
+  const artifactExitLbHref = `/__ui-mockup?${selQuery({ ...sel, surface: "artifact", lb: false })}`;
+  const artifactBackHref = `/__ui-mockup?${selQuery({ ...sel, surface: "runtime", runtime: "focus" })}`;
   const setMesh = (m: string) => nav({ mesh: m });
 
   const setView = (v: View) => {
@@ -2682,7 +2816,7 @@ export function UiMockup() {
     <div data-mockup="root" className="min-h-screen bg-surface text-text-primary font-sans p-6">
       {/* mockup tool chrome (outside the mocked app frame) */}
       <header className="mb-5">
-        <h1 className="mb-1 text-xl font-semibold">Agent Mesh — 终稿 mockup（{index ? "导航索引" : surface === "runtime" ? `运行态 A · ${runtime}` : surface === "board" ? "看板 C" : surface === "new-mesh" ? "新建 mesh" : surface === "assistant" ? "Mesh Assistant B" : surface === "harnesses" ? "Harnesses" : surface === "channels" ? "Channels" : surface === "doctor" ? "Doctor / 系统" : surface === "settings" ? "Settings" : surface === "notifications" ? "Notifications" : "应用外壳"}{index ? "" : ` · ${state} · ${device === "mobile" ? "移动" : "桌面"}`}）</h1>
+        <h1 className="mb-1 text-xl font-semibold">Agent Mesh — 终稿 mockup（{index ? "导航索引" : surface === "runtime" ? `运行态 A · ${runtime}` : surface === "board" ? "看板 C" : surface === "new-mesh" ? "新建 mesh" : surface === "assistant" ? "Mesh Assistant B" : surface === "harnesses" ? "Harnesses" : surface === "channels" ? "Channels" : surface === "doctor" ? "Doctor / 系统" : surface === "settings" ? "Settings" : surface === "notifications" ? "Notifications" : surface === "artifact" ? "File / Artifact" : "应用外壳"}{index ? "" : ` · ${state} · ${device === "mobile" ? "移动" : "桌面"}`}）</h1>
         <p className="mb-3 text-xs text-text-muted">真实 C5–C7 组件 + v2 compose 运行时 · fixture 数据 · 不连后端。Live: <code className="text-syntax-string">MESH_UI_PREVIEW=1 … /__ui-mockup</code></p>
         <div className="mb-3">
           <SegmentedControl ariaLabel="View mode" value={index ? "index" : "mockup"} onChange={(v) => nav({ index: v === "index" })} options={[{ value: "mockup", label: "Mockup" }, { value: "index", label: "▤ 索引" }]} size="sm" />
@@ -2702,7 +2836,7 @@ export function UiMockup() {
           </div>
           <div>
             <div className="mb-1.5 text-xs uppercase tracking-wider text-text-muted">Surface</div>
-            <SegmentedControl ariaLabel="Surface" value={surface} onChange={(s) => { const next = s as Surface; nav({ surface: next }); if (next === "board") setMobileTab("board"); else if (next === "runtime") setMobileTab("runtime"); }} options={[{ value: "shell", label: "外壳" }, { value: "runtime", label: "运行态 A" }, { value: "board", label: "看板 C" }, { value: "assistant", label: "助手 B" }, { value: "harnesses", label: "Harness" }, { value: "channels", label: "渠道" }, { value: "doctor", label: "Doctor" }, { value: "settings", label: "设置" }, { value: "notifications", label: "通知" }, { value: "new-mesh", label: "新建" }]} size="sm" />
+            <SegmentedControl ariaLabel="Surface" value={surface} onChange={(s) => { const next = s as Surface; nav({ surface: next }); if (next === "board") setMobileTab("board"); else if (next === "runtime") setMobileTab("runtime"); }} options={[{ value: "shell", label: "外壳" }, { value: "runtime", label: "运行态 A" }, { value: "board", label: "看板 C" }, { value: "assistant", label: "助手 B" }, { value: "harnesses", label: "Harness" }, { value: "channels", label: "渠道" }, { value: "doctor", label: "Doctor" }, { value: "settings", label: "设置" }, { value: "notifications", label: "通知" }, { value: "artifact", label: "产物" }, { value: "new-mesh", label: "新建" }]} size="sm" />
           </div>
           {surface === "runtime" ? (
             <div>
@@ -2732,7 +2866,7 @@ export function UiMockup() {
               />
             </div>
           ) : null}
-          {surface === "shell" || surface === "runtime" || surface === "board" || surface === "new-mesh" || surface === "assistant" || surface === "harnesses" || surface === "channels" || surface === "doctor" || surface === "settings" || surface === "notifications" ? (
+          {surface === "shell" || surface === "runtime" || surface === "board" || surface === "new-mesh" || surface === "assistant" || surface === "harnesses" || surface === "channels" || surface === "doctor" || surface === "settings" || surface === "notifications" || surface === "artifact" ? (
             <div>
               <div className="mb-1.5 text-xs uppercase tracking-wider text-text-muted">State</div>
               <SegmentedControl
@@ -2758,6 +2892,12 @@ export function UiMockup() {
               <SegmentedControl ariaLabel="Chat fullscreen" value={asstFs ? "on" : "off"} onChange={(v) => nav({ asstFs: v === "on" })} options={[{ value: "off", label: "off" }, { value: "on", label: "⊞ full" }]} size="sm" />
             </div>
           ) : null}
+          {surface === "artifact" ? (
+            <div>
+              <div className="mb-1.5 text-xs uppercase tracking-wider text-text-muted">Lightbox</div>
+              <SegmentedControl ariaLabel="Lightbox" value={lb ? "on" : "off"} onChange={(v) => nav({ lb: v === "on" })} options={[{ value: "off", label: "off" }, { value: "on", label: "🔍 zoom" }]} size="sm" />
+            </div>
+          ) : null}
         </div>
       </header>
 
@@ -2776,6 +2916,8 @@ export function UiMockup() {
           ? <SettingsFrame state={state} device={device} mode={mode} accent={accent} onMode={(m) => nav({ mode: m })} onAccent={(a) => nav({ accent: a })} />
           : surface === "notifications"
           ? <NotificationsFrame state={state} device={device} mode={mode} accent={accent} />
+          : surface === "artifact"
+          ? <FileViewerFrame state={state} device={device} lb={lb} lbHref={artifactLbHref} exitLbHref={artifactExitLbHref} backHref={artifactBackHref} />
           : surface === "new-mesh"
           ? <NewMeshFrame state={state} device={device} nmEditor={nmEditor} />
           : surface === "runtime" && device === "desktop" && runtime === "full"

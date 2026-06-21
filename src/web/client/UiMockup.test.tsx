@@ -345,12 +345,14 @@ test("index skeleton · lists every surface with state/device deep links", () =>
   expect(out).toContain("08 · Doctor");
   expect(out).toContain("09 · Settings");
   expect(out).toContain("10 · Notifications");
+  expect(out).toContain("11 · File / Artifact viewer");
   expect(out).toContain("surface=assistant"); // assistant deep links
   expect(out).toContain("surface=harnesses"); // harnesses deep links
   expect(out).toContain("surface=channels"); // channels deep links
   expect(out).toContain("surface=doctor"); // doctor deep links
   expect(out).toContain("surface=settings"); // settings deep links
   expect(out).toContain("surface=notifications"); // notifications deep links
+  expect(out).toContain("surface=artifact"); // artifact deep links
   expect(out).toContain("runtime=canvas"); // a runtime补漏 deep link (& is HTML-escaped in href)
   expect(out).toContain("boardManage=1"); // board补漏 deep link
   expect(out).toContain("boardFs=1");
@@ -810,6 +812,79 @@ test("notifications · mobile: full-screen list", () => {
   expect(out).toContain('data-device="mobile"');
   expect(out).toContain('data-notifications="center"');
   expect(out).toContain("全屏列表");
+});
+
+// ── File / artifact viewer (11) ──────────────────────────────────────────────
+test("file-viewer · populated: md + code + image(→lightbox) + back + pending tray", () => {
+  const out = renderAt("?surface=artifact&state=populated&device=desktop");
+  expect(out).toContain('data-artifact="viewer"');
+  expect(out).toContain('data-artifact-back'); // back to conversation
+  expect(out).toContain("data-artifact-path"); // URL-addressable path shown
+  expect(out).toContain('data-artifact-kind="markdown"');
+  expect(out).toContain('data-artifact-kind="code"');
+  expect(out).toContain("data-artifact-image"); // inline image → lightbox link
+  expect(out).toContain('aria-label="zoom topology.png"');
+  expect(out).toContain("data-pending-tray"); // composer pending-image tray
+  expect(out).toContain('aria-label="attach image"');
+  expect(out).toContain("data-tray-thumb");
+});
+
+test("file-viewer · loading(Bearer fetch); error 404 + back; permission 401 folds into error", () => {
+  expect(renderAt("?surface=artifact&state=loading&device=desktop")).toContain("Bearer 拉取中");
+  const err = renderAt("?surface=artifact&state=error&device=desktop");
+  expect(err).toContain("File not found");
+  expect(err).toContain('role="alert"');
+  expect(err).toContain('data-artifact-back'); // back stays
+  const perm = renderAt("?surface=artifact&state=permission&device=desktop");
+  expect(perm).toContain("Not permitted");
+  expect(perm).toContain("401");
+});
+
+test("file-viewer · empty is N/A for viewer (note) but pending tray shows its empty", () => {
+  const out = renderAt("?surface=artifact&state=empty&device=desktop");
+  expect(out).toContain("无空态"); // viewer N/A note
+  expect(out).toContain("data-pending-tray");
+  expect(out).toContain("无待发送图片"); // tray empty
+  expect(out.includes("data-tray-thumb")).toBe(false);
+});
+
+test("file-viewer · lightbox overlay (?lb=1): dialog + zoom controls + close", () => {
+  const out = renderAt("?surface=artifact&state=populated&lb=1&device=desktop");
+  expect(out).toContain("data-artifact-lightbox");
+  expect(out).toContain('aria-modal="true"');
+  expect(out).toContain('aria-label="zoom in"'); // desktop zoom control
+  expect(out).toContain('aria-label="close lightbox"');
+  // mobile lightbox = pinch-zoom presentation (no +/- buttons)
+  const mob = renderAt("?surface=artifact&state=populated&lb=1&device=mobile");
+  expect(mob).toContain("data-artifact-lightbox");
+  expect(mob).toContain("双指缩放");
+  expect(mob.includes('aria-label="zoom in"')).toBe(false);
+});
+
+test("file-viewer · offline: alt image + cached note; tray attach disabled", () => {
+  const out = renderAt("?surface=artifact&state=offline&device=desktop");
+  expect(out).toContain('data-artifact-image="alt"'); // broken/alt image
+  expect(out).toContain("显示最近已知内容");
+  expect(out).toContain('aria-label="attach image" title="attach" disabled=""'); // tray attach disabled offline
+});
+
+test("file-viewer · pending tray states: error(upload failed+remove), busy(sending), permission(gated), boundary(many)", () => {
+  const err = renderAt("?surface=artifact&state=error&device=desktop");
+  expect(err).toContain("上传失败"); // tray upload-failed thumb (tray renders across states)
+  const busy = renderAt("?surface=artifact&state=busy&device=desktop");
+  expect(busy).toContain("发送中"); // tray sending state
+  expect(busy).toContain('aria-label="sending"'); // sending spinner
+  const perm = renderAt("?surface=artifact&state=permission&device=desktop");
+  expect(perm).toContain("未声明图片输入"); // capability-gated attach
+  const b = renderAt("?surface=artifact&state=boundary&device=desktop");
+  expect(b).toContain("huge-render-4k.png (8.2 MB)"); // boundary large file in tray
+});
+
+test("file-viewer · mobile: full-screen reader + tray", () => {
+  const out = renderAt("?surface=artifact&state=populated&device=mobile");
+  expect(out).toContain('data-device="mobile"');
+  expect(out).toContain('data-artifact="viewer"');
+  expect(out).toContain("data-pending-tray");
 });
 
 test("mockup uses v2 semantic utilities and emits no raw-* class", () => {
