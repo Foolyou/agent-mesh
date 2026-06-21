@@ -249,21 +249,21 @@ try {
     }
   }
 
-  // ── board (C) screenshots (default Dark·Slate × Signal Teal) ────────────────────
-  const BOARD_SHOTS: [string, string][] = [
-    ["device=desktop&surface=board&board=list", "board-desktop-list-dark-slate-signal-teal.png"],
-    ["device=desktop&surface=board&board=detail", "board-desktop-detail-dark-slate-signal-teal.png"],
-    ["device=desktop&surface=board&board=kanban", "board-desktop-kanban-dark-slate-signal-teal.png"],
-    ["device=mobile&surface=board&board=list", "board-mobile-list-dark-slate-signal-teal.png"],
-    ["device=mobile&surface=board&board=detail", "board-mobile-detail-dark-slate-signal-teal.png"],
-  ];
-  for (const [q, file] of BOARD_SHOTS) {
-    await step(`screenshot ${file}`, async () => {
-      await page.goto(`${BASE}/__ui-mockup?${q}&mode=dark-slate&accent=signal-teal`, { waitUntil: "domcontentloaded" });
-      await page.waitForSelector('[data-mockup="frame"] [data-board]', { timeout: 8000 });
-      await sleep(150);
-      await shotFrame(`${SHOTS}/${file}`);
-    });
+  // ── board (C) subview × state × device screenshots (Phase B; Dark·Slate × Signal Teal) ──
+  // Desktop: list/detail/kanban. Mobile: list/detail (kanban degrades to list).
+  const BOARD_STATES = ["empty", "loading", "populated", "error", "permission", "busy", "offline", "boundary"];
+  const BOARD_SUBS: Record<string, string[]> = { desktop: ["list", "detail", "kanban"], mobile: ["list", "detail"] };
+  for (const device of ["desktop", "mobile"]) {
+    for (const sub of BOARD_SUBS[device]) {
+      for (const st of BOARD_STATES) {
+        await step(`screenshot board-${sub}-${st}-${device}`, async () => {
+          await page.goto(`${BASE}/__ui-mockup?surface=board&board=${sub}&state=${st}&device=${device}&mode=dark-slate&accent=signal-teal`, { waitUntil: "domcontentloaded" });
+          await page.waitForSelector(`[data-mockup="frame"][data-device="${device}"] [data-board]`, { timeout: 8000 });
+          await sleep(130);
+          await shotFrame(`${SHOTS}/board-${sub}-${st}-${device}-dark-slate-signal-teal.png`);
+        });
+      }
+    }
   }
 
   // ── shell (01) state × device screenshots (Phase B; default Dark·Slate × Signal Teal) ──

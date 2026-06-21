@@ -239,3 +239,57 @@ test("mockup uses v2 semantic utilities and emits no raw-* class", () => {
   expect(desktop).toContain("text-text-primary");
   expect(/\braw-(?:slate|cool|warm|green|amber|red|blue|gray|signal-teal|ember|fleet-azure)-\d/.test(desktop)).toBe(false);
 });
+
+// ── board (03) states (Phase B) ──────────────────────────────────────────────
+test("board list state · empty/loading/error stand-ins (chrome usable)", () => {
+  expect(renderAt("?surface=board&board=list&state=empty")).toContain("No issues");
+  expect(renderAt("?surface=board&board=list&state=loading")).toContain("animate-pulse");
+  const err = renderAt("?surface=board&board=list&state=error");
+  expect(err).toContain('role="alert"');
+  expect(err).toContain('aria-label="meshes"');
+});
+
+test("board list state · permission read-only disables dispatch/bulk/create", () => {
+  const out = renderAt("?surface=board&board=list&state=permission");
+  expect(out).toContain("只读"); // board note
+  expect(out).toContain("设备未授权"); // shell banner
+  expect(out).toContain("disabled");
+});
+
+test("board state · busy shows CAS-409 reconcile affordance", () => {
+  const out = renderAt("?surface=board&board=detail&state=busy");
+  expect(out).toContain("CAS 409"); // reconcile note
+  expect(out).toContain('aria-busy="true"'); // close ▾ busy spinner
+});
+
+test("board offline · last-known + edits disabled + banner", () => {
+  const out = renderAt("?surface=board&board=detail&state=offline");
+  expect(out).toContain("显示最近已知看板");
+  expect(out).toContain("正在重连");
+  expect(out).toContain("comments disabled");
+});
+
+test("board boundary · many issues incl long title + many labels + deeper epics", () => {
+  const out = renderAt("?surface=board&board=list&state=boundary&device=desktop");
+  expect(out).toContain("Epic: Infrastructure"); // MANY_EPICS-only epic
+  expect(out).toContain("truncate gracefully without breaking"); // long title
+  expect(out).toContain("#26"); // a MANY_ISSUES-only issue
+});
+
+test("board DETAIL boundary · long body + many subtasks + multiple deps + longer timeline (≠ populated)", () => {
+  const det = renderAt("?surface=board&board=detail&state=boundary&device=desktop");
+  expect(det).toContain("deliberately long markdown body"); // boundary-only body
+  expect(det).toContain("#23 (in_review)"); // multiple deps (boundary-only)
+  expect(det).toContain("virtualize list"); // a boundary-only subtask line
+  expect(det).toContain("split into 9 subtasks"); // boundary-only timeline entry
+  // populated detail must NOT carry the boundary body
+  expect(renderAt("?surface=board&board=detail&state=populated").includes("deliberately long markdown body")).toBe(false);
+  // mobile detail boundary also shows boundary body
+  expect(renderAt("?surface=board&board=detail&state=boundary&device=mobile")).toContain("deliberately long markdown body");
+});
+
+test("board mobile · list + detail states usable; kanban degrades to list", () => {
+  expect(renderAt("?surface=board&board=list&state=populated&device=mobile")).toContain('data-board="list"');
+  expect(renderAt("?surface=board&board=detail&state=populated&device=mobile")).toContain("Activity");
+  expect(renderAt("?surface=board&board=kanban&state=populated&device=mobile")).toContain('data-board="list"');
+});

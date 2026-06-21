@@ -114,12 +114,50 @@ const ISSUES: Issue[] = [
   { n: 7, title: "Composer polish", status: "done", assignee: "codex-1", labels: ["ui"], prio: "low", subDone: 3, subTotal: 3, blocked: false, updated: "3d", epic: "polish" },
   { n: 5, title: "Drop legacy theme", status: "cancelled", assignee: "", labels: ["infra"], prio: "low", subDone: 0, subTotal: 0, blocked: false, updated: "6d", epic: "polish" },
 ];
+// Boundary/scale: many issues incl. a very long title + many labels, deeper epic tree.
+const MANY_EPICS: typeof EPICS = [
+  ...EPICS,
+  { id: "infra", name: "Infrastructure", open: 6, closed: 4, subDone: 12, subTotal: 22 },
+  { id: "security", name: "Security audit", open: 2, closed: 1, subDone: 3, subTotal: 9 },
+];
+const MANY_ISSUES: Issue[] = [
+  ...ISSUES,
+  { n: 21, title: "A very long issue title that should truncate gracefully without breaking the row layout on desktop or the narrow mobile card", status: "in_progress", assignee: "claude-1", labels: ["infra", "perf", "a11y", "ui", "auth"], prio: "high", subDone: 3, subTotal: 9, blocked: true, updated: "10m", epic: "infra" },
+  { n: 22, title: "Rotate device keys", status: "todo", assignee: "router", labels: ["security"], prio: "high", subDone: 0, subTotal: 5, blocked: false, updated: "1h", epic: "security" },
+  { n: 23, title: "Cache board snapshots", status: "in_review", assignee: "codex-2", labels: ["perf", "infra"], prio: "med", subDone: 4, subTotal: 6, blocked: false, updated: "2h", epic: "infra" },
+  { n: 24, title: "Audit auth-codes envelope", status: "done", assignee: "reviewer-1", labels: ["security", "auth"], prio: "high", subDone: 5, subTotal: 5, blocked: false, updated: "1d", epic: "security" },
+  { n: 25, title: "Virtualize long transcripts", status: "in_progress", assignee: "claude-2", labels: ["perf", "ui"], prio: "med", subDone: 2, subTotal: 7, blocked: false, updated: "3h", epic: "infra" },
+  { n: 26, title: "Drop dead CSS", status: "cancelled", assignee: "", labels: ["ui"], prio: "low", subDone: 0, subTotal: 0, blocked: false, updated: "4d", epic: "infra" },
+];
+
 const DETAIL_ISSUE = ISSUES[0]; // #12 — the issue the detail state shows
 const TIMELINE: { kind: "lifecycle" | "comment"; text: string; when: string }[] = [
   { kind: "lifecycle", text: "dispatched → in_progress · by router", when: "3d" },
   { kind: "comment", text: "@codex-1: branch up, wiring the page", when: "2d" },
   { kind: "lifecycle", text: "review_requested → in_review", when: "1d" },
   { kind: "comment", text: "@router: looks good, blocked-by #9", when: "4h" },
+];
+
+// Boundary/scale detail fixture: long title/body, many labels, more subtasks,
+// multiple deps, longer activity/comment timeline (#21 from MANY_ISSUES).
+const DETAIL_BOUNDARY: Issue = MANY_ISSUES.find((i) => i.n === 21)!;
+const BOUNDARY_BODY =
+  "Refactor the device-auth + board snapshot path end-to-end so a fresh browser can enroll, " +
+  "resolve its remembered deep link, and stream a large board without jank. This issue carries a " +
+  "deliberately long markdown body to exercise wrapping, paragraph spacing, and scroll inside the " +
+  "detail surface on both desktop and the narrow mobile frame. It also enumerates many subtasks and " +
+  "several cross-issue dependencies so the detail pressure is visible, not just the list.";
+const BOUNDARY_DEPS = ["#9 (⛔ open)", "#14 (open)", "#22 (open)", "#23 (in_review)", "#24 (done)"];
+const BOUNDARY_SUBTASKS = ["scaffold enrollment page", "wire bootstrap token", "gate /api/*", "cache snapshot", "virtualize list", "perf budget", "a11y pass", "docs", "e2e"];
+const BOUNDARY_TIMELINE: { kind: "lifecycle" | "comment"; text: string; when: string }[] = [
+  { kind: "lifecycle", text: "created · by router", when: "12d" },
+  { kind: "comment", text: "@router: dispatching to claude-1; blocked-by #9, #14", when: "11d" },
+  { kind: "lifecycle", text: "dispatched → in_progress · by router", when: "10d" },
+  { kind: "comment", text: "@claude-1: split into 9 subtasks; starting enrollment page", when: "9d" },
+  { kind: "comment", text: "@codex-2: cache layer landed (#23), unblocks snapshot streaming", when: "6d" },
+  { kind: "lifecycle", text: "set labels: infra, perf, a11y, ui, auth", when: "5d" },
+  { kind: "comment", text: "@reviewer-1: security audit of auth-codes envelope ok (#24)", when: "3d" },
+  { kind: "comment", text: "@claude-1: 3/9 subtasks done; still blocked-by #9 (open)", when: "10m" },
 ];
 
 interface Sel {
@@ -275,6 +313,20 @@ const runtimeNote = (state: ShellState): ReactNode =>
   state === "offline" ? <p className="mb-2 text-xs text-text-muted">显示最近已知内容；连接恢复后自动刷新。</p>
   : state === "permission" ? <p className="mb-2 text-xs text-text-muted">只读浏览；审批 / 发送 / 打断 / 重启需已授权设备。</p>
   : null;
+
+// Board state stand-in (empty/loading/error); caller wraps in its own data-board div.
+function boardStatePanel(state: ShellState, title: string, emptyTitle: string, emptyDesc: string): ReactNode | null {
+  if (state === "empty") return <PanelFrame title={title} className="h-full"><EmptyState icon={<span className="text-2xl">📋</span>} title={emptyTitle} description={emptyDesc} action={<Button variant="primary">+ Issue</Button>} /></PanelFrame>;
+  if (state === "loading") return <PanelFrame title={title} className="h-full"><div className="flex flex-col gap-2"><Skeleton variant="row" /><Skeleton variant="row" /><Skeleton variant="row" /><Skeleton variant="card" /></div></PanelFrame>;
+  if (state === "error") return <PanelFrame title={title} className="h-full"><ErrorBanner title="Failed to load board" onRetry={() => {}}>The board snapshot failed — the shell stays usable.</ErrorBanner></PanelFrame>;
+  return null;
+}
+const boardNote = (state: ShellState): ReactNode =>
+  state === "offline" ? <p className="mb-1 text-xs text-text-muted">显示最近已知看板；编辑在离线时禁用。</p>
+  : state === "permission" ? <p className="mb-1 text-xs text-text-muted">只读；派活 / 状态 / 批量 / 关闭 / 标签 / 指派 需权限。</p>
+  : state === "busy" ? <p className="mb-1 inline-flex items-center gap-1.5 text-xs text-text-muted"><Spinner size={12} label="saving" /> 保存中…（CAS 409 → 自动重新对齐）</p>
+  : null;
+const boardEditable = (state: ShellState) => !(state === "permission" || state === "offline");
 
 // Desktop runtime — overview: all-agent topology/status with approval red-dots.
 function RuntimeOverviewDesktop({ focusHref, state = "populated" }: { focusHref: (id: string) => string; state?: ShellState }) {
@@ -440,7 +492,7 @@ function IssueRow({ issue }: { issue: Issue }) {
 }
 
 function EpicGroupHeader({ epicId }: { epicId: string }) {
-  const e = EPICS.find((x) => x.id === epicId)!;
+  const e = MANY_EPICS.find((x) => x.id === epicId)!; // MANY_EPICS ⊇ EPICS (covers boundary)
   return (
     <div className="flex items-center gap-2 rounded-lg bg-surface-sunken px-3 py-1.5">
       <span aria-hidden="true" className="text-text-muted">▾</span>
@@ -450,11 +502,11 @@ function EpicGroupHeader({ epicId }: { epicId: string }) {
   );
 }
 
-function BoardFilterBar() {
+function BoardFilterBar({ disabled = false }: { disabled?: boolean }) {
   return (
     <ActionBar
       ariaLabel="board filters"
-      end={<Cluster><Button size="sm" variant="secondary">Dispatch ▾</Button><Button size="sm" variant="primary">+ Issue</Button></Cluster>}
+      end={<Cluster><Button size="sm" variant="secondary" disabled={disabled}>Dispatch ▾</Button><Button size="sm" variant="primary" disabled={disabled}>+ Issue</Button></Cluster>}
     >
       <input aria-label="search issues" placeholder="search…" className="rounded-lg border border-border-strong bg-surface-sunken px-2 py-1 text-sm text-text-primary placeholder:text-text-muted" />
       <select aria-label="status filter" className="rounded-lg border border-border-strong bg-surface-sunken px-2 py-1 text-sm text-text-primary"><option>status</option></select>
@@ -466,16 +518,16 @@ function BoardFilterBar() {
   );
 }
 
-function BoardBulkToolbar() {
+function BoardBulkToolbar({ disabled = false }: { disabled?: boolean }) {
   return (
     <div className="flex items-center gap-3 rounded-lg border border-border bg-surface-sunken px-3 py-1.5 text-xs">
-      <label className="inline-flex items-center gap-1.5"><input type="checkbox" aria-label="select all" className="accent-accent" /> select all</label>
+      <label className="inline-flex items-center gap-1.5"><input type="checkbox" aria-label="select all" disabled={disabled} className="accent-accent" /> select all</label>
       <span className="text-text-muted">bulk:</span>
-      <Button size="sm" variant="ghost">status ▾</Button>
-      <Button size="sm" variant="ghost">label ▾</Button>
-      <Button size="sm" variant="ghost">epic ▾</Button>
-      <Button size="sm" variant="ghost">assignee ▾</Button>
-      <Button size="sm" variant="ghost">close</Button>
+      <Button size="sm" variant="ghost" disabled={disabled}>status ▾</Button>
+      <Button size="sm" variant="ghost" disabled={disabled}>label ▾</Button>
+      <Button size="sm" variant="ghost" disabled={disabled}>epic ▾</Button>
+      <Button size="sm" variant="ghost" disabled={disabled}>assignee ▾</Button>
+      <Button size="sm" variant="ghost" disabled={disabled}>close</Button>
       <span className="flex-1" aria-hidden="true" />
       <span className="text-text-muted tabular-nums">{openCount} open · {closedCount} closed</span>
     </div>
@@ -483,17 +535,23 @@ function BoardBulkToolbar() {
 }
 
 // Desktop board — List (GitHub-Issues maturity).
-function BoardListDesktop() {
+function BoardListDesktop({ state = "populated" }: { state?: ShellState }) {
+  const panel = boardStatePanel(state, "Board · Issues", "No issues", "Create the first issue or dispatch from runtime.");
+  if (panel) return <div data-board="list" className="h-full">{panel}</div>;
+  const editable = boardEditable(state);
+  const epics = state === "boundary" ? MANY_EPICS : EPICS;
+  const issues = state === "boundary" ? MANY_ISSUES : ISSUES;
   return (
     <div data-board="list" className="h-full">
       <PanelFrame title="Board · Issues" actions={<SegmentedControl ariaLabel="Board view" value="list" onChange={() => {}} size="sm" options={[{ value: "list", label: "List" }, { value: "kanban", label: "Board" }]} />} className="h-full" bodyClassName="flex flex-col gap-2">
-        <BoardFilterBar />
-        <BoardBulkToolbar />
+        {boardNote(state)}
+        <BoardFilterBar disabled={!editable} />
+        <BoardBulkToolbar disabled={!editable} />
         <div className="flex flex-col gap-2">
-          {EPICS.map((e) => (
+          {epics.map((e) => (
             <div key={e.id} className="flex flex-col">
               <EpicGroupHeader epicId={e.id} />
-              {ISSUES.filter((i) => i.epic === e.id).map((i) => <IssueRow key={i.n} issue={i} />)}
+              {issues.filter((i) => i.epic === e.id).map((i) => <IssueRow key={i.n} issue={i} />)}
             </div>
           ))}
         </div>
@@ -517,31 +575,42 @@ function LifecyclePath({ current }: { current: Lifecycle }) {
 }
 
 // Desktop board — Detail.
-function BoardDetailDesktop() {
-  const it = DETAIL_ISSUE;
+function BoardDetailDesktop({ state = "populated" }: { state?: ShellState }) {
+  const panel = boardStatePanel(state, "Issue", "No issue selected", "Pick an issue from the list to see its detail.");
+  if (panel) return <div data-board="detail" className="h-full">{panel}</div>;
+  const boundary = state === "boundary";
+  const it = boundary ? DETAIL_BOUNDARY : DETAIL_ISSUE;
+  const timeline = boundary ? BOUNDARY_TIMELINE : TIMELINE;
+  const editable = boardEditable(state);
   return (
     <div data-board="detail" className="h-full">
       <PanelFrame
         title={<span><a href="/__ui-mockup?surface=board&board=list" className="text-link no-underline">◀</a> #{it.n} · {it.title}</span>}
-        actions={<Cluster><StatusChip status={lifeOf(it.status).status} variant="soft" label={it.status} /><Button size="sm" variant="secondary">close ▾</Button></Cluster>}
+        actions={<Cluster><StatusChip status={lifeOf(it.status).status} variant="soft" label={it.status} /><Button size="sm" variant="secondary" disabled={!editable} busy={state === "busy"}>close ▾</Button></Cluster>}
         className="h-full"
         bodyClassName="flex flex-col gap-3"
       >
+        {boardNote(state)}
         <div className="flex flex-wrap items-center gap-2 text-xs text-text-secondary">
-          <span>by router · opened 3d</span><span aria-hidden="true">·</span>
+          <span>by router · opened {boundary ? "12d" : "3d"}</span><span aria-hidden="true">·</span>
           <AssigneeTag name={it.assignee} size="sm" />
           {it.labels.map((l) => <LabelChip key={l} name={l} />)}
-          <span aria-hidden="true">·</span><span>epic: Onboarding</span>
+          <span aria-hidden="true">·</span><span>epic: {boundary ? "Infrastructure" : "Onboarding"}</span>
           <span aria-hidden="true">·</span><PrioTag prio={it.prio} />
         </div>
         <LifecyclePath current={it.status} />
-        <p className="text-sm text-text-primary">Add the device-code authorization page so a new browser can enroll and reach the console. Markdown body…</p>
+        <p className="text-sm text-text-primary">{boundary ? BOUNDARY_BODY : "Add the device-code authorization page so a new browser can enroll and reach the console. Markdown body…"}</p>
         <div className="flex items-center gap-2 text-sm"><span className="text-text-muted">subtasks</span><SubtaskProgress done={it.subDone} total={it.subTotal} /></div>
-        <div className="text-sm"><span className="text-text-muted">deps:</span> blocked-by <span className="text-danger">#9 (⛔ open)</span></div>
+        {boundary ? (
+          <ul className="flex flex-col gap-0.5 text-xs text-text-secondary">
+            {BOUNDARY_SUBTASKS.map((s, i) => <li key={i}>{i < it.subDone ? "▣" : "▢"} {s}</li>)}
+          </ul>
+        ) : null}
+        <div className="text-sm"><span className="text-text-muted">deps:</span> {boundary ? <span>blocked-by {BOUNDARY_DEPS.map((d, i) => <span key={i} className={d.includes("⛔") ? "text-danger" : "text-text-primary"}>{i > 0 ? ", " : ""}{d}</span>)}</span> : <span>blocked-by <span className="text-danger">#9 (⛔ open)</span></span>}</div>
         <div>
           <div className="mb-1 text-xs uppercase tracking-wider text-text-muted">activity timeline</div>
           <ul className="flex flex-col gap-2">
-            {TIMELINE.map((t, i) => (
+            {timeline.map((t, i) => (
               <li key={i} className="flex items-start gap-2 text-sm">
                 <span aria-hidden="true" className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${t.kind === "lifecycle" ? "bg-accent" : "bg-border-strong"}`} />
                 <span className="flex-1 text-text-primary">{t.text}</span>
@@ -550,8 +619,8 @@ function BoardDetailDesktop() {
             ))}
           </ul>
         </div>
-        <Composer actions={<Button size="sm" variant="primary">Comment</Button>} hint="markdown supported"><div className="px-1 py-1 text-sm text-text-muted">Leave a comment…</div></Composer>
-        <ActionBar ariaLabel="issue controls"><Button size="sm" variant="ghost">status ▾</Button><Button size="sm" variant="ghost">assignee ▾</Button><Button size="sm" variant="ghost">labels ▾</Button><Button size="sm" variant="ghost">epic ▾</Button><Button size="sm" variant="ghost">deps ▾</Button></ActionBar>
+        <Composer disabled={!editable} actions={<Button size="sm" variant="primary" disabled={!editable}>Comment</Button>} hint={editable ? "markdown supported" : "comments disabled"}><div className="px-1 py-1 text-sm text-text-muted">Leave a comment…</div></Composer>
+        <ActionBar ariaLabel="issue controls"><Button size="sm" variant="ghost" disabled={!editable}>status ▾</Button><Button size="sm" variant="ghost" disabled={!editable}>assignee ▾</Button><Button size="sm" variant="ghost" disabled={!editable}>labels ▾</Button><Button size="sm" variant="ghost" disabled={!editable}>epic ▾</Button><Button size="sm" variant="ghost" disabled={!editable}>deps ▾</Button></ActionBar>
       </PanelFrame>
     </div>
   );
@@ -571,13 +640,17 @@ function KanbanCard({ issue }: { issue: Issue }) {
 }
 
 // Desktop board — Kanban (lifecycle columns; horizontal scroll keeps columns roomy).
-function BoardKanbanDesktop() {
+function BoardKanbanDesktop({ state = "populated" }: { state?: ShellState }) {
+  const panel = boardStatePanel(state, "Board · Kanban", "No issues", "Create the first issue or dispatch from runtime.");
+  if (panel) return <div data-board="kanban" className="h-full">{panel}</div>;
+  const issues = state === "boundary" ? MANY_ISSUES : ISSUES;
   return (
     <div data-board="kanban" className="h-full">
       <PanelFrame title="Board · Kanban" description="swimlanes: epic ▾ · drag = set_status (perm-gated)" actions={<SegmentedControl ariaLabel="Board view" value="kanban" onChange={() => {}} size="sm" options={[{ value: "list", label: "List" }, { value: "kanban", label: "Board" }]} />} className="h-full">
+        {boardNote(state)}
         <div className="flex gap-3 overflow-x-auto pb-2">
           {LIFECYCLE.map((col) => {
-            const cards = ISSUES.filter((i) => i.status === col.id);
+            const cards = issues.filter((i) => i.status === col.id);
             return (
               <div key={col.id} className="flex w-[180px] shrink-0 flex-col gap-2">
                 <div className="flex items-center gap-1.5 px-1">
@@ -616,27 +689,39 @@ function MobileIssueCard({ issue }: { issue: Issue }) {
   );
 }
 
-function BoardListMobile() {
+function BoardListMobile({ state = "populated" }: { state?: ShellState }) {
+  const panel = boardStatePanel(state, "Issues", "No issues", "Create the first issue.");
+  if (panel) return <div data-board="list">{panel}</div>;
+  const editable = boardEditable(state);
+  const issues = state === "boundary" ? MANY_ISSUES : ISSUES;
+  const open = issues.filter((i) => i.status !== "done" && i.status !== "cancelled").length;
   return (
     <div data-board="list" className="flex flex-col gap-3">
-      <ActionBar ariaLabel="board filters" end={<Button size="sm" variant="primary">+ Issue</Button>}>
+      {boardNote(state)}
+      <ActionBar ariaLabel="board filters" end={<Button size="sm" variant="primary" disabled={!editable}>+ Issue</Button>}>
         <input aria-label="search issues" placeholder="search…" className="min-w-0 flex-1 rounded-lg border border-border-strong bg-surface-sunken px-2 py-1 text-sm text-text-primary placeholder:text-text-muted" />
         <select aria-label="status filter" className="rounded-lg border border-border-strong bg-surface-sunken px-2 py-1 text-sm text-text-primary"><option>status</option></select>
       </ActionBar>
-      <PanelFrame title={`Issues · ${openCount} open`}>
+      <PanelFrame title={`Issues · ${open} open`}>
         <div className="flex flex-col gap-2">
-          {ISSUES.map((i) => <MobileIssueCard key={i.n} issue={i} />)}
+          {issues.map((i) => <MobileIssueCard key={i.n} issue={i} />)}
         </div>
       </PanelFrame>
     </div>
   );
 }
 
-function BoardDetailMobile() {
-  const it = DETAIL_ISSUE;
+function BoardDetailMobile({ state = "populated" }: { state?: ShellState }) {
+  const panel = boardStatePanel(state, "Issue", "No issue selected", "Pick an issue from the list.");
+  if (panel) return <div data-board="detail">{panel}</div>;
+  const boundary = state === "boundary";
+  const it = boundary ? DETAIL_BOUNDARY : DETAIL_ISSUE;
+  const timeline = boundary ? BOUNDARY_TIMELINE : TIMELINE;
+  const editable = boardEditable(state);
   return (
     <div data-board="detail" className="flex flex-col gap-3">
-      <ActionBar ariaLabel={`#${it.n} controls`} end={<Button size="sm" variant="secondary">close ▾</Button>}>
+      {boardNote(state)}
+      <ActionBar ariaLabel={`#${it.n} controls`} end={<Button size="sm" variant="secondary" disabled={!editable} busy={state === "busy"}>close ▾</Button>}>
         <a href="/__ui-mockup?device=mobile&surface=board&board=list" className="text-link no-underline">◀</a>
         <StatusChip status={lifeOf(it.status).status} variant="soft" label={it.status} />
         <span className="text-sm text-text-primary">#{it.n}</span>
@@ -647,11 +732,13 @@ function BoardDetailMobile() {
           {it.labels.map((l) => <LabelChip key={l} name={l} />)}
           <PrioTag prio={it.prio} />
         </div>
+        {boundary ? <p className="mt-2 text-sm text-text-primary">{BOUNDARY_BODY}</p> : null}
         <div className="mt-2 flex items-center gap-2 text-sm"><span className="text-text-muted">subtasks</span><SubtaskProgress done={it.subDone} total={it.subTotal} /></div>
+        {boundary ? <div className="mt-1 text-xs text-text-secondary">deps: blocked-by {BOUNDARY_DEPS.join(", ")}</div> : null}
       </PanelFrame>
       <PanelFrame title="Activity">
         <ul className="flex flex-col gap-2">
-          {TIMELINE.map((t, i) => (
+          {timeline.map((t, i) => (
             <li key={i} className="flex items-start gap-2 text-sm">
               <span aria-hidden="true" className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${t.kind === "lifecycle" ? "bg-accent" : "bg-border-strong"}`} />
               <span className="flex-1 text-text-primary">{t.text}</span>
@@ -660,7 +747,7 @@ function BoardDetailMobile() {
           ))}
         </ul>
       </PanelFrame>
-      <Composer actions={<Button size="sm" variant="primary">Comment</Button>}><div className="px-1 py-1 text-sm text-text-muted">Leave a comment…</div></Composer>
+      <Composer disabled={!editable} actions={<Button size="sm" variant="primary" disabled={!editable}>Comment</Button>}><div className="px-1 py-1 text-sm text-text-muted">Leave a comment…</div></Composer>
     </div>
   );
 }
@@ -931,9 +1018,10 @@ export function UiMockup() {
   const desktopStage = surface === "runtime"
     ? (runtime === "focus" ? <RuntimeFocusDesktop state={state} /> : <RuntimeOverviewDesktop focusHref={focusHref} state={state} />)
     : surface === "board"
-    ? (board === "detail" ? <BoardDetailDesktop /> : board === "kanban" ? <BoardKanbanDesktop /> : <BoardListDesktop />)
+    ? (board === "detail" ? <BoardDetailDesktop state={state} /> : board === "kanban" ? <BoardKanbanDesktop state={state} /> : <BoardListDesktop state={state} />)
     : <ShellStage state={state} view={view} />;
-  const shellChrome: ShellChrome = surface === "shell" ? shellChromeFor(state) : surface === "runtime" ? runtimeChromeFor(state) : {};
+  // Runtime + board share the same chrome-by-state behavior (mesh nav stays populated).
+  const shellChrome: ShellChrome = surface === "shell" ? shellChromeFor(state) : (surface === "runtime" || surface === "board") ? runtimeChromeFor(state) : {};
   const contextTitle = surface === "runtime"
     ? (runtime === "focus" ? `${FOCUS_AGENT} · activity` : "Topology detail")
     : surface === "board" ? "Epics · dispatch" : "Context";
@@ -978,7 +1066,7 @@ export function UiMockup() {
   const mobileStage = surface === "runtime"
     ? (runtime === "focus" ? <RuntimeFocusMobile state={state} /> : <RuntimeListMobile focusHref={focusHref} state={state} />)
     : surface === "board"
-    ? (board === "detail" ? <BoardDetailMobile /> : <BoardListMobile />)
+    ? (board === "detail" ? <BoardDetailMobile state={state} /> : <BoardListMobile state={state} />)
     : <ShellStage state={state} />;
   const mobileStageTab: MobileTab = surface === "board" ? "board" : "runtime";
 
@@ -1025,7 +1113,7 @@ export function UiMockup() {
               />
             </div>
           ) : null}
-          {surface === "shell" || surface === "runtime" ? (
+          {surface === "shell" || surface === "runtime" || surface === "board" ? (
             <div>
               <div className="mb-1.5 text-xs uppercase tracking-wider text-text-muted">State</div>
               <SegmentedControl ariaLabel="State" value={state} onChange={(s) => nav({ state: s as ShellState })} options={SHELL_STATES.map((s) => ({ value: s, label: s }))} size="sm" />
