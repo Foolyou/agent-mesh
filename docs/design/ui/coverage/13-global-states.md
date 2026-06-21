@@ -37,6 +37,27 @@ error wrapping), `device-auth.ts` (boot probe → 200 app / 401 gate), `index.ts
 | Offline contract [N] | ✓(no last-known) | ✓ | N/A | ✓ | N/A | △(mutations disabled) | ✓(last-known + reconnecting) | ✓(stale large data) | ✓ | ✓ |
 
 ## Change log / sources read
+- 2026-06-22 — **Step 7.5-C global states BUILT for `/bnw`** (real console, surface-13 parity):
+  - **Stage ErrorBoundary** (`bnw/error-boundary.tsx`, the one class component in the /bnw tree):
+    wraps ONLY the surface stage in `BnwApp` (`<BnwErrorBoundary resetKey={bnwHref(route)}>`),
+    so a render crash shows the unified 💥 error card + 重试 (reset) + 返回首页 while the topbar /
+    left-nav / sub-nav / bottom tabs stay alive. `resetKey`=route → auto-recovers on navigation.
+    A guarded `MaybeThrow` test seam (throws iff `window.__bnwForceError`) lets e2e exercise the
+    crash + retry-recovery deterministically; inert in production.
+  - **Unified offline/reconnect**: a single shell-level banner in `BnwApp` (`[data-bnw-offline]`,
+    `role="status"`, warning-subtle) shows when WS is down — "连接已断开 — 正在重连…（显示最近已知，
+    变更已禁用）" + a **立即重连** retry wired to the new `store.reconnect()` (cancels backoff,
+    drops a stale socket, connects now; stale-socket-guarded against duplicate timers). WS still
+    auto-reconnects with backoff; the banner is transient (no persistence). The three per-surface
+    offline banners (channels/harnesses/notifications) were removed in favor of this unified one;
+    those surfaces keep disabling their own mutations via `offline` independently.
+  - **In-app SPA 404**: `BnwApp` `NotFound` upgraded to the surface-13 treatment — 🧭 "404 ·
+    页面不存在" + offending path + 返回控制台 accent CTA; shell chrome stays mounted.
+  - Gates: tsc · full `bun test` · focused SSR (error-boundary contract + notifications offline
+    re-point) · lint:tokens · server.smoke · bnw.e2e 25 (404 nav+recover, ErrorBoundary
+    crash-contained+retry, offline banner via `routeWebSocket`-dropped WS) · `/bnw × 9`
+    desktop+mobile a11y 18/18. Screenshots: `bnw-404-{desktop,mobile}`, `bnw-error-{desktop,mobile}`,
+    `bnw-offline-{desktop,mobile}`. Old root UI untouched; only `/bnw` + shared ui/ components.
 - 2026-06-21 — created (Phase A commit 3). Sources: `server.ts` (SPA 404 + 401 gate + WS),
   `store.ts` (WS lifecycle + snapshot-first + guard errors), `device-auth.ts` (boot probe),
   `index.tsx` boot. p2p-DM connection states fold here per lead #683 assumption 4.

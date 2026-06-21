@@ -67,8 +67,10 @@ test("mark-all gates on the GLOBAL unread count, not the filtered/synthetic view
   expect(out2).not.toMatch(/aria-label="mark all read"[^>]*disabled=""/);
 });
 
-test("offline: reconnect banner + mark-all disabled", () => {
+test("offline: mark-all disabled (banner is now the unified shell-level treatment, 7.5-C)", () => {
   const out = renderToStaticMarkup(<BnwNotifications store={stub({ connected: false })} state={state()} />);
-  expect(out).toContain("连接已断开");
+  // the per-surface offline banner moved to the shell (BnwApp) in 7.5-C; the surface keeps
+  // disabling its own mutation (mark-all) via `offline`.
+  expect(out).not.toContain("连接已断开");
   expect(out).toMatch(/aria-label="mark all read"[^>]*disabled=""/);
 });

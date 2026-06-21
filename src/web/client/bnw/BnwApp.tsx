@@ -6,12 +6,13 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createStore, useStore, useConnected, type Store } from "../store";
 import {
-  Badge, Cluster, EmptyState, PanelFrame, RouteLink, Select, Spinner,
+  Badge, Button, Cluster, EmptyState, PanelFrame, RouteLink, Select, Spinner,
   StatusListRow, type Status,
 } from "../ui/index";
 import type { MeshStatus } from "../../types";
 import { useRoute, navigate, bnwHref, type BnwRoute } from "../router";
 import { BottomTabs, MoreMenu } from "./mobile-nav";
+import { BnwErrorBoundary } from "./error-boundary";
 import { RuntimeOverview, RuntimeFocus } from "./runtime";
 import { MeshCanvas } from "./canvas";
 import { BnwBoard } from "./board";
@@ -73,20 +74,34 @@ function SurfacePlaceholder({ route }: { route: BnwRoute }) {
   );
 }
 
+// 7.5-C — in-app SPA 404 matching surface-13's not-found-in-shell treatment (🧭 card +
+// 返回控制台). The shell chrome stays mounted; only the stage shows the not-found view.
 function NotFound({ path }: { path: string }) {
   return (
     <PanelFrame title="Not found">
-      <EmptyState
-        title="页面不存在"
-        description={`没有匹配的 /bnw 路由：${path}`}
-        action={<RouteLink href={bnwHref({ k: "home" })}>返回首页</RouteLink>}
-      />
+      <div data-bnw-not-found className="flex flex-col items-center gap-2 py-10 text-center">
+        <span className="text-3xl" aria-hidden="true">🧭</span>
+        <h2 className="text-base font-semibold text-text-primary">404 · 页面不存在</h2>
+        <p className="max-w-md text-xs text-text-muted">没有匹配的 /bnw 路由：<code className="break-all font-mono text-text-secondary">{path}</code></p>
+        <RouteLink href={bnwHref({ k: "home" })} unstyled className="mt-1 inline-flex items-center rounded-lg bg-accent px-3 py-1.5 text-sm font-medium text-on-accent hover:bg-accent-hover">返回控制台</RouteLink>
+      </div>
     </PanelFrame>
   );
 }
 
 function ManageLink({ route, label }: { route: BnwRoute; label: string }) {
   return <RouteLink href={bnwHref(route)} className="text-sm">{label}</RouteLink>;
+}
+
+// 7.5-C — test seam for the stage ErrorBoundary: throws during render iff `window.__bnwForceError`
+// is set, so e2e can verify a surface crash is contained + that clearing the flag and resetting
+// the boundary recovers. Inert in production (no one sets the global). Re-reads the live flag on
+// every render, so a boundary reset after the flag is cleared renders the real surface again.
+function MaybeThrow({ children }: { children: ReactNode }) {
+  if (typeof window !== "undefined" && (window as any).__bnwForceError) {
+    throw new Error("forced surface error (test seam)");
+  }
+  return <>{children}</>;
 }
 
 export function BnwApp() {
@@ -188,6 +203,18 @@ export function BnwApp() {
         </RouteLink>
       </header>
 
+      {/* 7.5-C — unified shell-level offline/reconnect banner (surface-13 contract). WS auto-
+          reconnects with backoff; this is transient (no persistence) and offers an immediate
+          retry. Surfaces still disable their own mutations via `offline` independently. */}
+      {!connected ? (
+        <div data-bnw-offline role="status" className="flex flex-wrap items-center gap-2 border-b border-border bg-warning-subtle px-4 py-1.5 text-xs text-warning">
+          <Spinner size={12} label="reconnecting" />
+          <span>连接已断开 — 正在重连…（显示最近已知内容，变更已禁用）</span>
+          <span className="flex-1" aria-hidden="true" />
+          <Button size="sm" variant="ghost" aria-label="reconnect now" onClick={() => store.reconnect()}>立即重连</Button>
+        </div>
+      ) : null}
+
       {/* body: left nav · stage · right context. `relative` anchors the mobile 更多 overlay. */}
       <div className="relative flex min-h-0 flex-1">
         {/* desktop left mesh nav — fully hidden on mobile (the topbar select + bottom tabs cover it) */}
@@ -223,7 +250,10 @@ export function BnwApp() {
               </Cluster>
             </div>
           ) : null}
-          {body}
+          {/* 7.5-C — stage-level boundary: a surface render crash shows a retry card here while
+              the topbar / nav / sub-nav / bottom tabs stay alive. resetKey=route → auto-recovers
+              on navigation. */}
+          <BnwErrorBoundary resetKey={bnwHref(route)}><MaybeThrow>{body}</MaybeThrow></BnwErrorBoundary>
         </main>
         {/* No generic right-context stub — each surface owns its own context (e.g. runtime
             focus renders an `<agent> · activity` panel; overview/canvas are full-width). */}

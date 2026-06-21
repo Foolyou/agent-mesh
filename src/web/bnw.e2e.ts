@@ -151,8 +151,11 @@ const step = async (name: string, fn: () => Promise<void>) => { await fn(); pass
 try {
   const ctx = await authedContext(browser, auth.token, { viewport: { width: 1440, height: 900 } });
   const page = await ctx.newPage();
-  page.on("pageerror", (e) => errors.push(String(e)));
-  page.on("console", (m) => { if (m.type() === "error" && !/Failed to load resource|_bun\/hmr/.test(m.text())) errors.push(m.text()); });
+  // 7.5-C error-boundary test deliberately throws (test seam); ignore that error + React's
+  // boundary console noise about it so the run's real-error gate stays meaningful.
+  const ignoredPageError = (s: string) => /forced surface error|The above error occurred|MaybeThrow|recreate this component tree/i.test(s);
+  page.on("pageerror", (e) => { const s = String(e); if (!ignoredPageError(s)) errors.push(s); });
+  page.on("console", (m) => { if (m.type() === "error" && !/Failed to load resource|_bun\/hmr/.test(m.text()) && !ignoredPageError(m.text())) errors.push(m.text()); });
 
   await step("/bnw/ mounts the new shell + lands on default mesh runtime", async () => {
     await page.goto(`${BASE}/bnw/`, { waitUntil: "domcontentloaded" });
@@ -750,6 +753,50 @@ try {
     assert(!(await page.locator('[data-bnw-bottomtabs]').isVisible()), "bottom tabs must hide on desktop");
   });
 
+  // 7.5-C — global states (surface 13): in-app 404, stage ErrorBoundary, offline/reconnect.
+  await step("7.5-C global states: in-app 404 + stage ErrorBoundary (crash contained + recover)", async () => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    // in-app SPA 404 for an unknown /bnw route — shell chrome stays, not-found card shows
+    await page.goto(`${BASE}/bnw/no-such-surface`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-bnw-not-found]', { timeout: 8000 });
+    assert(await page.locator('header').first().isVisible(), "topbar must survive a 404");
+    await page.locator('[data-bnw-not-found] a', { hasText: "返回控制台" }).click();
+    await page.waitForSelector('[data-bnw-surface="runtime"]', { timeout: 8000 });
+
+    // stage ErrorBoundary: force a surface crash → error card shows, topbar/nav survive.
+    // SPA-navigate (pushState+popstate) so `window` — and the test flag — persists; a full
+    // page goto would reset window and clear the flag.
+    await page.evaluate(() => {
+      (window as any).__bnwForceError = true;
+      history.pushState({}, "", "/bnw/doctor");
+      dispatchEvent(new PopStateEvent("popstate"));
+    });
+    await page.waitForSelector('[data-bnw-error-boundary]', { timeout: 8000 });
+    assert(await page.locator('header').first().isVisible(), "topbar must survive a surface crash");
+    assert(await page.locator('nav[aria-label="management"]').isVisible(), "management nav must survive a surface crash");
+    // retry recovers once the (test) error condition clears
+    await page.evaluate(() => { (window as any).__bnwForceError = false; });
+    await page.locator('[data-bnw-error-boundary] [aria-label="retry surface"]').click();
+    await page.waitForSelector('[data-doctor="panel"]', { timeout: 8000 });
+    assert(await page.locator('[data-bnw-error-boundary]').count() === 0, "error card must clear after retry");
+  });
+
+  await step("7.5-C offline/reconnect: shell banner shows when WS is down (transient)", async () => {
+    // a dedicated context whose WS connections are dropped → the store stays disconnected and
+    // the unified shell offline banner renders (REST boot probe still mounts the app).
+    const offCtx = await authedContext(browser, auth.token, { viewport: { width: 1440, height: 900 } });
+    try {
+      const op = await offCtx.newPage();
+      await op.routeWebSocket(/\/ws/, (ws) => { ws.close(); });
+      await op.goto(`${BASE}/bnw/mesh/demo`, { waitUntil: "domcontentloaded" });
+      await op.waitForSelector('[data-bnw-offline]', { timeout: 8000 });
+      assert(await op.locator('[data-bnw-offline] [aria-label="reconnect now"]').isVisible(), "offline banner must offer reconnect");
+      await sleep(120); await op.screenshot({ path: `${SHOTS}/bnw-offline-desktop.png`, fullPage: true });
+      await op.setViewportSize({ width: 390, height: 844 });
+      await sleep(120); await op.screenshot({ path: `${SHOTS}/bnw-offline-mobile.png`, fullPage: true });
+    } finally { await offCtx.close(); }
+  });
+
   await step("screenshots: overview / focus (C2 docked approval) / canvas / mobile overview", async () => {
     await page.setViewportSize({ width: 1440, height: 900 });
     // desktop overview
@@ -811,8 +858,29 @@ try {
     await page.goto(`${BASE}/bnw/assistant?full=1`, { waitUntil: "domcontentloaded" });
     await page.waitForSelector('[data-bnw-assistant="full"]', { timeout: 8000 });
     await sleep(120); await page.screenshot({ path: `${SHOTS}/bnw-assistant-fullscreen-desktop.png`, fullPage: true });
+    // 7.5-C global states — 404 + error card (desktop). Error card via SPA nav so the test
+    // flag survives (a full goto resets window).
+    await page.goto(`${BASE}/bnw/no-such-surface`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-bnw-not-found]', { timeout: 8000 });
+    await sleep(100); await page.screenshot({ path: `${SHOTS}/bnw-404-desktop.png`, fullPage: true });
+    await page.goto(`${BASE}/bnw/mesh/demo`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-bnw-surface="runtime"]', { timeout: 8000 });
+    await page.evaluate(() => { (window as any).__bnwForceError = true; history.pushState({}, "", "/bnw/doctor"); dispatchEvent(new PopStateEvent("popstate")); });
+    await page.waitForSelector('[data-bnw-error-boundary]', { timeout: 8000 });
+    await sleep(100); await page.screenshot({ path: `${SHOTS}/bnw-error-desktop.png`, fullPage: true });
+    await page.evaluate(() => { (window as any).__bnwForceError = false; });
     // mobile overview + mobile board list + mobile new-mesh + mobile assistant
     await page.setViewportSize({ width: 390, height: 844 });
+    // 7.5-C global states — error card + 404 (mobile)
+    await page.goto(`${BASE}/bnw/mesh/demo`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-bnw-surface="runtime"]', { timeout: 8000 });
+    await page.evaluate(() => { (window as any).__bnwForceError = true; history.pushState({}, "", "/bnw/doctor"); dispatchEvent(new PopStateEvent("popstate")); });
+    await page.waitForSelector('[data-bnw-error-boundary]', { timeout: 8000 });
+    await sleep(100); await page.screenshot({ path: `${SHOTS}/bnw-error-mobile.png`, fullPage: true });
+    await page.evaluate(() => { (window as any).__bnwForceError = false; });
+    await page.goto(`${BASE}/bnw/no-such-surface`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-bnw-not-found]', { timeout: 8000 });
+    await sleep(100); await page.screenshot({ path: `${SHOTS}/bnw-404-mobile.png`, fullPage: true });
     await page.goto(`${BASE}/bnw/mesh/demo`, { waitUntil: "domcontentloaded" });
     await page.waitForSelector('[data-bnw-surface="runtime"]', { timeout: 8000 });
     await sleep(120); await page.screenshot({ path: `${SHOTS}/bnw-runtime-overview-mobile.png`, fullPage: true });

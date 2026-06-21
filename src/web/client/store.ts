@@ -180,6 +180,8 @@ export interface Store {
   getState(): GatewayState;
   subscribe(cb: () => void): () => void;
   wsConnected(): boolean;
+  /** Force an immediate WS reconnect (offline banner retry); no-op when connected. */
+  reconnect(): void;
   getToasts(): Toast[];
   getUpgrade(): UpgradeState;
   apply(msg: ServerMsg): void;
@@ -490,9 +492,13 @@ export function createStore(): Store {
   }
 
   let delay = 500;
+  let currentWs: WebSocket | null = null;
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   function connect() {
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
     const proto = location.protocol === "https:" ? "wss" : "ws";
     const ws = new WebSocket(wsUrlWithToken(proto, location.host, getDeviceToken()));
+    currentWs = ws;
     ws.onopen = () => {
       connected = true;
       delay = 500;
@@ -508,13 +514,16 @@ export function createStore(): Store {
       }
     };
     ws.onclose = () => {
+      // Ignore a stale socket's close (e.g. one superseded by a manual reconnect) so it
+      // can't schedule a duplicate backoff timer alongside the live socket.
+      if (ws !== currentWs) return;
       const was = connected;
       connected = false;
       if (was) pushToast("info", "connection lost — reconnecting…");
       emit();
       const d = delay;
       delay = Math.min(delay * 2, 5000);
-      setTimeout(connect, d);
+      reconnectTimer = setTimeout(connect, d);
     };
     ws.onerror = () => {
       try {
@@ -523,6 +532,17 @@ export function createStore(): Store {
         /* already closing */
       }
     };
+  }
+  /** User-triggered immediate reconnect (the offline banner's retry): cancel any pending
+   *  backoff, drop a half-open socket, and connect now. No-op when already connected. */
+  function reconnect() {
+    if (connected) return;
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+    delay = 500;
+    const stale = currentWs;
+    currentWs = null; // detach so the stale socket's onclose is ignored
+    try { stale?.close(); } catch { /* already closing */ }
+    connect();
   }
   if (typeof window !== "undefined") connect();
 
@@ -614,6 +634,7 @@ export function createStore(): Store {
       };
     },
     wsConnected: () => connected,
+    reconnect,
     getToasts: () => toasts,
     getUpgrade: () => upgrade,
     apply: (msg) => applyIncoming(msg),
