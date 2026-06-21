@@ -14,6 +14,8 @@ import { useRoute, navigate, bnwHref, type BnwRoute } from "../router";
 import { RuntimeOverview, RuntimeFocus } from "./runtime";
 import { MeshCanvas } from "./canvas";
 import { BnwBoard } from "./board";
+import { BnwNewMesh } from "./new-mesh";
+import { BnwAssistant } from "./assistant";
 
 // Map the gateway MeshStatus → the C5 StatusChip vocabulary used by the component library.
 function meshDot(s: MeshStatus): Status {
@@ -111,6 +113,9 @@ export function BnwApp() {
   else if (route.k === "runtime") body = <RuntimeOverview store={store} state={state} mesh={route.mesh} />;
   // 7.2 — Board C wired to the real store.board (list/kanban/detail + C4 filter shell).
   else if (route.k === "board") body = <BnwBoard store={store} state={state} mesh={route.mesh} route={route} />;
+  // 7.3 — new/edit-mesh builder + Mesh Assistant B (real defineMesh / promptAssistant).
+  else if (route.k === "newMesh") body = <BnwNewMesh store={store} state={state} route={route} />;
+  else if (route.k === "assistant") body = <BnwAssistant store={store} state={state} full={!!route.full} />;
   else body = <SurfacePlaceholder route={route} />;
 
   return (

@@ -138,6 +138,14 @@ try {
         await page.goto(`${BASE}/bnw/mesh/demo/board/issue/12`, { waitUntil: "domcontentloaded" });
         await page.waitForSelector('[data-bnw-board-detail]', { timeout: 8000 });
         await sleep(60); await crawl(page, `${combo} · board-detail`);
+        // 7.3 — new-mesh builder + expanded focus-trap editor
+        await page.goto(`${BASE}/bnw/mesh/new?nmEditor=charter`, { waitUntil: "domcontentloaded" });
+        await page.waitForSelector('[data-bnw-editor]', { timeout: 8000 });
+        await sleep(60); await crawl(page, `${combo} · new-mesh+editor`);
+        // 7.3 — assistant
+        await page.goto(`${BASE}/bnw/assistant`, { waitUntil: "domcontentloaded" });
+        await page.waitForSelector('[data-bnw-assistant="panel"]', { timeout: 8000 });
+        await sleep(60); await crawl(page, `${combo} · assistant`);
         pass++; console.log(`  ✓ ${combo}`);
       } catch (e: any) {
         fails.push(combo); console.log(`  ✗ ${combo} — ${String(e?.message ?? e).split("\n")[0]}`);
