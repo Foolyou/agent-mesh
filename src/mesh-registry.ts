@@ -133,6 +133,37 @@ export async function reapAllHosts(runDir: string, opts: { termWaitMs?: number; 
   return { killed, cleaned, survived };
 }
 
+/**
+ * Targeted recovery: reap ONLY leaked hosts — stale records (record → dead pid) and orphan
+ * sockets (`.sock` with no live owner). A host whose pid is ALIVE is never signalled or
+ * removed, so this is safe to run while real meshes are running (unlike `reapAllHosts`, the
+ * `--cold` sweep that tears down everything). This is the WebUI/Doctor "reap orphans" scope.
+ * Pass `names` to reap a specific subset; omit to reap every detected leak.
+ */
+export async function reapLeaks(runDir: string, names?: readonly string[]): Promise<{ reaped: string[]; skipped: string[] }> {
+  let entries: string[];
+  try {
+    entries = await readdir(runDir);
+  } catch {
+    return { reaped: [], skipped: [] };
+  }
+  const recordNames = entries.filter((f) => f.endsWith(".json") && !f.endsWith(".sessions.json")).map((f) => f.slice(0, -5));
+  const sockNames = entries.filter((f) => f.endsWith(".sock")).map((f) => f.slice(0, -5));
+  const all = [...new Set([...recordNames, ...sockNames])];
+  const want = names ? new Set(names) : undefined;
+  const reaped: string[] = [];
+  const skipped: string[] = [];
+  for (const name of all) {
+    if (want && !want.has(name)) continue;
+    const rec = await readRecord(runDir, name);
+    if (rec && pidAlive(rec.pid)) { skipped.push(name); continue; } // live daemon — never reap
+    await removeRecord(runDir, name);
+    await rm(rec?.socketPath ?? join(runDir, `${name}.sock`), { force: true }).catch(() => {});
+    reaped.push(name);
+  }
+  return { reaped, skipped };
+}
+
 /** All records whose daemon is still alive; deletes (prunes) any whose pid is dead. */
 export async function listLiveRecords(runDir: string): Promise<MeshHostRecord[]> {
   let files: string[];

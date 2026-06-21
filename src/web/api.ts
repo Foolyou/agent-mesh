@@ -24,6 +24,7 @@ import {
 } from "./auth";
 import { collectPsDetail, runDoctor } from "../diagnostics";
 import { diagnosticsRunDir, doctorSources, webPsSources } from "../diagnostics-sources";
+import { reapLeaks } from "../mesh-registry";
 
 export interface ApiResult {
   status: number;
@@ -167,6 +168,18 @@ export async function handleApi(
       if (p[1] === "doctor") {
         return ok(await runDoctor(doctorSources(ctx.root, ctx.servicePort ?? 10010)));
       }
+    }
+    // Targeted leak recovery (user-approved WebUI scope): reap stale records / orphan sockets.
+    // GATED (below device-auth) + CSRF-checked. `reapLeaks` never touches a live daemon, so this
+    // is safe while real meshes run. Returns the reaped names + a freshly re-collected PsDetail.
+    if (p[0] === "diagnostics" && p[1] === "reap" && method === "POST" && p.length === 2) {
+      if (!ctx.root) return fail(500, "diagnostics root not configured");
+      const csrf = sameOriginCheck(ctx.headers, ctx.expectedOrigin);
+      if (!csrf.ok) return { status: 403, body: { error: { message: "forbidden" } } };
+      const names = Array.isArray(body?.names) ? (body.names as unknown[]).filter((x): x is string => typeof x === "string") : undefined;
+      const { reaped } = await reapLeaks(diagnosticsRunDir(ctx.root), names);
+      const ps = await collectPsDetail(diagnosticsRunDir(ctx.root), webPsSources(ctx.root, safeSnapshot(gw)));
+      return ok({ reaped, ps });
     }
 
     if (p[0] === "channels" && p[1] === "feishu") {

@@ -16,6 +16,7 @@ import { MeshCanvas } from "./canvas";
 import { BnwBoard } from "./board";
 import { BnwNewMesh } from "./new-mesh";
 import { BnwAssistant } from "./assistant";
+import { BnwDoctor } from "./doctor";
 
 // Map the gateway MeshStatus → the C5 StatusChip vocabulary used by the component library.
 function meshDot(s: MeshStatus): Status {
@@ -116,6 +117,8 @@ export function BnwApp() {
   // 7.3 — new/edit-mesh builder + Mesh Assistant B (real defineMesh / promptAssistant).
   else if (route.k === "newMesh") body = <BnwNewMesh store={store} state={state} route={route} />;
   else if (route.k === "assistant") body = <BnwAssistant store={store} state={state} full={!!route.full} />;
+  // 7.4-A — Doctor / system wired to real diagnostics (fetchDoctor + fetchPsDetail + reap/restart).
+  else if (route.k === "doctor") body = <BnwDoctor store={store} state={state} />;
   else body = <SurfacePlaceholder route={route} />;
 
   return (

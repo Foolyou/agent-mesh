@@ -8,6 +8,9 @@ import { WebGateway } from "./gateway";
 import { startWebServer } from "./server";
 import { authedContext, launchChromium, provisionE2eAuth } from "./e2e-playwright";
 import { rm } from "node:fs/promises";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { writeRecord } from "../mesh-registry";
 import type { Page } from "playwright";
 import type { MeshEvent, MeshConfig } from "../acp/types";
 
@@ -89,6 +92,13 @@ const CRAWL = () => {
 const installColorMath = (page: Page) => page.evaluate(`window.__a11y = (function(){ ${COLOR_MATH} return { parse, over, lum, ratio, effBg }; })();`);
 
 const auth = await provisionE2eAuth();
+// Seed the diagnostics run dir so the real /bnw/doctor surface paints a populated daemon +
+// recovery panel (live daemon record + orphan socket) for the contrast crawl.
+const RUN_DIR = join(auth.authRoot, "run");
+mkdirSync(RUN_DIR, { recursive: true });
+await writeRecord(RUN_DIR, { name: "dev-mesh", pid: process.pid, socketPath: join(RUN_DIR, "dev-mesh.sock"), proto: 2, startedAt: new Date(Date.now() - 3_600_000).toISOString() });
+writeFileSync(join(RUN_DIR, "dev-mesh.sock"), "");
+writeFileSync(join(RUN_DIR, "old-mesh.sock"), ""); // orphan socket → leak row
 const gw = new WebGateway(fake, undefined, { root: auth.authRoot });
 const handle = startWebServer({ gateway: gw, port: 0, dev: false });
 const BASE = handle.url;
@@ -146,6 +156,10 @@ try {
         await page.goto(`${BASE}/bnw/assistant`, { waitUntil: "domcontentloaded" });
         await page.waitForSelector('[data-bnw-assistant="panel"]', { timeout: 8000 });
         await sleep(60); await crawl(page, `${combo} · assistant`);
+        // 7.4-A — doctor (summary + findings + daemon table + recovery/leak rows)
+        await page.goto(`${BASE}/bnw/doctor`, { waitUntil: "domcontentloaded" });
+        await page.waitForSelector('[data-recovery] [data-leak]', { timeout: 8000 });
+        await sleep(60); await crawl(page, `${combo} · doctor`);
         pass++; console.log(`  ✓ ${combo}`);
       } catch (e: any) {
         fails.push(combo); console.log(`  ✗ ${combo} — ${String(e?.message ?? e).split("\n")[0]}`);

@@ -6,7 +6,9 @@ import { WebGateway } from "./gateway";
 import { startWebServer } from "./server";
 import { authedContext, launchChromium, provisionE2eAuth } from "./e2e-playwright";
 import { rm } from "node:fs/promises";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { writeRecord } from "../mesh-registry";
 import type { MeshEvent, MeshConfig } from "../acp/types";
 
 const SHOTS = process.env.AGENT_MESH_ARTIFACTS || "/tmp/mesh-shots";
@@ -121,6 +123,13 @@ const SEED_CANVAS = {
 };
 
 const auth = await provisionE2eAuth();
+// Seed the diagnostics run dir so the REAL doctor/ps path returns deterministic recovery
+// fixtures: a live daemon (record → this alive pid) + an orphan socket (leak with no owner).
+const RUN_DIR = join(auth.authRoot, "run");
+mkdirSync(RUN_DIR, { recursive: true });
+await writeRecord(RUN_DIR, { name: "dev-mesh", pid: process.pid, socketPath: join(RUN_DIR, "dev-mesh.sock"), proto: 2, startedAt: new Date(Date.now() - 3_600_000).toISOString() });
+writeFileSync(join(RUN_DIR, "dev-mesh.sock"), "");
+writeFileSync(join(RUN_DIR, "old-mesh.sock"), ""); // orphan socket → a reapable leak
 const gw = new WebGateway(fakeManager() as any, asstStub as any, { root: auth.authRoot });
 const handle = startWebServer({ gateway: gw, port: 0, dev: false }); // no HMR (prod-like serving)
 const BASE = handle.url;
@@ -430,6 +439,31 @@ try {
     if (await page.locator('[data-bnw-approval]').count() === 0) throw new Error("C2 docked approval bar must remain above the composer");
   });
 
+  await step("7.4-A doctor: real fetchDoctor+fetchPsDetail; reap orphan + restart daemon reach backend", async () => {
+    await page.goto(`${BASE}/bnw/doctor`, { waitUntil: "domcontentloaded" });
+    // wired (not placeholder): the summary only renders once fetchDoctor + fetchPsDetail resolve
+    await page.waitForSelector('[data-doctor-summary]', { timeout: 8000 });
+    await page.waitForSelector('[data-doctor-findings]', { timeout: 8000 });
+    // seeded live daemon (record → this alive pid) → ps row with a restart control
+    await page.waitForSelector('[aria-label="restart daemon dev-mesh"]', { timeout: 8000 });
+    // seeded orphan socket → a reapable leak row in the recovery panel
+    await page.waitForSelector('[data-recovery] [data-leak]', { timeout: 8000 });
+    assert(await page.locator('[data-leak]').count() >= 1, "orphan leak row present before reap");
+    await sleep(120); await page.screenshot({ path: `${SHOTS}/bnw-doctor-desktop.png`, fullPage: true });
+
+    // reap all → POST /api/diagnostics/reap → orphan leak removed; the live daemon is never touched
+    const reapResp = page.waitForResponse((r) => r.url().includes("/api/diagnostics/reap") && r.request().method() === "POST", { timeout: 8000 });
+    await page.locator('[aria-label="reap all orphans"]').click();
+    await reapResp;
+    await page.waitForFunction(() => document.querySelectorAll("[data-leak]").length === 0, { timeout: 8000 });
+    assert(await page.locator('[aria-label="restart daemon dev-mesh"]').count() === 1, "live daemon survived the reap (reapLeaks skips live pids)");
+
+    // restart daemon → stop+start reach the manager (existing approved lifecycle APIs)
+    await page.locator('[aria-label="restart daemon dev-mesh"]').click();
+    await waitCall("stopMesh:dev-mesh");
+    await waitCall("startMesh:dev-mesh");
+  });
+
   await step("screenshots: overview / focus (C2 docked approval) / canvas / mobile overview", async () => {
     await page.setViewportSize({ width: 1440, height: 900 });
     // desktop overview
@@ -505,6 +539,9 @@ try {
     await page.goto(`${BASE}/bnw/assistant`, { waitUntil: "domcontentloaded" });
     await page.waitForSelector('[data-bnw-assistant="panel"]', { timeout: 8000 });
     await sleep(120); await page.screenshot({ path: `${SHOTS}/bnw-assistant-mobile.png`, fullPage: true });
+    await page.goto(`${BASE}/bnw/doctor`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-doctor-summary]', { timeout: 8000 });
+    await sleep(120); await page.screenshot({ path: `${SHOTS}/bnw-doctor-mobile.png`, fullPage: true });
   });
 
   if (errors.length) throw new Error(`page errors:\n${errors.join("\n")}`);
