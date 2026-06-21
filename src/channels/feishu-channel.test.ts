@@ -1,5 +1,6 @@
 import { test, expect } from "bun:test";
-import { FeishuChannel, type FeishuAuthStore } from "./feishu-channel";
+import { FeishuChannel, type FeishuAuthStore, type OutboundSink } from "./feishu-channel";
+import { CardSender } from "./card-sender";
 import type { MeshGateway, FeishuChannelConfig, InboundMsg, InboundImageDownloader } from "./types";
 import type { MeshEvent, PromptImageRef } from "../acp/types";
 import { emptyFeishuAuth, feishuAllowKey, isFeishuAllowed, type FeishuAuthFile } from "../auth-store";
@@ -763,46 +764,135 @@ test("streaming off (INV-2): tool UI suppressed, but events still consumed (dedu
   expect(s.commits()).toBe(1); // finalize still scheduled+fired (events were consumed, not dropped)
 });
 
-test("streaming off: a pure tool-only turn is silent but still finalizes (R4)", () => {
+test("streaming off: a pure tool-only turn — fallback SKIPS (no UI, no commit), idle finalizes (R4 + card-seal-regression)", () => {
   const s = setupStreaming({ outbound: { minIntervalMs: 0, toolDisplay: "off" } });
   s.mesh.emit("feishu-poc", toolCall("router", "call-1", "bash")); // no prose at all
   expect(s.commits()).toBe(0);
-  s.timers.advance(3000);
+  s.timers.advance(3000); // pure-tool-only fallback: no finalizable prose → SKIP (no commit)
   expect(s.updates).toEqual([]); // nothing to show
   expect(s.annotations.filter((a) => a !== undefined)).toEqual([]);
-  expect(s.commits()).toBe(1); // turn still sealed (buffer not carried into the next turn)
+  expect(s.commits()).toBe(0); // fallback did NOT seal a pure-tool-only off turn (events still consumed/deduped)
+  s.mesh.emit("feishu-poc", idle("router")); // real turn boundary finalizes (no-op card, but clears state)
+  expect(s.commits()).toBe(1);
 });
 
 // ── running tool group: accumulate across card boundaries, reset only on prose / real turn end ──
 // (live feedback fix: 6→3→1→1 fragments — consecutive tool batches with no prose must merge into one
 //  running count; the fallback-timer card seal alone must NOT restart the count.)
 
-test("collapsed: tool batches across a fallback finalize (no prose) accumulate into one running count", () => {
+test("collapsed: tool batches across fallback boundaries (prose lead) accumulate into one running count", () => {
   const s = setupStreaming();
-  s.mesh.emit("feishu-poc", chunk("router", "working"));
+  s.mesh.emit("feishu-poc", chunk("router", "working")); // prose lead → first fallback commits (lost-idle)
   s.mesh.emit("feishu-poc", toolCall("router", "c1", "a"));
   s.mesh.emit("feishu-poc", toolCall("router", "c2", "b"));
   s.mesh.emit("feishu-poc", toolCall("router", "c3", "c")); // batch 1: 3 tools
   expect(s.annotations.at(-1)).toBe("🔧 Called 3 tools");
-  s.timers.advance(3000); // fallback finalize seals the card — must NOT reset the running group
+  s.timers.advance(3000); // prose present → fallback seals — but must NOT reset the running group
   s.mesh.emit("feishu-poc", toolCall("router", "c4", "d")); // batch 2, no prose between
   s.mesh.emit("feishu-poc", toolCall("router", "c5", "e"));
   expect(s.annotations.at(-1)).toBe("🔧 Called 5 tools"); // accumulated, NOT reset to "Called 2 tools"
-  s.timers.advance(3000);
+  s.timers.advance(3000); // now pure-tool-only (prose committed) → this fallback SKIPS
   s.mesh.emit("feishu-poc", toolCall("router", "c6", "f")); // batch 3
   expect(s.annotations.at(-1)).toBe("🔧 Called 6 tools");
   expect(s.sealSegments()).toBe(0); // no prose appeared → never split into prose groups
 });
 
-test("inline: tool batches across a fallback finalize (no prose) merge names into one running list", () => {
+test("inline: tool batches across fallback boundaries (prose lead) merge names into one running list", () => {
   const s = setupStreaming({ outbound: { minIntervalMs: 0, toolDisplay: "inline" } });
   s.mesh.emit("feishu-poc", chunk("router", "working"));
   s.mesh.emit("feishu-poc", toolCall("router", "c1", "bash"));
   s.mesh.emit("feishu-poc", toolCall("router", "c2", "grep"));
   expect(s.annotations.at(-1)).toBe("🔧 Tools: bash · grep");
-  s.timers.advance(3000); // fallback finalize — the running name list survives
+  s.timers.advance(3000); // fallback (prose present) — the running name list survives
   s.mesh.emit("feishu-poc", toolCall("router", "c3", "ls")); // no prose between
   expect(s.annotations.at(-1)).toBe("🔧 Tools: bash · grep · ls");
+});
+
+test("PURE tool-only across MULTIPLE fallback fires: no commit until idle, count accumulates on ONE card (T1/T2)", () => {
+  const s = setupStreaming(); // no prose at all this turn
+  s.mesh.emit("feishu-poc", toolCall("router", "c1", "a"));
+  s.timers.advance(3000); // fallback #1 → SKIP (no finalizable prose)
+  expect(s.commits()).toBe(0);
+  s.mesh.emit("feishu-poc", toolCall("router", "c2", "b"));
+  s.timers.advance(3000); // fallback #2 → SKIP
+  expect(s.commits()).toBe(0);
+  s.mesh.emit("feishu-poc", toolCall("router", "c3", "c"));
+  s.timers.advance(3000); // fallback #3 → SKIP
+  expect(s.commits()).toBe(0); // INV-1 refined: pure-tool fallback never seals a new card
+  expect(s.annotations.at(-1)).toBe("🔧 Called 3 tools"); // accumulated in place
+  expect(s.sealSegments()).toBe(0);
+  s.mesh.emit("feishu-poc", idle("router")); // real boundary
+  expect(s.commits()).toBe(1); // exactly one commit, at idle
+});
+
+// ── T0 HARD GATE: real CardSender seam (not the fake sink) + injectable channel setTimer ─────────
+// The fake `streamingSink` doesn't model CardSender live-card reset / new create+send, so it could
+// not catch the real-machine bug. This drives a REAL CardSender via recording CardKit seams and
+// asserts the card identity directly: pure-tool fallback fires must NOT open new cards.
+function cardKitRecorder() {
+  const creates: { text: string }[] = [];
+  const sends: { cardId: string }[] = [];
+  const contents: { cardId: string; content: string }[] = [];
+  const finalizes: { cardId: string }[] = [];
+  let n = 0;
+  return {
+    creates, sends, contents, finalizes,
+    create: async (req: { text: string }) => { creates.push({ text: req.text }); return { ok: true, cardId: `card${++n}` }; },
+    send: async (req: { cardId: string }) => { sends.push({ cardId: req.cardId }); return { ok: true, messageId: `m_${req.cardId}` }; },
+    content: async (req: { cardId: string; content: string }) => { contents.push({ cardId: req.cardId, content: req.content }); return { ok: true }; },
+    finalize: async (req: { cardId: string }) => { finalizes.push({ cardId: req.cardId }); return { ok: true }; },
+  };
+}
+
+function setupRealCard() {
+  const mesh = new FakeMesh();
+  const timers = manualTimers();
+  const rec = cardKitRecorder();
+  let t = 0;
+  const fallback: OutboundSink = { enqueue() {}, stop() {} }; // CardKit never fails here, so unused
+  const sender = new CardSender({
+    chatId: "oc_1",
+    create: rec.create as never, send: rec.send as never, content: rec.content as never, finalize: rec.finalize as never,
+    fallback,
+    minEditIntervalMs: 0, minIntervalMs: 0, // no throttle: every annotation renders deterministically
+    now: () => (t += 1), wait: async () => {},
+  });
+  let pushInbound!: (m: InboundMsg) => void;
+  const ch = new FeishuChannel({
+    mesh, config: cfg(), sender,
+    makeConsumer: (onMessage) => { pushInbound = onMessage; return { start() {}, stop() {} }; },
+    setTimer: timers.setTimer,
+  });
+  ch.start();
+  return { ch, mesh, timers, sender, rec, push: (m: InboundMsg) => pushInbound(m) };
+}
+
+test("T0 (real CardSender): pure tools c1→fallback→c2→fallback→c3 stay on ONE card; 0 finalize before idle, 1 after", async () => {
+  const s = setupRealCard();
+  s.mesh.emit("feishu-poc", toolCall("router", "c1", "a"));
+  await s.sender.whenIdle();
+  s.timers.advance(3000); // fallback #1 → pure-tool-only → SKIP (no commit/new card)
+  s.mesh.emit("feishu-poc", toolCall("router", "c2", "b"));
+  await s.sender.whenIdle();
+  s.timers.advance(3000); // fallback #2 → SKIP
+  s.mesh.emit("feishu-poc", toolCall("router", "c3", "c"));
+  await s.sender.whenIdle();
+  // BEFORE idle: exactly ONE card/message; content updated in place Called 1→2→3; ZERO finalize.
+  expect(s.rec.sends.length).toBe(1); // one im.message.create = one "ding"
+  expect(s.rec.creates.length).toBe(1);
+  const cardId = s.rec.sends[0].cardId;
+  const shown = [s.rec.creates[0].text, ...s.rec.contents.map((c) => c.content)];
+  expect(shown[0]).toContain("🔧 Called 1 tool");
+  expect(shown.some((x) => x.includes("🔧 Called 2 tools"))).toBe(true);
+  expect(shown.at(-1)).toContain("🔧 Called 3 tools");
+  expect(s.rec.contents.every((c) => c.cardId === cardId)).toBe(true); // all in-place edits on the SAME card
+  expect(s.rec.finalizes.length).toBe(0); // 0 finalize before idle (fallbacks did not seal)
+  // real boundary → commit exactly once on the same card; no new card opened
+  s.mesh.emit("feishu-poc", idle("router"));
+  await s.sender.whenIdle();
+  expect(s.rec.finalizes.length).toBe(1);
+  expect(s.rec.finalizes[0].cardId).toBe(cardId);
+  expect(s.rec.sends.length).toBe(1); // still one message — idle didn't open a new card
 });
 
 test("collapsed: visible prose between tool batches starts a NEW group (count resets + card sealed)", () => {
@@ -850,16 +940,27 @@ test("streaming: idle within the window cancels the fallback timer (single commi
   expect(s.commits()).toBe(1);
 });
 
-test("streaming: a tool_call with no following text finalizes via the fallback timer (INV-1)", () => {
+test("streaming: prose + tool with no idle finalizes via the fallback timer (INV-1: lost-idle PROSE delivered)", () => {
   const s = setupStreaming();
-  s.mesh.emit("feishu-poc", chunk("router", "before"));
+  s.mesh.emit("feishu-poc", chunk("router", "before")); // visible prose → finalizableProseSinceCommit=true
   s.mesh.emit("feishu-poc", toolCall("router", "call-1", "bash"));
-  // no following text, no idle
+  // no further text, no idle
   expect(s.commits()).toBe(0);
   s.timers.advance(3000);
   expect(s.segments).toEqual([]); // INV-1: tool call did NOT open a new message
   expect(s.annotations).toContain("🔧 Called 1 tool"); // surfaced in-card
-  expect(s.commits()).toBe(1); // finalize still scheduled+fired — sealed, not carried into the next turn
+  expect(s.commits()).toBe(1); // prose present → lost-idle protection still seals via fallback
+});
+
+test("streaming: a PURE tool-only turn — fallback SKIPS, real boundary commits (card-seal-regression, INV-1 refined)", () => {
+  const s = setupStreaming();
+  s.mesh.emit("feishu-poc", toolCall("router", "call-1", "bash")); // NO prose at all → finalizableProseSinceCommit stays false
+  expect(s.commits()).toBe(0);
+  s.timers.advance(3000); // pure-tool-only fallback: no finalizable prose → SKIP (no commit, keep live card)
+  expect(s.commits()).toBe(0); // the real-machine fix: a pure-tool fallback no longer seals a new card
+  expect(s.annotations.at(-1)).toBe("🔧 Called 1 tool"); // annotation still live on the open card
+  s.mesh.emit("feishu-poc", idle("router")); // real turn boundary
+  expect(s.commits()).toBe(1); // committed exactly once, at the real boundary
 });
 
 test("streaming: a new router turn-start finalizes a residual previous turn", () => {
