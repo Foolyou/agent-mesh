@@ -130,6 +130,16 @@ mkdirSync(RUN_DIR, { recursive: true });
 await writeRecord(RUN_DIR, { name: "dev-mesh", pid: process.pid, socketPath: join(RUN_DIR, "dev-mesh.sock"), proto: 2, startedAt: new Date(Date.now() - 3_600_000).toISOString() });
 writeFileSync(join(RUN_DIR, "dev-mesh.sock"), "");
 writeFileSync(join(RUN_DIR, "old-mesh.sock"), ""); // orphan socket → a reapable leak
+// Seed the notification center (the gateway sync-loads <root>/notifications.json at construction)
+// so the snapshot carries 2 unread + 1 read for the topbar badge + page tests.
+const NOW = Date.now();
+writeFileSync(join(auth.authRoot, "notifications.json"), JSON.stringify({
+  version: 1, revision: 3, seq: 3, notifications: [
+    { id: "ntf-3", type: "harness-upgrade", severity: "warning", title: "codex 有更新 v1.2.3 → v1.2.5", body: "在 Harnesses 面板更新", createdAt: new Date(NOW - 120000).toISOString(), dedupKey: "harness-upgrade:codex:1.2.5", source: { surface: "harnesses" } },
+    { id: "ntf-2", type: "device-auth", severity: "info", title: "新设备申请授权", createdAt: new Date(NOW - 600000).toISOString(), dedupKey: "device-auth:dev-x", source: { surface: "settings", tab: "devices" } },
+    { id: "ntf-1", type: "system-alert", severity: "info", title: "auto-compact 已触发", createdAt: new Date(NOW - 3600000).toISOString(), readAt: new Date(NOW - 3500000).toISOString(), dedupKey: "system:compact" },
+  ],
+}));
 const gw = new WebGateway(fakeManager() as any, asstStub as any, { root: auth.authRoot });
 const handle = startWebServer({ gateway: gw, port: 0, dev: false }); // no HMR (prod-like serving)
 const BASE = handle.url;
@@ -371,6 +381,51 @@ try {
 
     // reset all theme/lang/pref keys so later steps + screenshots render the default theme.
     await page.evaluate(() => ["mesh.theme", "mesh.theme.custom", "mesh.theme.mode", "mesh.theme.accent", "mesh.lang", "mesh.bnw.defaultView", "mesh.bnw.defaultDevice"].forEach((k) => localStorage.removeItem(k)));
+  });
+
+  await step("7.4-C.2 notifications: topbar badge + list + mark-read/all + follow + synthetic frontend-update", async () => {
+    // topbar 🔔 badge reflects the real folded unread count (≥2 seeded unread; the earlier
+    // device-auth step legitimately adds more via its producer, so assert presence, not exact N).
+    await page.goto(`${BASE}/bnw/`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-bnw-surface="runtime"]', { timeout: 8000 });
+    await page.waitForSelector('[aria-label="未读通知"]', { timeout: 8000 });
+    assert((await page.locator('[aria-label="未读通知"]').textContent())?.trim() !== "0", "unread badge shows a non-zero count");
+
+    await page.goto(`${BASE}/bnw/notifications`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-notifications="center"]', { timeout: 8000 });
+    await page.waitForSelector('[data-notif-type="harness-upgrade"]', { timeout: 8000 });
+    if (await page.getByText("历史 / 已读").count() === 0) throw new Error("read item not split into history");
+    await page.waitForSelector('[aria-label="notification filters"]', { timeout: 8000 });
+    await sleep(120); await page.screenshot({ path: `${SHOTS}/bnw-notifications-desktop.png`, fullPage: true });
+
+    // mark-all gates on GLOBAL unread: filter to a category with no unread (system-alert = only the
+    // read auto-compact) — mark-all stays ENABLED because the server-global unread count is > 0.
+    await page.locator('[aria-label="filter system-alert"]').click();
+    await page.waitForFunction(() => !document.querySelector('[data-notif-type="harness-upgrade"]')); // category filtered
+    assert(!(await page.locator('[aria-label="mark all read"]').isDisabled()), "mark-all enabled despite filtered-empty unread (global unread > 0)");
+    await page.locator('[aria-label="filter all"]').click();
+    await page.waitForSelector('[data-notif-type="harness-upgrade"]', { timeout: 8000 });
+
+    // mark one read → POST → WS update folds → that item's mark-read control disappears + count drops
+    const readResp = page.waitForResponse((r) => /\/api\/notifications\/ntf-3\/read$/.test(r.url()) && r.request().method() === "POST", { timeout: 8000 });
+    await page.locator('[aria-label="mark read ntf-3"]').click();
+    await readResp;
+    await page.waitForFunction(() => !document.querySelector('[aria-label="mark read ntf-3"]')); // moved to history
+
+    // mark all read → POST → unread badge clears entirely
+    const allResp = page.waitForResponse((r) => /\/api\/notifications\/read-all$/.test(r.url()) && r.request().method() === "POST", { timeout: 8000 });
+    await page.locator('[aria-label="mark all read"]').click();
+    await allResp;
+    await page.waitForFunction(() => !document.querySelector('[aria-label="未读通知"]'));
+
+    // synthetic frontend-update: a snapshot with a changed appVersion flips getUpgrade() → ephemeral row
+    await page.evaluate(() => { const s = (window as any).__meshStore.getState(); (window as any).__meshStore.apply({ t: "snapshot", state: { ...s, appVersion: "frontend-test-next-build" } }); });
+    await page.waitForSelector('[data-notif-type="frontend-update"]', { timeout: 8000 });
+    await page.waitForSelector('[aria-label="reload for update"]', { timeout: 8000 });
+
+    // follow action resolves via structured source → /bnw route (SPA nav), never an external URL
+    await page.locator('[data-notif-type="harness-upgrade"] a', { hasText: "查看" }).first().click();
+    await page.waitForFunction(() => location.pathname === "/bnw/harnesses");
   });
 
   await step("7.1-C canvas: real edges + recent highlight + toolbar; add-edge/add-agent reach gateway", async () => {
@@ -751,6 +806,9 @@ try {
     await page.goto(`${BASE}/bnw/settings`, { waitUntil: "domcontentloaded" });
     await page.waitForSelector('[data-theme-matrix]', { timeout: 8000 });
     await sleep(120); await page.screenshot({ path: `${SHOTS}/bnw-settings-mobile.png`, fullPage: true });
+    await page.goto(`${BASE}/bnw/notifications`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-notifications="center"]', { timeout: 8000 });
+    await sleep(120); await page.screenshot({ path: `${SHOTS}/bnw-notifications-mobile.png`, fullPage: true });
   });
 
   if (errors.length) throw new Error(`page errors:\n${errors.join("\n")}`);

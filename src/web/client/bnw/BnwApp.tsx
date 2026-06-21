@@ -6,7 +6,7 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import { createStore, useStore, useConnected, type Store } from "../store";
 import {
-  Cluster, EmptyState, PanelFrame, RouteLink, Spinner,
+  Badge, Cluster, EmptyState, PanelFrame, RouteLink, Spinner,
   StatusListRow, type Status,
 } from "../ui/index";
 import type { MeshStatus } from "../../types";
@@ -21,6 +21,7 @@ import { BnwHarnesses } from "./harnesses";
 import { BnwChannels } from "./channels";
 import { BnwFileViewer } from "./file-viewer";
 import { BnwSettings } from "./settings";
+import { BnwNotifications } from "./notifications";
 import { loadDefaultView } from "./prefs";
 
 // Map the gateway MeshStatus → the C5 StatusChip vocabulary used by the component library.
@@ -135,6 +136,8 @@ export function BnwApp() {
   else if (route.k === "file") body = <BnwFileViewer route={route} />;
   // 7.4-B — Settings (appearance/language/prefs/devices via ?tab).
   else if (route.k === "settings") body = <BnwSettings route={route} />;
+  // 7.4-C.2 — Notifications center (real folded state + synthetic frontend-update row).
+  else if (route.k === "notifications") body = <BnwNotifications store={store} state={state} />;
   else body = <SurfacePlaceholder route={route} />;
 
   return (
@@ -154,8 +157,10 @@ export function BnwApp() {
           <ManageLink route={{ k: "doctor" }} label="Doctor" />
           <ManageLink route={{ k: "settings" }} label="设置" />
         </nav>
-        <RouteLink href={bnwHref({ k: "notifications" })} aria-label="通知" className="relative inline-flex items-center">
+        <RouteLink href={bnwHref({ k: "notifications" })} aria-label="通知" className="relative inline-flex items-center gap-1">
           <span aria-hidden="true">🔔</span>
+          {/* 7.4-C.2 — real unread count from the folded notifications snapshot/deltas */}
+          {(state.notifications?.unreadCount ?? 0) > 0 ? <Badge count={state.notifications!.unreadCount} max={99} tone="urgent" label="未读通知" /> : null}
         </RouteLink>
       </header>
 
