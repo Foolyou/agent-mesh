@@ -346,6 +346,7 @@ test("index skeleton · lists every surface with state/device deep links", () =>
   expect(out).toContain("09 · Settings");
   expect(out).toContain("10 · Notifications");
   expect(out).toContain("11 · File / Artifact viewer");
+  expect(out).toContain("12 · Device-auth 门禁");
   expect(out).toContain("surface=assistant"); // assistant deep links
   expect(out).toContain("surface=harnesses"); // harnesses deep links
   expect(out).toContain("surface=channels"); // channels deep links
@@ -353,6 +354,7 @@ test("index skeleton · lists every surface with state/device deep links", () =>
   expect(out).toContain("surface=settings"); // settings deep links
   expect(out).toContain("surface=notifications"); // notifications deep links
   expect(out).toContain("surface=artifact"); // artifact deep links
+  expect(out).toContain("surface=device-auth"); // device-auth deep links
   expect(out).toContain("runtime=canvas"); // a runtime补漏 deep link (& is HTML-escaped in href)
   expect(out).toContain("boardManage=1"); // board补漏 deep link
   expect(out).toContain("boardFs=1");
@@ -885,6 +887,63 @@ test("file-viewer · mobile: full-screen reader + tray", () => {
   expect(out).toContain('data-device="mobile"');
   expect(out).toContain('data-artifact="viewer"');
   expect(out).toContain("data-pending-tray");
+});
+
+// ── Device-auth gate (12) ────────────────────────────────────────────────────
+test("device-auth · permission (base): device code + host-CLI approve + poll + bootstrap + deep link", () => {
+  const out = renderAt("?surface=device-auth&state=permission&device=desktop");
+  expect(out).toContain('data-device-auth="gate"');
+  expect(out).toContain("data-device-code");
+  expect(out).toContain("WXYZ-1234"); // device code
+  expect(out).toContain("mesh approve"); // host-CLI approve (authoritative)
+  expect(out).toContain("等待宿主批准"); // polling base state
+  expect(out).toContain("data-bootstrap");
+  expect(out).toContain('aria-label="bootstrap token"'); // paste field
+  expect(out).toContain('aria-label="submit bootstrap token"');
+  expect(out).toContain("不写入 URL、不持久化"); // body-only, never persisted
+  expect(out).toContain("data-remembered");
+  expect(out).toContain("/mesh/dev-mesh/agent/codex-1"); // remembered deep link
+  expect(out).toContain("loopback 不受信"); // only allow path = approved device token
+});
+
+test("device-auth · loading=requesting code; error=expired+refresh; busy=submitting", () => {
+  expect(renderAt("?surface=device-auth&state=loading&device=desktop")).toContain("正在请求设备码");
+  const err = renderAt("?surface=device-auth&state=error&device=desktop");
+  expect(err).toContain("无效或已过期"); // generic, non-leaky
+  expect(err).toContain('aria-label="refresh device code"');
+  expect(err).toContain('role="alert"');
+  const busy = renderAt("?surface=device-auth&state=busy&device=desktop");
+  expect(busy).toContain("正在解析目标"); // resolving remembered target
+  expect(busy).toContain('aria-busy="true"'); // submit busy
+});
+
+test("device-auth · offline: service-unavailable (≠ not approved) + bootstrap disabled", () => {
+  const out = renderAt("?surface=device-auth&state=offline&device=desktop");
+  expect(out).toContain("服务不可用"); // distinct from "not approved"
+  expect(out).toContain('placeholder="粘贴宿主日志里的一次性令牌…" disabled=""'); // bootstrap field disabled offline
+  expect(out).toContain('aria-label="submit bootstrap token" disabled=""'); // submit disabled offline
+});
+
+test("device-auth · empty/populated render an N/A explanation (not a normal app frame)", () => {
+  const e = renderAt("?surface=device-auth&state=empty&device=desktop");
+  expect(e).toContain("data-device-auth-na");
+  expect(e).toContain("无 empty / populated 态");
+  expect(e.includes("data-device-code")).toBe(false); // no gate code on N/A
+  expect(renderAt("?surface=device-auth&state=populated&device=desktop")).toContain("data-device-auth-na");
+});
+
+test("device-auth · boundary: prominent/long code + long token + long remembered route", () => {
+  const out = renderAt("?surface=device-auth&state=boundary&device=desktop");
+  expect(out).toContain("WXYZ-1234-ABCD-5678-EFGH-9012"); // long prominent code
+  expect(out).toContain("release-candidate-2026-q3"); // long remembered route
+  expect(out).toContain("break-all"); // long-code/route wrapping
+});
+
+test("device-auth · mobile: single-card full-screen gate", () => {
+  const out = renderAt("?surface=device-auth&state=permission&device=mobile");
+  expect(out).toContain('data-device="mobile"');
+  expect(out).toContain('data-device-auth="gate"');
+  expect(out).toContain("WXYZ-1234");
 });
 
 test("mockup uses v2 semantic utilities and emits no raw-* class", () => {

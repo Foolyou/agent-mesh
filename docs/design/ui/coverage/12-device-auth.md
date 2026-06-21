@@ -37,3 +37,18 @@ host-CLI approve, web gate (`server.ts` `authorizeRequest`).
 - 2026-06-21 — created (Phase A commit 3). Sources: `../interaction/12-device-auth.md`;
   `device-auth.ts` (submitBootstrap/poll/phases), `auth-store`/`auth-codes`, host-CLI
   approve, web gate `server.ts` `authorizeRequest`.
+- 2026-06-21 — Phase B Step 2 mockup (`UiMockup.tsx`): the device-auth pre-auth gate built in
+  the guarded `/__ui-mockup` (`?surface=device-auth`) — a single full-screen centered card
+  (identical desktop/mobile, large tap targets). Shows the device code prominently + the
+  host-CLI approve instruction (`mesh approve <code>`, authoritative) + a poll/"等待批准"
+  status; a divider; a one-time bootstrap-token field + self-approve submit (body-only — note
+  "不写入 URL、不持久化"); the remembered deep link to return to after approval; and a security
+  footer ("唯一放行路径 = 已批准的设备令牌；loopback 不受信；/api/* 始终门禁"). States:
+  loading→requesting code, permission→pending base (poll), error→generic expired/rejected +
+  refresh-for-new-code (non-leaky), busy→submitting/resolving target, offline→"服务不可用"
+  (≠ not approved) + bootstrap disabled, boundary→prominent/long code + long token field +
+  long remembered route. empty/populated → explicit N/A explanation (no accidental app frame).
+  Aligns with device-auth/P1: approved device token only allow path, loopback not trusted,
+  host-CLI approve authoritative, bootstrap body-only, revoked/unknown/expired generic. No
+  additional [E] capability beyond the checklist found. Index (`?index=1`) gains the 12 row.
+  Fixture-only, true C5–C8, v2 tokens.

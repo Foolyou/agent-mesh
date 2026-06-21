@@ -721,6 +721,43 @@ try {
     });
   }
 
+  // ── Device-auth gate (12): assertions + state × device screenshots ──
+  await step("device-auth: base pending = device code + host-CLI approve + poll + bootstrap + deep link", async () => {
+    await page.goto(`${BASE}/__ui-mockup?surface=device-auth&state=permission&device=desktop`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-mockup="frame"][data-device-auth="gate"]', { timeout: 8000 });
+    for (const sel of ["[data-device-code]", "[data-bootstrap]", "[data-remembered]"]) {
+      if (await page.locator(sel).count() === 0) throw new Error(`device-auth section missing: ${sel}`);
+    }
+    if (await page.locator('[aria-label="bootstrap token"]').count() === 0) throw new Error("bootstrap field missing");
+    if (await page.locator('[aria-label="submit bootstrap token"]').count() === 0) throw new Error("bootstrap submit missing");
+    if (await page.getByText("mesh approve", { exact: false }).count() === 0) throw new Error("host-CLI approve instruction missing");
+    if (await page.getByText("loopback 不受信", { exact: false }).count() === 0) throw new Error("security footer missing");
+  });
+  await step("device-auth: error=expired+refresh; offline=service-unavailable+bootstrap disabled; empty=N/A", async () => {
+    await page.goto(`${BASE}/__ui-mockup?surface=device-auth&state=error&device=desktop`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-device-auth="gate"]', { timeout: 8000 });
+    if (await page.locator('[aria-label="refresh device code"]').count() === 0) throw new Error("expiry refresh missing");
+    await page.goto(`${BASE}/__ui-mockup?surface=device-auth&state=offline&device=desktop`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-device-auth="gate"]', { timeout: 8000 });
+    if (await page.getByText("服务不可用", { exact: false }).count() === 0) throw new Error("service-unavailable message missing");
+    if (await page.locator('[aria-label="bootstrap token"]:disabled').count() === 0) throw new Error("bootstrap must be disabled offline");
+    await page.goto(`${BASE}/__ui-mockup?surface=device-auth&state=empty&device=desktop`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-device-auth="gate"]', { timeout: 8000 });
+    if (await page.locator("[data-device-auth-na]").count() === 0) throw new Error("empty must render an N/A explanation");
+    if (await page.locator("[data-device-code]").count() !== 0) throw new Error("N/A must not render a real gate code");
+  });
+  const DEVAUTH_STATES = ["loading", "permission", "error", "busy", "offline", "boundary"];
+  for (const device of ["desktop", "mobile"]) {
+    for (const st of DEVAUTH_STATES) {
+      await step(`screenshot device-auth-${st}-${device}`, async () => {
+        await page.goto(`${BASE}/__ui-mockup?surface=device-auth&state=${st}&device=${device}&mode=dark-slate&accent=signal-teal`, { waitUntil: "domcontentloaded" });
+        await page.waitForSelector(`[data-mockup="frame"][data-device="${device}"][data-device-auth="gate"]`, { timeout: 8000 });
+        await sleep(130);
+        await shotFrame(`${SHOTS}/device-auth-${st}-${device}-dark-slate-signal-teal.png`);
+      });
+    }
+  }
+
   // ── shell (01) state × device screenshots (Phase B; default Dark·Slate × Signal Teal) ──
   const SHELL_STATES = ["empty", "loading", "populated", "error", "permission", "busy", "offline", "boundary"];
   for (const device of ["desktop", "mobile"]) {

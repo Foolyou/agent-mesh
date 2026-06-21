@@ -35,10 +35,12 @@
 //     [E] surfaces (harnesses/doctor/settings). NOT transcript / mesh-local mail.
 //   - File/artifact viewer (11-file-viewer.md): rendered markdown/code/image at an artifact
 //     route + back-to-conversation + image lightbox (?lb=1) + composer pending-image tray.
+//   - Device-auth gate (12-device-auth.md): pre-auth unauthorized landing — device code +
+//     host-CLI approve + poll + body-only bootstrap token + expiry retry + remembered deep link.
 //   - navigation index (?index=1): a directory of every surface + state/device deep links.
 //
 // Query deep links for deterministic screenshots: ?device=desktop|mobile,
-// ?surface=shell|runtime|board|new-mesh|assistant|harnesses|channels|doctor|settings|notifications|artifact, ?runtime=overview|focus|full|canvas,
+// ?surface=shell|runtime|board|new-mesh|assistant|harnesses|channels|doctor|settings|notifications|artifact|device-auth, ?runtime=overview|focus|full|canvas,
 // ?board=list|detail|kanban, ?state=<shell-state>, ?index=1, ?view=runtime|board,
 // ?mesh=<id>, ?mode=<mode>, ?accent=<accent>. No raw-* utilities (passes
 // `bun run lint:tokens`); all classes literal so Tailwind emits them.
@@ -60,7 +62,7 @@ const ACCENT_SET = new Set<Accent>(ACCENTS);
 
 type Device = "desktop" | "mobile";
 type View = "runtime" | "board";
-type Surface = "shell" | "runtime" | "board" | "new-mesh" | "assistant" | "harnesses" | "channels" | "doctor" | "settings" | "notifications" | "artifact";
+type Surface = "shell" | "runtime" | "board" | "new-mesh" | "assistant" | "harnesses" | "channels" | "doctor" | "settings" | "notifications" | "artifact" | "device-auth";
 // overview/focus = the two in-shell runtime states; full/canvas = desktop-only standalone
 // frames (session fullscreen / zoomable topology canvas) reached from the focus / overview.
 type RuntimeState = "overview" | "focus" | "full" | "canvas";
@@ -245,7 +247,7 @@ function readSel(): Sel {
   const a = p.get("accent");
   const mesh = p.get("mesh");
   const sfc = p.get("surface");
-  const surface: Surface = sfc === "runtime" ? "runtime" : sfc === "board" ? "board" : sfc === "new-mesh" ? "new-mesh" : sfc === "assistant" ? "assistant" : sfc === "harnesses" ? "harnesses" : sfc === "channels" ? "channels" : sfc === "doctor" ? "doctor" : sfc === "settings" ? "settings" : sfc === "notifications" ? "notifications" : sfc === "artifact" ? "artifact" : "shell";
+  const surface: Surface = sfc === "runtime" ? "runtime" : sfc === "board" ? "board" : sfc === "new-mesh" ? "new-mesh" : sfc === "assistant" ? "assistant" : sfc === "harnesses" ? "harnesses" : sfc === "channels" ? "channels" : sfc === "doctor" ? "doctor" : sfc === "settings" ? "settings" : sfc === "notifications" ? "notifications" : sfc === "artifact" ? "artifact" : sfc === "device-auth" ? "device-auth" : "shell";
   const bs = p.get("board");
   const rt = p.get("runtime") as RuntimeState | null;
   const st = p.get("state") as ShellState | null;
@@ -2167,6 +2169,83 @@ function FileViewerFrame({ state, device, lb, lbHref, exitLbHref, backHref }: { 
   );
 }
 
+// ── Device-auth (12) — pre-auth unauthorized gate (single full-screen card) ─────────
+// Mirrors device-auth.ts: device-code request + poll loop, phases pending/approved/revoked/
+// unknown, submitBootstrap (body-only, never URL/persisted). Only allow path = an approved
+// device token; loopback not trusted; host-CLI approve is authoritative; revoked/unknown/
+// expired messages stay generic + non-leaky. Replaces the whole app while unauthorized.
+const DEVICE_CODE = "WXYZ-1234";
+const DEVICE_CODE_LONG = "WXYZ-1234-ABCD-5678-EFGH-9012";
+const REMEMBERED_ROUTE = "/mesh/dev-mesh/agent/codex-1";
+const REMEMBERED_ROUTE_LONG = "/mesh/release-candidate-2026-q3/agent/a-very-long-agent-id/artifact/reports/deep/nested/gate-summary.md";
+
+function DeviceAuthFrame({ state, device }: { state: ShellState; device: Device }) {
+  const mobile = device === "mobile";
+  const na = state === "empty" || state === "populated"; // gate has no empty/populated
+  const requesting = state === "loading";
+  const expired = state === "error";
+  const submitting = state === "busy";
+  const offline = state === "offline";
+  const boundary = state === "boundary";
+  const code = boundary ? DEVICE_CODE_LONG : DEVICE_CODE;
+  const route = boundary ? REMEMBERED_ROUTE_LONG : REMEMBERED_ROUTE;
+  const bootstrapDisabled = offline || requesting;
+  return (
+    <div data-mockup="frame" data-device={device} data-device-auth="gate"
+      className={`flex ${mobile ? "h-[760px] w-[390px] rounded-[28px]" : "h-[700px] w-[1280px] rounded-xl"} max-w-full flex-col items-center justify-center overflow-auto border border-border bg-surface p-6 text-text-primary shadow-sm`}>
+      <div className={`flex w-full flex-col gap-4 rounded-2xl border border-border bg-surface-raised p-6 ${mobile ? "" : "max-w-[460px]"}`}>
+        <div className="flex flex-col items-center gap-1 text-center">
+          <Brand />
+          <h1 className="text-lg font-semibold">设备授权</h1>
+          <p className="text-xs text-text-muted">此设备尚未授权 — 授权后才能访问控制台。</p>
+        </div>
+
+        {na ? (
+          <p data-device-auth-na className="text-sm text-text-muted">此页是未授权门禁，无 empty / populated 态（N/A）。授权成功即跳转到记住的深链。</p>
+        ) : requesting ? (
+          <div className="flex items-center justify-center gap-2 py-6 text-sm text-text-secondary"><Spinner size={16} label="requesting code" /> 正在请求设备码…</div>
+        ) : (
+          <>
+            {offline ? <div role="status" className="flex items-center gap-2 rounded-lg bg-warning-subtle px-3 py-2 text-xs text-warning"><Spinner size={12} label="reconnecting" /> 服务不可用 — 与"未批准"不同；连接恢复后重试。</div> : null}
+            {expired ? <div role="alert" className="rounded-lg bg-danger-subtle px-3 py-2 text-xs text-danger">设备码 / 令牌无效或已过期。请刷新获取新码。</div> : null}
+
+            {/* device code — operator approves via host CLI (authoritative) */}
+            <div className="flex flex-col items-center gap-1">
+              <span className="text-xs uppercase tracking-wider text-text-muted">设备码</span>
+              <code data-device-code className={`rounded-lg border border-border-strong bg-surface-sunken px-4 py-2 font-mono font-semibold tracking-widest text-text-primary ${boundary ? "text-base break-all" : "text-2xl"} ${offline ? "opacity-50" : ""}`}>{code}</code>
+              <span className="text-center text-xs text-text-muted">在宿主终端运行 <code className="font-mono text-text-secondary">mesh approve {code}</code> 批准本设备。</span>
+            </div>
+
+            {/* poll status */}
+            <div className="flex items-center justify-center gap-2 text-xs text-text-secondary">
+              {submitting ? <><Spinner size={12} label="resolving" /> 正在解析目标…</>
+                : offline ? <span className="text-text-muted">轮询暂停（离线）。</span>
+                : expired ? <Button size="sm" variant="primary" aria-label="refresh device code">刷新获取新码</Button>
+                : <><Spinner size={12} label="polling" /> 等待宿主批准…（每 3s 轮询）</>}
+            </div>
+
+            <div className="flex items-center gap-2 text-xs text-text-muted"><span className="h-px flex-1 bg-border" aria-hidden="true" />或<span className="h-px flex-1 bg-border" aria-hidden="true" /></div>
+
+            {/* bootstrap token — body-only, never URL/persisted */}
+            <div data-bootstrap className="flex flex-col gap-1.5">
+              <label className="text-xs uppercase tracking-wider text-text-muted">一次性 bootstrap 令牌（自助批准）</label>
+              <Input aria-label="bootstrap token" placeholder="粘贴宿主日志里的一次性令牌…" disabled={bootstrapDisabled} className={`w-full font-mono ${boundary ? "" : ""}`} defaultValue={boundary ? "bootstrap_3f9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f" : ""} />
+              <span className="text-xs text-text-muted">令牌仅随本次请求提交 — 不写入 URL、不持久化。</span>
+              <Button variant="primary" disabled={bootstrapDisabled} busy={submitting} aria-label="submit bootstrap token" className="w-full">{submitting ? "提交中…" : "自助批准本设备"}</Button>
+            </div>
+
+            {/* remembered deep link + security footer */}
+            <div data-remembered className="rounded-lg border border-border bg-surface-sunken px-3 py-2 text-xs text-text-muted">
+              批准后将返回：<code className="break-all font-mono text-text-secondary">{route}</code>
+            </div>
+            <p className="text-center text-[11px] text-text-muted">唯一放行路径 = 已批准的设备令牌；loopback 不受信，<code className="font-mono">/api/*</code> 始终门禁。</p>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── new-mesh builder (04) fixtures + frame ───────────────────────────────────────
 interface AgentRow { id: string; harness: string; project: string; role: "router" | "member"; model?: string; effort?: string; lazy?: boolean; opencodePermission?: "ask" | "allow"; instructions?: string }
 const HARNESSES = ["claude", "codex", "opencode", "kimi"];
@@ -2667,6 +2746,9 @@ const INDEX_SECTIONS: { title: string; note: string; rows: IndexRow[] }[] = [
     { label: "viewer", base: "surface=artifact", states: SHELL_STATES, mobile: true },
     { label: "viewer · lightbox", base: "surface=artifact&lb=1", states: ["populated", "boundary", "offline"], mobile: true },
   ] },
+  { title: "12 · Device-auth 门禁", note: "未授权落地：设备码+宿主CLI批准 · 轮询 · bootstrap 令牌(仅body) · 过期重试 · 批准后回深链", rows: [
+    { label: "gate", base: "surface=device-auth", states: ["loading", "permission", "error", "busy", "offline", "boundary"], mobile: true },
+  ] },
 ];
 
 function MockupIndex({ backHref }: { backHref: string }) {
@@ -2816,7 +2898,7 @@ export function UiMockup() {
     <div data-mockup="root" className="min-h-screen bg-surface text-text-primary font-sans p-6">
       {/* mockup tool chrome (outside the mocked app frame) */}
       <header className="mb-5">
-        <h1 className="mb-1 text-xl font-semibold">Agent Mesh — 终稿 mockup（{index ? "导航索引" : surface === "runtime" ? `运行态 A · ${runtime}` : surface === "board" ? "看板 C" : surface === "new-mesh" ? "新建 mesh" : surface === "assistant" ? "Mesh Assistant B" : surface === "harnesses" ? "Harnesses" : surface === "channels" ? "Channels" : surface === "doctor" ? "Doctor / 系统" : surface === "settings" ? "Settings" : surface === "notifications" ? "Notifications" : surface === "artifact" ? "File / Artifact" : "应用外壳"}{index ? "" : ` · ${state} · ${device === "mobile" ? "移动" : "桌面"}`}）</h1>
+        <h1 className="mb-1 text-xl font-semibold">Agent Mesh — 终稿 mockup（{index ? "导航索引" : surface === "runtime" ? `运行态 A · ${runtime}` : surface === "board" ? "看板 C" : surface === "new-mesh" ? "新建 mesh" : surface === "assistant" ? "Mesh Assistant B" : surface === "harnesses" ? "Harnesses" : surface === "channels" ? "Channels" : surface === "doctor" ? "Doctor / 系统" : surface === "settings" ? "Settings" : surface === "notifications" ? "Notifications" : surface === "artifact" ? "File / Artifact" : surface === "device-auth" ? "Device-auth gate" : "应用外壳"}{index ? "" : ` · ${state} · ${device === "mobile" ? "移动" : "桌面"}`}）</h1>
         <p className="mb-3 text-xs text-text-muted">真实 C5–C7 组件 + v2 compose 运行时 · fixture 数据 · 不连后端。Live: <code className="text-syntax-string">MESH_UI_PREVIEW=1 … /__ui-mockup</code></p>
         <div className="mb-3">
           <SegmentedControl ariaLabel="View mode" value={index ? "index" : "mockup"} onChange={(v) => nav({ index: v === "index" })} options={[{ value: "mockup", label: "Mockup" }, { value: "index", label: "▤ 索引" }]} size="sm" />
@@ -2836,7 +2918,7 @@ export function UiMockup() {
           </div>
           <div>
             <div className="mb-1.5 text-xs uppercase tracking-wider text-text-muted">Surface</div>
-            <SegmentedControl ariaLabel="Surface" value={surface} onChange={(s) => { const next = s as Surface; nav({ surface: next }); if (next === "board") setMobileTab("board"); else if (next === "runtime") setMobileTab("runtime"); }} options={[{ value: "shell", label: "外壳" }, { value: "runtime", label: "运行态 A" }, { value: "board", label: "看板 C" }, { value: "assistant", label: "助手 B" }, { value: "harnesses", label: "Harness" }, { value: "channels", label: "渠道" }, { value: "doctor", label: "Doctor" }, { value: "settings", label: "设置" }, { value: "notifications", label: "通知" }, { value: "artifact", label: "产物" }, { value: "new-mesh", label: "新建" }]} size="sm" />
+            <SegmentedControl ariaLabel="Surface" value={surface} onChange={(s) => { const next = s as Surface; nav({ surface: next }); if (next === "board") setMobileTab("board"); else if (next === "runtime") setMobileTab("runtime"); }} options={[{ value: "shell", label: "外壳" }, { value: "runtime", label: "运行态 A" }, { value: "board", label: "看板 C" }, { value: "assistant", label: "助手 B" }, { value: "harnesses", label: "Harness" }, { value: "channels", label: "渠道" }, { value: "doctor", label: "Doctor" }, { value: "settings", label: "设置" }, { value: "notifications", label: "通知" }, { value: "artifact", label: "产物" }, { value: "device-auth", label: "鉴权" }, { value: "new-mesh", label: "新建" }]} size="sm" />
           </div>
           {surface === "runtime" ? (
             <div>
@@ -2866,7 +2948,7 @@ export function UiMockup() {
               />
             </div>
           ) : null}
-          {surface === "shell" || surface === "runtime" || surface === "board" || surface === "new-mesh" || surface === "assistant" || surface === "harnesses" || surface === "channels" || surface === "doctor" || surface === "settings" || surface === "notifications" || surface === "artifact" ? (
+          {surface === "shell" || surface === "runtime" || surface === "board" || surface === "new-mesh" || surface === "assistant" || surface === "harnesses" || surface === "channels" || surface === "doctor" || surface === "settings" || surface === "notifications" || surface === "artifact" || surface === "device-auth" ? (
             <div>
               <div className="mb-1.5 text-xs uppercase tracking-wider text-text-muted">State</div>
               <SegmentedControl
@@ -2918,6 +3000,8 @@ export function UiMockup() {
           ? <NotificationsFrame state={state} device={device} mode={mode} accent={accent} />
           : surface === "artifact"
           ? <FileViewerFrame state={state} device={device} lb={lb} lbHref={artifactLbHref} exitLbHref={artifactExitLbHref} backHref={artifactBackHref} />
+          : surface === "device-auth"
+          ? <DeviceAuthFrame state={state} device={device} />
           : surface === "new-mesh"
           ? <NewMeshFrame state={state} device={device} nmEditor={nmEditor} />
           : surface === "runtime" && device === "desktop" && runtime === "full"
