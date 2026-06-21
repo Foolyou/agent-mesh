@@ -968,3 +968,47 @@ test("distinct publishes (distinct ts) yield distinct attachment cards", () => {
   const items = transcriptItems(gw, "codex-1");
   expect(items.filter((it: any) => it.kind === "attachment")).toHaveLength(2);
 });
+
+// ── Step 7.4-C — notification center (in-memory; no root) ─────────────────────────
+test("emitNotification broadcasts notification.add + folds into the snapshot", async () => {
+  const m = fakeManager();
+  const gw = new WebGateway(m as any);
+  const seen: any[] = [];
+  const unsub = gw.subscribe((msg) => seen.push(msg));
+  await gw.emitNotification({ type: "system-alert", severity: "warning", title: "auto-compact", dedupKey: "system:compact:demo" });
+  const add = seen.find((x) => x.t === "notification.add");
+  expect(add).toBeTruthy();
+  expect(add.item.title).toBe("auto-compact");
+  expect(add.unreadCount).toBe(1);
+  expect(gw.snapshot().notifications?.items[0].title).toBe("auto-compact");
+  expect(gw.snapshot().notifications?.unreadCount).toBe(1);
+  unsub();
+});
+
+test("emitNotification dedup: same key idempotent → no second add, no re-nag", async () => {
+  const m = fakeManager();
+  const gw = new WebGateway(m as any);
+  await gw.emitNotification({ type: "harness-upgrade", title: "codex v1.2.5", dedupKey: "harness-upgrade:codex:1.2.5" });
+  await gw.markAllNotificationsRead();
+  const seen: any[] = [];
+  const unsub = gw.subscribe((msg) => seen.push(msg));
+  await gw.emitNotification({ type: "harness-upgrade", title: "codex v1.2.5", dedupKey: "harness-upgrade:codex:1.2.5" });
+  expect(seen.some((x) => x.t === "notification.add")).toBe(false); // idempotent — no duplicate, no re-surface
+  expect(gw.snapshot().notifications?.unreadCount).toBe(0);
+  unsub();
+});
+
+test("markNotificationRead broadcasts notification.update; markAll → unread 0", async () => {
+  const m = fakeManager();
+  const gw = new WebGateway(m as any);
+  await gw.emitNotification({ type: "device-auth", title: "new device", dedupKey: "device-auth:dev-x" });
+  const id = gw.listNotifications().items[0].id;
+  const seen: any[] = [];
+  const unsub = gw.subscribe((msg) => seen.push(msg));
+  await gw.markNotificationRead(id);
+  const upd = seen.find((x) => x.t === "notification.update");
+  expect(upd?.id).toBe(id);
+  expect(upd?.patch.readAt).toBeTruthy();
+  expect(upd?.unreadCount).toBe(0);
+  unsub();
+});

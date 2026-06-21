@@ -337,4 +337,7 @@ test("isPreAuthApiPath matches only the device-auth endpoints", () => {
   // nor invoke the reap recovery action.
   for (const p of ["/api/diagnostics/ps", "/api/diagnostics/doctor", "/api/diagnostics/reap"])
     expect(isPreAuthApiPath(p)).toBe(false);
+  // Notification center MUST be gated too (an unapproved device must never read/mutate notifications).
+  for (const p of ["/api/notifications", "/api/notifications/read-all", "/api/notifications/ntf-1/read", "/api/notifications/cleanup"])
+    expect(isPreAuthApiPath(p)).toBe(false);
 });

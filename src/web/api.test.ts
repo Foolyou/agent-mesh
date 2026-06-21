@@ -1045,3 +1045,62 @@ test("POST /api/diagnostics/reap fails with 500 when no diagnostics root is conf
   const gw = new WebGateway(fakeManager() as any);
   expect((await handleApi(gw, "POST", "/api/diagnostics/reap", {}, new URLSearchParams(), undefined, undefined, undefined, sameOriginCtx())).status).toBe(500);
 });
+
+// ── Step 7.4-C — notification center REST + producers ─────────────────────────────
+test("GET /api/notifications: empty store → empty page", async () => {
+  const gw = new WebGateway(fakeManager() as any);
+  const r = await handleApi(gw, "GET", "/api/notifications", undefined);
+  expect(r.status).toBe(200);
+  expect(r.body).toEqual({ items: [], unreadCount: 0, revision: 0, nextCursor: null });
+});
+
+test("notifications POST routes require same-origin (CSRF)", async () => {
+  const gw = new WebGateway(fakeManager() as any);
+  const evil = { headers: new Headers({ origin: "http://evil.test" }), expectedOrigin: SAME_ORIGIN };
+  for (const path of ["/api/notifications/read-all", "/api/notifications/cleanup", "/api/notifications/ntf-1/read"]) {
+    const r = await handleApi(gw, "POST", path, {}, new URLSearchParams(), undefined, undefined, undefined, evil);
+    expect(r.status).toBe(403);
+  }
+});
+
+test("producer: GET /api/harnesses emits a harness-upgrade notification for outdated rows", async () => {
+  const gw = new WebGateway(fakeManager() as any);
+  const probe = (async () => [
+    { id: "codex", label: "Codex", installed: true, version: "1.2.3", latest: "1.2.5", outdated: true, auth: "ok", installable: "npm", lastProbeAt: 0, runningAgentsUsingOldVersion: [] },
+    { id: "claude", label: "Claude", installed: true, version: "1.4.2", latest: "1.4.2", outdated: false, auth: "ok", installable: "npm", lastProbeAt: 0, runningAgentsUsingOldVersion: [] },
+  ]) as any;
+  await handleApi(gw, "GET", "/api/harnesses", undefined, new URLSearchParams(), probe);
+  const list = gw.listNotifications();
+  expect(list.items.length).toBe(1);
+  expect(list.items[0].type).toBe("harness-upgrade");
+  expect(list.items[0].dedupKey).toBe("harness-upgrade:codex:1.2.5");
+  // idempotent: a second probe of the same versions does not duplicate or grow unread
+  await handleApi(gw, "GET", "/api/harnesses", undefined, new URLSearchParams(), probe);
+  expect(gw.listNotifications().items.length).toBe(1);
+});
+
+test("producer: POST /api/auth/device/start emits a device-auth notification (informational)", async () => {
+  const root = await mkdtemp(join(tmpdir(), "api-notif-dev-"));
+  try {
+    const gw = new WebGateway(fakeManager() as any);
+    const r = await handleApi(gw, "POST", "/api/auth/device/start", undefined, new URLSearchParams(), undefined, undefined, undefined, { root });
+    expect(r.status).toBe(200);
+    const list = gw.listNotifications();
+    expect(list.items.some((n) => n.type === "device-auth" && n.dedupKey === `device-auth:${r.body.deviceId}`)).toBe(true);
+    // source is a structured /bnw target (never an arbitrary URL)
+    expect(list.items.find((n) => n.type === "device-auth")?.source).toEqual({ surface: "settings", tab: "devices" });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("notifications mark-read flow: list → mark one read → unread drops", async () => {
+  const gw = new WebGateway(fakeManager() as any);
+  await gw.emitNotification({ type: "system-alert", title: "alert", dedupKey: "k1" });
+  const id = gw.listNotifications().items[0].id;
+  const read = await handleApi(gw, "POST", `/api/notifications/${id}/read`, {}, new URLSearchParams(), undefined, undefined, undefined, sameOriginCtx());
+  expect(read.status).toBe(200);
+  expect(read.body.unreadCount).toBe(0);
+  const all = await handleApi(gw, "POST", "/api/notifications/read-all", {}, new URLSearchParams(), undefined, undefined, undefined, sameOriginCtx());
+  expect(all.status).toBe(200);
+});
