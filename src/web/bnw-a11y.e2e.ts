@@ -120,40 +120,39 @@ async function crawl(page: Page, label: string) {
   if (offenders.length) throw new Error(`${label}: ${offenders.length} below AA (scanned ${scanned}): ` + offenders.slice(0, 6).map((o) => `<${o.tag}.${o.cls}> "${o.text}"=${o.ratio} need ${o.need}${o.disabled ? " [disabled]" : ""}`).join(" · "));
 }
 
-try {
-  const ctx = await authedContext(browser, auth.token, { viewport: { width: 1440, height: 900 } });
-  const page = await ctx.newPage();
-  // The harness probe is host-dependent; stub it so /bnw/harnesses paints deterministic rows
-  // (ok / outdated+auth / self-install + old-version agent) for the contrast crawl.
+// 7.5-A — the host-dependent backends are stubbed per page so every surface paints
+// deterministic content for the contrast crawl (shared by the desktop + mobile passes).
+async function setupStubs(page: Page) {
   await page.route("**/api/harnesses", (r) => r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([
     { id: "claude", label: "Claude", installed: true, version: "1.4.2", toolVersion: "0.141.0", latest: "1.4.2", outdated: false, auth: "ok", installable: "npm", lastProbeAt: 0, runningAgentsUsingOldVersion: [] },
     { id: "codex", label: "Codex", installed: true, version: "1.2.3", toolVersion: "0.140.0", latest: "1.2.5", outdated: true, auth: "required", installable: "npm", lastProbeAt: 0, runningAgentsUsingOldVersion: ["demo/codex-1"] },
     { id: "opencode", label: "OpenCode", installed: false, auth: "unknown", installable: "self", installHint: { command: "npm i -g opencode", docsUrl: "https://opencode.example/docs" }, lastProbeAt: 0, runningAgentsUsingOldVersion: [] },
     { id: "kimi", label: "Kimi", installed: true, auth: "unknown", installable: "self", installHint: { command: "npm i -g @moonshot/kimi", docsUrl: "https://kimi.example/docs" }, lastProbeAt: 0, runningAgentsUsingOldVersion: [] },
   ]) }));
-  // Feishu channel is absent in the fake gateway → stub status so /bnw/channels paints a running
-  // channel with a binding (auth-admin sections are static placeholders) for the contrast crawl.
   await page.route("**/api/channels/feishu/status", (r) => r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ state: "running", configPath: "channels/feishu.json", configured: true, enabled: true, appId: "cli_demo", domain: "feishu", bindings: [{ mesh: "demo", chatId: "oc_demo123", name: "demo 群", source: "auto", requireMention: true }], updatedAt: "" }) }));
-  // file-viewer: stub a markdown artifact so /bnw/.../file/report.md paints rendered content.
   await page.route("**/api/agents/router/files/report.md", (r) => r.fulfill({ status: 200, contentType: "text/markdown", body: "# Gate summary\n\nThe device-auth gate is ready for review.\n" }));
-  await page.goto(`${BASE}/bnw/`, { waitUntil: "domcontentloaded" }); // establish origin for localStorage
+}
 
-  // A separate UNAUTHENTICATED page (no device token) so the /bnw device-auth gate (mockup 12)
-  // renders for the contrast crawl — the gate replaces the console until a device is approved.
-  const anonCtx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
-  const anonPage = await anonCtx.newPage();
-  await anonPage.goto(`${BASE}/bnw/`, { waitUntil: "domcontentloaded" });
-
+// Run the 9 mode×accent combos at the page's current viewport. `mobile` adds a 更多-overlay
+// crawl (the management list is mobile-only). Combo failures are suffixed with the viewport.
+async function runCombos(page: Page, anonPage: Page, viewport: "desktop" | "mobile") {
   for (const mode of MODES) {
     for (const accent of ACCENTS) {
-      const combo = `${mode} × ${accent}`;
+      const combo = `${mode} × ${accent} [${viewport}]`;
       try {
-        // persist the v2 composition + clear any legacy theme so initTheme applies compose()
         await page.evaluate(([m, a]) => { localStorage.setItem("mesh.theme.mode", m); localStorage.setItem("mesh.theme.accent", a); localStorage.removeItem("mesh.theme"); }, [mode, accent]);
         // overview (real snapshot agents)
         await page.goto(`${BASE}/bnw/mesh/demo`, { waitUntil: "domcontentloaded" });
         await page.waitForSelector('[data-bnw-agents]', { timeout: 8000 });
         await sleep(60); await crawl(page, `${combo} · overview`);
+        // mobile: the bottom tab bar + 更多 management overlay (mockup 01 mobile shell)
+        if (viewport === "mobile") {
+          await page.waitForSelector('[data-bnw-bottomtabs]', { timeout: 8000 });
+          await page.locator('[data-bnw-more-toggle]').click();
+          await page.waitForSelector('[data-bnw-more]', { timeout: 8000 });
+          await sleep(60); await crawl(page, `${combo} · more-overlay`);
+          await page.locator('[aria-label="关闭更多"]').click();
+        }
         // board list (real readBoard fetch)
         await page.goto(`${BASE}/bnw/mesh/demo/board`, { waitUntil: "domcontentloaded" });
         await page.waitForSelector('[data-bnw-board-list]', { timeout: 8000 });
@@ -184,15 +183,15 @@ try {
         await sleep(60); await crawl(page, `${combo} · assistant`);
         // 7.4-A — doctor (summary + findings + daemon table + recovery/leak rows)
         await page.goto(`${BASE}/bnw/doctor`, { waitUntil: "domcontentloaded" });
-        await page.waitForSelector('[data-recovery] [data-leak]', { timeout: 8000 });
+        await page.waitForSelector('[data-doctor="panel"]', { timeout: 8000 });
         await sleep(60); await crawl(page, `${combo} · doctor`);
         // 7.4-A.2a — harnesses (rows + status/auth chips + self-install guide + old-version agents)
         await page.goto(`${BASE}/bnw/harnesses`, { waitUntil: "domcontentloaded" });
         await page.waitForSelector('[data-old-agents] [data-old-agent]', { timeout: 8000 });
         await sleep(60); await crawl(page, `${combo} · harnesses`);
-        // 7.4-A.2b-i — channels (status + bindings + auth-admin placeholders)
+        // 7.4-A.2b-i — channels (desktop: bindings registry; mobile: bindings deferred → status card)
         await page.goto(`${BASE}/bnw/channels`, { waitUntil: "domcontentloaded" });
-        await page.waitForSelector('[data-bindings] [data-binding]', { timeout: 8000 });
+        await page.waitForSelector(viewport === "mobile" ? '[data-channel-status]' : '[data-bindings] [data-binding]', { timeout: 8000 });
         await sleep(60); await crawl(page, `${combo} · channels`);
         // 7.4-A.2b-ii — file/artifact viewer (rendered markdown + header/back)
         await page.goto(`${BASE}/bnw/mesh/demo/agent/router/file/report.md`, { waitUntil: "domcontentloaded" });
@@ -217,8 +216,36 @@ try {
       }
     }
   }
-  if (fails.length) throw new Error(`/bnw a11y failed in ${fails.length}/9 combos: ${fails.join(", ")}`);
-  console.log(`BNW A11Y OK — /bnw × 9 mode×accent combos all ≥ AA (${pass}/9)`);
+}
+
+try {
+  // ── desktop pass (1440×900) ──────────────────────────────────────────────────
+  const ctx = await authedContext(browser, auth.token, { viewport: { width: 1440, height: 900 } });
+  const page = await ctx.newPage();
+  await setupStubs(page);
+  await page.goto(`${BASE}/bnw/`, { waitUntil: "domcontentloaded" }); // establish origin for localStorage
+  // A separate UNAUTHENTICATED page (no device token) so the /bnw device-auth gate (mockup 12)
+  // renders for the contrast crawl — the gate replaces the console until a device is approved.
+  const anonCtx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const anonPage = await anonCtx.newPage();
+  await anonPage.goto(`${BASE}/bnw/`, { waitUntil: "domcontentloaded" });
+  console.log("desktop /bnw × 9:");
+  await runCombos(page, anonPage, "desktop");
+
+  // ── mobile pass (390×844) — 7.5-A: same crawl at the mobile breakpoint so the
+  // bottom-tab shell + 更多 overlay + stacked surface layouts all clear WCAG AA ────
+  const mctx = await authedContext(browser, auth.token, { viewport: { width: 390, height: 844 } });
+  const mpage = await mctx.newPage();
+  await setupStubs(mpage);
+  await mpage.goto(`${BASE}/bnw/`, { waitUntil: "domcontentloaded" });
+  const manonCtx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const manonPage = await manonCtx.newPage();
+  await manonPage.goto(`${BASE}/bnw/`, { waitUntil: "domcontentloaded" });
+  console.log("mobile /bnw × 9:");
+  await runCombos(mpage, manonPage, "mobile");
+
+  if (fails.length) throw new Error(`/bnw a11y failed in ${fails.length}/18 combos: ${fails.join(", ")}`);
+  console.log(`BNW A11Y OK — /bnw × 9 mode×accent combos all ≥ AA, desktop + mobile (${pass}/18)`);
 } finally {
   await browser.close();
   handle.stop();

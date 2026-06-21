@@ -3,14 +3,15 @@
 // the DATA layer (store / WS / API) with the old UI but is a SEPARATE view tree — it does
 // NOT import or mutate the old view components (MeshDetail/BoardPanel/Sidebar/…). Surfaces
 // render placeholders in 7.0; later phases (7.1+) fill them with real wired views.
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createStore, useStore, useConnected, type Store } from "../store";
 import {
-  Badge, Cluster, EmptyState, PanelFrame, RouteLink, Spinner,
+  Badge, Cluster, EmptyState, PanelFrame, RouteLink, Select, Spinner,
   StatusListRow, type Status,
 } from "../ui/index";
 import type { MeshStatus } from "../../types";
 import { useRoute, navigate, bnwHref, type BnwRoute } from "../router";
+import { BottomTabs, MoreMenu } from "./mobile-nav";
 import { RuntimeOverview, RuntimeFocus } from "./runtime";
 import { MeshCanvas } from "./canvas";
 import { BnwBoard } from "./board";
@@ -98,6 +99,9 @@ export function BnwApp() {
   const state = useStore(store);
   const connected = useConnected(store);
   const route = useRoute();
+  // 7.5-A — mobile "更多" overlay (local state, not a route). Any navigation closes it.
+  const [moreOpen, setMoreOpen] = useState(false);
+  useEffect(() => { setMoreOpen(false); }, [route]);
 
   // Landing: `/bnw/` → the default-view pref (7.4-B) of the first mesh once meshes arrive
   // (replace, so back works). Defaults to runtime; honors a saved board preference.
@@ -112,6 +116,13 @@ export function BnwApp() {
   const activeMesh = route.k === "runtime" || route.k === "board" || route.k === "file"
     ? route.mesh
     : route.k === "newMesh" ? route.editOf : undefined;
+  // 7.5-A — bottom tabs / mobile mesh select need a target even on management surfaces;
+  // fall back to the first mesh. Switching the mobile select preserves runtime⇄board.
+  const tabMesh = activeMesh ?? state.meshes[0]?.name;
+  const switchMesh = (m: string) => {
+    if (!m) return;
+    navigate(route.k === "board" ? { k: "board", mesh: m, view: "list", filters: {} } : { k: "runtime", mesh: m });
+  };
 
   let body: ReactNode;
   if (route.k === "notFound") body = <NotFound path={route.path} />;
@@ -149,8 +160,21 @@ export function BnwApp() {
           <span className={`inline-block h-2 w-2 rounded-full ${connected ? "bg-success" : "bg-danger"}`} aria-hidden="true" />
           {connected ? "connected" : "offline"}
         </span>
+        {/* mobile: a mesh switcher in the topbar (desktop uses the left nav rows) */}
+        {state.meshes.length > 0 ? (
+          <Select
+            aria-label="选择 mesh"
+            className="lg:hidden"
+            value={tabMesh ?? ""}
+            onChange={(e) => switchMesh(e.target.value)}
+          >
+            {!tabMesh ? <option value="">选择 mesh…</option> : null}
+            {state.meshes.map((m) => <option key={m.name} value={m.name}>{m.name}</option>)}
+          </Select>
+        ) : null}
         <span className="flex-1" aria-hidden="true" />
-        <nav aria-label="management" className="flex items-center gap-3">
+        {/* desktop management links; on mobile these fold into the 更多 bottom tab */}
+        <nav aria-label="management" className="hidden items-center gap-3 lg:flex">
           <ManageLink route={{ k: "assistant" }} label="助手" />
           <ManageLink route={{ k: "harnesses" }} label="Harness" />
           <ManageLink route={{ k: "channels" }} label="渠道" />
@@ -164,9 +188,10 @@ export function BnwApp() {
         </RouteLink>
       </header>
 
-      {/* body: left nav · stage · right context */}
-      <div className="flex min-h-0 flex-1">
-        <nav aria-label="meshes" className="flex w-[232px] shrink-0 flex-col gap-1 overflow-auto border-r border-border bg-surface-raised p-2">
+      {/* body: left nav · stage · right context. `relative` anchors the mobile 更多 overlay. */}
+      <div className="relative flex min-h-0 flex-1">
+        {/* desktop left mesh nav — fully hidden on mobile (the topbar select + bottom tabs cover it) */}
+        <nav aria-label="meshes" className="hidden w-[232px] shrink-0 flex-col gap-1 overflow-auto border-r border-border bg-surface-raised p-2 lg:flex">
           <div className="mb-1 flex items-center justify-between px-1">
             <span className="text-xs uppercase tracking-wider text-text-muted">meshes</span>
             <RouteLink href={bnwHref({ k: "newMesh" })} className="text-xs">+ 新建</RouteLink>
@@ -186,10 +211,11 @@ export function BnwApp() {
           )}
         </nav>
 
-        <main className="min-w-0 flex-1 overflow-auto p-3">
-          {/* mesh-scoped sub-nav so runtime/board/canvas switch visibly */}
+        {/* extra bottom padding on mobile so the fixed bottom tab bar never covers content */}
+        <main className="min-w-0 flex-1 overflow-auto p-3 pb-20 lg:pb-3">
+          {/* desktop mesh-scoped sub-nav (运行态/看板/画布); on mobile this folds into the bottom tabs */}
           {activeMesh && route.k !== "notFound" ? (
-            <div className="mb-3">
+            <div className="mb-3 hidden lg:block">
               <Cluster>
                 <RouteLink href={bnwHref({ k: "runtime", mesh: activeMesh })} active={route.k === "runtime"} className="text-sm">运行态</RouteLink>
                 <RouteLink href={bnwHref({ k: "board", mesh: activeMesh, view: "list", filters: {} })} active={route.k === "board"} className="text-sm">看板</RouteLink>
@@ -201,7 +227,18 @@ export function BnwApp() {
         </main>
         {/* No generic right-context stub — each surface owns its own context (e.g. runtime
             focus renders an `<agent> · activity` panel; overview/canvas are full-width). */}
+        {/* 7.5-A — mobile 更多 overlay covers the body region (under the fixed bottom tabs) */}
+        {moreOpen ? <MoreMenu onClose={() => setMoreOpen(false)} unreadCount={state.notifications?.unreadCount ?? 0} /> : null}
       </div>
+
+      {/* 7.5-A — mobile bottom tab bar (hidden at lg+) */}
+      <BottomTabs
+        route={route}
+        tabMesh={tabMesh}
+        moreOpen={moreOpen}
+        onToggleMore={() => setMoreOpen((v) => !v)}
+        onNavigate={() => setMoreOpen(false)}
+      />
     </div>
   );
 }

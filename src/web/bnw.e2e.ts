@@ -716,6 +716,40 @@ try {
     await waitCall("startMesh:dev-mesh");
   });
 
+  // 7.5-A — mobile shell: bottom tabs (运行态/看板/更多), mesh <select>, no desktop side rails.
+  await step("mobile shell: bottom tabs + mesh select + 更多 overlay (no desktop rails)", async () => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(`${BASE}/bnw/mesh/demo`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-bnw-surface="runtime"]', { timeout: 8000 });
+    // desktop left mesh nav + mesh sub-nav are fully hidden at 390px
+    assert(!(await page.locator('nav[aria-label="meshes"]').isVisible()), "left mesh nav must be hidden on mobile");
+    assert(await page.locator('[data-bnw-bottomtabs]').isVisible(), "bottom tabs must show on mobile");
+    assert(await page.locator('[aria-label="选择 mesh"]').isVisible(), "mobile mesh select must show");
+    // bottom tab: 看板 → board surface
+    await page.locator('[data-bnw-bottomtabs] [aria-label="看板"]').click();
+    await page.waitForSelector('[data-bnw-surface="board"]', { timeout: 8000 });
+    // bottom tab: 运行态 → back to runtime
+    await page.locator('[data-bnw-bottomtabs] [aria-label="运行态"]').click();
+    await page.waitForSelector('[data-bnw-surface="runtime"]', { timeout: 8000 });
+    // 更多 → full-screen management list; tapping a row navigates + closes the overlay
+    await page.locator('[data-bnw-more-toggle]').click();
+    await page.waitForSelector('[data-bnw-more]', { timeout: 8000 });
+    await page.locator('[data-bnw-more] a', { hasText: "设置" }).click();
+    await page.waitForSelector('[data-bnw-surface="settings"]', { timeout: 8000 });
+    assert(!(await page.locator('[data-bnw-more]').isVisible()), "更多 overlay must close after navigating");
+    // mesh select switches the active mesh (preserves runtime)
+    await page.goto(`${BASE}/bnw/mesh/demo`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-bnw-surface="runtime"]', { timeout: 8000 });
+    await page.locator('[aria-label="选择 mesh"]').selectOption("alpha");
+    await page.waitForFunction(() => location.pathname === "/bnw/mesh/alpha", { timeout: 8000 });
+    // desktop sanity: at 1440 the bottom tabs hide and the left nav returns
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(`${BASE}/bnw/mesh/demo`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-bnw-surface="runtime"]', { timeout: 8000 });
+    assert(await page.locator('nav[aria-label="meshes"]').isVisible(), "left mesh nav must show on desktop");
+    assert(!(await page.locator('[data-bnw-bottomtabs]').isVisible()), "bottom tabs must hide on desktop");
+  });
+
   await step("screenshots: overview / focus (C2 docked approval) / canvas / mobile overview", async () => {
     await page.setViewportSize({ width: 1440, height: 900 });
     // desktop overview
@@ -785,6 +819,12 @@ try {
     await page.goto(`${BASE}/bnw/mesh/demo/board`, { waitUntil: "domcontentloaded" });
     await page.waitForSelector('[data-bnw-board-list]', { timeout: 8000 });
     await sleep(120); await page.screenshot({ path: `${SHOTS}/bnw-board-list-mobile.png`, fullPage: true });
+    // 7.5-A — mobile 更多 management overlay
+    await page.goto(`${BASE}/bnw/mesh/demo`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-bnw-bottomtabs]', { timeout: 8000 });
+    await page.locator('[data-bnw-more-toggle]').click();
+    await page.waitForSelector('[data-bnw-more]', { timeout: 8000 });
+    await sleep(120); await page.screenshot({ path: `${SHOTS}/bnw-shell-more-mobile.png`, fullPage: true });
     await page.goto(`${BASE}/bnw/mesh/new`, { waitUntil: "domcontentloaded" });
     await page.waitForSelector('[data-bnw-newmesh]', { timeout: 8000 });
     await sleep(120); await page.screenshot({ path: `${SHOTS}/bnw-newmesh-mobile.png`, fullPage: true });
