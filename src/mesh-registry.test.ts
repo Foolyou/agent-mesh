@@ -214,6 +214,24 @@ test("reapLeaks(names): reaps only the named leak, leaving other leaks intact", 
   expect(await readRecord(dir, "staleB")).toBeDefined();
 });
 
+test("reapLeaks: a stale record's out-of-runDir socketPath is NEVER deleted (path-escape guard)", async () => {
+  const victim = join(tmpdir(), `reapleaks-victim-${process.pid}-${Date.now()}.txt`);
+  await writeFile(victim, "do not delete");
+  try {
+    // a poisoned/corrupted stale record (dead pid) whose socketPath points OUTSIDE runDir
+    await writeRecord(dir, { name: "evil", pid: 2147483646, socketPath: victim, proto: 2, startedAt: "T" });
+
+    const r = await reapLeaks(dir);
+
+    expect(r.reaped).toContain("evil");                       // the stale record is still reaped
+    expect(await readRecord(dir, "evil")).toBeUndefined();    // canonical record removed
+    expect(existsSync(victim)).toBe(true);                    // the out-of-runDir file is untouched
+    expect(existsSync(join(dir, "evil.sock"))).toBe(false);   // only the canonical socket is targeted
+  } finally {
+    await rm(victim, { force: true });
+  }
+});
+
 test("reapLeaks: missing run dir is a no-op", async () => {
   expect(await reapLeaks(join(dir, "nope"))).toEqual({ reaped: [], skipped: [] });
 });

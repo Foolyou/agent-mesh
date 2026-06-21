@@ -157,8 +157,12 @@ export async function reapLeaks(runDir: string, names?: readonly string[]): Prom
     if (want && !want.has(name)) continue;
     const rec = await readRecord(runDir, name);
     if (rec && pidAlive(rec.pid)) { skipped.push(name); continue; } // live daemon — never reap
-    await removeRecord(runDir, name);
-    await rm(rec?.socketPath ?? join(runDir, `${name}.sock`), { force: true }).catch(() => {});
+    await removeRecord(runDir, name); // canonical record path under runDir — safe
+    // Only ever delete the CANONICAL socket under the authoritative runDir. A corrupted/stale
+    // record's `socketPath` could point outside runDir (or anywhere), so it is never trusted
+    // here — that would let a poisoned record delete an arbitrary file via WebUI recovery.
+    // `name` is a runDir basename, so the join stays under runDir.
+    await rm(join(runDir, `${name}.sock`), { force: true }).catch(() => {});
     reaped.push(name);
   }
   return { reaped, skipped };

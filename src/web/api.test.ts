@@ -1003,3 +1003,45 @@ test("GET /api/diagnostics/ps enriches running agents from the live gateway snap
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("POST /api/diagnostics/reap requires same-origin request headers (CSRF)", async () => {
+  const root = await mkdtemp(join(tmpdir(), "api-reap-csrf-"));
+  try {
+    const gw = new WebGateway(fakeManager() as any);
+    const r = await handleApi(gw, "POST", "/api/diagnostics/reap", {}, new URLSearchParams(), undefined, undefined, undefined,
+      { root, headers: new Headers({ origin: "http://evil.test" }), expectedOrigin: SAME_ORIGIN });
+    expect(r.status).toBe(403);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("POST /api/diagnostics/reap: reaps stale/orphan leaks, keeps the live daemon, returns fresh ps", async () => {
+  const { writeRecord, readRecord } = await import("../mesh-registry");
+  const root = await mkdtemp(join(tmpdir(), "api-reap-"));
+  try {
+    const runDir = join(root, "run");
+    await mkdir(runDir, { recursive: true });
+    await writeRecord(runDir, { name: "live", pid: process.pid, socketPath: join(runDir, "live.sock"), startedAt: new Date().toISOString() } as any);
+    await writeFile(join(runDir, "live.sock"), "");
+    await writeRecord(runDir, { name: "stale", pid: 2147483646, socketPath: join(runDir, "stale.sock"), startedAt: new Date().toISOString() } as any);
+    await writeFile(join(runDir, "orphan.sock"), ""); // socket, no record
+
+    const gw = new WebGateway(fakeManager() as any);
+    const r = await handleApi(gw, "POST", "/api/diagnostics/reap", {}, new URLSearchParams(), undefined, undefined, undefined, { root, ...sameOriginCtx() });
+
+    expect(r.status).toBe(200);
+    expect([...r.body.reaped].sort()).toEqual(["orphan", "stale"]);
+    expect(r.body.ps.leaks).toEqual([]);                                            // fresh ps: leaks cleared
+    expect((r.body.ps.running as any[]).some((m) => m.name === "live")).toBe(true);  // live daemon survives
+    expect(await readRecord(runDir, "live")).toBeDefined();
+    expect(await readRecord(runDir, "stale")).toBeUndefined();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("POST /api/diagnostics/reap fails with 500 when no diagnostics root is configured", async () => {
+  const gw = new WebGateway(fakeManager() as any);
+  expect((await handleApi(gw, "POST", "/api/diagnostics/reap", {}, new URLSearchParams(), undefined, undefined, undefined, sameOriginCtx())).status).toBe(500);
+});
