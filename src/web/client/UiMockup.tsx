@@ -30,10 +30,13 @@
 //     diagnostics + app/build version.
 //   - Settings (09-settings.md): appearance (mode×accent 3×3 + custom palette) + language +
 //     default-view/default-device prefs + device authorization (approve/revoke/bootstrap).
+//   - Notifications (10-notifications.md): app-level cross-mesh notice center ([N]) — unread
+//     badge + list/drawer + read/mark-read/mark-all + history + follow-actions targeting the
+//     [E] surfaces (harnesses/doctor/settings). NOT transcript / mesh-local mail.
 //   - navigation index (?index=1): a directory of every surface + state/device deep links.
 //
 // Query deep links for deterministic screenshots: ?device=desktop|mobile,
-// ?surface=shell|runtime|board|new-mesh|assistant|harnesses|channels|doctor|settings, ?runtime=overview|focus|full|canvas,
+// ?surface=shell|runtime|board|new-mesh|assistant|harnesses|channels|doctor|settings|notifications, ?runtime=overview|focus|full|canvas,
 // ?board=list|detail|kanban, ?state=<shell-state>, ?index=1, ?view=runtime|board,
 // ?mesh=<id>, ?mode=<mode>, ?accent=<accent>. No raw-* utilities (passes
 // `bun run lint:tokens`); all classes literal so Tailwind emits them.
@@ -55,7 +58,7 @@ const ACCENT_SET = new Set<Accent>(ACCENTS);
 
 type Device = "desktop" | "mobile";
 type View = "runtime" | "board";
-type Surface = "shell" | "runtime" | "board" | "new-mesh" | "assistant" | "harnesses" | "channels" | "doctor" | "settings";
+type Surface = "shell" | "runtime" | "board" | "new-mesh" | "assistant" | "harnesses" | "channels" | "doctor" | "settings" | "notifications";
 // overview/focus = the two in-shell runtime states; full/canvas = desktop-only standalone
 // frames (session fullscreen / zoomable topology canvas) reached from the focus / overview.
 type RuntimeState = "overview" | "focus" | "full" | "canvas";
@@ -239,7 +242,7 @@ function readSel(): Sel {
   const a = p.get("accent");
   const mesh = p.get("mesh");
   const sfc = p.get("surface");
-  const surface: Surface = sfc === "runtime" ? "runtime" : sfc === "board" ? "board" : sfc === "new-mesh" ? "new-mesh" : sfc === "assistant" ? "assistant" : sfc === "harnesses" ? "harnesses" : sfc === "channels" ? "channels" : sfc === "doctor" ? "doctor" : sfc === "settings" ? "settings" : "shell";
+  const surface: Surface = sfc === "runtime" ? "runtime" : sfc === "board" ? "board" : sfc === "new-mesh" ? "new-mesh" : sfc === "assistant" ? "assistant" : sfc === "harnesses" ? "harnesses" : sfc === "channels" ? "channels" : sfc === "doctor" ? "doctor" : sfc === "settings" ? "settings" : sfc === "notifications" ? "notifications" : "shell";
   const bs = p.get("board");
   const rt = p.get("runtime") as RuntimeState | null;
   const st = p.get("state") as ShellState | null;
@@ -1941,6 +1944,104 @@ function SettingsFrame({ state, device, mode, accent, onMode, onAccent }: { stat
   );
 }
 
+// ── Notifications center (10) — app-level cross-mesh notices ([N], fixture-only) ─────
+// NOT transcript / not a mesh's local mail. Classes: harness upgrade, frontend self-update,
+// connection/service status, system alert, device-auth; action targets point at the [E]
+// surfaces (harnesses/doctor/settings). No backend — server persistence/unread = later phase.
+type NotifClass = "harness" | "update" | "service" | "system" | "device";
+const NOTIF_ICON: Record<NotifClass, string> = { harness: "⬆", update: "⟳", service: "🛰", system: "⚙", device: "🔑" };
+const NOTIF_TONE: Record<NotifClass, Status> = { harness: "attention", update: "ready", service: "working", system: "idle", device: "attention" };
+interface Notif { id: string; cls: NotifClass; title: string; detail: string; time: string; unread: boolean; actionLabel: string; actionSurface?: Surface }
+const NOTIFS: Notif[] = [
+  { id: "n1", cls: "harness", title: "codex-acp 有更新 v1.2.3 → v1.2.5", detail: "在 Harnesses 面板更新并重启旧版本 agent", time: "2m", unread: true, actionLabel: "打开 Harnesses", actionSurface: "harnesses" },
+  { id: "n2", cls: "update", title: "控制台前端有新版本", detail: "刷新以加载最新 WebUI", time: "15m", unread: true, actionLabel: "刷新更新" },
+  { id: "n3", cls: "service", title: "backend 短暂不可达后已恢复", detail: "诊断详情见 Doctor", time: "1h", unread: true, actionLabel: "打开 Doctor", actionSurface: "doctor" },
+  { id: "n4", cls: "device", title: "有新设备申请授权", detail: "iPhone · Feishu webview 待批准", time: "3h", unread: false, actionLabel: "打开设置", actionSurface: "settings" },
+  { id: "n5", cls: "system", title: "自动 compact 已触发（dev-mesh / codex-1）", detail: "上下文达 85% 阈值", time: "5h", unread: false, actionLabel: "查看" },
+];
+const NOTIFS_MANY: Notif[] = [
+  { id: "b0", cls: "system", title: "一条很长的系统通知标题，用来检验在抽屉与移动端全屏列表里的截断与换行行为是否优雅而不破坏布局", time: "1m", detail: "long-title boundary", unread: true, actionLabel: "查看" },
+  ...NOTIFS,
+  { id: "n6", cls: "harness", title: "kimi 版本未知", detail: "reprobe 以检测", time: "6h", unread: false, actionLabel: "打开 Harnesses", actionSurface: "harnesses" },
+  { id: "n7", cls: "service", title: "Feishu channel 已连接", detail: "ops@host 群已绑定", time: "8h", unread: false, actionLabel: "打开渠道", actionSurface: "channels" },
+  { id: "n8", cls: "update", title: "依赖更新可用：bun 1.3.15", detail: "见 Doctor", time: "1d", unread: false, actionLabel: "打开 Doctor", actionSurface: "doctor" },
+  { id: "n9", cls: "system", title: "孤儿进程已清理（2）", detail: "Doctor 恢复面板", time: "2d", unread: false, actionLabel: "查看" },
+];
+
+function NotifItem({ n, device, mode, accent, disabled, busy }: { n: Notif; device: Device; mode: Mode; accent: Accent; disabled: boolean; busy: boolean }) {
+  const followHref = n.actionSurface
+    ? `/__ui-mockup?surface=${n.actionSurface}&state=populated&device=${device}&mode=${mode}&accent=${accent}`
+    : undefined;
+  return (
+    <div data-notif data-unread={n.unread ? "1" : undefined} className={`flex flex-col gap-1 rounded-lg border px-3 py-2 ${n.unread ? "border-border-strong bg-surface-raised" : "border-border bg-surface-sunken"}`}>
+      <div className="flex flex-wrap items-center gap-2">
+        {n.unread ? <span data-unread-dot aria-label="unread" className="h-2 w-2 rounded-full bg-accent" /> : <span className="h-2 w-2" aria-hidden="true" />}
+        <StatusChip status={NOTIF_TONE[n.cls]} variant="soft" label={`${NOTIF_ICON[n.cls]} ${n.cls}`} />
+        <span className="min-w-0 flex-1 truncate text-sm font-medium text-text-primary">{n.title}</span>
+        <span className="shrink-0 text-xs text-text-muted">{n.time}</span>
+      </div>
+      <div className="pl-4 text-xs text-text-muted">{n.detail}</div>
+      <div className="flex items-center gap-2 pl-4">
+        {followHref
+          ? <LinkButton href={followHref} label={n.actionLabel}>{n.actionLabel} →</LinkButton>
+          : <Button size="sm" variant="ghost" disabled={n.actionLabel === "刷新更新" ? false : disabled} aria-label={n.actionLabel}>{n.actionLabel}</Button>}
+        {n.unread ? <Button size="sm" variant="ghost" disabled={disabled} busy={busy} aria-label={`mark read ${n.id}`}>标记已读</Button> : null}
+      </div>
+    </div>
+  );
+}
+
+function NotificationsFrame({ state, device, mode, accent }: { state: ShellState; device: Device; mode: Mode; accent: Accent }) {
+  const mobile = device === "mobile";
+  const offline = state === "offline";
+  const perm = state === "permission";
+  const busy = state === "busy";
+  const disabled = offline; // mark-read / net-needing actions disabled offline
+  const baseList = state === "boundary" ? NOTIFS_MANY : NOTIFS;
+  // In permission state, surface an unread device-auth notice so the gated (disabled)
+  // device-class mark-read is actually visible/testable (matrix: action may be gated).
+  const list = perm ? baseList.map((n) => (n.cls === "device" ? { ...n, unread: true } : n)) : baseList;
+  const unread = list.filter((n) => n.unread);
+  const read = list.filter((n) => !n.unread);
+  const unreadCount = state === "boundary" ? 250 : unread.length;
+  return (
+    <div data-mockup="frame" data-device={device} data-notifications="center"
+      className={`flex ${mobile ? "h-[760px] w-[390px] rounded-[28px]" : "h-[700px] w-[1280px] rounded-xl"} max-w-full flex-col overflow-hidden border border-border bg-surface text-text-primary shadow-sm`}>
+      <header className="flex items-center gap-2 border-b border-border bg-surface-raised px-4 py-2.5">
+        <Brand /><span className="text-text-muted">·</span>
+        <span className="text-sm font-semibold">通知 Notifications</span>
+        <span className="text-xs text-text-muted">{mobile ? "全屏列表" : "抽屉"}</span>
+        {unreadCount > 0 && state !== "empty" ? <Badge count={unreadCount} max={99} tone="urgent" /> : null}
+        <span className="flex-1" aria-hidden="true" />
+        <Button size="sm" variant="ghost" disabled={disabled || state === "empty"} busy={busy} aria-label="mark all read">全部已读</Button>
+      </header>
+      {offline ? <div role="status" className="flex items-center gap-2 border-b border-border bg-warning-subtle px-4 py-1.5 text-xs text-warning"><Spinner size={12} label="reconnecting" /> 连接已断开 — 显示最近已知通知；标记已读已禁用。</div> : null}
+      <div className="min-h-0 flex-1 overflow-auto p-4">
+        <div className={`mx-auto flex flex-col gap-2 ${mobile ? "" : "max-w-[680px]"}`}>
+          {state === "loading" ? (
+            <div className="flex flex-col gap-2"><Skeleton variant="row" /><Skeleton variant="row" /><Skeleton variant="card" /></div>
+          ) : state === "empty" ? (
+            <EmptyState icon={<span className="text-2xl">🎉</span>} title="全部已读" description="没有新的系统通知。harness 升级、前端更新、服务状态等会出现在这里。" />
+          ) : (
+            <>
+              {state === "error" ? <ErrorBanner title="加载通知失败" onRetry={() => {}}>历史拉取失败 — 重试；动作目标失败会就地提示。</ErrorBanner> : null}
+              {offline ? <div data-notif data-conn-lost className="flex items-center gap-2 rounded-lg border border-border-strong bg-warning-subtle px-3 py-2 text-sm text-warning"><span aria-hidden="true">🛰</span> 连接丢失 — 实时通知暂停</div> : null}
+              {perm ? <p className="text-xs text-text-muted">只读浏览；需授权的动作（如批准设备）在未授权设备上禁用。</p> : null}
+              {unread.map((n) => <NotifItem key={n.id} n={n} device={device} mode={mode} accent={accent} disabled={disabled || (perm && n.cls === "device")} busy={busy} />)}
+              {read.length ? (
+                <>
+                  <div className="mt-2 flex items-center gap-2 text-xs uppercase tracking-wider text-text-muted"><span>历史 / 已读</span><span className="h-px flex-1 bg-border" aria-hidden="true" /></div>
+                  {read.map((n) => <NotifItem key={n.id} n={n} device={device} mode={mode} accent={accent} disabled={disabled || (perm && n.cls === "device")} busy={busy} />)}
+                </>
+              ) : null}
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── new-mesh builder (04) fixtures + frame ───────────────────────────────────────
 interface AgentRow { id: string; harness: string; project: string; role: "router" | "member"; model?: string; effort?: string; lazy?: boolean; opencodePermission?: "ask" | "allow"; instructions?: string }
 const HARNESSES = ["claude", "codex", "opencode", "kimi"];
@@ -2433,6 +2534,9 @@ const INDEX_SECTIONS: { title: string; note: string; rows: IndexRow[] }[] = [
   { title: "09 · Settings", note: "外观(mode×accent 3×3 + 自定义调色板) · 语言 · 默认视图/设备偏好 · 设备授权(approve/revoke/bootstrap)", rows: [
     { label: "panel", base: "surface=settings", states: SHELL_STATES, mobile: true },
   ] },
+  { title: "10 · Notifications", note: "跨 mesh 通知中心 · 未读徽标 · 抽屉/列表 · 标记已读/全部 · 历史 · 跟随动作(→harnesses/doctor/settings)", rows: [
+    { label: "center", base: "surface=notifications", states: SHELL_STATES, mobile: true },
+  ] },
 ];
 
 function MockupIndex({ backHref }: { backHref: string }) {
@@ -2578,7 +2682,7 @@ export function UiMockup() {
     <div data-mockup="root" className="min-h-screen bg-surface text-text-primary font-sans p-6">
       {/* mockup tool chrome (outside the mocked app frame) */}
       <header className="mb-5">
-        <h1 className="mb-1 text-xl font-semibold">Agent Mesh — 终稿 mockup（{index ? "导航索引" : surface === "runtime" ? `运行态 A · ${runtime}` : surface === "board" ? "看板 C" : surface === "new-mesh" ? "新建 mesh" : surface === "assistant" ? "Mesh Assistant B" : surface === "harnesses" ? "Harnesses" : surface === "channels" ? "Channels" : surface === "doctor" ? "Doctor / 系统" : surface === "settings" ? "Settings" : "应用外壳"}{index ? "" : ` · ${state} · ${device === "mobile" ? "移动" : "桌面"}`}）</h1>
+        <h1 className="mb-1 text-xl font-semibold">Agent Mesh — 终稿 mockup（{index ? "导航索引" : surface === "runtime" ? `运行态 A · ${runtime}` : surface === "board" ? "看板 C" : surface === "new-mesh" ? "新建 mesh" : surface === "assistant" ? "Mesh Assistant B" : surface === "harnesses" ? "Harnesses" : surface === "channels" ? "Channels" : surface === "doctor" ? "Doctor / 系统" : surface === "settings" ? "Settings" : surface === "notifications" ? "Notifications" : "应用外壳"}{index ? "" : ` · ${state} · ${device === "mobile" ? "移动" : "桌面"}`}）</h1>
         <p className="mb-3 text-xs text-text-muted">真实 C5–C7 组件 + v2 compose 运行时 · fixture 数据 · 不连后端。Live: <code className="text-syntax-string">MESH_UI_PREVIEW=1 … /__ui-mockup</code></p>
         <div className="mb-3">
           <SegmentedControl ariaLabel="View mode" value={index ? "index" : "mockup"} onChange={(v) => nav({ index: v === "index" })} options={[{ value: "mockup", label: "Mockup" }, { value: "index", label: "▤ 索引" }]} size="sm" />
@@ -2598,7 +2702,7 @@ export function UiMockup() {
           </div>
           <div>
             <div className="mb-1.5 text-xs uppercase tracking-wider text-text-muted">Surface</div>
-            <SegmentedControl ariaLabel="Surface" value={surface} onChange={(s) => { const next = s as Surface; nav({ surface: next }); if (next === "board") setMobileTab("board"); else if (next === "runtime") setMobileTab("runtime"); }} options={[{ value: "shell", label: "外壳" }, { value: "runtime", label: "运行态 A" }, { value: "board", label: "看板 C" }, { value: "assistant", label: "助手 B" }, { value: "harnesses", label: "Harness" }, { value: "channels", label: "渠道" }, { value: "doctor", label: "Doctor" }, { value: "settings", label: "设置" }, { value: "new-mesh", label: "新建" }]} size="sm" />
+            <SegmentedControl ariaLabel="Surface" value={surface} onChange={(s) => { const next = s as Surface; nav({ surface: next }); if (next === "board") setMobileTab("board"); else if (next === "runtime") setMobileTab("runtime"); }} options={[{ value: "shell", label: "外壳" }, { value: "runtime", label: "运行态 A" }, { value: "board", label: "看板 C" }, { value: "assistant", label: "助手 B" }, { value: "harnesses", label: "Harness" }, { value: "channels", label: "渠道" }, { value: "doctor", label: "Doctor" }, { value: "settings", label: "设置" }, { value: "notifications", label: "通知" }, { value: "new-mesh", label: "新建" }]} size="sm" />
           </div>
           {surface === "runtime" ? (
             <div>
@@ -2628,7 +2732,7 @@ export function UiMockup() {
               />
             </div>
           ) : null}
-          {surface === "shell" || surface === "runtime" || surface === "board" || surface === "new-mesh" || surface === "assistant" || surface === "harnesses" || surface === "channels" || surface === "doctor" || surface === "settings" ? (
+          {surface === "shell" || surface === "runtime" || surface === "board" || surface === "new-mesh" || surface === "assistant" || surface === "harnesses" || surface === "channels" || surface === "doctor" || surface === "settings" || surface === "notifications" ? (
             <div>
               <div className="mb-1.5 text-xs uppercase tracking-wider text-text-muted">State</div>
               <SegmentedControl
@@ -2670,6 +2774,8 @@ export function UiMockup() {
           ? <DoctorFrame state={state} device={device} />
           : surface === "settings"
           ? <SettingsFrame state={state} device={device} mode={mode} accent={accent} onMode={(m) => nav({ mode: m })} onAccent={(a) => nav({ accent: a })} />
+          : surface === "notifications"
+          ? <NotificationsFrame state={state} device={device} mode={mode} accent={accent} />
           : surface === "new-mesh"
           ? <NewMeshFrame state={state} device={device} nmEditor={nmEditor} />
           : surface === "runtime" && device === "desktop" && runtime === "full"

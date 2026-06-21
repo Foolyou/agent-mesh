@@ -35,3 +35,21 @@ notifications-center module/endpoint found; `HarnessPanel.tsx` is the only curre
   repo audit (no center today → whole surface [N]; persistence/unread/history = phase 4).
 - Open (carried): notifications stays in scope as [N] (lead #683 assumption 1). Membership
   (which message classes are global vs mesh-local) + read/history data model = phase-4 detail.
+- 2026-06-21 — Phase B Step 2 mockup (`UiMockup.tsx`): the Notifications center built in the
+  guarded `/__ui-mockup` (`?surface=notifications`) — a standalone frame (route
+  `/notifications`, topbar 🔔 / mobile 更多). All [N], fixture-only. Unread badge (99+
+  overflow at boundary) + mark-all-read; newest-first list of notice items by class —
+  harness upgrade / frontend self-update / connection-service / system alert / device-auth —
+  each with type icon + title + detail + time + unread dot + a follow-action (nav to the [E]
+  surfaces harnesses/doctor/settings/channels via LinkButton, or a local action like 刷新更新)
+  + per-item mark-read; a history (已读) divider section. States: empty→"全部已读" + no badge
+  + mark-all disabled, loading→skeleton, populated, error→load-failed+retry, busy→mark in
+  flight, offline→pinned connection-lost item + last-known list + mark-read disabled,
+  boundary→long title + 99+ + large history, permission→read-only note + gated device-class
+  mark-read. Desktop = drawer/list; mobile = full-screen list. No existing [E] notifications-
+  center capability exists (only ad-hoc `HarnessPanel.tsx` upgrade notices, already its own
+  surface) → nothing new to flag. Index (`?index=1`) gains the 10 row. true C5–C8, v2 tokens.
+- 2026-06-21 — amend (lead review): make the permission-state gated action real — in
+  `state="permission"` the device-auth notice is surfaced as unread so its mark-read renders
+  disabled (gated), while a non-device unread item's mark-read stays enabled. SSR + e2e now
+  assert `mark read n4` is disabled and `mark read n1` is not.

@@ -636,6 +636,46 @@ try {
     }
   }
 
+  // ── Notifications center (10): assertions + state × device screenshots ──
+  await step("notifications: list + classes + follow action → harnesses; mark read/all; history", async () => {
+    await page.goto(`${BASE}/__ui-mockup?surface=notifications&state=populated&device=desktop`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-mockup="frame"][data-notifications="center"]', { timeout: 8000 });
+    if (await page.locator("[data-notif]").count() === 0) throw new Error("no notifications rendered");
+    if (await page.locator("[data-unread-dot]").count() === 0) throw new Error("unread indicator missing");
+    for (const lbl of ["mark all read", "mark read n1", "刷新更新"]) {
+      if (await page.locator(`[aria-label="${lbl}"]`).count() === 0) throw new Error(`notif control missing: ${lbl}`);
+    }
+    if (await page.getByText("历史 / 已读", { exact: false }).count() === 0) throw new Error("history section missing");
+    // follow-action navigates to the harnesses surface
+    await page.locator('[data-notif] a[href*="surface=harnesses"]').first().click();
+    await page.waitForSelector('[data-mockup="frame"][data-harnesses="panel"]', { timeout: 8000 });
+  });
+  await step("notifications: empty→all-caught-up; offline→conn-lost + mark-read disabled", async () => {
+    await page.goto(`${BASE}/__ui-mockup?surface=notifications&state=empty&device=desktop`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-notifications="center"]', { timeout: 8000 });
+    if (await page.getByText("全部已读", { exact: false }).count() === 0) throw new Error("all-caught-up missing");
+    await page.goto(`${BASE}/__ui-mockup?surface=notifications&state=offline&device=desktop`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-notifications="center"]', { timeout: 8000 });
+    if (await page.locator("[data-conn-lost]").count() === 0) throw new Error("connection-lost notice missing");
+    if (await page.locator('[aria-label="mark read n1"]:disabled').count() === 0) throw new Error("mark-read must be disabled offline");
+    // permission: device-auth notice surfaces unread with a gated (disabled) mark-read
+    await page.goto(`${BASE}/__ui-mockup?surface=notifications&state=permission&device=desktop`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-notifications="center"]', { timeout: 8000 });
+    if (await page.locator('[aria-label="mark read n4"]:disabled').count() === 0) throw new Error("permission must gate the device-class mark-read");
+    if (await page.locator('[aria-label="mark read n1"]:disabled').count() !== 0) throw new Error("permission must NOT disable non-device mark-read");
+  });
+  const NOTIF_STATES = ["empty", "loading", "populated", "error", "permission", "busy", "offline", "boundary"];
+  for (const device of ["desktop", "mobile"]) {
+    for (const st of NOTIF_STATES) {
+      await step(`screenshot notifications-${st}-${device}`, async () => {
+        await page.goto(`${BASE}/__ui-mockup?surface=notifications&state=${st}&device=${device}&mode=dark-slate&accent=signal-teal`, { waitUntil: "domcontentloaded" });
+        await page.waitForSelector(`[data-mockup="frame"][data-device="${device}"][data-notifications="center"]`, { timeout: 8000 });
+        await sleep(130);
+        await shotFrame(`${SHOTS}/notifications-${st}-${device}-dark-slate-signal-teal.png`);
+      });
+    }
+  }
+
   // ── shell (01) state × device screenshots (Phase B; default Dark·Slate × Signal Teal) ──
   const SHELL_STATES = ["empty", "loading", "populated", "error", "permission", "busy", "offline", "boundary"];
   for (const device of ["desktop", "mobile"]) {

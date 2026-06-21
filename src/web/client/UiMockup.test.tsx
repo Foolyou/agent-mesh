@@ -344,11 +344,13 @@ test("index skeleton · lists every surface with state/device deep links", () =>
   expect(out).toContain("07 · Channels");
   expect(out).toContain("08 · Doctor");
   expect(out).toContain("09 · Settings");
+  expect(out).toContain("10 · Notifications");
   expect(out).toContain("surface=assistant"); // assistant deep links
   expect(out).toContain("surface=harnesses"); // harnesses deep links
   expect(out).toContain("surface=channels"); // channels deep links
   expect(out).toContain("surface=doctor"); // doctor deep links
   expect(out).toContain("surface=settings"); // settings deep links
+  expect(out).toContain("surface=notifications"); // notifications deep links
   expect(out).toContain("runtime=canvas"); // a runtime补漏 deep link (& is HTML-escaped in href)
   expect(out).toContain("boardManage=1"); // board补漏 deep link
   expect(out).toContain("boardFs=1");
@@ -743,6 +745,71 @@ test("settings · mobile: stacked groups render", () => {
   expect(out).toContain('data-device="mobile"');
   expect(out).toContain('data-settings="panel"');
   expect(out).toContain('aria-label="theme mode"');
+});
+
+// ── Notifications center (10) ─────────────────────────────────────────────────
+test("notifications · populated: unread badge + classes + follow actions + mark read/all + history", () => {
+  const out = renderAt("?surface=notifications&state=populated&device=desktop");
+  expect(out).toContain('data-notifications="center"');
+  expect(out).toContain('aria-label="mark all read"');
+  expect(out).toContain("data-unread-dot"); // unread indicator
+  expect(out).toContain("codex-acp 有更新"); // harness-upgrade class
+  expect(out).toContain("控制台前端有新版本"); // frontend self-update class
+  expect(out).toContain("backend 短暂不可达后已恢复"); // connection/service class
+  // follow-actions target the [E] surfaces (& HTML-escaped in href)
+  expect(out).toContain("surface=harnesses");
+  expect(out).toContain("surface=doctor");
+  expect(out).toContain("surface=settings");
+  expect(out).toContain('aria-label="刷新更新"'); // non-nav action
+  expect(out).toContain('aria-label="mark read n1"'); // per-item mark read
+  expect(out).toContain("历史 / 已读"); // history section
+});
+
+test("notifications · empty: all-caught-up, no badge, mark-all disabled", () => {
+  const out = renderAt("?surface=notifications&state=empty&device=desktop");
+  expect(out).toContain("全部已读");
+  expect(out.includes("data-notif ")).toBe(false); // no items (trailing space ≠ data-notifications)
+  expect(out).toContain('aria-label="mark all read" disabled=""');
+});
+
+test("notifications · loading skeleton; error load-failed+retry; busy mark-all in flight", () => {
+  expect(renderAt("?surface=notifications&state=loading&device=desktop")).toContain("animate-pulse");
+  const err = renderAt("?surface=notifications&state=error&device=desktop");
+  expect(err).toContain("加载通知失败");
+  expect(err).toContain('role="alert"');
+  expect(renderAt("?surface=notifications&state=busy&device=desktop")).toContain('aria-busy="true"');
+});
+
+test("notifications · offline: connection-lost item + mark-read disabled + banner", () => {
+  const out = renderAt("?surface=notifications&state=offline&device=desktop");
+  expect(out).toContain("data-conn-lost"); // pinned connection-lost notice
+  expect(out).toContain("显示最近已知通知"); // offline banner text
+  expect(out).toContain('aria-label="mark read n1" disabled=""'); // mark-read disabled offline
+  expect(out).toContain('aria-label="mark all read" disabled=""');
+});
+
+test("notifications · boundary: 99+ unread overflow + long title + many items", () => {
+  const out = renderAt("?surface=notifications&state=boundary&device=desktop");
+  expect(out).toContain("99+"); // unread badge overflow (count 250)
+  expect(out).toContain("一条很长的系统通知标题"); // long-title boundary item
+  expect(out).toContain("依赖更新可用"); // a boundary-only item
+});
+
+test("notifications · permission: read-only note + gated device-class mark-read disabled", () => {
+  const out = renderAt("?surface=notifications&state=permission&device=desktop");
+  expect(out).toContain("只读浏览");
+  // permission surfaces the device-auth notice as unread, and its mark-read is gated (disabled)
+  expect(out).toContain('aria-label="mark read n4" disabled=""');
+  // a non-device unread item's mark-read stays enabled under permission (only device is gated)
+  expect(out).toContain('aria-label="mark read n1"');
+  expect(out.includes('aria-label="mark read n1" disabled=""')).toBe(false);
+});
+
+test("notifications · mobile: full-screen list", () => {
+  const out = renderAt("?surface=notifications&state=populated&device=mobile");
+  expect(out).toContain('data-device="mobile"');
+  expect(out).toContain('data-notifications="center"');
+  expect(out).toContain("全屏列表");
 });
 
 test("mockup uses v2 semantic utilities and emits no raw-* class", () => {
