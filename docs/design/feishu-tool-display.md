@@ -273,6 +273,84 @@ onRouterToolCall(rt, u):
 
 ---
 
+## 11. 真机回归：兜底定时器对"纯工具轮"误封卡（根因 + 修复方案，仅设计，待审）
+
+> slug `feishu-tool-card-seal-regression`，基线 main `09f50d5`（实读核实）。**真机现象**：一轮里每个工具调用各自封成独立卡/新消息、计数累加：`🔧 Called 1 tool` / `Called 2 tools` / … / `Called 5 tools`，每个工具都"叮"。**本节只出根因+修复设计+测试计划，不实现。**
+
+### 11.1 根因链路（实读 `feishu-channel.ts@09f50d5` 核实，行号为该版本）
+1. 工具事件到达 → `dispatchRouterEvent` 的 tool 分支（801-806）：`onRouterToolCall(rt,u)` 累加计数/刷新注解（in-place），**随后无条件 `scheduleStreamFinish(rt)`（805）** 重排兜底定时器。
+2. `scheduleStreamFinish`（840-851）：`streamCommitDebounceMs`（默认 3000ms）静默后回调 **`streamFinish(rt, false)`（848）**。
+3. `streamFinish`（868-884）：`rt.sender.streamCommit!()`（877）**封掉当前 live 卡** + `rt.buffer=""`（878）+ `currentMessageId=undefined`（879）+ `beginCommitBarrier`（883）；因 `endsGroup=false` **不**调 `resetToolGroup`（881）→ `toolCount/toolNames/seenToolCalls` **不归零**（这是 tool-count-merge 的有意行为）。
+4. 下一个工具 → `onRouterToolCall` 时已无 live 卡（上一卡被封）→ CardSender **另开一张新卡**（=新 `im.v1.message.create`=新"叮"），且因计数未归零，新卡显示**累加值**。
+5. 工具执行之间的"思考/执行间隔 >3s"会让步骤 2 的兜底**逐个间隔触发** → 每个间隔封一卡 → 真机 `1/2/3/4/5` 各自一张卡、计数累加。
+
+**结论：prdmgr 的判断属实，已实读核实。** 根因本质 = **兜底定时器（lost-idle 把卡住的"正文"发出去的保护）被纯工具活动的中途停顿误触发**，对一张"只有工具注解、没有未终结正文"的卡做了不该做的封卡。tool-count-merge 解决了"计数重置"，但**没解决"封卡本身"**——所以真机表现为"计数对了，但仍碎成多卡多叮"。（这正是我在 tool-count-merge 交付时 flag 的 remaining risk：INV-1 要求 fallback 封卡，>3s 间隔批次仍落不同卡，须重审。）
+
+### 11.2 "新可终结正文" vs "纯工具活动"的**真实状态判据**（实读字段，非猜测）
+> 按 prdmgr 硬要求：判据基于代码真实状态，不照抄 `rt.buffer` 猜测。以下逐字段核实。
+
+- **`rt.buffer: string`（channel 累积正文缓冲，权威信号）**：由 `appendRouterChunk`（1127-1164）维护——只在收到**新可见 agent_message_chunk 正文**时增长（`textOf(content)` 非空、且非重复/全量重发；返回 `true` 才是"新正文"），并做 messageId 增量/全量重发去重。`rt.buffer` **仅**在 `streamFinish`(878)/`flush`(990)/`clearOutboundBuffer`(963)/teardown(1038) 被清空为 `""`。
+  → 因此 **`rt.buffer.trim() !== ""` ⟺ "自上次 commit 以来存在尚未终结的正文"**（= "有新 prose chunk 到达且未提交"）。这不是猜测，是该缓冲的实测语义。
+- **`rt.currentMessageId?` / `rt.currentMessageStart`**（1132-1163）：正文块的增量/全量重发去重锚，随 commit 一并 `undefined`/复位（879）。佐证 `rt.buffer` 是"正文累加器"且与 commit 同步清零。
+- **`rt.toolCount: number`**（+ `toolNames`/`seenToolCalls`）：当前运行工具组。`onRouterToolCall` 累加；off 档**提前 return、不累加 → off 下 `toolCount` 恒 0**。
+- **`rt.streamTurnActive: boolean`**：有未终结内容（`scheduleStreamFinish` 置 true，`streamFinish` 起手 `if(!streamTurnActive) return` 防重复 commit）。
+- **CardSender 侧镜像（下游，佐证）**：纯工具卡的 live 状态 = `live.sentText === ""`（空正文 body）+ `live.sentAnnotation !== undefined`（只有注解）——见 `doStreamOp` 创建 `this.live = { …, sentText: body(""), sentAnnotation: ann }`（card-sender.ts:632）、`composeLiveDisplay("")` 走 annotation-only 分支（775-777）。即 channel 的 `rt.buffer===""` 在 sender 侧对应"`sentText` 空、仅注解"的卡。channel 层只需 `rt.buffer` 即可判定，无需窥探 sender（保持分层）。
+
+**判据（grounded）**：
+- **"纯工具活动、无可终结正文"** ⟺ `rt.buffer.trim() === "" && rt.toolCount > 0`。
+- **"有新可终结正文"** ⟺ `rt.buffer.trim() !== ""`（lost-idle 保护对象）。
+- off 档 `toolCount===0` → 判据为假 → 行为不变（仍按今天 finalize，见 §11.4）。
+
+### 11.3 修复方案（仅设计）
+**仅改兜底定时器的回调语义**：fallback fire 时，若**纯工具活动且无可终结正文**，**不封卡**（不 `streamCommit`）——保持同一张 live 卡、工具注解继续 in-place 更新，等**真实轮边界**再提交；保留对正文的 lost-idle 保护。
+
+把 `scheduleStreamFinish`（848）的回调从无条件 `streamFinish(rt,false)` 改为一个判据分流（伪码）：
+```
+// fallback timer callback:
+if (rt.buffer.trim() === "" && rt.toolCount > 0) {
+  // 纯工具活动、无未终结正文：保持 live 卡，不封卡、不 commit、不 beginCommitBarrier。
+  // 不重排 timer——下一个工具会自然重排(805)；真实边界(idle/agent_turn started/pre-prompt/prompt-resolve)
+  // 会 finalizeTurn→streamFinish 提交一次。streamTurnActive 保持 true，真 idle 仍能提交。
+  this.tlog(rt, "fallback-skip-toolonly");
+  return;
+}
+this.streamFinish(rt, false); // 有未终结正文 → 照旧交付(lost-idle 保护)
+```
+- **真实轮边界提交**：`idle`(810-812)、新 turn `agent_turn started`(残留 finalize)、入站 prompt 的 pre-prompt 边界(437)、assistant prompt-resolve(576) —— 均已 `finalizeTurn → streamFinish(endsGroup=true)`，会**把那张累积的工具卡提交一次并重置组**。
+- **lost-idle 正文保护不丢**：`rt.buffer.trim() !== ""`（prose+tools，或纯 prose）仍走 `streamFinish` 交付。
+- **不重排 timer**：跳过时不再 `scheduleStreamFinish`；下一工具会重排，真边界会提交。代价=纯工具轮若 idle 真丢失，卡会"generating"到下一轮 pre-prompt 才封（可接受：纯中间活动、无正文卡住；真 idle 的常态会及时提交）。**这是开放问题 O1（见 §11.6）**。
+
+> 说明：`streamSegmentBreak`/`proseSeal` 状态**不参与**本判据——它只在"prose-after-tools"（chunk 分支 788-792）触发，与 fallback 无关；fallback 时无 pending segment break。
+
+### 11.4 不破坏清单（逐项核实）
+- **INV-1（需显式说明的"细化"，非静默破坏）**：INV-1 的**核心**（工具调用不开新消息、与"开新消息"解耦）**保留并强化**；但 INV-1 早前的子断言"**纯工具收尾轮经 fallback 提交**"**被有意改变**——纯工具轮不再经 fallback 封卡，改为等真实边界提交。对应测试 `feishu-channel.test.ts:853` "a tool_call with no following text finalizes via the fallback timer" **必须更新**（见 §11.5 测试 T4）。**这是本修复的核心语义变化，需 prdmgr 确认**（开放问题 O2）。
+- **commit barrier / queuedEvents / commitGen**：跳过分支**不**调 `beginCommitBarrier` → `committing` 保持 false → 后续工具事件正常 dispatch（不入队）；真实边界提交时照旧 begin 一次 barrier。语义不变。
+- **seenToolCalls 去重**：`onRouterToolCall` 路径完全不动；去重不变。
+- **replay 不镜像**：`clearOutboundBuffer`(963 区) 不变；replay 仍清 buffer+组。
+- **idempotency**：卡 op 的 `stableCardKey`/seq 不动；纯工具轮少了多余封卡 → 反而更少 op。
+- **off 语义**：off `toolCount===0` → 判据假 → 仍 `streamFinish(rt,false)`（与今天一致：空 buffer、无 live 卡 → 安静空 commit）。`feishu-channel.test.ts:766`（off 纯工具轮静默仍 finalize）**保持绿**。
+- **tool-count merge**：本修复与 merge **互补**——merge 让计数跨边界不重置，本修复**移除纯工具的多余边界**；二者合力 = 纯工具批次落在**一张** live 卡、计数 in-place 累积。`:780/:797`（跨 fallback 累计）断言的是注解累积值，跳过封卡后注解仍累积 → **预期保持绿**（如其暗含 commit 计数需同步，详见 T1）。
+- **rollover 不重复**：纯 sender 内行为（size/timeout rollover 的头卡 strip/尾卡注解），与 channel 兜底改动正交，不受影响。
+
+### 11.5 测试计划（具体场景 + 断言；timer 驱动为硬门禁）
+> 复用 `feishu-channel.test.ts` 的 `setupStreaming`（注入 `manualTimers` 的 `setTimer`）+ 假 `streamingSink`（记录 `commits()`/`streamUpdate`/`annotations`/`sealSegments`）。`commits()` = `streamCommit` 调用数 = "新 committed 卡/新消息" 的代理。
+
+- **T1（硬门禁）兜底在两次工具调用之间触发，不产生新 committed 卡**：注入 `chunk?`无 → `tool c1` → `advance(3000)`（兜底 fire）→ `tool c2` → `advance(3000)` → `tool c3` → `idle`。断言：(a) 两次 `advance(3000)` 后 **`commits()===0`**（兜底未封卡）；(b) `annotations.at(-1)==="🔧 Called 3 tools"`（同卡 in-place 累积）；(c) `idle` 后 **`commits()===1`**（真边界只提交一次）；(d) `sealSegments()===0`（无 prose、无段封）。
+- **T2 纯工具跨多次 fallback fire**：`tool×N` 间穿插多次 `advance(3000)`，无 prose、无 idle。断言每次 fallback 后 `commits()` 不增；`annotations` 单调累积到 `Called N tools`。
+- **T3 工具后有正文**：`tool c1` → `chunk "done"` → `idle`。断言：prose-after-tools 走既有 `streamSealSegment` 分组（`sealSegments()===1`），与本修复不冲突；`idle` 提交。
+- **T4 lost-idle 正文仍送达（且更新 INV-1 用例）**：
+  - T4a：`chunk "hello"` → `advance(3000)`（无 idle）。断言 `rt.buffer` 非空 → **`commits()===1`**（正文 lost-idle 保护，照旧交付）。
+  - T4b（替换旧 853 用例）：`chunk?`无 → `tool c1`（纯工具）→ `advance(3000)`。断言 **`commits()===0`**（纯工具轮不再经 fallback 提交）；随后 `idle` → `commits()===1`。
+- **T5 off 档**：`toolDisplay:"off"`，`tool c1` → `advance(3000)`。断言行为同今天（`commits()===1`，静默无注解）——off 不受本修复影响（`toolCount===0`）。
+- **T6 不破坏 commit barrier/dedupe/replay/idempotency**：复跑既有相关用例保持绿；新增"跳过分支不 begin barrier"断言（兜底跳过后，紧接的工具事件不被 `queuedEvents` 暂存）。
+
+### 11.6 开放问题（需 prdmgr/用户拍板）
+- **O1 纯工具轮 + 真 idle 丢失的悬挂**：跳过封卡后，若该轮 idle 真丢失，工具卡会"generating"到下一轮 pre-prompt 才封。可接受（无正文卡住、真 idle 常态会及时提交）？还是要给纯工具轮一个**更长的兜底上限**（如 N×debounce 后才强制封一次）以防长期悬挂？
+- **O2 INV-1 子断言变更确认**：纯工具收尾轮不再经 fallback 提交（改等真实边界）——确认接受并据此更新 `feishu-channel.test.ts:853`。
+- **O3 判据口径**：采用 `rt.buffer.trim()==="" && rt.toolCount>0`（channel 层、不窥探 sender）。是否需要额外纳入 sender `live.sentText===""` 作为双保险？（建议不需要——channel buffer 已是权威，保持分层。）
+
+---
+
 ## 附录：实际读过的文件（实读核对，未跑实现）
 
 - `docs/design/feishu-rich-outbound.md`（现状 §1.1-1.6、locked decisions、§4 segment 模型）。
@@ -283,5 +361,6 @@ onRouterToolCall(rt, u):
 - `src/channels/config.ts`（解析/默认 58-101）。
 - `src/channels/index.ts`（sink 选用 79-98、`cardSenderOptions` 104-135）。
 - `src/channels/provision.ts`（outbound 默认 173）。
+- **§11 真机回归本轮（main `09f50d5` 实读）**：`feishu-channel.ts` 的 `dispatchRouterEvent` tool/chunk 分支(770-814)、`scheduleStreamFinish`(840-851)、`resetToolGroup`(853-861)、`streamFinish(rt,endsGroup)`(863-884)、`beginCommitBarrier`(886+)、`finalizeTurn/streamCurrent`(821-833)、pre-prompt 边界(437)、prompt-resolve(576)、`BindingRuntime` 字段(buffer/currentMessageId/currentMessageStart/streamTurnActive/committing/commitGen/queuedEvents/toolCount/toolNames/seenToolCalls)、`appendRouterChunk`(1127-1164 真实 buffer 语义)；`card-sender.ts` 的 `doStreamOp` 创建(632 `sentText/sentAnnotation`)、`composeLiveDisplay`(775-777)、up-to-date 判定(431-434)；`feishu-channel.test.ts` 受影响用例(766 off、780/797 跨 fallback 累计、853 INV-1 纯工具 fallback)。
 
-**未跑的 gate**：本阶段纯 spec、无实现改动，**未运行** `bun test` / tsc（无代码改动，不涉回归）。§8/§9 的命令是实现阶段门禁，本文档未执行。
+**未跑的 gate**：本阶段纯设计文档、无实现改动，**未运行** `bun test` / tsc（无代码改动，不涉回归）。§8/§9/§11.5 的命令/用例是实现阶段门禁，本文档未执行。
