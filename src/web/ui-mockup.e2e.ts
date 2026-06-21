@@ -525,6 +525,38 @@ try {
     }
   }
 
+  // ── Channels (07): assertions + state × device screenshots ──
+  await step("channels: status + bindings + pending approve/revoke + allowSenders registry", async () => {
+    await page.goto(`${BASE}/__ui-mockup?surface=channels&state=populated&device=desktop`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-mockup="frame"][data-channels="panel"]', { timeout: 8000 });
+    for (const sel of ["[data-channel-status]", "[data-bindings]", "[data-pending-senders]", "[data-authorized-senders]", "[data-channel-enroll]"]) {
+      if (await page.locator(sel).count() === 0) throw new Error(`channels section missing: ${sel}`);
+    }
+    for (const lbl of ["bind chat to mesh", "sync feishu groups", "approve sender ou_77c…e2", "revoke pending ou_77c…e2", "revoke sender ou_me…01"]) {
+      if (await page.locator(`[aria-label="${lbl}"]`).count() === 0) throw new Error(`channels control missing: ${lbl}`);
+    }
+  });
+  await step("channels: busy→provision QR card; mobile→read-only status + inbox only", async () => {
+    await page.goto(`${BASE}/__ui-mockup?surface=channels&state=busy&device=desktop`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector("[data-provision]", { timeout: 8000 });
+    if (await page.locator('[aria-label="cancel provision"]').count() === 0) throw new Error("provision cancel missing");
+    await page.goto(`${BASE}/__ui-mockup?surface=channels&state=populated&device=mobile`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-device="mobile"][data-channels="panel"]', { timeout: 8000 });
+    if (await page.locator("[data-pending-senders]").count() === 0) throw new Error("mobile inbox missing");
+    if (await page.locator("[data-bindings]").count() !== 0) throw new Error("mobile must defer bindings to desktop");
+  });
+  const CHANNEL_STATES = ["empty", "loading", "populated", "error", "permission", "busy", "offline", "boundary"];
+  for (const device of ["desktop", "mobile"]) {
+    for (const st of CHANNEL_STATES) {
+      await step(`screenshot channels-${st}-${device}`, async () => {
+        await page.goto(`${BASE}/__ui-mockup?surface=channels&state=${st}&device=${device}&mode=dark-slate&accent=signal-teal`, { waitUntil: "domcontentloaded" });
+        await page.waitForSelector(`[data-mockup="frame"][data-device="${device}"][data-channels="panel"]`, { timeout: 8000 });
+        await sleep(130);
+        await shotFrame(`${SHOTS}/channels-${st}-${device}-dark-slate-signal-teal.png`);
+      });
+    }
+  }
+
   // ── shell (01) state × device screenshots (Phase B; default Dark·Slate × Signal Teal) ──
   const SHELL_STATES = ["empty", "loading", "populated", "error", "permission", "busy", "offline", "boundary"];
   for (const device of ["desktop", "mobile"]) {

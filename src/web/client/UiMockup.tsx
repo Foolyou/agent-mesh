@@ -23,10 +23,12 @@
 //   - Harnesses (06-harnesses.md): per-harness status + dual version + auth + reprobe +
 //     install/update, install progress (retry-stream/close), self-install guide, and
 //     old-version-agent restarts (after-idle / force / cancel).
+//   - Channels (07-channels.md): Feishu status + chat→mesh bindings (provision/QR) +
+//     pending-sender auth-code inbox (approve/revoke) + allowSenders registry (revoke).
 //   - navigation index (?index=1): a directory of every surface + state/device deep links.
 //
 // Query deep links for deterministic screenshots: ?device=desktop|mobile,
-// ?surface=shell|runtime|board|new-mesh|assistant|harnesses, ?runtime=overview|focus|full|canvas,
+// ?surface=shell|runtime|board|new-mesh|assistant|harnesses|channels, ?runtime=overview|focus|full|canvas,
 // ?board=list|detail|kanban, ?state=<shell-state>, ?index=1, ?view=runtime|board,
 // ?mesh=<id>, ?mode=<mode>, ?accent=<accent>. No raw-* utilities (passes
 // `bun run lint:tokens`); all classes literal so Tailwind emits them.
@@ -48,7 +50,7 @@ const ACCENT_SET = new Set<Accent>(ACCENTS);
 
 type Device = "desktop" | "mobile";
 type View = "runtime" | "board";
-type Surface = "shell" | "runtime" | "board" | "new-mesh" | "assistant" | "harnesses";
+type Surface = "shell" | "runtime" | "board" | "new-mesh" | "assistant" | "harnesses" | "channels";
 // overview/focus = the two in-shell runtime states; full/canvas = desktop-only standalone
 // frames (session fullscreen / zoomable topology canvas) reached from the focus / overview.
 type RuntimeState = "overview" | "focus" | "full" | "canvas";
@@ -232,7 +234,7 @@ function readSel(): Sel {
   const a = p.get("accent");
   const mesh = p.get("mesh");
   const sfc = p.get("surface");
-  const surface: Surface = sfc === "runtime" ? "runtime" : sfc === "board" ? "board" : sfc === "new-mesh" ? "new-mesh" : sfc === "assistant" ? "assistant" : sfc === "harnesses" ? "harnesses" : "shell";
+  const surface: Surface = sfc === "runtime" ? "runtime" : sfc === "board" ? "board" : sfc === "new-mesh" ? "new-mesh" : sfc === "assistant" ? "assistant" : sfc === "harnesses" ? "harnesses" : sfc === "channels" ? "channels" : "shell";
   const bs = p.get("board");
   const rt = p.get("runtime") as RuntimeState | null;
   const st = p.get("state") as ShellState | null;
@@ -1397,6 +1399,216 @@ function HarnessesFrame({ state, device }: { state: ShellState; device: Device }
   );
 }
 
+// ── Channels (07) — Feishu connection / chat→mesh binding / sender allowlist ─────────
+// Mirrors src/channels: FeishuChannelStatus (state disabled/running/stopped/error +
+// configured/enabled/appId/domain/bindings), FeishuMeshBinding (mesh/chatId/name/source/
+// requireMention/allowSenders), provision job (starting/waiting[QR]/complete/cancelled/
+// error), and the device-auth allowSenders allowlist (auth-code enrollment → approve/revoke).
+const FEISHU = { appId: "cli_a1b2c3d4", domain: "feishu" as const, configPath: "channels/feishu.json" };
+interface ChannelBinding { mesh: string; chatId: string; name: string; source: "manual" | "auto"; requireMention: boolean }
+const CH_BINDINGS: ChannelBinding[] = [
+  { mesh: "dev-mesh", chatId: "oc_9f…a1", name: "dev-mesh@host", source: "auto", requireMention: true },
+  { mesh: "ops", chatId: "oc_3e…b7", name: "ops@host", source: "manual", requireMention: false },
+];
+interface PendingSender { openId: string; authcode: string; when: string }
+const CH_PENDING: PendingSender[] = [
+  { openId: "ou_77c…e2", authcode: "AB12-CD34", when: "2m" },
+  { openId: "ou_5a1…9f", authcode: "EF56-GH78", when: "8m" },
+];
+interface AuthSender { openId: string; label: string }
+const CH_AUTHORIZED: AuthSender[] = [
+  { openId: "ou_me…01", label: "you (operator)" },
+  { openId: "ou_22b…7c", label: "teammate" },
+];
+const CH_BINDINGS_MANY: ChannelBinding[] = [
+  ...CH_BINDINGS,
+  { mesh: "infra", chatId: "oc_aa…22", name: "infra@host", source: "auto", requireMention: true },
+  { mesh: "research", chatId: "oc_bb…33", name: "research@host", source: "manual", requireMention: false },
+  { mesh: "security-audit", chatId: "oc_cc…44", name: "security@host", source: "auto", requireMention: true },
+];
+const CH_PENDING_MANY: PendingSender[] = [
+  ...CH_PENDING,
+  { openId: "ou_91d…3a", authcode: "IJ90-KL12", when: "11m" },
+  { openId: "ou_44e…6b", authcode: "MN34-OP56", when: "20m" },
+  { openId: "ou_88f…0c", authcode: "QR78-ST90", when: "33m" },
+];
+const CH_AUTHORIZED_MANY: AuthSender[] = [
+  ...CH_AUTHORIZED,
+  { openId: "ou_33c…1d", label: "reviewer" }, { openId: "ou_77a…9e", label: "ops-bot" },
+  { openId: "ou_55b…2f", label: "oncall" }, { openId: "ou_99d…4a", label: "guest" },
+];
+
+const FEISHU_STATE: Record<ShellState, { tone: Status; label: string }> = {
+  empty: { tone: "idle", label: "not configured" },
+  loading: { tone: "working", label: "fetching…" },
+  populated: { tone: "ready", label: "running" },
+  error: { tone: "blocked", label: "config invalid" },
+  permission: { tone: "ready", label: "running" },
+  busy: { tone: "working", label: "binding…" },
+  offline: { tone: "blocked", label: "offline (stale)" },
+  boundary: { tone: "ready", label: "running" },
+};
+
+function ChannelStatusCard({ state }: { state: ShellState }) {
+  const s = FEISHU_STATE[state];
+  return (
+    <div data-channel-status className="flex flex-col gap-1.5 rounded-lg border border-border bg-surface-raised p-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-sm font-semibold text-text-primary">飞书 Feishu</span>
+        <StatusChip status={s.tone} variant="soft" label={s.label} />
+        {state !== "empty" ? <StatusChip status="idle" variant="soft" label={`domain: ${FEISHU.domain}`} /> : null}
+        <span className="flex-1" aria-hidden="true" />
+        <code className="font-mono text-xs text-text-muted">{FEISHU.configPath}</code>
+      </div>
+      {state === "empty"
+        ? <p className="text-xs text-text-muted">未配置 — 在 <code className="font-mono">channels/feishu.json</code> 填入 appId/appSecret/bot 后 reload 启用。</p>
+        : state === "error"
+        ? <p className="text-xs text-danger">配置无效 — appSecret 缺失或 bot scope 不足；修正后 reload。</p>
+        : <p className="text-xs text-text-muted">appId {FEISHU.appId} · 入站事件 + 出站 IM · allowSenders 白名单门禁开启。</p>}
+    </div>
+  );
+}
+
+// Provision flow card (bind chat → mesh): waiting = QR + verify url + cancel (audit checklist).
+function ProvisionCard({ disabled = false }: { disabled?: boolean }) {
+  return (
+    <div data-provision className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-surface-sunken p-3">
+      <div className="flex h-20 w-20 shrink-0 items-center justify-center rounded border border-border-strong bg-surface text-3xl" aria-label="授权二维码">▦</div>
+      <div className="flex min-w-0 flex-1 flex-col gap-1">
+        <span className="text-sm text-text-primary">在飞书中扫码授权（waiting）</span>
+        <a href="#" className="truncate text-xs text-link no-underline">https://open.feishu.cn/…/verify?token=…</a>
+        <span className="text-xs text-text-muted">过期：04:32 · 轮询中…</span>
+      </div>
+      <Button size="sm" variant="ghost" disabled={disabled} aria-label="cancel provision">取消</Button>
+    </div>
+  );
+}
+
+function ChannelBindingsCard({ state, mobile }: { state: ShellState; mobile: boolean }) {
+  const disabled = state === "permission" || state === "offline";
+  const busy = state === "busy";
+  const bindings = state === "empty" ? [] : state === "boundary" ? CH_BINDINGS_MANY : CH_BINDINGS;
+  return (
+    <div data-bindings className="flex flex-col gap-2 rounded-lg border border-border bg-surface-raised p-3">
+      <div className="flex items-center justify-between">
+        <span className="text-xs uppercase tracking-wider text-text-muted">绑定 chat → mesh ({bindings.length})</span>
+        <Cluster>
+          <Button size="sm" variant="ghost" disabled={disabled} aria-label="sync feishu groups">sync</Button>
+          <Button size="sm" variant="secondary" disabled={disabled} aria-label="bind chat to mesh">+ 绑定</Button>
+        </Cluster>
+      </div>
+      {state === "error" ? <ErrorBanner title="Bind failed" onRetry={() => {}}>provision 失败 — 稍后重试。</ErrorBanner> : null}
+      {busy ? <ProvisionCard disabled={disabled} /> : null}
+      {bindings.length === 0 && !busy ? <span className="text-xs text-text-muted">暂无绑定。</span> : (
+        <div className="flex flex-col gap-1.5">
+          {bindings.map((b) => (
+            <div key={b.mesh} className="flex flex-wrap items-center gap-2 text-sm">
+              <StatusChip status="ready" variant="dot" />
+              <span className="font-medium text-text-primary">{b.mesh}</span>
+              <span aria-hidden="true" className="text-text-muted">←</span>
+              <code className="font-mono text-xs text-text-muted">{b.chatId}</code>
+              <span className="text-xs text-text-muted">{b.name}</span>
+              <StatusChip status="idle" variant="soft" label={b.source} />
+              {b.requireMention ? <span className="text-xs text-text-muted">@mention</span> : null}
+              <span className="flex-1" aria-hidden="true" />
+              <Button size="sm" variant="ghost" disabled={disabled} aria-label={`ensure group ${b.mesh}`}>建群</Button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Pending sender auth-codes → approve/revoke (dynamic-authz inbox; device-auth ⑤ overlap).
+function PendingSendersCard({ state }: { state: ShellState }) {
+  const disabled = state === "permission" || state === "offline";
+  const busy = state === "busy";
+  const pending = state === "empty" ? [] : state === "boundary" ? CH_PENDING_MANY : CH_PENDING;
+  return (
+    <div data-pending-senders className="flex flex-col gap-2 rounded-lg border border-border bg-surface-raised p-3">
+      <div className="flex items-center justify-between">
+        <span className="text-xs uppercase tracking-wider text-text-muted">待审批发送者 · authcode 入册 ({pending.length})</span>
+        {/* enrollment overlaps device-auth — entry to the device/auth surface (#12). */}
+        <LinkButton href="#" label="设备授权" dataKey="channel-enroll">设备授权 ↗</LinkButton>
+      </div>
+      {state === "error" ? <ErrorBanner title="Action failed" onRetry={() => {}}>approve/revoke 失败 — 重试。</ErrorBanner> : null}
+      {pending.length === 0 ? <span className="text-xs text-text-muted">暂无待审批发送者。</span> : (
+        <div className="flex flex-col gap-1.5">
+          {pending.map((p) => (
+            <div key={p.openId} className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-surface-sunken px-2.5 py-1.5 text-sm">
+              <StatusChip status="attention" variant="dot" />
+              <code className="font-mono text-xs text-text-primary">{p.openId}</code>
+              <span className="text-xs text-text-muted">authcode {p.authcode} · {p.when}</span>
+              <span className="flex-1" aria-hidden="true" />
+              {busy ? <Spinner size={12} label="resolving" /> : null}
+              <Button size="sm" variant="primary" disabled={disabled} busy={busy} aria-label={`approve sender ${p.openId}`}>批准</Button>
+              <Button size="sm" variant="ghost" disabled={disabled} aria-label={`revoke pending ${p.openId}`}>拒绝</Button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Authorized sender registry (allowSenders) → revoke.
+function AuthorizedSendersCard({ state }: { state: ShellState }) {
+  const disabled = state === "permission" || state === "offline";
+  const senders = state === "boundary" ? CH_AUTHORIZED_MANY : CH_AUTHORIZED;
+  return (
+    <div data-authorized-senders className="flex flex-col gap-2 rounded-lg border border-border bg-surface-raised p-3">
+      <span className="text-xs uppercase tracking-wider text-text-muted">已授权发送者 · allowSenders ({senders.length})</span>
+      <div className="flex flex-col gap-1.5">
+        {senders.map((s) => (
+          <div key={s.openId} className="flex flex-wrap items-center gap-2 text-sm">
+            <StatusChip status="ready" variant="dot" />
+            <code className="font-mono text-xs text-text-primary">{s.openId}</code>
+            <span className="text-xs text-text-muted">{s.label}</span>
+            <span className="flex-1" aria-hidden="true" />
+            <Button size="sm" variant="ghost" disabled={disabled} aria-label={`revoke sender ${s.openId}`}>撤销</Button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ChannelsFrame({ state, device }: { state: ShellState; device: Device }) {
+  const mobile = device === "mobile";
+  const disabled = state === "permission" || state === "offline";
+  return (
+    <div data-mockup="frame" data-device={device} data-channels="panel"
+      className={`flex ${mobile ? "h-[760px] w-[390px] rounded-[28px]" : "h-[700px] w-[1280px] rounded-xl"} max-w-full flex-col overflow-hidden border border-border bg-surface text-text-primary shadow-sm`}>
+      <header className="flex items-center gap-2 border-b border-border bg-surface-raised px-4 py-2.5">
+        <Brand /><span className="text-text-muted">·</span>
+        <span className="text-sm font-semibold">Channels</span>
+        {mobile ? <StatusChip status="idle" variant="soft" label="只读" /> : null}
+        <span className="flex-1" aria-hidden="true" />
+        <Button size="sm" variant="ghost" disabled={disabled} aria-label="refresh channel status">refresh</Button>
+      </header>
+      {state === "permission" ? <div role="status" className="border-b border-border bg-danger-subtle px-4 py-1.5 text-xs text-danger">设备未授权 — 绑定 / 审批 / 撤销需已授权设备；状态只读。</div> : null}
+      {state === "offline" ? <div role="status" className="flex items-center gap-2 border-b border-border bg-warning-subtle px-4 py-1.5 text-xs text-warning"><Spinner size={12} label="reconnecting" /> 连接已断开 — 正在重连…（显示最近已知，操作禁用）</div> : null}
+      <div className="min-h-0 flex-1 overflow-auto p-4">
+        <div className={`mx-auto flex flex-col gap-4 ${mobile ? "" : "max-w-[860px]"}`}>
+          {state === "loading" ? (
+            <div className="flex flex-col gap-3"><Skeleton variant="line" /><Skeleton variant="row" /><Skeleton variant="card" /></div>
+          ) : (
+            <>
+              <ChannelStatusCard state={state} />
+              {/* Mobile = read-only status + the actionable pending-sender inbox; binding/registry desktop-only (△). */}
+              {!mobile ? <ChannelBindingsCard state={state} mobile={mobile} /> : null}
+              <PendingSendersCard state={state} />
+              {!mobile && state !== "empty" ? <AuthorizedSendersCard state={state} /> : null}
+              {mobile ? <p className="text-xs text-text-muted">绑定 / 已授权注册表在桌面端管理（移动端聚焦待审批收件箱）。</p> : null}
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── new-mesh builder (04) fixtures + frame ───────────────────────────────────────
 interface AgentRow { id: string; harness: string; project: string; role: "router" | "member"; model?: string; effort?: string; lazy?: boolean; opencodePermission?: "ask" | "allow"; instructions?: string }
 const HARNESSES = ["claude", "codex", "opencode", "kimi"];
@@ -1880,6 +2092,9 @@ const INDEX_SECTIONS: { title: string; note: string; rows: IndexRow[] }[] = [
   { title: "06 · Harnesses", note: "适配器安装/健康/双版本 · 安装进度(重试/关闭) · 自助安装 · 旧版本重启(after-idle/force/cancel)", rows: [
     { label: "panel", base: "surface=harnesses", states: ["loading", "populated", "error", "permission", "busy", "offline", "boundary"], mobile: true },
   ] },
+  { title: "07 · Channels", note: "飞书状态/绑定 chat→mesh(provision) · 待审批发送者 authcode 入册 · allowSenders 注册表/撤销", rows: [
+    { label: "panel", base: "surface=channels", states: SHELL_STATES, mobile: true },
+  ] },
 ];
 
 function MockupIndex({ backHref }: { backHref: string }) {
@@ -2025,7 +2240,7 @@ export function UiMockup() {
     <div data-mockup="root" className="min-h-screen bg-surface text-text-primary font-sans p-6">
       {/* mockup tool chrome (outside the mocked app frame) */}
       <header className="mb-5">
-        <h1 className="mb-1 text-xl font-semibold">Agent Mesh — 终稿 mockup（{index ? "导航索引" : surface === "runtime" ? `运行态 A · ${runtime}` : surface === "board" ? "看板 C" : surface === "new-mesh" ? "新建 mesh" : surface === "assistant" ? "Mesh Assistant B" : surface === "harnesses" ? "Harnesses" : "应用外壳"}{index ? "" : ` · ${state} · ${device === "mobile" ? "移动" : "桌面"}`}）</h1>
+        <h1 className="mb-1 text-xl font-semibold">Agent Mesh — 终稿 mockup（{index ? "导航索引" : surface === "runtime" ? `运行态 A · ${runtime}` : surface === "board" ? "看板 C" : surface === "new-mesh" ? "新建 mesh" : surface === "assistant" ? "Mesh Assistant B" : surface === "harnesses" ? "Harnesses" : surface === "channels" ? "Channels" : "应用外壳"}{index ? "" : ` · ${state} · ${device === "mobile" ? "移动" : "桌面"}`}）</h1>
         <p className="mb-3 text-xs text-text-muted">真实 C5–C7 组件 + v2 compose 运行时 · fixture 数据 · 不连后端。Live: <code className="text-syntax-string">MESH_UI_PREVIEW=1 … /__ui-mockup</code></p>
         <div className="mb-3">
           <SegmentedControl ariaLabel="View mode" value={index ? "index" : "mockup"} onChange={(v) => nav({ index: v === "index" })} options={[{ value: "mockup", label: "Mockup" }, { value: "index", label: "▤ 索引" }]} size="sm" />
@@ -2045,7 +2260,7 @@ export function UiMockup() {
           </div>
           <div>
             <div className="mb-1.5 text-xs uppercase tracking-wider text-text-muted">Surface</div>
-            <SegmentedControl ariaLabel="Surface" value={surface} onChange={(s) => { const next = s as Surface; nav({ surface: next }); if (next === "board") setMobileTab("board"); else if (next === "runtime") setMobileTab("runtime"); }} options={[{ value: "shell", label: "外壳" }, { value: "runtime", label: "运行态 A" }, { value: "board", label: "看板 C" }, { value: "assistant", label: "助手 B" }, { value: "harnesses", label: "Harness" }, { value: "new-mesh", label: "新建" }]} size="sm" />
+            <SegmentedControl ariaLabel="Surface" value={surface} onChange={(s) => { const next = s as Surface; nav({ surface: next }); if (next === "board") setMobileTab("board"); else if (next === "runtime") setMobileTab("runtime"); }} options={[{ value: "shell", label: "外壳" }, { value: "runtime", label: "运行态 A" }, { value: "board", label: "看板 C" }, { value: "assistant", label: "助手 B" }, { value: "harnesses", label: "Harness" }, { value: "channels", label: "渠道" }, { value: "new-mesh", label: "新建" }]} size="sm" />
           </div>
           {surface === "runtime" ? (
             <div>
@@ -2075,7 +2290,7 @@ export function UiMockup() {
               />
             </div>
           ) : null}
-          {surface === "shell" || surface === "runtime" || surface === "board" || surface === "new-mesh" || surface === "assistant" || surface === "harnesses" ? (
+          {surface === "shell" || surface === "runtime" || surface === "board" || surface === "new-mesh" || surface === "assistant" || surface === "harnesses" || surface === "channels" ? (
             <div>
               <div className="mb-1.5 text-xs uppercase tracking-wider text-text-muted">State</div>
               <SegmentedControl
@@ -2111,6 +2326,8 @@ export function UiMockup() {
           ? <AssistantFrame state={state} device={device} fs={device === "desktop" && asstFs} fsHref={asstFsHref} />
           : surface === "harnesses"
           ? <HarnessesFrame state={state} device={device} />
+          : surface === "channels"
+          ? <ChannelsFrame state={state} device={device} />
           : surface === "new-mesh"
           ? <NewMeshFrame state={state} device={device} nmEditor={nmEditor} />
           : surface === "runtime" && device === "desktop" && runtime === "full"

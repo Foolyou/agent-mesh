@@ -34,3 +34,19 @@ allowSenders enrollment (auth-store/auth-codes; see `12`).
 - 2026-06-21 — created (Phase A commit 3). Sources: `../interaction/07-channels.md`;
   `src/channels/*`, `channels/feishu.json`, `store.ts` feishu endpoints, device-auth
   allowSenders (`12`). p2p-DM folded here per lead #683 assumption 4.
+- 2026-06-21 — Phase B Step 2 mockup (`UiMockup.tsx`): the Channels surface built in the
+  guarded `/__ui-mockup` (`?surface=channels`) — a standalone panel frame (route
+  `/channels`, 管理▾ / mobile 更多). Feishu status card (state running/disabled/error/
+  not-configured + appId + domain + configPath, mirrors FeishuChannelStatus); chat→mesh
+  bindings list (mesh/chatId/name/source/@mention, FeishuMeshBinding) with sync + bind +
+  per-mesh ensure-group, and a provision card (QR + verify URL + expiry + cancel) shown
+  while binding (busy); pending-sender auth-code inbox (approve/revoke + a 设备授权 ↗
+  enrollment entry, overlapping device-auth ⑤); allowSenders registry with per-sender
+  revoke. States: empty→"not configured"+hint, loading→skeleton, populated, error→config-
+  invalid+bind/action failed, permission→banner+operator-actions disabled (inbox is the
+  natural authz home), busy→provision in flight, offline→reconnect+disabled, boundary→
+  many bindings/pending/senders. Desktop = full; mobile = read-only status + the actionable
+  pending-sender inbox (binding/registry deferred to desktop, matrix △). Grounded in
+  `src/channels` (FeishuChannelStatus / FeishuMeshBinding / provision states / allowSenders)
+  + `store.ts` feishu endpoints. No additional [E] capability beyond the checklist found.
+  Index (`?index=1`) gains the 07 row. Fixture-only, true C5–C8, v2 tokens.

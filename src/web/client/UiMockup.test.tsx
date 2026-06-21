@@ -341,8 +341,10 @@ test("index skeleton · lists every surface with state/device deep links", () =>
   expect(out).toContain("04 · 新建 mesh");
   expect(out).toContain("05 · Mesh Assistant B");
   expect(out).toContain("06 · Harnesses");
+  expect(out).toContain("07 · Channels");
   expect(out).toContain("surface=assistant"); // assistant deep links
   expect(out).toContain("surface=harnesses"); // harnesses deep links
+  expect(out).toContain("surface=channels"); // channels deep links
   expect(out).toContain("runtime=canvas"); // a runtime补漏 deep link (& is HTML-escaped in href)
   expect(out).toContain("boardManage=1"); // board补漏 deep link
   expect(out).toContain("boardFs=1");
@@ -522,6 +524,74 @@ test("harnesses · mobile: stacked panel renders", () => {
   expect(out).toContain('data-device="mobile"');
   expect(out).toContain('data-harnesses="panel"');
   expect(out).toContain("data-old-agents");
+});
+
+// ── Channels (07) ────────────────────────────────────────────────────────────
+test("channels · populated: status + bindings + pending approve/revoke + allowSenders registry", () => {
+  const out = renderAt("?surface=channels&state=populated&device=desktop");
+  expect(out).toContain('data-channels="panel"');
+  expect(out).toContain("data-channel-status"); // Feishu status
+  expect(out).toContain("飞书 Feishu");
+  expect(out).toContain("cli_a1b2c3d4"); // appId
+  expect(out).toContain("data-bindings"); // chat→mesh bindings
+  expect(out).toContain('aria-label="bind chat to mesh"');
+  expect(out).toContain('aria-label="sync feishu groups"');
+  expect(out).toContain("data-pending-senders"); // dynamic-authz inbox
+  expect(out).toContain('aria-label="approve sender ou_77c…e2"');
+  expect(out).toContain('aria-label="revoke pending ou_77c…e2"');
+  expect(out).toContain('data-channel-enroll'); // device-auth enrollment entry overlap
+  expect(out).toContain("data-authorized-senders"); // allowSenders registry
+  expect(out).toContain('aria-label="revoke sender ou_me…01"');
+});
+
+test("channels · empty: not-configured hint, no bindings, pending empty, no registry", () => {
+  const out = renderAt("?surface=channels&state=empty&device=desktop");
+  expect(out).toContain("not configured");
+  expect(out).toContain("暂无绑定");
+  expect(out).toContain("暂无待审批发送者");
+  expect(out.includes("data-authorized-senders")).toBe(false); // registry hidden when none/unconfigured
+});
+
+test("channels · loading skeleton (no status card); busy shows provision QR card", () => {
+  const loading = renderAt("?surface=channels&state=loading&device=desktop");
+  expect(loading).toContain("animate-pulse");
+  expect(loading.includes("data-channel-status")).toBe(false);
+  const busy = renderAt("?surface=channels&state=busy&device=desktop");
+  expect(busy).toContain("data-provision"); // bind provision in flight (QR/waiting)
+  expect(busy).toContain('aria-label="cancel provision"');
+});
+
+test("channels · error: config-invalid + bind/action failed banners", () => {
+  const out = renderAt("?surface=channels&state=error&device=desktop");
+  expect(out).toContain("config invalid");
+  expect(out).toContain("Bind failed");
+  expect(out).toContain('role="alert"');
+});
+
+test("channels · permission/offline disable operator actions + show banners", () => {
+  const perm = renderAt("?surface=channels&state=permission&device=desktop");
+  expect(perm).toContain("设备未授权");
+  expect(perm).toContain('aria-label="bind chat to mesh" disabled=""');
+  expect(perm).toContain('aria-label="approve sender ou_77c…e2" disabled=""');
+  const off = renderAt("?surface=channels&state=offline&device=desktop");
+  expect(off).toContain("正在重连");
+  expect(off).toContain('aria-label="revoke sender ou_me…01" disabled=""');
+});
+
+test("channels · boundary many bindings/pending/senders", () => {
+  const out = renderAt("?surface=channels&state=boundary&device=desktop");
+  expect(out).toContain("security-audit"); // a boundary-only binding
+  expect(out).toContain("QR78-ST90"); // a boundary-only pending authcode
+  expect(out).toContain("ou_99d…4a"); // a boundary-only authorized sender
+});
+
+test("channels · mobile: read-only status + pending inbox; bindings/registry desktop-only", () => {
+  const out = renderAt("?surface=channels&state=populated&device=mobile");
+  expect(out).toContain('data-device="mobile"');
+  expect(out).toContain("data-channel-status");
+  expect(out).toContain("data-pending-senders"); // actionable inbox kept on mobile
+  expect(out.includes("data-bindings")).toBe(false); // binding deferred to desktop
+  expect(out.includes("data-authorized-senders")).toBe(false);
 });
 
 test("mockup uses v2 semantic utilities and emits no raw-* class", () => {
