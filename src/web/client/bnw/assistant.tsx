@@ -53,7 +53,7 @@ export function BnwAssistant({ store, state, full }: { store: Store; state: Gate
         ariaLabel="Assistant composer"
         actions={<div className="flex items-center gap-2">
           {working ? <Button size="sm" variant="ghost" aria-label="interrupt assistant" onClick={() => void store.interruptAssistant()}>打断</Button> : null}
-          <Button size="sm" variant="secondary" busy={busy} disabled={!text.trim()} aria-label="send" onClick={() => void send()}>Send</Button>
+          <Button size="sm" variant="primary" busy={busy} disabled={!text.trim()} aria-label="send" onClick={() => void send()}>Send</Button>
         </div>}
         hint={working ? "assistant 正在工作…" : undefined}
       >

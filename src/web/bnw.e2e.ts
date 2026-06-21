@@ -452,6 +452,12 @@ try {
     await page.goto(`${BASE}/bnw/mesh/demo/board`, { waitUntil: "domcontentloaded" });
     await page.waitForSelector('[data-bnw-board-list]', { timeout: 8000 });
     await sleep(120); await page.screenshot({ path: `${SHOTS}/bnw-board-list-desktop.png`, fullPage: true });
+    // restored primary CTA, enabled (accent): open create row (+ 新建) and fill it so "+ task" lights up
+    await page.locator('[aria-label="new issue"]').click();
+    await page.waitForSelector('[data-bnw-board-create]', { timeout: 8000 });
+    await page.locator('[aria-label="new task"]').fill("draft the device-auth enrollment page");
+    await sleep(80); await page.screenshot({ path: `${SHOTS}/bnw-board-list-cta-enabled-desktop.png`, fullPage: true });
+    await page.locator('[aria-label="new issue"]').click(); // close create row
     await page.locator('[aria-label="manage labels"]').click();
     await page.waitForSelector('[data-bnw-board-labels]', { timeout: 8000 });
     await sleep(120); await page.screenshot({ path: `${SHOTS}/bnw-board-labels-desktop.png`, fullPage: true });
@@ -461,18 +467,27 @@ try {
     await page.goto(`${BASE}/bnw/mesh/demo/board/issue/12`, { waitUntil: "domcontentloaded" });
     await page.waitForSelector('[data-bnw-board-detail]', { timeout: 8000 });
     await sleep(120); await page.screenshot({ path: `${SHOTS}/bnw-board-detail-desktop.png`, fullPage: true });
+    // restored primary CTA, enabled (accent): type a comment so "评论" lights up
+    await page.locator('[aria-label="comment input"]').fill("looks good — merging once CI is green");
+    await sleep(80); await page.screenshot({ path: `${SHOTS}/bnw-board-detail-cta-enabled-desktop.png`, fullPage: true });
     // 7.3 new-mesh (desktop) + expanded editor + assistant (desktop) + assistant fullscreen
     await page.goto(`${BASE}/bnw/mesh/new`, { waitUntil: "domcontentloaded" });
     await page.waitForSelector('[data-bnw-newmesh]', { timeout: 8000 });
     await page.locator('[aria-label="mesh name"]').fill("app");
     await page.locator('[aria-label="agent 1 id"]').fill("router");
     await sleep(120); await page.screenshot({ path: `${SHOTS}/bnw-newmesh-desktop.png`, fullPage: true });
+    // restored primary CTA, enabled (accent): a valid project makes Save/Create accent
+    await page.locator('[aria-label="agent 1 project"]').fill("/repo/app");
+    await sleep(80); await page.screenshot({ path: `${SHOTS}/bnw-newmesh-cta-enabled-desktop.png`, fullPage: true });
     await page.locator('[aria-label="expand charter"]').click();
     await page.waitForSelector('[data-bnw-editor]', { timeout: 8000 });
     await sleep(120); await page.screenshot({ path: `${SHOTS}/bnw-newmesh-editor-desktop.png`, fullPage: true });
     await page.goto(`${BASE}/bnw/assistant`, { waitUntil: "domcontentloaded" });
     await page.waitForSelector('[data-bnw-assistant="panel"]', { timeout: 8000 });
     await sleep(120); await page.screenshot({ path: `${SHOTS}/bnw-assistant-desktop.png`, fullPage: true });
+    // restored primary CTA, enabled (accent): typing a message makes Send accent
+    await page.locator('[aria-label="assistant input"]').fill("build a router(claude) + codex member app mesh");
+    await sleep(80); await page.screenshot({ path: `${SHOTS}/bnw-assistant-cta-enabled-desktop.png`, fullPage: true });
     await page.goto(`${BASE}/bnw/assistant?full=1`, { waitUntil: "domcontentloaded" });
     await page.waitForSelector('[data-bnw-assistant="full"]', { timeout: 8000 });
     await sleep(120); await page.screenshot({ path: `${SHOTS}/bnw-assistant-fullscreen-desktop.png`, fullPage: true });

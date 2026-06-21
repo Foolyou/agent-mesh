@@ -140,7 +140,7 @@ export function BnwNewMesh({ store, state, route }: { store: Store; state: Gatew
   // Save/Create stays `secondary` (not primary): a disabled primary on the accent bg falls
   // below the 3:1 disabled-contrast floor (the /bnw a11y gate) — same precedent as the 7.2-B
   // board action buttons. Disabled-secondary (surface bg + disabled text) meets the floor.
-  const actions = <Cluster><Button variant="ghost" size="sm" aria-label="cancel" onClick={() => navigate(name.trim() && editing ? { k: "runtime", mesh: name.trim() } : { k: "home" })}>Cancel</Button><Button variant="secondary" size="sm" busy={busy} disabled={!name.trim() || agents.some((a) => !a.id.trim() || !a.project.trim())} aria-label="save mesh" onClick={() => void save()}>{editing ? "Save" : "Create"}</Button></Cluster>;
+  const actions = <Cluster><Button variant="ghost" size="sm" aria-label="cancel" onClick={() => navigate(name.trim() && editing ? { k: "runtime", mesh: name.trim() } : { k: "home" })}>Cancel</Button><Button variant="primary" size="sm" busy={busy} disabled={!name.trim() || agents.some((a) => !a.id.trim() || !a.project.trim())} aria-label="save mesh" onClick={() => void save()}>{editing ? "Save" : "Create"}</Button></Cluster>;
 
   if (loadingCfg) return <PanelFrame title={editing ? `编辑 mesh · ${route.editOf}` : "新建 mesh"}><div className="flex items-center gap-2 text-sm text-text-muted"><Spinner size={14} label="loading" /> 载入配置…</div></PanelFrame>;
 

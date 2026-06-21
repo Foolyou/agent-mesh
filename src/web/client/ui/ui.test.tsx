@@ -24,6 +24,26 @@ test("Button disabled + busy states (a11y: disabled attr, aria-busy, spinner)", 
   expect(busy).toContain("disabled"); // busy implies disabled
 });
 
+// Filled variants must drop their accent/danger fill when disabled so dimmed
+// text-disabled clears the 3:1 DISABLED_FLOOR (regression: disabled primary kept bg-accent).
+test("Button disabled-primary/danger: enabled fill is accent/danger, disabled fill is neutral", () => {
+  const primary = html(<Button variant="primary">Save</Button>);
+  // enabled fill matches the approved mockup (accent), unconditionally
+  expect(primary).toContain("bg-accent");
+  expect(primary).not.toContain("disabled:bg-accent");
+  // disabled state overrides to the neutral surface-raised treatment (wins by :disabled specificity)
+  expect(primary).toContain("disabled:bg-surface-raised");
+  expect(primary).toContain("disabled:border-border-strong");
+  expect(primary).toContain("disabled:text-text-disabled");
+  const danger = html(<Button variant="danger">Delete</Button>);
+  expect(danger).toContain("bg-danger");
+  expect(danger).not.toContain("disabled:bg-danger");
+  expect(danger).toContain("disabled:bg-surface-raised");
+  // ghost/link/secondary keep their (already-neutral) styling — no accent fill to strip
+  expect(html(<Button variant="ghost">x</Button>)).not.toContain("disabled:bg-surface-raised");
+  expect(html(<Button variant="secondary">x</Button>)).not.toContain("disabled:bg-surface-raised");
+});
+
 test("ConfirmButton renders an armable danger button with its base label", () => {
   const out = html(<ConfirmButton onConfirm={() => {}}>Delete mesh</ConfirmButton>);
   expect(out).toContain("<button");
