@@ -339,6 +339,8 @@ test("index skeleton · lists every surface with state/device deep links", () =>
   expect(out).toContain("02 · 运行态 A");
   expect(out).toContain("03 · 看板 C");
   expect(out).toContain("04 · 新建 mesh");
+  expect(out).toContain("05 · Mesh Assistant B");
+  expect(out).toContain("surface=assistant"); // assistant deep links
   expect(out).toContain("runtime=canvas"); // a runtime补漏 deep link (& is HTML-escaped in href)
   expect(out).toContain("boardManage=1"); // board补漏 deep link
   expect(out).toContain("boardFs=1");
@@ -404,6 +406,59 @@ test("board补漏 mobile · group-by-epic in the filter row (fullscreen/manager 
   expect(out).toContain('aria-label="group by epic"');
   // fullscreen flag is ignored on mobile (no standalone frame)
   expect(renderAt("?surface=board&board=list&state=populated&boardFs=1&device=mobile").includes('data-board-fs="1"')).toBe(false);
+});
+
+// ── Mesh Assistant (05) ──────────────────────────────────────────────────────
+test("assistant · populated: chat + tool-call card + delete confirm + composer + p2p + ⊞ full", () => {
+  const out = renderAt("?surface=assistant&state=populated&device=desktop");
+  expect(out).toContain('data-assistant="chat"');
+  expect(out).toContain("Mesh Assistant");
+  expect(out).toContain("data-assistant-tool"); // tool-call card (create_mesh)
+  expect(out).toContain("create_mesh");
+  expect(out).toContain("Delete"); // inline delete-confirm ApprovalCard
+  expect(out).toContain('aria-label="Message composer"');
+  expect(out).toContain('aria-label="attach image"'); // image advertised here
+  expect(out).toContain('data-assistant-p2p'); // folded p2p DM entry
+  expect(out).toContain('aria-label="全屏"'); // chat fullscreen toggle (#21)
+});
+
+test("assistant · empty shows prompt suggestions; absent(error) shows not-configured + enable, no composer", () => {
+  const empty = renderAt("?surface=assistant&state=empty&device=desktop");
+  expect(empty).toContain("data-assistant-suggestions");
+  expect(empty).toContain("删除 scratch mesh");
+  const absent = renderAt("?surface=assistant&state=error&device=desktop");
+  expect(absent).toContain("未配置"); // not-configured
+  expect(absent).toContain("启用助手"); // enable CTA
+  expect(absent.includes('aria-label="Message composer"')).toBe(false); // no composer when absent
+});
+
+test("assistant · loading skeleton (no composer); busy shows in-flight; boundary many tool cards", () => {
+  const loading = renderAt("?surface=assistant&state=loading&device=desktop");
+  expect(loading).toContain("animate-pulse");
+  expect(loading.includes('aria-label="Message composer"')).toBe(false);
+  expect(renderAt("?surface=assistant&state=busy&device=desktop")).toContain('aria-busy="true"');
+  const b = renderAt("?surface=assistant&state=boundary&device=desktop");
+  expect(b).toContain("update_mesh"); // boundary-only extra tool calls
+  expect(b).toContain("delete_mesh");
+});
+
+test("assistant · permission gates image attach + disables composer; offline shows reconnect", () => {
+  const perm = renderAt("?surface=assistant&state=permission&device=desktop");
+  expect(perm).toContain("设备未授权");
+  expect(perm).toContain('aria-label="image not advertised"'); // image capability gated
+  const off = renderAt("?surface=assistant&state=offline&device=desktop");
+  expect(off).toContain("正在重连");
+  expect(off).toContain("显示最近已知对话");
+});
+
+test("assistant · fullscreen frame (#21) + mobile has no fullscreen toggle (△ already full-width)", () => {
+  const fs = renderAt("?surface=assistant&state=populated&asstFs=1&device=desktop");
+  expect(fs).toContain('data-assistant-fs="1"');
+  expect(fs).toContain('aria-label="退出全屏"'); // ⊟ exit
+  const mob = renderAt("?surface=assistant&state=populated&device=mobile");
+  expect(mob).toContain('data-device="mobile"');
+  expect(mob.includes('aria-label="全屏"')).toBe(false); // toggle desktop-only
+  expect(renderAt("?surface=assistant&state=populated&asstFs=1&device=mobile").includes('data-assistant-fs="1"')).toBe(false);
 });
 
 test("mockup uses v2 semantic utilities and emits no raw-* class", () => {

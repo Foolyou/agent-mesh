@@ -39,3 +39,16 @@ via 更多 → Assistant (works well); mesh-builder hand-offs use the mobile new
   `store.ts` assistant scope (status/capabilities/transcript/interruptAssistant).
 - 2026-06-21 — backward-consistency completion (audit `14`): +assistant chat fullscreen
   toggle (#21). `Sidebar.tsx` `AssistantChat` `onToggleFull`.
+- 2026-06-21 — Phase B Step 2 mockup (`UiMockup.tsx`): the Mesh Assistant surface built in
+  the guarded `/__ui-mockup` (`?surface=assistant`) — a standalone full-width chat frame
+  (route `/assistant`, 管理▾ / mobile 更多). Renders chat bubbles, tool-call cards
+  (`create_mesh`/`get_mesh`/`update_mesh`/`delete_mesh` + args + result), an inline
+  delete-confirm ApprovalCard, a composer with capability-gated image attach (disabled +
+  reason when image not advertised), Interrupt while working, the chat fullscreen toggle
+  ⊞/⊟ (`?asstFs=1`, desktop; mobile △), and a folded p2p-DM entry. All matrix states:
+  empty→suggestions, loading→spawning skeleton, populated→streaming+tools, error→absent
+  "未配置"+启用 (no composer), permission→banner+image-gated+disabled, busy→in-flight,
+  offline→reconnect+last-known, boundary→many tool cards; desktop + mobile. Mirrors
+  `store.ts` assistant scope (status/capabilities/interruptAssistant) + the tool set from
+  `mesh-assistant-tools.check.ts`. No additional [E] capability beyond the checklist found.
+  Index (`?index=1`) gains the 05 row. Fixture-only, true C5–C8, v2 tokens.

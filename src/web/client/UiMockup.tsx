@@ -17,10 +17,13 @@
 //     abilities — fullscreen (?boardFs=1), group-by-epic, label CRUD + palette
 //     (?boardManage=1), create-epic, and reopen of closed (terminal) issues.
 //   - new mesh builder (04): agents / edges / charter / per-agent controls.
+//   - Mesh Assistant (05-assistant.md): NL controller chat + tool-call cards
+//     (create/delete/update-mesh) + inline delete-confirm + chat fullscreen
+//     (?asstFs=1) + folded p2p-DM entry; absent → "not configured" + enable.
 //   - navigation index (?index=1): a directory of every surface + state/device deep links.
 //
 // Query deep links for deterministic screenshots: ?device=desktop|mobile,
-// ?surface=shell|runtime|board|new-mesh, ?runtime=overview|focus|full|canvas,
+// ?surface=shell|runtime|board|new-mesh|assistant, ?runtime=overview|focus|full|canvas,
 // ?board=list|detail|kanban, ?state=<shell-state>, ?index=1, ?view=runtime|board,
 // ?mesh=<id>, ?mode=<mode>, ?accent=<accent>. No raw-* utilities (passes
 // `bun run lint:tokens`); all classes literal so Tailwind emits them.
@@ -42,7 +45,7 @@ const ACCENT_SET = new Set<Accent>(ACCENTS);
 
 type Device = "desktop" | "mobile";
 type View = "runtime" | "board";
-type Surface = "shell" | "runtime" | "board" | "new-mesh";
+type Surface = "shell" | "runtime" | "board" | "new-mesh" | "assistant";
 // overview/focus = the two in-shell runtime states; full/canvas = desktop-only standalone
 // frames (session fullscreen / zoomable topology canvas) reached from the focus / overview.
 type RuntimeState = "overview" | "focus" | "full" | "canvas";
@@ -209,6 +212,7 @@ interface Sel {
   nmEditor: NmEditor;
   boardFs: boolean;
   boardManage: boolean;
+  asstFs: boolean;
   index: boolean;
   mesh: string;
   mode: Mode;
@@ -225,7 +229,7 @@ function readSel(): Sel {
   const a = p.get("accent");
   const mesh = p.get("mesh");
   const sfc = p.get("surface");
-  const surface: Surface = sfc === "runtime" ? "runtime" : sfc === "board" ? "board" : sfc === "new-mesh" ? "new-mesh" : "shell";
+  const surface: Surface = sfc === "runtime" ? "runtime" : sfc === "board" ? "board" : sfc === "new-mesh" ? "new-mesh" : sfc === "assistant" ? "assistant" : "shell";
   const bs = p.get("board");
   const rt = p.get("runtime") as RuntimeState | null;
   const st = p.get("state") as ShellState | null;
@@ -239,6 +243,7 @@ function readSel(): Sel {
     nmEditor: p.get("nmEditor") === "charter" ? "charter" : p.get("nmEditor") === "instructions" ? "instructions" : "off",
     boardFs: p.get("boardFs") === "1",
     boardManage: p.get("boardManage") === "1",
+    asstFs: p.get("asstFs") === "1",
     index: p.get("index") === "1",
     mesh: mesh && MESH_IDS.has(mesh) ? mesh : MESHES[0].id,
     mode: MODE_SET.has(m as Mode) ? (m as Mode) : "dark-slate",
@@ -1106,6 +1111,140 @@ function BoardDetailMobile({ state = "populated" }: { state?: ShellState }) {
   );
 }
 
+// ── Mesh Assistant (05) — central NL controller chat (create/manage/delete meshes) ──
+// Statuses mirror store.ts assistant scope: absent → "not configured"; starting →
+// spawning; ready → chat. Tool-call cards = create_mesh/delete_mesh/update_mesh.
+const ASSISTANT_SUGGESTIONS = [
+  "创建一个 mesh：router + codex 跑 ~/projects/app",
+  "删除 scratch mesh",
+  "把 router 的 project 改成 ~/projects/web",
+];
+const ASSISTANT_TOOL = { tool: "create_mesh", args: "name: app · agents: [router(claude), codex-1(codex)] · edges: router→codex-1", result: "mesh “app” created — start it from 运行态", status: "done" as Status };
+const ASSISTANT_TOOLS_MANY = [
+  ASSISTANT_TOOL,
+  { tool: "get_mesh", args: "name: scratch", result: "router(project=test_mesh_0), 1 edge", status: "done" as Status },
+  { tool: "update_mesh", args: "scratch · router.project → test_mesh_web", result: "updated; restart to apply", status: "done" as Status },
+  { tool: "delete_mesh", args: "name: scratch-del", result: "awaiting confirm", status: "attention" as Status },
+];
+
+function AssistantBubble({ who, text }: { who: "user" | "agent"; text: string }) {
+  const mine = who === "user";
+  return (
+    <div className={`flex ${mine ? "justify-end" : "justify-start"}`}>
+      <div className={`max-w-[80%] rounded-xl px-3 py-2 text-sm text-text-primary ${mine ? "bg-accent-subtle" : "border border-border bg-surface-raised"}`}>
+        <div className="mb-0.5 text-xs text-text-muted">{mine ? "you" : "Mesh Assistant"}</div>
+        {text}
+      </div>
+    </div>
+  );
+}
+
+// Tool-call card: create/delete/update/get-mesh action + args + result (audit checklist).
+function AssistantToolCard({ tool, args, result, status, busy = false }: { tool: string; args: string; result: string; status: Status; busy?: boolean }) {
+  return (
+    <div data-assistant-tool className="rounded-lg border border-border bg-surface-raised px-3 py-2">
+      <div className="flex items-center gap-2">
+        <StatusChip status={busy ? "working" : status} variant="dot" />
+        <span className="font-mono text-xs text-text-secondary">⚙ {tool}</span>
+        <span className="flex-1" aria-hidden="true" />
+        {busy ? <Spinner size={12} label="running" /> : <span className="text-xs text-text-muted">{status}</span>}
+      </div>
+      <pre className="mt-1 overflow-x-auto rounded bg-surface-sunken px-2 py-1 text-xs font-mono text-text-secondary">{args}</pre>
+      <div className="mt-1 text-xs text-text-secondary">→ {result}</div>
+    </div>
+  );
+}
+
+// Inline confirm card for a destructive assistant action (delete mesh) → ApprovalCard.
+function AssistantDeleteConfirm({ busy = false }: { busy?: boolean }) {
+  return (
+    <ApprovalCard
+      title="Mesh Assistant · delete mesh"
+      question={<>Delete mesh <code className="text-syntax-string">scratch-del</code>? This removes its config.</>}
+      options={[{ id: "del", label: "Delete", kind: "reject" }, { id: "cancel", label: "Cancel" }]}
+      onResolve={() => {}}
+      busy={busy}
+    />
+  );
+}
+
+function AssistantComposer({ disabled = false, busy = false, imageEnabled = true }: { disabled?: boolean; busy?: boolean; imageEnabled?: boolean }) {
+  return (
+    <Composer
+      disabled={disabled}
+      toolbar={<Button size="sm" variant="ghost" iconOnly aria-label={imageEnabled ? "attach image" : "image not advertised"} disabled={disabled || !imageEnabled} title={imageEnabled ? "attach image" : "Mesh Assistant 未声明图片输入"}>📎</Button>}
+      actions={<Button size="sm" variant="primary" disabled={disabled} busy={busy}>Send</Button>}
+      hint={disabled ? "assistant 不可用" : "Enter 发送 · 用自然语言创建 / 修改 / 删除 mesh"}
+    >
+      <div className="px-1 py-1 text-sm text-text-muted">让 Mesh Assistant 管理 mesh…</div>
+    </Composer>
+  );
+}
+
+// The Mesh Assistant surface — a standalone full-width chat frame (route /assistant,
+// in 管理▾ / mobile 更多). `fs` is the chat fullscreen toggle (audit #21, desktop).
+function AssistantFrame({ state, device, fs = false, fsHref = "#" }: { state: ShellState; device: Device; fs?: boolean; fsHref?: string }) {
+  const mobile = device === "mobile";
+  const absent = state === "error";                       // error column = absent → "not configured"
+  const offline = state === "offline";
+  const perm = state === "permission";
+  const working = state === "busy";
+  const disabled = absent || offline || perm || working || state === "loading";
+  const imageEnabled = !perm;                             // image attach gated by capability (perm illustrates the gated case)
+  const statusChip = absent ? <StatusChip status="blocked" variant="soft" label="not configured" />
+    : state === "loading" ? <StatusChip status="working" variant="soft" label="spawning…" />
+    : offline ? <StatusChip status="blocked" variant="soft" label="offline" />
+    : <StatusChip status="ready" variant="soft" label="ready" />;
+  const long = state === "boundary";
+  const showChat = !absent && state !== "loading";
+  return (
+    <div data-mockup="frame" data-device={device} data-assistant="chat" data-assistant-fs={fs ? "1" : undefined}
+      className={`flex ${mobile ? "h-[760px] w-[390px] rounded-[28px]" : fs ? "h-[760px] w-[1280px] rounded-xl" : "h-[640px] w-[1280px] rounded-xl"} max-w-full flex-col overflow-hidden border border-border bg-surface text-text-primary shadow-sm`}>
+      <header className="flex items-center gap-2 border-b border-border bg-surface-raised px-4 py-2.5">
+        <Brand /><span className="text-text-muted">·</span>
+        <span className="text-sm font-semibold">Mesh Assistant</span>
+        {statusChip}
+        <span className="flex-1" aria-hidden="true" />
+        {/* p2p DM → Mesh Assistant is folded here (device-auth ⑤ / channels). */}
+        <LinkButton href="#" label="p2p DM 入口" dataKey="assistant-p2p">✉ p2p DM</LinkButton>
+        {working ? <Button size="sm" variant="ghost" aria-label="interrupt assistant">Interrupt</Button> : null}
+        {!mobile ? <LinkButton href={fsHref} label={fs ? "退出全屏" : "全屏"} dataKey="assistant-fs">{fs ? "⊟" : "⊞"}</LinkButton> : null}
+      </header>
+      {perm ? <div role="status" className="border-b border-border bg-danger-subtle px-4 py-1.5 text-xs text-danger">设备未授权 — 只读；启用 / 管理需已授权设备。</div> : null}
+      {offline ? <div role="status" className="flex items-center gap-2 border-b border-border bg-warning-subtle px-4 py-1.5 text-xs text-warning"><Spinner size={12} label="reconnecting" /> 连接已断开 — 正在重连…（显示最近已知对话）</div> : null}
+      <div className="min-h-0 flex-1 overflow-auto p-4">
+        <div className={`mx-auto flex flex-col gap-3 ${mobile ? "" : "max-w-[820px]"}`}>
+          {absent ? (
+            <EmptyState icon={<span className="text-2xl">🤖</span>} title="Mesh Assistant 未配置" description="未检测到 assistant harness — 启用后即可用自然语言管理 mesh。" action={<Button variant="primary">启用助手</Button>} />
+          ) : state === "loading" ? (
+            <div className="flex flex-col gap-3"><Skeleton variant="line" /><Skeleton variant="row" /><Skeleton variant="card" /></div>
+          ) : state === "empty" ? (
+            <>
+              <AssistantBubble who="agent" text="我是 Mesh Assistant — 告诉我你想怎么编排 mesh。" />
+              <div data-assistant-suggestions className="flex flex-col gap-2">
+                <span className="text-xs uppercase tracking-wider text-text-muted">试试：</span>
+                <div className="flex flex-wrap gap-2">{ASSISTANT_SUGGESTIONS.map((s, i) => <button key={i} className="rounded-full border border-border bg-surface-raised px-3 py-1.5 text-sm text-text-secondary hover:bg-hover">{s}</button>)}</div>
+              </div>
+            </>
+          ) : (
+            <>
+              {offline ? <p className="text-xs text-text-muted">显示最近已知对话；连接恢复后自动刷新。</p> : null}
+              <AssistantBubble who="user" text="create a mesh named app with a router and a codex member on ~/projects/app" />
+              <AssistantBubble who="agent" text="Creating mesh “app” with router (claude) + codex-1 (codex)…" />
+              <AssistantToolCard {...ASSISTANT_TOOL} busy={working} />
+              {long ? ASSISTANT_TOOLS_MANY.map((tc, i) => <AssistantToolCard key={i} {...tc} />) : null}
+              <AssistantBubble who="agent" text="Done — mesh “app” created. Start it from the runtime view." />
+              <AssistantBubble who="user" text="now delete the scratch-del mesh" />
+              <AssistantDeleteConfirm busy={working || disabled} />
+            </>
+          )}
+        </div>
+      </div>
+      {showChat ? <div className="border-t border-border bg-surface-raised p-3"><AssistantComposer disabled={disabled} busy={working} imageEnabled={imageEnabled} /></div> : null}
+    </div>
+  );
+}
+
 // ── new-mesh builder (04) fixtures + frame ───────────────────────────────────────
 interface AgentRow { id: string; harness: string; project: string; role: "router" | "member"; model?: string; effort?: string; lazy?: boolean; opencodePermission?: "ask" | "allow"; instructions?: string }
 const HARNESSES = ["claude", "codex", "opencode", "kimi"];
@@ -1503,6 +1642,7 @@ function selQuery(s: Sel): string {
   p.set("nmEditor", s.nmEditor);
   if (s.boardFs) p.set("boardFs", "1");
   if (s.boardManage) p.set("boardManage", "1");
+  if (s.asstFs) p.set("asstFs", "1");
   if (s.index) p.set("index", "1");
   p.set("mesh", s.mesh);
   p.set("mode", s.mode);
@@ -1581,6 +1721,10 @@ const INDEX_SECTIONS: { title: string; note: string; rows: IndexRow[] }[] = [
   { title: "04 · 新建 mesh", note: "builder: agents / edges / charter / per-agent controls", rows: [
     { label: "builder", base: "surface=new-mesh", states: ["empty", "populated", "error", "permission", "busy", "offline", "boundary"], mobile: true },
   ] },
+  { title: "05 · Mesh Assistant B", note: "NL 控制器对话 · tool-call 卡片 · 删除确认 · 全屏 ⊞ · p2p DM 入口", rows: [
+    { label: "chat", base: "surface=assistant", states: SHELL_STATES, mobile: true },
+    { label: "chat · 全屏 (桌面)", base: "surface=assistant&asstFs=1", states: ["populated", "boundary"], mobile: false },
+  ] },
 ];
 
 function MockupIndex({ backHref }: { backHref: string }) {
@@ -1623,7 +1767,7 @@ function MockupIndex({ backHref }: { backHref: string }) {
 
 export function UiMockup() {
   const [sel, setSel] = useState<Sel>(readSel);
-  const { device, view, surface, runtime, board, state, nmEditor, boardFs, boardManage, index, mesh, mode, accent } = sel;
+  const { device, view, surface, runtime, board, state, nmEditor, boardFs, boardManage, asstFs, index, mesh, mode, accent } = sel;
   const [mobileTab, setMobileTab] = useState<MobileTab>(surface === "board" || view === "board" ? "board" : "runtime");
 
   useEffect(() => {
@@ -1655,6 +1799,8 @@ export function UiMockup() {
   const boardFsHref = `/__ui-mockup?${selQuery({ ...sel, surface: "board", boardFs: true })}`;
   const boardExitFsHref = `/__ui-mockup?${selQuery({ ...sel, surface: "board", boardFs: false })}`;
   const boardManageHref = `/__ui-mockup?${selQuery({ ...sel, surface: "board", boardManage: !boardManage })}`;
+  // Assistant chat fullscreen enter/exit (audit #21).
+  const asstFsHref = `/__ui-mockup?${selQuery({ ...sel, surface: "assistant", asstFs: !asstFs })}`;
   const setMesh = (m: string) => nav({ mesh: m });
 
   const setView = (v: View) => {
@@ -1724,7 +1870,7 @@ export function UiMockup() {
     <div data-mockup="root" className="min-h-screen bg-surface text-text-primary font-sans p-6">
       {/* mockup tool chrome (outside the mocked app frame) */}
       <header className="mb-5">
-        <h1 className="mb-1 text-xl font-semibold">Agent Mesh — 终稿 mockup（{index ? "导航索引" : surface === "runtime" ? `运行态 A · ${runtime}` : surface === "board" ? "看板 C" : surface === "new-mesh" ? "新建 mesh" : "应用外壳"}{index ? "" : ` · ${state} · ${device === "mobile" ? "移动" : "桌面"}`}）</h1>
+        <h1 className="mb-1 text-xl font-semibold">Agent Mesh — 终稿 mockup（{index ? "导航索引" : surface === "runtime" ? `运行态 A · ${runtime}` : surface === "board" ? "看板 C" : surface === "new-mesh" ? "新建 mesh" : surface === "assistant" ? "Mesh Assistant B" : "应用外壳"}{index ? "" : ` · ${state} · ${device === "mobile" ? "移动" : "桌面"}`}）</h1>
         <p className="mb-3 text-xs text-text-muted">真实 C5–C7 组件 + v2 compose 运行时 · fixture 数据 · 不连后端。Live: <code className="text-syntax-string">MESH_UI_PREVIEW=1 … /__ui-mockup</code></p>
         <div className="mb-3">
           <SegmentedControl ariaLabel="View mode" value={index ? "index" : "mockup"} onChange={(v) => nav({ index: v === "index" })} options={[{ value: "mockup", label: "Mockup" }, { value: "index", label: "▤ 索引" }]} size="sm" />
@@ -1744,7 +1890,7 @@ export function UiMockup() {
           </div>
           <div>
             <div className="mb-1.5 text-xs uppercase tracking-wider text-text-muted">Surface</div>
-            <SegmentedControl ariaLabel="Surface" value={surface} onChange={(s) => { const next = s as Surface; nav({ surface: next }); if (next === "board") setMobileTab("board"); else if (next === "runtime") setMobileTab("runtime"); }} options={[{ value: "shell", label: "外壳" }, { value: "runtime", label: "运行态 A" }, { value: "board", label: "看板 C" }, { value: "new-mesh", label: "新建" }]} size="sm" />
+            <SegmentedControl ariaLabel="Surface" value={surface} onChange={(s) => { const next = s as Surface; nav({ surface: next }); if (next === "board") setMobileTab("board"); else if (next === "runtime") setMobileTab("runtime"); }} options={[{ value: "shell", label: "外壳" }, { value: "runtime", label: "运行态 A" }, { value: "board", label: "看板 C" }, { value: "assistant", label: "助手 B" }, { value: "new-mesh", label: "新建" }]} size="sm" />
           </div>
           {surface === "runtime" ? (
             <div>
@@ -1774,7 +1920,7 @@ export function UiMockup() {
               />
             </div>
           ) : null}
-          {surface === "shell" || surface === "runtime" || surface === "board" || surface === "new-mesh" ? (
+          {surface === "shell" || surface === "runtime" || surface === "board" || surface === "new-mesh" || surface === "assistant" ? (
             <div>
               <div className="mb-1.5 text-xs uppercase tracking-wider text-text-muted">State</div>
               <SegmentedControl
@@ -1792,12 +1938,20 @@ export function UiMockup() {
               <SegmentedControl ariaLabel="Expanded editor" value={nmEditor} onChange={(e) => nav({ nmEditor: e as NmEditor })} options={[{ value: "off", label: "off" }, { value: "charter", label: "charter" }, { value: "instructions", label: "instructions" }]} size="sm" />
             </div>
           ) : null}
+          {surface === "assistant" && device === "desktop" ? (
+            <div>
+              <div className="mb-1.5 text-xs uppercase tracking-wider text-text-muted">Chat fullscreen</div>
+              <SegmentedControl ariaLabel="Chat fullscreen" value={asstFs ? "on" : "off"} onChange={(v) => nav({ asstFs: v === "on" })} options={[{ value: "off", label: "off" }, { value: "on", label: "⊞ full" }]} size="sm" />
+            </div>
+          ) : null}
         </div>
       </header>
 
       <div className="flex justify-center">
         {index
           ? <MockupIndex backHref={indexBackHref} />
+          : surface === "assistant"
+          ? <AssistantFrame state={state} device={device} fs={device === "desktop" && asstFs} fsHref={asstFsHref} />
           : surface === "new-mesh"
           ? <NewMeshFrame state={state} device={device} nmEditor={nmEditor} />
           : surface === "runtime" && device === "desktop" && runtime === "full"

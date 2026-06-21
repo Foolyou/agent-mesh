@@ -452,6 +452,44 @@ try {
     });
   }
 
+  // ── Mesh Assistant (05): assertions + state × device screenshots + fullscreen ──
+  await step("assistant: chat + tool-call card + delete confirm + composer + ⊞ full → fullscreen", async () => {
+    await page.goto(`${BASE}/__ui-mockup?surface=assistant&state=populated&device=desktop`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-mockup="frame"][data-assistant="chat"]', { timeout: 8000 });
+    if (await page.locator("[data-assistant-tool]").count() === 0) throw new Error("tool-call card missing");
+    if (await page.getByRole("button", { name: "Delete" }).count() === 0) throw new Error("delete-confirm missing");
+    if (await page.locator('[aria-label="Message composer"]').count() === 0) throw new Error("composer missing");
+    if (await page.locator('[data-assistant-p2p]').count() === 0) throw new Error("p2p DM entry missing");
+    await page.locator('[aria-label="全屏"]').click();
+    await page.waitForSelector('[data-mockup="frame"][data-assistant-fs="1"]', { timeout: 8000 });
+    if (await page.locator('[aria-label="退出全屏"]').count() === 0) throw new Error("⊟ exit missing in assistant fullscreen");
+  });
+  await step("assistant: absent(error)→not-configured+enable (no composer); empty→suggestions", async () => {
+    await page.goto(`${BASE}/__ui-mockup?surface=assistant&state=error&device=desktop`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-assistant="chat"]', { timeout: 8000 });
+    if (await page.getByText("未配置", { exact: false }).count() === 0) throw new Error("not-configured missing");
+    if (await page.locator('[aria-label="Message composer"]').count() !== 0) throw new Error("absent must hide composer");
+    await page.goto(`${BASE}/__ui-mockup?surface=assistant&state=empty&device=desktop`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector("[data-assistant-suggestions]", { timeout: 8000 });
+  });
+  const ASSISTANT_STATES = ["empty", "loading", "populated", "error", "permission", "busy", "offline", "boundary"];
+  for (const device of ["desktop", "mobile"]) {
+    for (const st of ASSISTANT_STATES) {
+      await step(`screenshot assistant-${st}-${device}`, async () => {
+        await page.goto(`${BASE}/__ui-mockup?surface=assistant&state=${st}&device=${device}&mode=dark-slate&accent=signal-teal`, { waitUntil: "domcontentloaded" });
+        await page.waitForSelector(`[data-mockup="frame"][data-device="${device}"][data-assistant="chat"]`, { timeout: 8000 });
+        await sleep(130);
+        await shotFrame(`${SHOTS}/assistant-${st}-${device}-dark-slate-signal-teal.png`);
+      });
+    }
+  }
+  await step("screenshot assistant-fullscreen-populated-desktop", async () => {
+    await page.goto(`${BASE}/__ui-mockup?surface=assistant&state=populated&asstFs=1&device=desktop&mode=dark-slate&accent=signal-teal`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-mockup="frame"][data-assistant-fs="1"]', { timeout: 8000 });
+    await sleep(130);
+    await shotFrame(`${SHOTS}/assistant-fullscreen-populated-desktop-dark-slate-signal-teal.png`);
+  });
+
   // ── shell (01) state × device screenshots (Phase B; default Dark·Slate × Signal Teal) ──
   const SHELL_STATES = ["empty", "loading", "populated", "error", "permission", "busy", "offline", "boundary"];
   for (const device of ["desktop", "mobile"]) {
