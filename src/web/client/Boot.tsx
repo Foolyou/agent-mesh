@@ -3,13 +3,16 @@
 // approved device token the ONLY allow path (loopback is no longer trusted), so EVERY session —
 // including local dev/host — needs a token: an unauthorized device sees a MINIMAL device-code page
 // that polls for approval (or accepts a one-time bootstrap token). No internal failure reasons leak.
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { App } from "./App";
 import { bootAuthorized, runEnrollment, submitBootstrap, type DeviceAuthPhase } from "./device-auth";
 
 type BootPhase = "checking" | "authorized" | "unauthorized";
 
-export function Boot() {
+// The device-auth gate wraps WHATEVER console it is given. `children` lets the new `/bnw/`
+// tree reuse the exact same gate (Step 7.0); when omitted it defaults to the old <App />,
+// so existing callers are unchanged.
+export function Boot({ children }: { children?: ReactNode } = {}) {
   const [phase, setPhase] = useState<BootPhase>("checking");
   useEffect(() => {
     let cancelled = false;
@@ -21,7 +24,7 @@ export function Boot() {
     };
   }, []);
 
-  if (phase === "authorized") return <App />;
+  if (phase === "authorized") return <>{children ?? <App />}</>;
   if (phase === "checking") {
     return (
       <div className="boot-gate">

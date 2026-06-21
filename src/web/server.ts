@@ -13,6 +13,9 @@ import { resolveRoot } from "../root";
 import type { WebGateway } from "./gateway";
 
 const SPA_CACHE_CONTROL = "no-store, max-age=0, must-revalidate";
+// Known static-asset extensions — a `/bnw/` request for one of these is a missing bundle
+// asset (404), not a deep UI route (which SPA-falls-back to index.html). See fetch() below.
+const BNW_ASSET_EXT = /\.(js|mjs|css|map|png|jpe?g|svg|gif|ico|webp|woff2?|ttf|wasm|txt)$/i;
 
 export interface WebServerOptions {
   port?: number;
@@ -77,7 +80,9 @@ export function startWebServer(opts: WebServerOptions = {}): WebServerHandle {
     development: dev ? { hmr: true, console: false } : false,
     // `/__ui-preview` (C8 gallery) + `/__ui-mockup` (Step 6 page mockups) are temporary
     // design routes; the public server gates access below (MESH_UI_PREVIEW=1).
-    routes: { "/": index, "/mesh/*": index, "/__ui-preview": index, "/__ui-mockup": index },
+    // `/bnw/*` (Step 7.0) is the new parallel console namespace — SPA-fallback to index.html
+    // for every deep `/bnw/` UI path; the old `/` and `/mesh/*` routes are untouched.
+    routes: { "/": index, "/mesh/*": index, "/bnw": index, "/bnw/*": index, "/__ui-preview": index, "/__ui-mockup": index },
     fetch() {
       return new Response("not found", { status: 404 });
     },
@@ -137,10 +142,18 @@ export function startWebServer(opts: WebServerOptions = {}): WebServerHandle {
       if ((url.pathname.startsWith("/__ui-preview") || url.pathname.startsWith("/__ui-mockup")) && !uiPreviewEnabled) {
         return new Response("not found", { status: 404 });
       }
+      // Step 7.0: `/bnw/*` SPA-falls-back to index.html (handled by the asset route map), but
+      // a `/bnw/` request for a bundle asset (a known asset extension) is never real — the
+      // bundle's assets live at the root, not under /bnw — so 404 it instead of masking the
+      // miss with index.html. File-viewer deep links (`…/file/<x.ext>`, `…/artifact/<x.ext>`)
+      // legitimately carry a dotted tail and are excluded.
+      if (url.pathname.startsWith("/bnw/") && BNW_ASSET_EXT.test(url.pathname) && !/\/(file|artifact)\//.test(url.pathname)) {
+        return new Response("not found", { status: 404 });
+      }
       const resp = await fetch(assetOrigin + url.pathname + url.search).catch(() => null);
       if (!resp) return new Response("not found", { status: 404 });
       const headers = new Headers(resp.headers);
-      if (url.pathname === "/" || url.pathname.startsWith("/mesh/")) {
+      if (url.pathname === "/" || url.pathname.startsWith("/mesh/") || url.pathname === "/bnw" || url.pathname.startsWith("/bnw/")) {
         headers.set("cache-control", SPA_CACHE_CONTROL);
       }
       return new Response(resp.body, { status: resp.status, statusText: resp.statusText, headers });
