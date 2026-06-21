@@ -32,6 +32,11 @@ repo: `src/board.ts` (model/lifecycle), `src/web/client/BoardPanel.tsx`
 - **Router dispatch** [E] — dispatch issue → assignee (`board_dispatch`; `send_mail` + slug/branch); from row/detail/dispatch panel.
 - **Lifecycle auto-reflow** [E] — `todo→in_progress→in_review` from machine events (`board_lifecycle`); visualized as kanban columns / status path / timeline.
 - **Keyboard nav** [N-redesign] — j/k move, x select, enter open, e edit, l label.
+- **Board fullscreen toggle** [E] — `board-fs-btn`/`setFullscreen` expands the board panel within the detail view. (audit #22)
+- **Group-by-epic toggle** [E] — `groupByEpic` checkbox toggles list grouping by epic. (audit #23)
+- **Label management (CRUD + color palette)** [E] — `LabelManager`/`setManage` (`board-manage-labels`): create/rename/recolor/delete labels with an AA `PalettePicker`. (audit #24)
+- **Create epic** [E] — `CreateRow` epic input (running mesh). (audit #25 per triage → explicit in board)
+- **Reopen closed issue** [E] — reopen a done/cancelled issue → records `reopened` lifecycle event → in_progress (terminal only). (audit #25)
 - **Deep links** [E] — list query, `/board/issue/<N>`.
 
 ## Function × state matrix
@@ -52,6 +57,11 @@ repo: `src/board.ts` (model/lifecycle), `src/web/client/BoardPanel.tsx`
 | Lifecycle auto-reflow [E] | N/A | ✓ | ✓(status moves) | ✓ | N/A | ✓(reflowing) | ✓(replays on reconnect) | ✓(reopened-cycle idempotent) | ✓(columns/path/history) | ✓(status+timeline) |
 | Keyboard nav [N] | N/A | N/A | ✓ | N/A | △(gated actions) | ✓ | △ | ✓(list traversal) | ✓ | N/A(touch) |
 | Deep links [E] | ✓ | ✓ | ✓ | ✓(bad #N→fallback) | ✓(unauth→gate) | N/A | ✓ | N/A | ✓ | ✓ |
+| Board fullscreen toggle [E] (audit #22) | ✓ | ✓ | ✓(expand/restore) | ✓ | N/A | N/A | ✓(last-known) | ✓(more rows visible) | ✓ | △(mobile already full-width) |
+| Group-by-epic toggle [E] (audit #23) | ✓(no issues) | ✓ | ✓(grouped/flat) | ✓ | N/A | ✓ | ✓(stale) | ✓(many epics) | ✓ | ✓(filter sheet) |
+| Label management CRUD+palette [E] (audit #24) | ✓(no labels) | ✓ | ✓(create/rename/recolor/delete) | ✓(action failed) | △(running + perm only) | ✓(in flight) | △(disabled offline) | ✓(many labels scroll) | ✓ | △(simplified/deferred) |
+| Create epic [E] (audit #25) | ✓(first epic) | N/A | ✓(create) | ✓(fail+retry) | △(create perm) | ✓(creating) | △(disabled offline) | N/A | ✓ | △(create via sheet) |
+| Reopen closed issue [E] (audit #25) | N/A | N/A | ✓(terminal→reopen) | ✓(fail+retry) | △(operator/router) | ✓(reopening) | △(disabled offline) | N/A | ✓ | ✓ |
 
 ## Change log / sources read
 - 2026-06-21 — created (Phase A commit 2). Sources: `../interaction/03-board-view.md`,
@@ -59,3 +69,6 @@ repo: `src/board.ts` (model/lifecycle), `src/web/client/BoardPanel.tsx`
   (CAS), `src/control-plane.ts` board_* tools (list/create_task/create_subtask/set_status/
   comment/create_epic/lifecycle/set_task_labels/create_label/dispatch).
 - Milestones intentionally absent (maturity benchmark only); Epic is the aggregation primitive.
+- 2026-06-21 — backward-consistency completion (audit `14`): +board fullscreen (#22),
+  +group-by-epic toggle (#23), +label CRUD/palette (#24), +create-epic & reopen (#25,
+  explicit in board per triage). `BoardPanel.tsx` (`LabelManager`/`PalettePicker`/`CreateRow`).

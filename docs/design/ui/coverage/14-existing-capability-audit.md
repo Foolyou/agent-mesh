@@ -42,7 +42,7 @@ file/identifier. **No coverage docs or mockups were modified in this checkpoint.
 | 14 | **Transcript item expand toggles** (thought / tool-call / mail) | `Transcript.tsx` `setOpen` (thought `:60`), `setOverride` (tool `:95`), `mail-expand-btn` (`:239`) | Expand/collapse thoughts, tool input/output/files, long mail bodies | transcript modeled as flat bubbles | C+M |
 | 15 | **Jump-to-bottom + load-older** transcript controls | `VirtualTranscript.tsx`/`Transcript.tsx` `jump-bottom`/`jumpToBottom`, `onLoadOlder` | Resume autoscroll; lazy-load older history | not inventoried | C+M |
 | 16 | **Zoomable topology canvas** (MeshCanvas overlay) | `MeshDetail.tsx` `⤢`/`setTopoOpen` → `MeshCanvas.tsx`: window drag (`startDrag`)/resize (`startResize`)/focus, per-window stop/wake, actions menu, Esc close | Full draggable/resizable topology editor overlay (desktop) | coverage said "zoomable canvas deferred-on-mobile" but never enumerated its controls | C+M |
-| 17 | **Live topology manage** (add agent / add edge to a running mesh) | `MeshDetail.tsx` `agent-add` / `edge-add` controls | Add an agent or edge to an already-running mesh | runtime coverage only had start/stop/restart | C (triage: confirm in-scope) |
+| 17 | **Live topology manage** (add agent / add edge to a running mesh) | `MeshDetail.tsx` `agent-add` / `edge-add` controls | Add an agent or edge to an already-running mesh | runtime coverage only had start/stop/restart | C+M (assigned to `02-runtime` by decision) |
 | 18 | **Start-strategy select (resume/fresh)** + **new-all-sessions** | `MeshDetail.tsx` `start-session-sel`; `newAllSessions` two-click | Choose session strategy before start; reset all sessions on a live mesh | only generic start/stop captured | C+M |
 
 ## App shell (owning surface `01-app-shell`)
@@ -62,7 +62,7 @@ file/identifier. **No coverage docs or mockups were modified in this checkpoint.
 | 22 | Board **fullscreen** toggle | `BoardPanel.tsx` `board-fs-btn`, `setFullscreen` | Expand the board panel to fullscreen | not inventoried | C+M |
 | 23 | **Group-by-epic** toggle | `BoardPanel.tsx` `groupByEpic`/`setGroupByEpic` | Toggle list grouping by epic | coverage mentioned epic grouping but not the control | C+M |
 | 24 | **Manage-labels** CRUD + accessible color **palette picker** | `BoardPanel.tsx` `LabelManager`/`setManage` (`board-manage-labels`), `PalettePicker` (create/rename/recolor/delete) | Create/rename/recolor/delete board labels with an AA color palette | label management never inventoried | C+M |
-| 25 | (triage) **create-epic** row + **reopen** closed task | `BoardPanel.tsx` `CreateRow` (epic), reopen lifecycle (`:940`) | Create epics from the board; reopen a done/cancelled issue | partially implied by lifecycle; confirm explicit coverage | C (triage) |
+| 25 | **create-epic** row + **reopen** closed task | `BoardPanel.tsx` `CreateRow` (epic), reopen lifecycle (`:940`) | Create epics from the board; reopen a done/cancelled issue | only implied by lifecycle; now explicit in board | C+M (explicit in `03-board` by decision) |
 
 ## Harnesses (owning surface `06-harnesses`)
 | # | Missing [E] capability | Code location | Current behavior | Why missed | Bucket |
@@ -80,21 +80,30 @@ file/identifier. **No coverage docs or mockups were modified in this checkpoint.
 ## Summary
 - **Missing [E] capabilities: 28** (incl. 3 confirmed seed misses ⭐: #1 instructions,
   #2 expanded-text dialog, #9 session fullscreen).
-- Owning-surface spread: 04 ×8, 02 ×10, 01 ×2, 05 ×1, 03 ×4 (1 triage), 06 ×3.
-- Follow-up: most are **C+M** (patch both the coverage matrix row and the mockup state);
-  #17 (live topology manage) + #25 (create-epic/reopen) flagged **triage** for prdmgr/user
-  to confirm scope; #21 (assistant fullscreen) is **C now, M when surface 05 ships**.
+- Owning-surface spread: 04 ×8, 02 ×10, 01 ×2, 05 ×1, 03 ×4, 06 ×3.
+- Follow-up: ownership is fully resolved (see below); most rows are **C+M** (patch both the
+  coverage matrix row and the mockup state); #21 (assistant fullscreen) is **C now, M when
+  surface 05 ships**.
 
-## Uncertain items needing prdmgr/user triage
-1. **#17 live topology manage** (add agent/edge to a running mesh) — is this in redesign
-   scope for runtime, or intentionally CLI/builder-only?
-2. **#25 create-epic / reopen** — confirm these belong in the board mockup explicitly.
-3. Mesh-level **auto-compact** settings (#7) live in the builder today — confirm they stay
-   in the new-mesh surface vs move to a per-mesh settings surface.
-4. Several health/usage surfaces (#12) may warrant their own coverage notes rather than
-   folding entirely into runtime — confirm preferred home.
+## Resolved ownership decisions (prdmgr/user, final)
+- **#17 live add agent / add edge** → `02-runtime` (in scope for the runtime redesign).
+- **#25 create-epic / reopen** → `03-board` (explicit in the board surface).
+- **#7 auto-compact settings** → `04-new-mesh` (stays in the builder).
+- **#12 context / health usage UI** → `02-runtime`.
+All four are reflected in the owning surface docs (Step 1 coverage completion) and slated
+for mockup patches (M) in Step 2.
+
+## Status
+- **Coverage-map completion (Step 1) DONE 2026-06-21**: all 28 rows folded into the owning
+  surface docs (`01`×2, `02`×10, `03`×4, `04`×8, `05`×1, `06`×3) — each added to the
+  function checklist **and** the rectangular Function × state matrix (cells filled
+  ✓/△(reason)/N/A). Resolved ownership decisions applied (see section above): #17 live
+  add agent/edge → `02-runtime`; #25 create-epic/reopen explicit in `03-board`; #7
+  auto-compact stays in `04-new-mesh`; #12 context/health → `02-runtime`. Mockup patches
+  (M) deferred to a later released step.
 
 ## Change log / sources read
 - 2026-06-21 — created (backward-consistency audit, step 1+2 only). Sources audited +
   grep-verified per the list above; one fabricated claim dropped. No coverage/mockup
-  files modified. Patches (C/M) deferred to a later released checkpoint.
+  files modified at audit time.
+- 2026-06-21 — Step 1 coverage-map completion: 28/28 folded into `01`–`06` (this commit).

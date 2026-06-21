@@ -16,6 +16,7 @@ via 更多 → Assistant (works well); mesh-builder hand-offs use the mobile new
 - **Attach context** [E] — composer (image capability gated by `assistant.capabilities.image`).
 - **Confirm destructive action** [E] — inline confirm card (e.g. delete mesh) → ApprovalCard.
 - **Interrupt** [E] — `interruptAssistant`.
+- **Assistant chat fullscreen toggle** [E] — `⊟`/`⊞` expands the assistant chat to fill the column (`Sidebar.tsx` `AssistantChat` `onToggleFull`). (audit #21)
 
 ## Function × state matrix
 ✓ designed · △ partial/deferred (reason) · N/A not applicable
@@ -27,6 +28,7 @@ via 更多 → Assistant (works well); mesh-builder hand-offs use the mobile new
 | Attach context [E] | ✓ | △(disabled until ready) | ✓ | ✓ | △(image gated by capability) | ✓ | ✓(disabled) | ✓(image tray) | ✓ | ✓ |
 | Confirm destructive [E] | N/A | N/A | ✓ | ✓(resolve failed) | ✓(the confirm) | ✓(resolving) | ✓(disabled) | N/A | ✓(inline card) | ✓(inline) |
 | Interrupt [E] | N/A | N/A | ✓(while working) | ✓ | N/A | ✓(in flight) | ✓(disabled) | N/A | ✓ | ✓ |
+| Chat fullscreen toggle [E] (audit #21) | ✓ | ✓ | ✓(expand/restore) | ✓ | N/A | N/A | ✓(last-known) | ✓(long convo fills) | ✓ | △(already full-width) |
 
 > **p2p-DM note** (lead #683 assumption 4): the authorized-p2p-DM → Mesh Assistant path
 > (device-auth phase ⑤, in-progress in repo) is folded here + channels/device-auth for
@@ -35,3 +37,5 @@ via 更多 → Assistant (works well); mesh-builder hand-offs use the mobile new
 ## Change log / sources read
 - 2026-06-21 — created (Phase A commit 3). Sources: `../interaction/05-mesh-assistant.md`;
   `store.ts` assistant scope (status/capabilities/transcript/interruptAssistant).
+- 2026-06-21 — backward-consistency completion (audit `14`): +assistant chat fullscreen
+  toggle (#21). `Sidebar.tsx` `AssistantChat` `onToggleFull`.

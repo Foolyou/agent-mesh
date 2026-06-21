@@ -29,6 +29,8 @@ preference.
 - **Right context pane** [E] — on-demand, collapsible; content owned by active view.
 - **Mesh lifecycle controls** [E] — start / stop / restart (API + `mesh start|stop|restart`), `status`/`ps` surfaced; per-mesh.
 - **Mobile bottom tabs** [N-redesign] — 运行态/看板/更多; 更多 sheet = 管理/设置/通知.
+- **Mesh-list pagination** [E] — ‹ › page through the mesh list (4/page; `Sidebar.tsx` `setPage`/`PER_PAGE`). (audit #19)
+- **Reload mesh definitions** [E] — ↻ two-click confirm re-reads mesh defs from server (`Sidebar.tsx` `store.reload`). (audit #20)
 - **Routing/deep-link** [E] — History API + SPA catch-all; every surface URL-addressable.
 
 ## Function × state matrix
@@ -48,9 +50,13 @@ preference.
 | Right context [E] | ✓ | ✓ | ✓ | ✓ | N/A | N/A | ✓ | ✓(long content scroll) | ✓(collapsible) | △(deferred; no rail) |
 | Mesh lifecycle (start/stop/restart) [E] | ✓(stopped→Start) | ✓(starting) | ✓(running) | ✓(fail+retry) | △(perm) | ✓(in flight) | △(disabled offline) | N/A | ✓ | ✓ |
 | Routing/deep-link [E] | ✓ | ✓ | ✓ | ✓(404→fallback) | ✓(unauth→gate) | N/A | ✓ | N/A | ✓ | ✓ |
+| Mesh-list pagination [E] (audit #19) | N/A(no pages) | ✓ | ✓(‹ ›, 4/page) | ✓ | N/A | N/A | ✓(last-known) | ✓(many meshes→pages) | ✓ | △(within mesh-picker sheet) |
+| Reload definitions [E] (audit #20) | ✓ | ✓ | ✓(↻ confirm) | ✓(fail+retry) | △(perm) | ✓(reloading) | △(disabled offline) | N/A | ✓ | ✓(in sheet) |
 
 ## Change log / sources read
 - 2026-06-21 — created (Phase A commit 2). Sources: `../interaction/01-app-shell.md`;
   code paths above (`server.ts`, `index.tsx`, `Sidebar.tsx`/`MeshDetail.tsx`,
   `store.ts`, `cli-dispatch.ts`, `cli-host-bearer.ts`, `themes.ts`).
 - Open: notifications [N] + default-view pref [N] carried per lead working assumptions (#680).
+- 2026-06-21 — backward-consistency completion (audit `14`): +mesh-list pagination (#19),
+  +reload definitions (#20). `Sidebar.tsx`.
