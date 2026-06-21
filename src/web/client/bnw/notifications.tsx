@@ -3,7 +3,7 @@
 // via store.markNotificationRead / markAllNotificationsRead. Follow actions resolve ONLY through a
 // structured source → bnwHref (never an arbitrary URL). Independent /bnw view.
 import { useState } from "react";
-import { Badge, Button, Cluster, EmptyState, PanelFrame, RouteLink, Spinner, StatusChip, type Status } from "../ui/index";
+import { Badge, Button, Cluster, EmptyState, PanelFrame, RouteLink, StatusChip, type Status } from "../ui/index";
 import { useUpgrade, useConnected, type Store } from "../store";
 import { bnwHref, type BnwRoute } from "../router";
 import type { GatewayState, NotificationRecord, NotificationSource, NotificationType } from "../../types";
@@ -73,11 +73,8 @@ export function BnwNotifications({ store, state }: { store: Store; state: Gatewa
   return (
     <PanelFrame title="通知 Notifications" actions={actions} className="h-full" bodyClassName="min-h-0">
       <div data-notifications="center" className="flex min-h-0 flex-col">
-        {offline ? (
-          <div role="status" className="mb-3 flex items-center gap-2 rounded-lg border border-border bg-warning-subtle px-3 py-1.5 text-xs text-warning">
-            <Spinner size={12} label="reconnecting" /> 连接已断开 — 显示最近已知通知；标记已读已禁用。
-          </div>
-        ) : null}
+        {/* 7.5-C — offline/reconnect is now the unified shell-level banner (BnwApp); mark-read
+            stays disabled via `offline` independently. */}
         <nav aria-label="notification filters" className="mb-3">
           {/* 7.5-B C1: chips wrap to a second row on mobile instead of overflowing/clipping */}
           <Cluster className="flex-wrap">

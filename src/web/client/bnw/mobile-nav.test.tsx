@@ -35,7 +35,7 @@ test("BottomTabs reflects 更多 open state via aria-expanded", () => {
 });
 
 test("MoreMenu lists the management routes and shows an unread badge", () => {
-  const html = render(createElement(MoreMenu, { onClose: () => {}, unreadCount: 3 }));
+  const html = render(createElement(MoreMenu, { onClose: () => {}, unreadCount: 3, onReload: () => {}, reloadDisabled: false, reloading: false }));
   expect(html).toContain('data-bnw-more');
   expect(html).toContain('href="/bnw/assistant"');
   expect(html).toContain('href="/bnw/harnesses"');
@@ -45,11 +45,13 @@ test("MoreMenu lists the management routes and shows an unread badge", () => {
   expect(html).toContain('href="/bnw/notifications"');
   expect(html).toContain('href="/bnw/mesh/new"');
   expect(html).toContain('aria-label="关闭更多"');
+  // #20 — reload mesh definitions lives in 更多 on mobile
+  expect(html).toContain('aria-label="reload mesh definitions (mobile)"');
   // unread badge surfaces on the 通知 row
   expect(html).toContain('aria-label="未读通知"');
 });
 
 test("MoreMenu hides the unread badge at zero", () => {
-  const html = render(createElement(MoreMenu, { onClose: () => {}, unreadCount: 0 }));
+  const html = render(createElement(MoreMenu, { onClose: () => {}, unreadCount: 0, onReload: () => {}, reloadDisabled: false, reloading: false }));
   expect(html).not.toContain('aria-label="未读通知"');
 });

@@ -82,11 +82,8 @@ export function BnwChannels({ store }: { store: Store }) {
   return (
     <PanelFrame title="Channels" actions={actions} className="h-full" bodyClassName="min-h-0">
       <div data-channels="panel" className="flex min-h-0 flex-col">
-        {offline ? (
-          <div role="status" className="mb-3 flex items-center gap-2 rounded-lg border border-border bg-warning-subtle px-3 py-1.5 text-xs text-warning">
-            <Spinner size={12} label="reconnecting" /> 连接已断开 — 显示最近已知状态，操作禁用。
-          </div>
-        ) : null}
+        {/* 7.5-C — offline/reconnect is now the unified shell-level banner (BnwApp); controls
+            below stay disabled via `offline` independently. */}
         <div className="mx-auto flex w-full max-w-[860px] flex-col gap-4">
           {phase === "loading" ? (
             <div className="flex flex-col gap-3"><Skeleton variant="line" /><Skeleton variant="row" /><Skeleton variant="card" /></div>

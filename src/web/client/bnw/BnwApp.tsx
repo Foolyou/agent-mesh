@@ -6,12 +6,13 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createStore, useStore, useConnected, type Store } from "../store";
 import {
-  Badge, Cluster, EmptyState, PanelFrame, RouteLink, Select, Spinner,
+  Badge, Button, Cluster, ConfirmButton, EmptyState, PanelFrame, RouteLink, Select, Spinner,
   StatusListRow, type Status,
 } from "../ui/index";
 import type { MeshStatus } from "../../types";
 import { useRoute, navigate, bnwHref, type BnwRoute } from "../router";
 import { BottomTabs, MoreMenu } from "./mobile-nav";
+import { BnwErrorBoundary } from "./error-boundary";
 import { RuntimeOverview, RuntimeFocus } from "./runtime";
 import { MeshCanvas } from "./canvas";
 import { BnwBoard } from "./board";
@@ -73,20 +74,34 @@ function SurfacePlaceholder({ route }: { route: BnwRoute }) {
   );
 }
 
+// 7.5-C — in-app SPA 404 matching surface-13's not-found-in-shell treatment (🧭 card +
+// 返回控制台). The shell chrome stays mounted; only the stage shows the not-found view.
 function NotFound({ path }: { path: string }) {
   return (
     <PanelFrame title="Not found">
-      <EmptyState
-        title="页面不存在"
-        description={`没有匹配的 /bnw 路由：${path}`}
-        action={<RouteLink href={bnwHref({ k: "home" })}>返回首页</RouteLink>}
-      />
+      <div data-bnw-not-found className="flex flex-col items-center gap-2 py-10 text-center">
+        <span className="text-3xl" aria-hidden="true">🧭</span>
+        <h2 className="text-base font-semibold text-text-primary">404 · 页面不存在</h2>
+        <p className="max-w-md text-xs text-text-muted">没有匹配的 /bnw 路由：<code className="break-all font-mono text-text-secondary">{path}</code></p>
+        <RouteLink href={bnwHref({ k: "home" })} unstyled className="mt-1 inline-flex items-center rounded-lg bg-accent px-3 py-1.5 text-sm font-medium text-on-accent hover:bg-accent-hover">返回控制台</RouteLink>
+      </div>
     </PanelFrame>
   );
 }
 
 function ManageLink({ route, label }: { route: BnwRoute; label: string }) {
   return <RouteLink href={bnwHref(route)} className="text-sm">{label}</RouteLink>;
+}
+
+// 7.5-C — test seam for the stage ErrorBoundary: throws during render iff `window.__bnwForceError`
+// is set, so e2e can verify a surface crash is contained + that clearing the flag and resetting
+// the boundary recovers. Inert in production (no one sets the global). Re-reads the live flag on
+// every render, so a boundary reset after the flag is cleared renders the real surface again.
+function MaybeThrow({ children }: { children: ReactNode }) {
+  if (typeof window !== "undefined" && (window as any).__bnwForceError) {
+    throw new Error("forced surface error (test seam)");
+  }
+  return <>{children}</>;
 }
 
 export function BnwApp() {
@@ -123,6 +138,15 @@ export function BnwApp() {
     if (!m) return;
     navigate(route.k === "board" ? { k: "board", mesh: m, view: "list", filters: {} } : { k: "runtime", mesh: m });
   };
+  // #19 — desktop left-nav mesh-list pagination (4/page, ‹ ›; mobile select lists all).
+  const PER_PAGE = 4;
+  const [meshPage, setMeshPage] = useState(0);
+  const pageCount = Math.max(1, Math.ceil(state.meshes.length / PER_PAGE));
+  useEffect(() => { if (meshPage > pageCount - 1) setMeshPage(pageCount - 1); }, [pageCount, meshPage]);
+  const pageMeshes = state.meshes.slice(meshPage * PER_PAGE, meshPage * PER_PAGE + PER_PAGE);
+  // #20 — reload mesh definitions from the server (two-click confirm; disabled offline).
+  const [reloading, setReloading] = useState(false);
+  const doReload = async () => { setReloading(true); try { await store.reload(); } finally { setReloading(false); } };
 
   let body: ReactNode;
   if (route.k === "notFound") body = <NotFound path={route.path} />;
@@ -188,18 +212,34 @@ export function BnwApp() {
         </RouteLink>
       </header>
 
+      {/* 7.5-C — unified shell-level offline/reconnect banner (surface-13 contract). WS auto-
+          reconnects with backoff; this is transient (no persistence) and offers an immediate
+          retry. Surfaces still disable their own mutations via `offline` independently. */}
+      {!connected ? (
+        <div data-bnw-offline role="status" className="flex flex-wrap items-center gap-2 border-b border-border bg-warning-subtle px-4 py-1.5 text-xs text-warning">
+          <Spinner size={12} label="reconnecting" />
+          <span>连接已断开 — 正在重连…（显示最近已知内容，变更已禁用）</span>
+          <span className="flex-1" aria-hidden="true" />
+          <Button size="sm" variant="ghost" aria-label="reconnect now" onClick={() => store.reconnect()}>立即重连</Button>
+        </div>
+      ) : null}
+
       {/* body: left nav · stage · right context. `relative` anchors the mobile 更多 overlay. */}
       <div className="relative flex min-h-0 flex-1">
         {/* desktop left mesh nav — fully hidden on mobile (the topbar select + bottom tabs cover it) */}
         <nav aria-label="meshes" className="hidden w-[232px] shrink-0 flex-col gap-1 overflow-auto border-r border-border bg-surface-raised p-2 lg:flex">
-          <div className="mb-1 flex items-center justify-between px-1">
+          <div className="mb-1 flex items-center justify-between gap-1 px-1">
             <span className="text-xs uppercase tracking-wider text-text-muted">meshes</span>
-            <RouteLink href={bnwHref({ k: "newMesh" })} className="text-xs">+ 新建</RouteLink>
+            <div className="flex items-center gap-1">
+              {/* #20 — reload mesh definitions (two-click confirm; disabled offline) */}
+              <ConfirmButton size="sm" variant="ghost" confirmLabel="重新加载?" disabled={!connected} busy={reloading} aria-label="reload mesh definitions" onConfirm={() => void doReload()}>↻</ConfirmButton>
+              <RouteLink href={bnwHref({ k: "newMesh" })} className="text-xs">+ 新建</RouteLink>
+            </div>
           </div>
           {state.meshes.length === 0 ? (
             <div className="px-1 py-2 text-xs text-text-muted">{connected ? "无 mesh" : "连接中…"}</div>
           ) : (
-            state.meshes.map((m) => (
+            pageMeshes.map((m) => (
               <StatusListRow
                 key={m.name}
                 status={meshDot(m.status)}
@@ -209,6 +249,14 @@ export function BnwApp() {
               />
             ))
           )}
+          {/* #19 — pagination (only when >1 page) */}
+          {pageCount > 1 ? (
+            <div data-bnw-mesh-pager className="mt-1 flex items-center justify-between px-1 text-xs text-text-muted">
+              <Button size="sm" variant="ghost" iconOnly disabled={meshPage <= 0} aria-label="previous mesh page" onClick={() => setMeshPage((p) => Math.max(0, p - 1))}>‹</Button>
+              <span className="tabular-nums" aria-label={`mesh page ${meshPage + 1} of ${pageCount}`}>{meshPage + 1}/{pageCount}</span>
+              <Button size="sm" variant="ghost" iconOnly disabled={meshPage >= pageCount - 1} aria-label="next mesh page" onClick={() => setMeshPage((p) => Math.min(pageCount - 1, p + 1))}>›</Button>
+            </div>
+          ) : null}
         </nav>
 
         {/* extra bottom padding on mobile so the fixed bottom tab bar never covers content */}
@@ -223,12 +271,15 @@ export function BnwApp() {
               </Cluster>
             </div>
           ) : null}
-          {body}
+          {/* 7.5-C — stage-level boundary: a surface render crash shows a retry card here while
+              the topbar / nav / sub-nav / bottom tabs stay alive. resetKey=route → auto-recovers
+              on navigation. */}
+          <BnwErrorBoundary resetKey={bnwHref(route)}><MaybeThrow>{body}</MaybeThrow></BnwErrorBoundary>
         </main>
         {/* No generic right-context stub — each surface owns its own context (e.g. runtime
             focus renders an `<agent> · activity` panel; overview/canvas are full-width). */}
         {/* 7.5-A — mobile 更多 overlay covers the body region (under the fixed bottom tabs) */}
-        {moreOpen ? <MoreMenu onClose={() => setMoreOpen(false)} unreadCount={state.notifications?.unreadCount ?? 0} /> : null}
+        {moreOpen ? <MoreMenu onClose={() => setMoreOpen(false)} unreadCount={state.notifications?.unreadCount ?? 0} onReload={() => void doReload()} reloadDisabled={!connected} reloading={reloading} /> : null}
       </div>
 
       {/* 7.5-A — mobile bottom tab bar (hidden at lg+) */}

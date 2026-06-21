@@ -56,6 +56,7 @@ function store(state: GatewayState): Store {
     getState: () => state,
     subscribe: () => () => {},
     wsConnected: () => true,
+    reconnect: () => {},
     getToasts: () => [],
     getUpgrade: () => ({ available: false }),
     apply: () => {},
