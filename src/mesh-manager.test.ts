@@ -639,3 +639,10 @@ hostTest("mergeDefinitionsFromDisk preserves an existing RUNNING mesh's status a
   expect(list.find((m) => m.name === "echo")!.status).toBe("running"); // live entry NOT clobbered to stopped
   expect(list.find((m) => m.name === "extra")!.status).toBe("stopped"); // new file-only mesh added stopped
 }, HOST_TEST_TIMEOUT);
+
+test("mergeDefinitionsFromDisk ignores a DIRECTORY named like a mesh config", async () => {
+  await mgr.defineMesh(cfg); // "echo"
+  await mkdir(join(dir, "meshes", "dir-mesh.json"), { recursive: true }); // a directory, not a file
+  await mgr.mergeDefinitionsFromDisk();
+  expect(mgr.listMeshes().map((m) => m.name)).toEqual(["echo"]); // dir-mesh NOT added; no EISDIR throw
+});

@@ -460,3 +460,26 @@ test("meshes watcher: a CLI/hand-edited meshes/<name>.json (file-only) is synced
     await ctl.stop();
   } finally { cleanup(); }
 });
+
+test("meshes watcher: a DIRECTORY named meshes/<name>.json is ignored (no schedule, no chat)", async () => {
+  const { dir, cleanup } = root();
+  try {
+    writeConfig(dir, { enabled: true, appId: "cli_1", appSecret: "secret", allowSenders: ["ou_me"] });
+    const created: string[] = [];
+    const gw = diskBackedMesh(dir, ["m"]);
+    const timer = controllableTimer();
+    const ctl = new FeishuChannelController(gw, {
+      root: dir, watch: true,
+      buildChannel: () => ({ start() {}, stop() {} }),
+      createChat: async (_c, name) => { created.push(name); return { chatId: `oc_${name}` }; },
+      setTimer: timer.setTimer,
+    });
+    await ctl.start();
+    expect(created).toEqual(["m"]);
+    mkdirSync(join(dir, "meshes", "dir-mesh.json"), { recursive: true }); // a directory named like a config
+    await waitFor(() => false, 250); // give fs.watch time to deliver the event
+    expect(timer.hasPending()).toBe(false); // statSync isFile() rejects the directory → no sync scheduled
+    expect(created).toEqual(["m"]); // no chat created for the directory
+    await ctl.stop();
+  } finally { cleanup(); }
+});

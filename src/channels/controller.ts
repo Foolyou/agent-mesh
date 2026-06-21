@@ -4,7 +4,7 @@
 // turns the channel on later when channels/feishu.json becomes complete+enabled, restarts it on
 // config changes, and stops it when the file is disabled/invalid/removed.
 
-import { watch, existsSync, type FSWatcher } from "node:fs";
+import { watch, statSync, type FSWatcher } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { hostname } from "node:os";
@@ -247,7 +247,8 @@ export class FeishuChannelController implements FeishuChannelControl {
     this.meshWatcher = watch(dir, (_event, filename) => {
       const name = filename ? String(filename) : "";
       if (!isMeshConfigFile(name)) return; // ignore .sessions.json, temp/hidden names, the dir itself
-      if (!existsSync(join(dir, name))) return; // ignore delete events (the final file is gone)
+      // Require a regular FILE: rejects delete events (path now gone) AND a directory named `<name>.json`.
+      if (!statSync(join(dir, name), { throwIfNoEntry: false })?.isFile()) return;
       this.scheduleMeshSync();
     });
   }
