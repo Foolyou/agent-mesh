@@ -322,6 +322,57 @@ try {
     } finally { await anon.close(); }
   });
 
+  await step("7.4-B settings: real compose/applyComposition writes :root + persist; language/prefs; device placeholder", async () => {
+    const cssVar = (name: string) => page.evaluate((n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim(), name);
+    const ls = (k: string) => page.evaluate((key) => localStorage.getItem(key), k);
+
+    await page.goto(`${BASE}/bnw/settings`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-settings="panel"]', { timeout: 8000 });
+    await page.waitForSelector('[data-theme-matrix] [data-theme-cell]', { timeout: 8000 });
+    assert(await page.locator('[data-theme-cell]').count() === 9, "9-combo live preview grid");
+    await sleep(120); await page.screenshot({ path: `${SHOTS}/bnw-settings-appearance-desktop.png`, fullPage: true });
+
+    // REAL theme apply (not preview-only): switch accent → :root --accent changes + persists.
+    const accentBefore = await cssVar("--accent");
+    await page.locator('[aria-label="apply dark-slate ember"]').click();
+    await page.waitForFunction((prev) => getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() !== prev, accentBefore, { timeout: 8000 });
+    assert(await ls("mesh.theme.accent") === "ember", "accent persisted to localStorage");
+    // switch mode via the segmented control → :root --surface changes + persists.
+    const surfaceBefore = await cssVar("--surface");
+    await page.getByRole("radio", { name: "Light·Cool" }).click();
+    await page.waitForFunction((prev) => getComputedStyle(document.documentElement).getPropertyValue("--surface").trim() !== prev, surfaceBefore, { timeout: 8000 });
+    assert(await ls("mesh.theme.mode") === "light-cool", "mode persisted to localStorage");
+    // custom palette: edit a token → live applyPalette writes :root --bg + persists custom.
+    await page.locator('[data-custom-palette] summary').click();
+    const bgInput = page.locator('[aria-label="palette bg"]');
+    await bgInput.fill("#123456");
+    await page.waitForFunction(() => getComputedStyle(document.documentElement).getPropertyValue("--bg").trim().toLowerCase() === "#123456", { timeout: 8000 });
+    assert(await ls("mesh.theme") === "custom", "custom palette marks active=custom");
+
+    // language → persist + <html lang>
+    await page.goto(`${BASE}/bnw/settings?tab=language`, { waitUntil: "domcontentloaded" });
+    await page.getByRole("radio", { name: "English" }).click();
+    await page.waitForFunction(() => document.documentElement.lang === "en", { timeout: 8000 });
+    assert(await ls("mesh.lang") === "en", "language persisted");
+    await sleep(80); await page.screenshot({ path: `${SHOTS}/bnw-settings-language-desktop.png`, fullPage: true });
+
+    // prefs → client-local persist (no fake server write)
+    await page.goto(`${BASE}/bnw/settings?tab=prefs`, { waitUntil: "domcontentloaded" });
+    await page.getByRole("radio", { name: "看板" }).click();
+    await page.waitForFunction(() => localStorage.getItem("mesh.bnw.defaultView") === "board", { timeout: 8000 });
+    await sleep(80); await page.screenshot({ path: `${SHOTS}/bnw-settings-prefs-desktop.png`, fullPage: true });
+
+    // devices → own-status (real) + honest host-CLI placeholder, no web approve/revoke
+    await page.goto(`${BASE}/bnw/settings?tab=devices`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-device-mgmt]', { timeout: 8000 });
+    assert(await page.locator('[data-device-mgmt] button').count() === 0, "device mgmt placeholder has no web action buttons");
+    if (await page.getByText("mesh device list").count() === 0) throw new Error("host-CLI device guidance missing");
+    await sleep(80); await page.screenshot({ path: `${SHOTS}/bnw-settings-devices-desktop.png`, fullPage: true });
+
+    // reset all theme/lang/pref keys so later steps + screenshots render the default theme.
+    await page.evaluate(() => ["mesh.theme", "mesh.theme.custom", "mesh.theme.mode", "mesh.theme.accent", "mesh.lang", "mesh.bnw.defaultView", "mesh.bnw.defaultDevice"].forEach((k) => localStorage.removeItem(k)));
+  });
+
   await step("7.1-C canvas: real edges + recent highlight + toolbar; add-edge/add-agent reach gateway", async () => {
     await page.goto(`${BASE}/bnw/mesh/demo/canvas`, { waitUntil: "domcontentloaded" });
     await page.waitForSelector('[data-bnw-canvas]', { timeout: 8000 });
@@ -697,6 +748,9 @@ try {
     await page.goto(`${BASE}/bnw/mesh/demo/agent/router/file/report.md`, { waitUntil: "domcontentloaded" });
     await page.waitForSelector('[data-artifact-kind="markdown"]', { timeout: 8000 });
     await sleep(120); await page.screenshot({ path: `${SHOTS}/bnw-file-viewer-mobile.png`, fullPage: true });
+    await page.goto(`${BASE}/bnw/settings`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-theme-matrix]', { timeout: 8000 });
+    await sleep(120); await page.screenshot({ path: `${SHOTS}/bnw-settings-mobile.png`, fullPage: true });
   });
 
   if (errors.length) throw new Error(`page errors:\n${errors.join("\n")}`);

@@ -191,6 +191,10 @@ try {
         await page.goto(`${BASE}/bnw/mesh/demo/agent/router/file/report.md`, { waitUntil: "domcontentloaded" });
         await page.waitForSelector('[data-artifact-kind="markdown"]', { timeout: 8000 });
         await sleep(60); await crawl(page, `${combo} · file-viewer`);
+        // 7.4-B — settings appearance (mode/accent + 9-combo live grid)
+        await page.goto(`${BASE}/bnw/settings`, { waitUntil: "domcontentloaded" });
+        await page.waitForSelector('[data-theme-matrix] [data-theme-cell]', { timeout: 8000 });
+        await sleep(60); await crawl(page, `${combo} · settings`);
         // 7.4-A.2b-ii — device-auth gate (unauthenticated page; mockup 12)
         await anonPage.evaluate(([m, a]) => { localStorage.setItem("mesh.theme.mode", m); localStorage.setItem("mesh.theme.accent", a); localStorage.removeItem("mesh.theme"); }, [mode, accent]);
         await anonPage.goto(`${BASE}/bnw/`, { waitUntil: "domcontentloaded" });
