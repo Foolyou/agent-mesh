@@ -226,6 +226,9 @@ export function RuntimeFocus({ store, state, mesh, agent, full }: { store: Store
       <RuntimeSelectors store={store} mesh={mesh} agent={agent} harness={a.harness}
         modes={pm?.modes[agent]} models={pm?.models[agent]} efforts={pm?.efforts[agent]} disabled={!editable} />
       <UsageLine pm={pm} agent={agent} />
+      {/* #13 — pending-turn queue is a compact `queued · N` chip at the transcript top
+          (not a separate right column); expands inline for prev/next + remove. */}
+      {queue?.count ? <div data-bnw-queue-chip className="rounded-lg border border-border bg-surface-sunken px-2.5 py-1.5"><QueueList store={store} mesh={mesh} agent={agent} queue={queue} disabled={!editable} /></div> : null}
       {/* transcript scroll region (relative for the jump-to-bottom affordance) */}
       <div className="relative flex min-h-0 flex-1 flex-col">
         <div ref={scrollRef} onScroll={onScroll} data-bnw-transcript className="flex flex-1 flex-col gap-2 overflow-auto">
@@ -255,28 +258,31 @@ export function RuntimeFocus({ store, state, mesh, agent, full }: { store: Store
     return <div data-bnw-focus="full" className="h-full">{focusColumn}</div>;
   }
 
-  // split: focus column + side summaries (queue / activity / mail), all real reads.
+  // split: focus column + a SINGLE right context panel `<agent> · activity` (ACTIVITY + MAIL),
+  // matching /__ui-mockup?surface=runtime&runtime=focus + coverage/02-runtime.md. Queue lives
+  // in the transcript-top chip; the C2 approval is docked above the composer.
   return (
     <div data-bnw-focus="split" className="flex h-full min-h-0 gap-3">
       <div className="min-w-0 flex-1">{focusColumn}</div>
-      <aside className="hidden w-[300px] shrink-0 flex-col gap-3 overflow-auto lg:flex">
-        <PanelFrame title="队列" description={queue?.count ? `${queue.count} 排队` : "空"}>
-          <QueueList store={store} mesh={mesh} agent={agent} queue={queue} disabled={!editable} />
-        </PanelFrame>
-        <PanelFrame title="活动">
-          <div className="flex flex-col gap-1">
-            {(pm?.activity ?? []).slice(-6).reverse().map((e) => (
-              <div key={e.id} className="truncate text-xs text-text-muted"><span className="text-text-secondary">{e.kind}</span> · {e.text}</div>
-            ))}
-            {!pm?.activity?.length ? <p className="text-xs text-text-muted">暂无活动。</p> : null}
+      <aside data-bnw-context className="hidden w-[288px] shrink-0 overflow-auto lg:block">
+        <PanelFrame title={`${agent} · activity`} className="h-full" bodyClassName="flex flex-col gap-3">
+          <div>
+            <div className="mb-1 text-xs uppercase tracking-wider text-text-muted">activity</div>
+            <div className="flex flex-col gap-1">
+              {(pm?.activity ?? []).slice(-8).reverse().map((e) => (
+                <div key={e.id} className="truncate text-xs text-text-muted"><span className="text-text-secondary">{e.kind}</span> · {e.text}</div>
+              ))}
+              {!pm?.activity?.length ? <p className="text-xs text-text-muted">暂无活动。</p> : null}
+            </div>
           </div>
-        </PanelFrame>
-        <PanelFrame title="邮件">
-          <div className="flex flex-col gap-1">
-            {(pm?.mail ?? []).slice(-6).reverse().map((m) => (
-              <div key={m.id} className="truncate text-xs text-text-muted">{m.from} → {m.to}: {m.body}</div>
-            ))}
-            {!pm?.mail?.length ? <p className="text-xs text-text-muted">暂无邮件。</p> : null}
+          <div>
+            <div className="mb-1 text-xs uppercase tracking-wider text-text-muted">mail</div>
+            <div className="flex flex-col gap-1">
+              {(pm?.mail ?? []).slice(-8).reverse().map((m) => (
+                <div key={m.id} className="truncate text-xs text-text-muted">{m.from} → {m.to}: {m.body}</div>
+              ))}
+              {!pm?.mail?.length ? <p className="text-xs text-text-muted">暂无邮件。</p> : null}
+            </div>
           </div>
         </PanelFrame>
       </aside>

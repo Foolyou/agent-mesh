@@ -167,13 +167,8 @@ export function BnwApp() {
           ) : null}
           {body}
         </main>
-
-        <aside aria-label="context" className="hidden w-[288px] shrink-0 border-l border-border bg-surface-raised p-3 lg:block">
-          <PanelFrame title="Context">
-            <p className="text-sm text-text-secondary">上下文面板将随各表面接线填充（7.1+）。</p>
-            <div className="mt-2 text-xs text-text-muted">当前：{SURFACE_TITLE[route.k]}</div>
-          </PanelFrame>
-        </aside>
+        {/* No generic right-context stub — each surface owns its own context (e.g. runtime
+            focus renders an `<agent> · activity` panel; overview/canvas are full-width). */}
       </div>
     </div>
   );

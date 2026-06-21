@@ -250,6 +250,23 @@ try {
   });
 
   // ── user-review screenshots (<=1500 wide, in artifacts) ──
+  await step("7.1 focus-layout correction: single `<agent> · activity` context, queue chip, no stub", async () => {
+    // overview must NOT render the old generic context stub
+    await page.goto(`${BASE}/bnw/mesh/demo`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-bnw-surface="runtime"]', { timeout: 8000 });
+    if (await page.getByText("上下文面板将随各表面接线填充").count() !== 0) throw new Error("overview still shows the generic context stub");
+    // focus: exactly one right context panel, queue chip at top, no stub
+    await page.goto(`${BASE}/bnw/mesh/demo/agent/router`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-bnw-focus="split"]', { timeout: 8000 });
+    await page.evaluate((s) => (window as any).__meshStore.apply({ t: "snapshot", state: s }), SEED_FOCUS);
+    await page.waitForSelector('[data-bnw-context]', { timeout: 8000 });
+    if (await page.locator('[data-bnw-context]').count() !== 1) throw new Error("focus must have exactly one context panel");
+    if (await page.getByText("router · activity").count() === 0) throw new Error("context panel title `<agent> · activity` missing");
+    if (await page.getByText("上下文面板将随各表面接线填充").count() !== 0) throw new Error("focus still shows the generic context stub");
+    await page.waitForSelector('[data-bnw-queue-chip]', { timeout: 8000 }); // queue is a top chip
+    if (await page.locator('[data-bnw-approval]').count() === 0) throw new Error("C2 docked approval bar must remain above the composer");
+  });
+
   await step("screenshots: overview / focus (C2 docked approval) / canvas / mobile overview", async () => {
     await page.setViewportSize({ width: 1440, height: 900 });
     // desktop overview

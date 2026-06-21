@@ -3,7 +3,7 @@
 // store only; no old view component (MeshDetail/ChatPane/…) imported. Pure harness logic is
 // reused from ../../harness-utils (a shared util module, not a view).
 import { useState } from "react";
-import { Badge, Button, Composer, ConfirmButton, Input, Select, Textarea } from "../ui/index";
+import { Button, Composer, ConfirmButton, Input, Select, Textarea } from "../ui/index";
 import type { Store } from "../store";
 import type { AgentModes, AgentModels, AgentEfforts, PermissionReq, QueueSummary, MeshSummary, StartSessionStrategy } from "../../types";
 import type { HarnessId, AgentRole } from "../../../acp/types";
@@ -134,7 +134,7 @@ export function QueueList({ store, mesh, agent, queue, disabled }: { store: Stor
   if (!queue?.count) return <p className="text-xs text-text-muted">无排队 prompt。</p>;
   return (
     <div className="flex flex-col gap-1">
-      <div className="flex items-center gap-1.5 text-xs text-text-muted">排队 <Badge count={queue.count} tone="neutral" /></div>
+      <div className="flex items-center gap-1.5 text-xs text-text-muted"><span aria-hidden="true">↕</span> queued · {queue.count}</div>
       {items.length === 0 ? (
         <p className="truncate text-xs text-text-secondary">下一条：{queue.latestPreview}</p>
       ) : items.map((it) => (

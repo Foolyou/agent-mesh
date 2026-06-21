@@ -64,6 +64,8 @@ test("RuntimeFocus split: transcript + real selectors + composer + side summarie
     transcripts: { router: { items, hasMore: false } },
     models: { router: { current: "opus-4.8", available: [{ id: "opus-4.8", name: "Opus 4.8" }, { id: "sonnet-4.6", name: "Sonnet 4.6" }] } },
     activity: [{ id: "a1", ts: "", kind: "mail", text: "→ codex-1" }],
+    mail: [{ id: "ml1", ts: "", from: "router", to: "codex-1", body: "go" }],
+    queues: { router: { count: 2, items: [{ id: "q1", source: "operator", preview: "next prompt", ts: "" }] } },
   }) });
   const out = renderToStaticMarkup(<RuntimeFocus store={STUB} state={s} mesh="demo" agent="router" full={false} />);
   expect(out).toContain('data-bnw-focus="split"');
@@ -76,7 +78,14 @@ test("RuntimeFocus split: transcript + real selectors + composer + side summarie
   expect(out).toContain('aria-label="Message composer"'); // real composer
   expect(out).toContain('aria-label="message input"');
   expect(out).toContain('href="/bnw/mesh/demo/agent/router?full=1"'); // fullscreen toggle
-  expect(out).toContain("活动"); // side summary
+  // SINGLE right context panel `<agent> · activity` with ACTIVITY + MAIL (no extra stub column)
+  expect(out).toContain("data-bnw-context");
+  expect(out).toContain("router · activity");
+  expect(out).toContain(">activity<");
+  expect(out).toContain(">mail<");
+  // queue is a compact chip at the transcript top, not a right column
+  expect(out).toContain("data-bnw-queue-chip");
+  expect(out).toContain("queued · 2");
 });
 
 test("RuntimeFocus: #14 transcript items expose expand toggles", () => {
