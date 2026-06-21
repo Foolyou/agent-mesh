@@ -2,7 +2,7 @@ import { test, expect } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { FeishuChannelController, feishuMeshChatName } from "./controller";
+import { FeishuChannelController, feishuMeshChatName, isMeshConfigFile } from "./controller";
 import { feishuConfigPath } from "./config";
 import type { Channel, MeshGateway } from "./types";
 import type { MeshEvent } from "../acp/types";
@@ -160,4 +160,195 @@ test("feishuMeshChatName carries no 联调 / PoC / Mesh wording", () => {
   expect(name).not.toContain("PoC");
   expect(name).not.toContain("Mesh");
   expect(name).not.toContain("·");
+});
+
+// ── meshes/ directory watcher (feishu-mesh-watch-sync) ──────────────────────────
+
+/** A controllable debounce timer: stores the latest scheduled fn (cancel-then-set models the debounce),
+ *  fires only on flush(). hasPending() reports whether a sync is scheduled. */
+function controllableTimer() {
+  let pending: (() => void) | null = null;
+  return {
+    setTimer: (fn: () => void, _ms: number) => { pending = fn; return () => { if (pending === fn) pending = null; }; },
+    flush: () => { const f = pending; pending = null; f?.(); },
+    hasPending: () => pending !== null,
+  };
+}
+
+/** A mesh gateway whose listMeshes() reflects a mutable name list (simulating defineMesh/in-memory) and
+ *  counts how many times it is read (to assert sync coalescing). */
+function dynamicMesh(names: string[]) {
+  let listCalls = 0;
+  const gw: MeshGateway = { ...mesh, listMeshes() { listCalls++; return names.map((name) => ({ name, status: "running" as const })); } };
+  return { gw, calls: () => listCalls };
+}
+
+async function waitFor(cond: () => boolean, ms = 2500): Promise<boolean> {
+  const end = Date.now() + ms;
+  while (Date.now() < end) { if (cond()) return true; await new Promise((r) => setTimeout(r, 10)); }
+  return cond();
+}
+const writeMesh = (dir: string, file: string, body: unknown = { name: file.replace(/\.json$/, ""), agents: [] }) => {
+  mkdirSync(join(dir, "meshes"), { recursive: true });
+  writeFileSync(join(dir, "meshes", file), JSON.stringify(body), "utf8");
+};
+
+test("isMeshConfigFile accepts <mesh>.json and rejects sessions/temp/hidden/non-json/dir", () => {
+  expect(isMeshConfigFile("ops.json")).toBe(true);
+  expect(isMeshConfigFile("ops.sessions.json")).toBe(false); // session state
+  expect(isMeshConfigFile("ops.json.tmp")).toBe(false);       // atomic-write intermediate
+  expect(isMeshConfigFile("ops.json~")).toBe(false);          // editor backup
+  expect(isMeshConfigFile(".ops.json")).toBe(false);          // hidden / editor temp
+  expect(isMeshConfigFile("ops.txt")).toBe(false);
+  expect(isMeshConfigFile("")).toBe(false);                   // dir / no filename
+});
+
+test("meshes watcher: writing meshes/<name>.json after start triggers sync and creates the binding (no restart)", async () => {
+  const { dir, cleanup } = root();
+  try {
+    writeConfig(dir, { enabled: true, appId: "cli_1", appSecret: "secret", allowSenders: ["ou_me"] });
+    const created: string[] = [];
+    const names = ["m"];
+    const { gw } = dynamicMesh(names);
+    const timer = controllableTimer();
+    const ctl = new FeishuChannelController(gw, {
+      root: dir, watch: true,
+      buildChannel: () => ({ start() {}, stop() {} }),
+      createChat: async (_c, name) => { created.push(name); return { chatId: `oc_${name}` }; },
+      setTimer: timer.setTimer,
+    });
+    await ctl.start();
+    expect(created).toEqual(["m"]); // start() ensured the already-known mesh
+
+    names.push("m2"); // a new mesh appears (create_mesh/defineMesh: in-memory + file)
+    writeMesh(dir, "m2.json");
+    expect(await waitFor(timer.hasPending)).toBe(true); // fs event → debounced sync scheduled
+    timer.flush();
+    expect(await waitFor(() => created.includes("m2"))).toBe(true); // binding created without restart
+    await ctl.stop();
+  } finally { cleanup(); }
+});
+
+test("meshes watcher: an existing binding is not re-created on a later file change (idempotent)", async () => {
+  const { dir, cleanup } = root();
+  try {
+    writeConfig(dir, { enabled: true, appId: "cli_1", appSecret: "secret", allowSenders: ["ou_me"] });
+    const created: string[] = [];
+    const names = ["m"];
+    const { gw } = dynamicMesh(names);
+    const timer = controllableTimer();
+    const ctl = new FeishuChannelController(gw, {
+      root: dir, watch: true,
+      buildChannel: () => ({ start() {}, stop() {} }),
+      createChat: async (_c, name) => { created.push(name); return { chatId: `oc_${name}` }; },
+      setTimer: timer.setTimer,
+    });
+    await ctl.start();
+    expect(created).toEqual(["m"]); // "m" bound
+
+    writeMesh(dir, "m.json"); // a modify of the already-bound mesh
+    expect(await waitFor(timer.hasPending)).toBe(true);
+    timer.flush();
+    await waitFor(() => false, 150); // let the sync run
+    expect(created).toEqual(["m"]); // NO duplicate createChat for the existing binding
+    await ctl.stop();
+  } finally { cleanup(); }
+});
+
+test("meshes watcher: ignored names (.sessions.json, temp) do not schedule a sync", async () => {
+  const { dir, cleanup } = root();
+  try {
+    writeConfig(dir, { enabled: true, appId: "cli_1", appSecret: "secret", allowSenders: ["ou_me"] });
+    const { gw } = dynamicMesh(["m"]);
+    const timer = controllableTimer();
+    const ctl = new FeishuChannelController(gw, {
+      root: dir, watch: true,
+      buildChannel: () => ({ start() {}, stop() {} }),
+      createChat: async (_c, name) => ({ chatId: `oc_${name}` }),
+      setTimer: timer.setTimer,
+    });
+    await ctl.start();
+    writeMesh(dir, "m.sessions.json");
+    writeMesh(dir, "m.json.tmp");
+    await waitFor(() => false, 250); // give fs.watch time to deliver the (ignored) events
+    expect(timer.hasPending()).toBe(false); // neither scheduled a sync
+    await ctl.stop();
+  } finally { cleanup(); }
+});
+
+test("meshes watcher: rapid multiple mesh-file writes coalesce into a SINGLE sync", async () => {
+  const { dir, cleanup } = root();
+  try {
+    writeConfig(dir, { enabled: true, appId: "cli_1", appSecret: "secret", allowSenders: ["ou_me"] });
+    const names = ["m"];
+    const { gw, calls } = dynamicMesh(names);
+    const timer = controllableTimer();
+    const ctl = new FeishuChannelController(gw, {
+      root: dir, watch: true,
+      buildChannel: () => ({ start() {}, stop() {} }),
+      createChat: async (_c, name) => ({ chatId: `oc_${name}` }),
+      setTimer: timer.setTimer,
+    });
+    await ctl.start();
+    writeMesh(dir, "a.json"); writeMesh(dir, "b.json"); writeMesh(dir, "c.json"); // rapid burst
+    expect(await waitFor(timer.hasPending)).toBe(true);
+    const base = calls();
+    timer.flush(); // the debounce collapsed the burst into one scheduled fn
+    await waitFor(() => false, 100);
+    expect(calls() - base).toBe(1); // exactly one syncMeshChats (listMeshes read once)
+    await ctl.stop();
+  } finally { cleanup(); }
+});
+
+test("meshes watcher: a createChat failure is logged and contained; the watcher stays usable", async () => {
+  const { dir, cleanup } = root();
+  try {
+    writeConfig(dir, { enabled: true, appId: "cli_1", appSecret: "secret", allowSenders: ["ou_me"] });
+    const logs: string[] = [];
+    const created: string[] = [];
+    let fail = true;
+    const names = ["m"];
+    const { gw } = dynamicMesh(names);
+    const timer = controllableTimer();
+    const ctl = new FeishuChannelController(gw, {
+      root: dir, watch: true, log: (m) => logs.push(m),
+      buildChannel: () => ({ start() {}, stop() {} }),
+      createChat: async (_c, name) => { if (fail) throw new Error("boom"); created.push(name); return { chatId: `oc_${name}` }; },
+      setTimer: timer.setTimer,
+    });
+    await ctl.start(); // "m" fails to create (logged), does not throw
+    names.push("m2");
+    writeMesh(dir, "m2.json");
+    expect(await waitFor(timer.hasPending)).toBe(true);
+    timer.flush();
+    expect(await waitFor(() => logs.some((l) => l.includes("failed to ensure mesh chat")))).toBe(true);
+
+    // watcher still usable: a later success creates the chat
+    fail = false;
+    writeMesh(dir, "m2.json");
+    expect(await waitFor(timer.hasPending)).toBe(true);
+    timer.flush();
+    expect(await waitFor(() => created.includes("m2"))).toBe(true);
+    await ctl.stop();
+  } finally { cleanup(); }
+});
+
+test("meshes watcher: stop() closes the watcher — a later mesh-file write does not schedule a sync", async () => {
+  const { dir, cleanup } = root();
+  try {
+    writeConfig(dir, { enabled: true, appId: "cli_1", appSecret: "secret", allowSenders: ["ou_me"] });
+    const { gw } = dynamicMesh(["m"]);
+    const timer = controllableTimer();
+    const ctl = new FeishuChannelController(gw, {
+      root: dir, watch: true,
+      buildChannel: () => ({ start() {}, stop() {} }),
+      createChat: async (_c, name) => ({ chatId: `oc_${name}` }),
+      setTimer: timer.setTimer,
+    });
+    await ctl.start();
+    await ctl.stop();
+    writeMesh(dir, "after-stop.json");
+    await waitFor(() => false, 250);
+    expect(timer.hasPending()).toBe(false); // closed watcher → no schedule
+  } finally { cleanup(); }
 });

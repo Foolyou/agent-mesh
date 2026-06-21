@@ -4,9 +4,9 @@
 // turns the channel on later when channels/feishu.json becomes complete+enabled, restarts it on
 // config changes, and stops it when the file is disabled/invalid/removed.
 
-import { watch, type FSWatcher } from "node:fs";
+import { watch, existsSync, type FSWatcher } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { hostname } from "node:os";
 import type { Channel, FeishuChannelConfig, FeishuChannelControl, FeishuChannelStatus, FeishuMeshBinding, FeishuMeshChatEnsureResult, FeishuProvisionJobPublic, FeishuProvisionStartRequest, MeshGateway } from "./types";
 import type { AssistantGateway } from "./assistant-gateway";
@@ -42,7 +42,9 @@ export class FeishuChannelController implements FeishuChannelControl {
   private chatQueue: Promise<unknown> = Promise.resolve();
 
   private watcher?: FSWatcher;
+  private meshWatcher?: FSWatcher;
   private cancelReload?: () => void;
+  private cancelMeshSync?: () => void;
   private active?: Channel;
   private activeSignature = "";
   private reloadInFlight?: Promise<FeishuChannelStatus>;
@@ -86,15 +88,22 @@ export class FeishuChannelController implements FeishuChannelControl {
         if (!result.ok) this.log(`feishu channel: failed to ensure mesh chat for "${result.mesh}": ${result.error ?? "unknown error"}`);
       }
     }
-    if (this.watchEnabled) await this.startWatcher();
+    if (this.watchEnabled) {
+      await this.startWatcher();
+      await this.startMeshWatcher();
+    }
   }
 
   async stop(): Promise<void> {
     this.started = false;
     this.cancelReload?.();
     this.cancelReload = undefined;
+    this.cancelMeshSync?.();
+    this.cancelMeshSync = undefined;
     this.watcher?.close();
     this.watcher = undefined;
+    this.meshWatcher?.close();
+    this.meshWatcher = undefined;
     await this.stopActive();
     this.lastStatus = { ...this.lastStatus, state: "stopped", reason: "controller stopped", updatedAt: new Date().toISOString() };
   }
@@ -225,6 +234,44 @@ export class FeishuChannelController implements FeishuChannelControl {
     }, 150);
   }
 
+  /** Watch the `<root>/meshes/` directory so a mesh config created/modified OUTSIDE the WebUI's
+   *  `POST /api/meshes` (Assistant `create_mesh`, CLI, or a manual `meshes/<name>.json` write) still
+   *  auto-creates its Feishu group without a restart. Reacts only to external `<mesh>.json` changes and
+   *  debounces into the idempotent `syncMeshChats()`. No feedback loop: `syncMeshChats` writes
+   *  `channels/feishu.json` (the other watcher's file), never `meshes/`. */
+  private async startMeshWatcher(): Promise<void> {
+    const dir = join(this.root, "meshes");
+    await mkdir(dir, { recursive: true });
+    this.meshWatcher = watch(dir, (_event, filename) => {
+      const name = filename ? String(filename) : "";
+      if (!isMeshConfigFile(name)) return; // ignore .sessions.json, temp/hidden names, the dir itself
+      if (!existsSync(join(dir, name))) return; // ignore delete events (the final file is gone)
+      this.scheduleMeshSync();
+    });
+  }
+
+  private scheduleMeshSync(): void {
+    this.cancelMeshSync?.();
+    this.cancelMeshSync = this.setTimer(() => {
+      this.cancelMeshSync = undefined;
+      void this.runMeshSync();
+    }, 150);
+  }
+
+  /** Failure-isolated mesh sync for the watcher path: per-mesh errors are already contained by
+   *  `syncMeshChats`; log non-ok results (mirroring `start()`), and swallow any top-level throw so the
+   *  watcher never dies and stays usable for the next change. */
+  private async runMeshSync(): Promise<void> {
+    try {
+      const results = await this.syncMeshChats();
+      for (const result of results) {
+        if (!result.ok) this.log(`feishu channel: failed to ensure mesh chat for "${result.mesh}": ${result.error ?? "unknown error"}`);
+      }
+    } catch (e) {
+      this.log(`feishu channel: mesh directory sync failed: ${String(e)}`);
+    }
+  }
+
   private async doEnsureMeshChat(meshName: string): Promise<FeishuMeshChatEnsureResult> {
     const mesh = String(meshName ?? "").trim();
     if (!mesh) throw new Error("mesh name is required");
@@ -245,6 +292,15 @@ export class FeishuChannelController implements FeishuChannelControl {
     await this.reload();
     return { mesh, chatId: binding.chatId, name: binding.name, created: true, ok: true };
   }
+}
+
+/** A watched `meshes/` filename that is a real mesh CONFIG (`<mesh>.json`) the controller should sync on.
+ *  Excludes session state (`<mesh>.sessions.json`), atomic-write intermediates / editor temp / hidden
+ *  names (anything with `.tmp`, a trailing `~`, or a leading dot), and non-JSON / the directory itself. */
+export function isMeshConfigFile(name: string): boolean {
+  if (!name || name.startsWith(".") || name.endsWith("~") || name.includes(".tmp")) return false;
+  if (!name.endsWith(".json") || name.endsWith(".sessions.json")) return false;
+  return true;
 }
 
 function runningStatus(path: string, cfg: FeishuChannelConfig): FeishuChannelStatus {
