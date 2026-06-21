@@ -347,6 +347,9 @@ test("index skeleton · lists every surface with state/device deep links", () =>
   expect(out).toContain("10 · Notifications");
   expect(out).toContain("11 · File / Artifact viewer");
   expect(out).toContain("12 · Device-auth 门禁");
+  expect(out).toContain("13 · Global states");
+  expect(out).toContain("data-index-overview"); // single entry-point overview sentence
+  expect(out).toContain("浏览整套 Phase B mockup 的唯一入口");
   expect(out).toContain("surface=assistant"); // assistant deep links
   expect(out).toContain("surface=harnesses"); // harnesses deep links
   expect(out).toContain("surface=channels"); // channels deep links
@@ -355,6 +358,7 @@ test("index skeleton · lists every surface with state/device deep links", () =>
   expect(out).toContain("surface=notifications"); // notifications deep links
   expect(out).toContain("surface=artifact"); // artifact deep links
   expect(out).toContain("surface=device-auth"); // device-auth deep links
+  expect(out).toContain("surface=global"); // global-states deep links
   expect(out).toContain("runtime=canvas"); // a runtime补漏 deep link (& is HTML-escaped in href)
   expect(out).toContain("boardManage=1"); // board补漏 deep link
   expect(out).toContain("boardFs=1");
@@ -944,6 +948,54 @@ test("device-auth · mobile: single-card full-screen gate", () => {
   expect(out).toContain('data-device="mobile"');
   expect(out).toContain('data-device-auth="gate"');
   expect(out).toContain("WXYZ-1234");
+});
+
+// ── Global states (13) ───────────────────────────────────────────────────────
+test("global · populated=connected + the full cross-cutting contract catalog", () => {
+  const out = renderAt("?surface=global&state=populated&device=desktop");
+  expect(out).toContain('data-global="states"');
+  expect(out).toContain("data-connected"); // normal/connected demo
+  expect(out).toContain("snapshot loaded · live deltas");
+  expect(out).toContain("data-global-contracts");
+  // all 7 cross-cutting contracts catalogued
+  expect(out).toContain("Boot / connection probe");
+  expect(out).toContain("WS connect / snapshot-first");
+  expect(out).toContain("Reconnect on drop");
+  expect(out).toContain("Gate 401 → device-auth");
+  expect(out).toContain("SPA 404 / unknown route");
+  expect(out).toContain("Unified error + retry");
+  expect(out).toContain("Offline contract");
+});
+
+test("global · state demos: 404/probe/boot-fail/401/retry/offline/boundary", () => {
+  expect(renderAt("?surface=global&state=empty&device=desktop")).toContain("data-not-found"); // SPA 404
+  expect(renderAt("?surface=global&state=empty&device=desktop")).toContain("404 · 页面不存在");
+  expect(renderAt("?surface=global&state=loading&device=desktop")).toContain("正在连接控制台"); // boot probe
+  const err = renderAt("?surface=global&state=error&device=desktop");
+  expect(err).toContain("启动失败");
+  expect(err).toContain('role="alert"');
+  const perm = renderAt("?surface=global&state=permission&device=desktop");
+  expect(perm).toContain("data-401-redirect");
+  expect(perm).toContain("401 Unauthorized");
+  expect(perm).toContain("surface=device-auth"); // routes to the gate (& escaped)
+  expect(renderAt("?surface=global&state=busy&device=desktop")).toContain("重连中");
+  const off = renderAt("?surface=global&state=offline&device=desktop");
+  expect(off).toContain("data-reconnect");
+  expect(off).toContain("正在重连");
+  expect(off).toContain("最近已知");
+  expect(renderAt("?surface=global&state=boundary&device=desktop")).toContain("深层坏路径");
+});
+
+test("global · contract catalog is present in every state (aggregate doc)", () => {
+  for (const st of ["empty", "loading", "error", "permission", "busy", "offline", "boundary"]) {
+    expect(renderAt(`?surface=global&state=${st}&device=desktop`)).toContain("data-global-contracts");
+  }
+});
+
+test("global · mobile renders the states surface", () => {
+  const out = renderAt("?surface=global&state=populated&device=mobile");
+  expect(out).toContain('data-device="mobile"');
+  expect(out).toContain('data-global="states"');
 });
 
 test("mockup uses v2 semantic utilities and emits no raw-* class", () => {

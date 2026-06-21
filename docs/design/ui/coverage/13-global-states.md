@@ -40,3 +40,17 @@ error wrapping), `device-auth.ts` (boot probe → 200 app / 401 gate), `index.ts
 - 2026-06-21 — created (Phase A commit 3). Sources: `server.ts` (SPA 404 + 401 gate + WS),
   `store.ts` (WS lifecycle + snapshot-first + guard errors), `device-auth.ts` (boot probe),
   `index.tsx` boot. p2p-DM connection states fold here per lead #683 assumption 4.
+- 2026-06-21 — Phase B Step 2 mockup (`UiMockup.tsx`): the Global-states surface built in the
+  guarded `/__ui-mockup` (`?surface=global`) — a documentation/demo surface aggregating the
+  cross-cutting contracts every surface inherits. A per-state demo region maps each state to
+  its global treatment: empty→SPA 404 not-found-in-shell, loading→boot probe / awaiting
+  snapshot, populated→connected (snapshot-first + live deltas), error→unified ErrorBanner +
+  retry (boot/snapshot fail), permission→401 routes to the device-auth gate (link to 12),
+  busy→reconnect retrying (backoff), offline→reconnect banner + last-known (mutations
+  disabled), boundary→large snapshot / deep bad path / long outage. A full contract catalog
+  (boot probe / snapshot-first / reconnect / 401→gate / SPA-404 / unified-error+retry /
+  offline) is shown in every state so the surface documents the aggregate. Desktop + mobile.
+  Grounded in `server.ts`/`store.ts`/`device-auth.ts`/`index.tsx`. No additional [E] capability
+  beyond the checklist found. Index (`?index=1`) finalized: covers all 01–13 surfaces with
+  state×device deep links + a single-entry-point overview sentence. Fixture-only, true C5–C8,
+  v2 tokens.

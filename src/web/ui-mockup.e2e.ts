@@ -758,6 +758,48 @@ try {
     }
   }
 
+  // ── Global states (13): assertions + state × device screenshots ──
+  await step("global: connected demo + full contract catalog; 401 demo → device-auth gate", async () => {
+    await page.goto(`${BASE}/__ui-mockup?surface=global&state=populated&device=desktop`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-mockup="frame"][data-global="states"]', { timeout: 8000 });
+    if (await page.locator("[data-global-contracts]").count() === 0) throw new Error("contract catalog missing");
+    for (const t of ["Boot / connection probe", "WS connect / snapshot-first", "Gate 401 → device-auth", "SPA 404 / unknown route", "Offline contract"]) {
+      if (await page.getByText(t, { exact: false }).count() === 0) throw new Error(`contract missing: ${t}`);
+    }
+    await page.goto(`${BASE}/__ui-mockup?surface=global&state=permission&device=desktop`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector("[data-401-redirect]", { timeout: 8000 });
+    await page.locator('[data-401-redirect] a[href*="surface=device-auth"]').first().click();
+    await page.waitForSelector('[data-mockup="frame"][data-device-auth="gate"]', { timeout: 8000 });
+  });
+  await step("global: empty=SPA 404; offline=reconnect + last-known", async () => {
+    await page.goto(`${BASE}/__ui-mockup?surface=global&state=empty&device=desktop`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-global="states"]', { timeout: 8000 });
+    if (await page.locator("[data-not-found]").count() === 0) throw new Error("SPA 404 not-found missing");
+    await page.goto(`${BASE}/__ui-mockup?surface=global&state=offline&device=desktop`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-global="states"]', { timeout: 8000 });
+    if (await page.locator("[data-reconnect]").count() === 0) throw new Error("offline reconnect demo missing");
+    if (await page.getByText("最近已知", { exact: false }).count() === 0) throw new Error("last-known missing");
+  });
+  await step("index closeout: all 13 surfaces + single-entry overview sentence", async () => {
+    await page.goto(`${BASE}/__ui-mockup?index=1`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector("[data-mockup-index]", { timeout: 8000 });
+    if (await page.locator("[data-index-overview]").count() === 0) throw new Error("index overview sentence missing");
+    for (const t of ["01 · 应用外壳", "07 · Channels", "13 · Global states"]) {
+      if (await page.getByText(t, { exact: false }).count() === 0) throw new Error(`index section missing: ${t}`);
+    }
+  });
+  const GLOBAL_STATES = ["empty", "loading", "populated", "error", "permission", "busy", "offline", "boundary"];
+  for (const device of ["desktop", "mobile"]) {
+    for (const st of GLOBAL_STATES) {
+      await step(`screenshot global-${st}-${device}`, async () => {
+        await page.goto(`${BASE}/__ui-mockup?surface=global&state=${st}&device=${device}&mode=dark-slate&accent=signal-teal`, { waitUntil: "domcontentloaded" });
+        await page.waitForSelector(`[data-mockup="frame"][data-device="${device}"][data-global="states"]`, { timeout: 8000 });
+        await sleep(130);
+        await shotFrame(`${SHOTS}/global-${st}-${device}-dark-slate-signal-teal.png`);
+      });
+    }
+  }
+
   // ── shell (01) state × device screenshots (Phase B; default Dark·Slate × Signal Teal) ──
   const SHELL_STATES = ["empty", "loading", "populated", "error", "permission", "busy", "offline", "boundary"];
   for (const device of ["desktop", "mobile"]) {

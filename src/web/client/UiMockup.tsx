@@ -37,10 +37,13 @@
 //     route + back-to-conversation + image lightbox (?lb=1) + composer pending-image tray.
 //   - Device-auth gate (12-device-auth.md): pre-auth unauthorized landing — device code +
 //     host-CLI approve + poll + body-only bootstrap token + expiry retry + remembered deep link.
-//   - navigation index (?index=1): a directory of every surface + state/device deep links.
+//   - Global states (13-global-states.md): cross-cutting boot/connection/snapshot-first/
+//     reconnect/401→gate/SPA-404/unified-error+retry/offline contracts every surface inherits.
+//   - navigation index (?index=1): the single entry point — a directory of ALL 13 surfaces +
+//     state/device deep links.
 //
 // Query deep links for deterministic screenshots: ?device=desktop|mobile,
-// ?surface=shell|runtime|board|new-mesh|assistant|harnesses|channels|doctor|settings|notifications|artifact|device-auth, ?runtime=overview|focus|full|canvas,
+// ?surface=shell|runtime|board|new-mesh|assistant|harnesses|channels|doctor|settings|notifications|artifact|device-auth|global, ?runtime=overview|focus|full|canvas,
 // ?board=list|detail|kanban, ?state=<shell-state>, ?index=1, ?view=runtime|board,
 // ?mesh=<id>, ?mode=<mode>, ?accent=<accent>. No raw-* utilities (passes
 // `bun run lint:tokens`); all classes literal so Tailwind emits them.
@@ -62,7 +65,7 @@ const ACCENT_SET = new Set<Accent>(ACCENTS);
 
 type Device = "desktop" | "mobile";
 type View = "runtime" | "board";
-type Surface = "shell" | "runtime" | "board" | "new-mesh" | "assistant" | "harnesses" | "channels" | "doctor" | "settings" | "notifications" | "artifact" | "device-auth";
+type Surface = "shell" | "runtime" | "board" | "new-mesh" | "assistant" | "harnesses" | "channels" | "doctor" | "settings" | "notifications" | "artifact" | "device-auth" | "global";
 // overview/focus = the two in-shell runtime states; full/canvas = desktop-only standalone
 // frames (session fullscreen / zoomable topology canvas) reached from the focus / overview.
 type RuntimeState = "overview" | "focus" | "full" | "canvas";
@@ -247,7 +250,7 @@ function readSel(): Sel {
   const a = p.get("accent");
   const mesh = p.get("mesh");
   const sfc = p.get("surface");
-  const surface: Surface = sfc === "runtime" ? "runtime" : sfc === "board" ? "board" : sfc === "new-mesh" ? "new-mesh" : sfc === "assistant" ? "assistant" : sfc === "harnesses" ? "harnesses" : sfc === "channels" ? "channels" : sfc === "doctor" ? "doctor" : sfc === "settings" ? "settings" : sfc === "notifications" ? "notifications" : sfc === "artifact" ? "artifact" : sfc === "device-auth" ? "device-auth" : "shell";
+  const surface: Surface = sfc === "runtime" ? "runtime" : sfc === "board" ? "board" : sfc === "new-mesh" ? "new-mesh" : sfc === "assistant" ? "assistant" : sfc === "harnesses" ? "harnesses" : sfc === "channels" ? "channels" : sfc === "doctor" ? "doctor" : sfc === "settings" ? "settings" : sfc === "notifications" ? "notifications" : sfc === "artifact" ? "artifact" : sfc === "device-auth" ? "device-auth" : sfc === "global" ? "global" : "shell";
   const bs = p.get("board");
   const rt = p.get("runtime") as RuntimeState | null;
   const st = p.get("state") as ShellState | null;
@@ -2246,6 +2249,111 @@ function DeviceAuthFrame({ state, device }: { state: ShellState; device: Device 
   );
 }
 
+// ── Global states (13) — cross-cutting boot/connection/offline/error/404 contracts ──
+// Aggregated treatments every surface inherits (so none invents its own). Mirrors:
+// server.ts (SPA catch-all 404 + authorizeRequest 401 gate + WS upgrade), store.ts (WS
+// open/close/reconnect, snapshot-first, request guard error wrapping), device-auth.ts boot
+// probe (200 app / 401 gate), index.tsx boot. [E] mechanisms; [N] = the unified visual contract.
+const GLOBAL_CONTRACTS: { id: string; label: string; detail: string }[] = [
+  { id: "boot", label: "Boot / connection probe", detail: "boot probe → 200 app · 401 device-auth gate" },
+  { id: "snapshot", label: "WS connect / snapshot-first", detail: "首帧=快照，随后实时增量(deltas)" },
+  { id: "reconnect", label: "Reconnect on drop", detail: "断线→最近已知+「重连中」，恢复后续传" },
+  { id: "gate401", label: "Gate 401 → device-auth", detail: "任何受门禁 /api·/ws 401 → 门禁(12)" },
+  { id: "spa404", label: "SPA 404 / unknown route", detail: "catch-all 在 /api·/ws 之后；应用内未知路由→壳内 not-found" },
+  { id: "error", label: "Unified error + retry", detail: "ErrorBanner + 重试，全 surface 一致" },
+  { id: "offline", label: "Offline contract", detail: "禁用变更 · 显示最近已知 · 重连提示" },
+];
+
+function GlobalStatesFrame({ state, device, deviceAuthHref }: { state: ShellState; device: Device; deviceAuthHref: string }) {
+  const mobile = device === "mobile";
+  // The demo region reflects how the chosen state manifests as a global treatment.
+  const demo = (() => {
+    switch (state) {
+      case "empty": // SPA 404 / unknown route → not-found within the shell
+        return (
+          <div data-global-demo data-not-found className="flex flex-col items-center gap-2 py-8 text-center">
+            <span className="text-3xl" aria-hidden="true">🧭</span>
+            <h2 className="text-base font-semibold">404 · 页面不存在</h2>
+            <p className="text-xs text-text-muted">应用内未知路由 → 壳内 not-found（catch-all 在 /api、/ws 之后）。</p>
+            <Button variant="primary" size="sm">返回控制台</Button>
+          </div>
+        );
+      case "loading": // boot probe / awaiting first snapshot
+        return (
+          <div data-global-demo className="flex flex-col items-center gap-2 py-8 text-center">
+            <Spinner size={18} label="probing" />
+            <p className="text-sm text-text-secondary">正在连接控制台…（boot probe）</p>
+            <p className="text-xs text-text-muted">WS 快照优先：首帧为快照，随后实时增量。</p>
+          </div>
+        );
+      case "error": // boot / snapshot fail → unified ErrorBanner + retry
+        return (
+          <div data-global-demo className="flex flex-col gap-2">
+            <ErrorBanner title="启动失败 — 快照请求失败" onRetry={() => {}}>统一 ErrorBanner + 重试契约，全 surface 一致；外壳保持可用。</ErrorBanner>
+          </div>
+        );
+      case "permission": // 401 → device-auth gate
+        return (
+          <div data-global-demo data-401-redirect className="flex flex-col items-center gap-2 py-6 text-center">
+            <StatusChip status="blocked" variant="soft" label="401 Unauthorized" />
+            <p className="text-sm text-text-primary">受门禁请求返回 401 → 路由到设备授权门禁。</p>
+            <LinkButton href={deviceAuthHref} label="到设备授权门禁">前往门禁 (12) →</LinkButton>
+          </div>
+        );
+      case "busy": // reconnect retrying with backoff
+        return (
+          <div data-global-demo data-reconnect className="flex items-center justify-center gap-2 py-8 text-sm text-text-secondary">
+            <Spinner size={16} label="retrying" /> 重连中…（指数退避；多次失败仍保留最近已知）
+          </div>
+        );
+      case "offline": // WS drop → offline contract
+        return (
+          <div data-global-demo data-reconnect className="flex flex-col gap-2">
+            <div role="status" className="flex items-center gap-2 rounded-lg bg-warning-subtle px-3 py-2 text-xs text-warning"><Spinner size={12} label="reconnecting" /> 连接已断开 — 正在重连…（变更已禁用，显示最近已知）</div>
+            <div className="rounded-lg border border-border bg-surface-sunken px-3 py-2 text-xs text-text-muted opacity-70">最近已知内容（stale）— 恢复后自动续传增量。</div>
+          </div>
+        );
+      case "boundary": // large snapshot / deep bad path / long outage
+        return (
+          <div data-global-demo className="flex flex-col gap-1.5 text-xs text-text-secondary">
+            <span>· 大快照：首帧虚拟化加载，避免阻塞。</span>
+            <span>· 深层坏路径：<code className="break-all font-mono text-text-muted">/mesh/x/agent/y/artifact/a/very/deep/missing/path</code> → not-found。</span>
+            <span>· 长时间断网：重连退避封顶，横幅持续显示「重连中」。</span>
+          </div>
+        );
+      default: // populated = normal / connected
+        return (
+          <div data-global-demo data-connected className="flex flex-col gap-2">
+            <div className="flex items-center gap-2"><ConnectionChip connection="connected" /><span className="text-xs text-text-muted">snapshot loaded · live deltas</span></div>
+            <div className="rounded-lg border border-border bg-surface-sunken px-3 py-2 text-sm text-text-primary">已连接 — 正常态；各 surface 在此契约上渲染自身内容。</div>
+          </div>
+        );
+    }
+  })();
+  return (
+    <div data-mockup="frame" data-device={device} data-global="states"
+      className={`flex ${mobile ? "h-[760px] w-[390px] rounded-[28px]" : "h-[700px] w-[1280px] rounded-xl"} max-w-full flex-col overflow-auto border border-border bg-surface p-6 text-text-primary shadow-sm`}>
+      <div className={`mx-auto flex w-full flex-col gap-5 ${mobile ? "" : "max-w-[760px]"}`}>
+        <div className="flex flex-col gap-1">
+          <span className="inline-flex items-center gap-2"><Brand /><span className="text-text-muted">·</span><span className="text-sm font-semibold">全局状态 Global states</span></span>
+          <p className="text-xs text-text-muted">每个 surface 继承的跨切面契约——无 surface 自行发明。当前演示：<code className="font-mono text-text-secondary">{state}</code></p>
+        </div>
+        <PanelFrame title={`当前演示 · ${state}`}>{demo}</PanelFrame>
+        {/* The full contract catalog (always shown) so this surface documents the aggregate. */}
+        <div data-global-contracts className="flex flex-col gap-1.5">
+          <span className="text-xs uppercase tracking-wider text-text-muted">全局契约目录（01–12 共享）</span>
+          {GLOBAL_CONTRACTS.map((c) => (
+            <div key={c.id} className="flex flex-col gap-0.5 rounded-lg border border-border bg-surface-raised px-3 py-2">
+              <span className="text-sm font-medium text-text-primary">{c.label}</span>
+              <span className="text-xs text-text-muted">{c.detail}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── new-mesh builder (04) fixtures + frame ───────────────────────────────────────
 interface AgentRow { id: string; harness: string; project: string; role: "router" | "member"; model?: string; effort?: string; lazy?: boolean; opencodePermission?: "ask" | "allow"; instructions?: string }
 const HARNESSES = ["claude", "codex", "opencode", "kimi"];
@@ -2749,6 +2857,9 @@ const INDEX_SECTIONS: { title: string; note: string; rows: IndexRow[] }[] = [
   { title: "12 · Device-auth 门禁", note: "未授权落地：设备码+宿主CLI批准 · 轮询 · bootstrap 令牌(仅body) · 过期重试 · 批准后回深链", rows: [
     { label: "gate", base: "surface=device-auth", states: ["loading", "permission", "error", "busy", "offline", "boundary"], mobile: true },
   ] },
+  { title: "13 · Global states", note: "跨切面契约：boot/连接探测 · WS 快照优先 · 断线重连 · 401→门禁 · SPA 404 · 统一错误+重试 · 离线契约", rows: [
+    { label: "states", base: "surface=global", states: SHELL_STATES, mobile: true },
+  ] },
 ];
 
 function MockupIndex({ backHref }: { backHref: string }) {
@@ -2756,8 +2867,11 @@ function MockupIndex({ backHref }: { backHref: string }) {
     `/__ui-mockup?${base}&device=${device}&state=${state}&mode=${INDEX_TONE}`;
   return (
     <div data-mockup-index className="mx-auto flex w-full max-w-[1100px] flex-col gap-5">
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-text-secondary">每个 surface 的已实现状态 / 设备深链（fixture-only · 路由受 <code className="text-syntax-string">MESH_UI_PREVIEW</code> 保护）。</p>
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex flex-col gap-1">
+          <h2 className="text-base font-semibold text-text-primary">Phase B 设计 mockup 总览（01–13）</h2>
+          <p data-index-overview className="text-sm text-text-secondary">这是浏览整套 Phase B mockup 的唯一入口：覆盖全部 13 个 surface 的 状态 × 设备 深链（fixture-only · 路由受 <code className="text-syntax-string">MESH_UI_PREVIEW</code> 保护）。</p>
+        </div>
         <LinkButton href={backHref} label="back to mockup">← 返回 mockup</LinkButton>
       </div>
       {INDEX_SECTIONS.map((sec) => (
@@ -2829,6 +2943,8 @@ export function UiMockup() {
   const artifactLbHref = `/__ui-mockup?${selQuery({ ...sel, surface: "artifact", lb: true })}`;
   const artifactExitLbHref = `/__ui-mockup?${selQuery({ ...sel, surface: "artifact", lb: false })}`;
   const artifactBackHref = `/__ui-mockup?${selQuery({ ...sel, surface: "runtime", runtime: "focus" })}`;
+  // Global-states 401 demo → device-auth gate.
+  const globalDeviceAuthHref = `/__ui-mockup?${selQuery({ ...sel, surface: "device-auth", state: "permission" })}`;
   const setMesh = (m: string) => nav({ mesh: m });
 
   const setView = (v: View) => {
@@ -2898,7 +3014,7 @@ export function UiMockup() {
     <div data-mockup="root" className="min-h-screen bg-surface text-text-primary font-sans p-6">
       {/* mockup tool chrome (outside the mocked app frame) */}
       <header className="mb-5">
-        <h1 className="mb-1 text-xl font-semibold">Agent Mesh — 终稿 mockup（{index ? "导航索引" : surface === "runtime" ? `运行态 A · ${runtime}` : surface === "board" ? "看板 C" : surface === "new-mesh" ? "新建 mesh" : surface === "assistant" ? "Mesh Assistant B" : surface === "harnesses" ? "Harnesses" : surface === "channels" ? "Channels" : surface === "doctor" ? "Doctor / 系统" : surface === "settings" ? "Settings" : surface === "notifications" ? "Notifications" : surface === "artifact" ? "File / Artifact" : surface === "device-auth" ? "Device-auth gate" : "应用外壳"}{index ? "" : ` · ${state} · ${device === "mobile" ? "移动" : "桌面"}`}）</h1>
+        <h1 className="mb-1 text-xl font-semibold">Agent Mesh — 终稿 mockup（{index ? "导航索引" : surface === "runtime" ? `运行态 A · ${runtime}` : surface === "board" ? "看板 C" : surface === "new-mesh" ? "新建 mesh" : surface === "assistant" ? "Mesh Assistant B" : surface === "harnesses" ? "Harnesses" : surface === "channels" ? "Channels" : surface === "doctor" ? "Doctor / 系统" : surface === "settings" ? "Settings" : surface === "notifications" ? "Notifications" : surface === "artifact" ? "File / Artifact" : surface === "device-auth" ? "Device-auth gate" : surface === "global" ? "Global states" : "应用外壳"}{index ? "" : ` · ${state} · ${device === "mobile" ? "移动" : "桌面"}`}）</h1>
         <p className="mb-3 text-xs text-text-muted">真实 C5–C7 组件 + v2 compose 运行时 · fixture 数据 · 不连后端。Live: <code className="text-syntax-string">MESH_UI_PREVIEW=1 … /__ui-mockup</code></p>
         <div className="mb-3">
           <SegmentedControl ariaLabel="View mode" value={index ? "index" : "mockup"} onChange={(v) => nav({ index: v === "index" })} options={[{ value: "mockup", label: "Mockup" }, { value: "index", label: "▤ 索引" }]} size="sm" />
@@ -2918,7 +3034,7 @@ export function UiMockup() {
           </div>
           <div>
             <div className="mb-1.5 text-xs uppercase tracking-wider text-text-muted">Surface</div>
-            <SegmentedControl ariaLabel="Surface" value={surface} onChange={(s) => { const next = s as Surface; nav({ surface: next }); if (next === "board") setMobileTab("board"); else if (next === "runtime") setMobileTab("runtime"); }} options={[{ value: "shell", label: "外壳" }, { value: "runtime", label: "运行态 A" }, { value: "board", label: "看板 C" }, { value: "assistant", label: "助手 B" }, { value: "harnesses", label: "Harness" }, { value: "channels", label: "渠道" }, { value: "doctor", label: "Doctor" }, { value: "settings", label: "设置" }, { value: "notifications", label: "通知" }, { value: "artifact", label: "产物" }, { value: "device-auth", label: "鉴权" }, { value: "new-mesh", label: "新建" }]} size="sm" />
+            <SegmentedControl ariaLabel="Surface" value={surface} onChange={(s) => { const next = s as Surface; nav({ surface: next }); if (next === "board") setMobileTab("board"); else if (next === "runtime") setMobileTab("runtime"); }} options={[{ value: "shell", label: "外壳" }, { value: "runtime", label: "运行态 A" }, { value: "board", label: "看板 C" }, { value: "assistant", label: "助手 B" }, { value: "harnesses", label: "Harness" }, { value: "channels", label: "渠道" }, { value: "doctor", label: "Doctor" }, { value: "settings", label: "设置" }, { value: "notifications", label: "通知" }, { value: "artifact", label: "产物" }, { value: "device-auth", label: "鉴权" }, { value: "global", label: "全局" }, { value: "new-mesh", label: "新建" }]} size="sm" />
           </div>
           {surface === "runtime" ? (
             <div>
@@ -2948,7 +3064,7 @@ export function UiMockup() {
               />
             </div>
           ) : null}
-          {surface === "shell" || surface === "runtime" || surface === "board" || surface === "new-mesh" || surface === "assistant" || surface === "harnesses" || surface === "channels" || surface === "doctor" || surface === "settings" || surface === "notifications" || surface === "artifact" || surface === "device-auth" ? (
+          {surface === "shell" || surface === "runtime" || surface === "board" || surface === "new-mesh" || surface === "assistant" || surface === "harnesses" || surface === "channels" || surface === "doctor" || surface === "settings" || surface === "notifications" || surface === "artifact" || surface === "device-auth" || surface === "global" ? (
             <div>
               <div className="mb-1.5 text-xs uppercase tracking-wider text-text-muted">State</div>
               <SegmentedControl
@@ -3002,6 +3118,8 @@ export function UiMockup() {
           ? <FileViewerFrame state={state} device={device} lb={lb} lbHref={artifactLbHref} exitLbHref={artifactExitLbHref} backHref={artifactBackHref} />
           : surface === "device-auth"
           ? <DeviceAuthFrame state={state} device={device} />
+          : surface === "global"
+          ? <GlobalStatesFrame state={state} device={device} deviceAuthHref={globalDeviceAuthHref} />
           : surface === "new-mesh"
           ? <NewMeshFrame state={state} device={device} nmEditor={nmEditor} />
           : surface === "runtime" && device === "desktop" && runtime === "full"
