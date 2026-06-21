@@ -812,8 +812,10 @@ export class FeishuChannel implements Channel {
       }
       if (u && (u.sessionUpdate === "tool_call" || u.sessionUpdate === "tool_call_update")) {
         this.onRouterToolCall(rt, u);
-        // A tool call (with no following text + lost idle) must still finalize: the fallback timer
-        // lets CardSender materialize the hint-only card rather than carrying it into the next turn.
+        // Re-arm the turn-boundary fallback so a stuck turn can still be delivered. The fallback now
+        // distinguishes (scheduleStreamFinish callback): lost-idle PROSE still finalizes via fallback,
+        // but a PURE tool-only fallback skips (keeps the live annotation card open) and waits for a real
+        // turn boundary — so consecutive tool batches stay on ONE card instead of one card per gap.
         if (this.useStreaming(rt)) this.scheduleStreamFinish(rt);
       }
       return;

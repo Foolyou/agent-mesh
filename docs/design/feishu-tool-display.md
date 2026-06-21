@@ -273,9 +273,9 @@ onRouterToolCall(rt, u):
 
 ---
 
-## 11. 真机回归：兜底定时器对"纯工具轮"误封卡（根因 + 修复方案，仅设计，待审）
+## 11. 真机回归：兜底定时器对"纯工具轮"误封卡（根因 + 修复 — ✅ 已实现并集成 main `19dfc72`）
 
-> slug `feishu-tool-card-seal-regression`，基线 main `09f50d5`（实读核实）。**真机现象**：一轮里每个工具调用各自封成独立卡/新消息、计数累加：`🔧 Called 1 tool` / `Called 2 tools` / … / `Called 5 tools`，每个工具都"叮"。**本节只出根因+修复设计+测试计划，不实现。**
+> slug `feishu-tool-card-seal-regression`，RCA 实读基线 main `09f50d5`；**修复已实现于 `task/feishu-tool-card-seal-regression`（commit `a4c42c2`）、经 PrdMgr 核验 + 集成 + 部署到 main `19dfc72`**（tsc 0 / channel 337 / 全量绿）。**真机现象（已修复）**：一轮里每个工具调用各自封成独立卡/新消息、计数累加：`🔧 Called 1 tool` / `Called 2 tools` / … / `Called 5 tools`，每个工具都"叮"。**本节为根因 + 已落地修复设计 + 测试的最终记录。**
 > **根因双确认**：builder（本人，实读 09f50d5）与 reviewer（独立 read-only RCA）**结论一致**，链路无分歧。本轮已**采纳 reviewer 的两点精化**：① 判据从我初版的 `rt.buffer.trim()` 计算改为**显式 `BindingRuntime` 标志 `finalizableProseSinceCommit`**（§11.2，更清晰、零 sender introspection、能表达 streamSealSegment 特例）；② 测试新增**真 CardSender recorder 门禁 T0**（假 sink 漏掉了本 bug，§11.5）；并据此把 off 也统一为"纯工具 fallback 跳过"（§11.4，需更新旧 off 用例）。
 
 ### 11.1 根因链路（实读 `feishu-channel.ts@09f50d5` 核实，行号为该版本）
@@ -305,7 +305,7 @@ onRouterToolCall(rt, u):
 - 于是：**"纯工具活动、无可终结正文" ⟺ `!finalizableProseSinceCommit`**；**"有新可终结正文" ⟺ `finalizableProseSinceCommit===true`**（lost-idle 保护对象）。
 - **`rt.buffer.trim()==="" && rt.toolCount>0` 仅作为解释/测试症状提及**（语义上与本标志等价，便于理解真机表现），**不是实现判据**——实现以本标志为准（不依赖对 buffer 的派生推断、零 sender introspection、能精确表达 streamSealSegment 特例）。
 
-### 11.3 修复方案（仅设计）
+### 11.3 修复方案（✅ 已实现，main `19dfc72`）
 **仅改兜底定时器的回调语义**：fallback fire 时，若**纯工具活动且无可终结正文**，**不封卡**（不 `streamCommit`）——保持同一张 live 卡、工具注解继续 in-place 更新，等**真实轮边界**再提交；保留对正文的 lost-idle 保护。
 
 把 `scheduleStreamFinish`（848）的回调从无条件 `streamFinish(rt,false)` 改为按 `finalizableProseSinceCommit`（§11.2）分流（伪码）：
@@ -324,12 +324,12 @@ this.streamFinish(rt, false); // 有未终结正文 → 照旧交付(lost-idle �
 ```
 - **真实轮边界提交**：`idle`(810-812)、新 turn `agent_turn started`(残留 finalize)、入站 prompt 的 pre-prompt 边界(437)、assistant prompt-resolve(576) —— 均已 `finalizeTurn → streamFinish(endsGroup=true)`，会**把那张累积的工具卡提交一次并重置组**。
 - **lost-idle 正文保护不丢**：`finalizableProseSinceCommit===true`（prose+tools，或纯 prose）仍走 `streamFinish` 交付。
-- **不重排 timer**：跳过时不再 `scheduleStreamFinish`；下一工具会重排，真边界会提交。代价=纯工具轮若 idle 真丢失，卡会"generating"到下一轮 pre-prompt 才封（可接受：纯中间活动、无正文卡住；真 idle 的常态会及时提交）。**这是开放问题 O1（见 §11.6）**。
+- **不重排 timer**：跳过时不再 `scheduleStreamFinish`；下一工具会重排，真边界会提交。代价=纯工具轮若 idle 真丢失，卡会"generating"到下一轮 pre-prompt 才封（可接受：纯中间活动、无正文卡住；真 idle 的常态会及时提交）。**已由 PrdMgr 拍板接受、本补丁不加上限（决议 O1，见 §11.6）**。
 
 > 说明：`streamSegmentBreak`/`proseSeal` 状态**不参与**本判据——它只在"prose-after-tools"（chunk 分支 788-792）触发，与 fallback 无关；fallback 时无 pending segment break。
 
 ### 11.4 不破坏清单（逐项核实）
-- **INV-1（显式"细化"，非静默破坏）**：INV-1 的**核心**（工具调用不开新消息、与"开新消息"解耦）**保留并强化**。INV-1 重述为：**"lost-idle 正文仍经 fallback 提交（`finalizableProseSinceCommit` 时）；纯工具(no-finalizable-prose)的 fallback **有意推迟**到真实轮边界提交。"** 即早前子断言"纯工具收尾轮经 fallback 提交"被有意改变。对应测试 `feishu-channel.test.ts:853` "a tool_call with no following text finalizes via the fallback timer" **必须更新**（见 §11.5 T4b）。**这是核心语义变化，需 prdmgr 确认**（开放问题 O2）。
+- **INV-1（显式"细化"，非静默破坏）**：INV-1 的**核心**（工具调用不开新消息、与"开新消息"解耦）**保留并强化**。INV-1 重述为：**"lost-idle 正文仍经 fallback 提交（`finalizableProseSinceCommit` 时）；纯工具(no-finalizable-prose)的 fallback **有意推迟**到真实轮边界提交。"** 即早前子断言"纯工具收尾轮经 fallback 提交"被有意改变。对应旧测试 `feishu-channel.test.ts` `:853`/`:766` **已更新**（见 §11.5 T4b/T5）。**这是核心语义变化，已由 PrdMgr 批准**（决议 O2，#640）。
 - **commit barrier / queuedEvents / commitGen**：跳过分支**不**调 `beginCommitBarrier` → `committing` 保持 false → 后续工具事件正常 dispatch（不入队）；真实边界提交时照旧 begin 一次 barrier。语义不变。
 - **seenToolCalls 去重**：`onRouterToolCall` 路径完全不动；去重不变。
 - **replay 不镜像**：`clearOutboundBuffer`(963 区) 不变；replay 仍清 buffer+组。
@@ -351,10 +351,10 @@ this.streamFinish(rt, false); // 有未终结正文 → 照旧交付(lost-idle �
 - **T5 off 档（更新旧 `:766` 用例）**：`toolDisplay:"off"`，`tool c1`→`advance(3000)`。断言 **`commits()===0`**（off 纯工具轮 fallback 也跳过、无 UI 无 commit）、无注解、`seenToolCalls` 已消费(去重)；随后 `idle` → `commits()===1`。
 - **T6 不破坏 commit barrier/dedupe/replay/idempotency**：跳过分支**不 begin barrier**（断言兜底跳过后紧接的工具事件**不**进 `queuedEvents`、`committing` 仍 false）；复跑既有 dedupe/replay/idempotency 用例保持绿。
 
-### 11.6 开放问题（需 prdmgr/用户拍板）
-- **O1 纯工具轮 + 真 idle 丢失的悬挂**：跳过封卡后，若该轮 idle 真丢失，工具卡会"generating"到下一轮 pre-prompt 才封。可接受（无正文卡住、真 idle 常态会及时提交）？还是要给纯工具轮一个**更长的兜底上限**（如 N×debounce 后才强制封一次）以防长期悬挂？
-- **O2 INV-1 子断言变更确认**：纯工具收尾轮不再经 fallback 提交（改等真实边界）——确认接受并据此更新 `feishu-channel.test.ts:853`。
-- **O3 判据口径（已与 reviewer 收敛）**：采用 channel 自有的显式标志 **`finalizableProseSinceCommit`**（§11.2），**不** introspect CardSender 私有 live 状态（`live.sentText` 等保持私有）。reviewer 与我一致：保持分层、不双保险。此项视为已定，仅留待 prdmgr 最终点头。
+### 11.6 决议（已由 PrdMgr 拍板 #640/#641，并据此实现）
+- **O1（已定，#641）纯工具轮 + 真 idle 丢失的悬挂**：**接受**——跳过封卡后若该轮 idle 真丢失，工具卡"generating"到下一轮真实边界（pre-prompt）才封（无正文卡住、真 idle 常态及时提交）。**本补丁不加 tool-only 兜底上限**；若日后需要，须是一个远长于 `streamCommitDebounceMs` 的独立超时。
+- **O2（已批准，#640）INV-1 子断言细化**：纯工具收尾轮不再经 fallback 提交（改等真实边界）；lost-idle 正文仍经 fallback 提交。已据此更新旧用例（`feishu-channel.test.ts` 的 `:766` off、`:853` 改为 prose+tool lost-idle 交付 + 新增纯工具 refined 用例）。
+- **O3（已定）判据口径**：采用 channel 自有显式标志 **`finalizableProseSinceCommit`**（§11.2），**不** introspect CardSender 私有 live 状态、不双保险。
 
 ---
 
