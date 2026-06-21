@@ -12,14 +12,17 @@ initTheme(); // apply the persisted theme before first paint (no flash)
 installVisualViewportHeightVar({ window, target: document.documentElement });
 
 const root = document.getElementById("root");
-// Isolated design gallery (Step 5 C8): /__ui-preview mounts the v2 component gallery
-// INSTEAD of the console when the server explicitly exposes that route
-// (MESH_UI_PREVIEW=1). It never opens the WS / store / device-auth, so it cannot
-// disrupt business flows. Dynamically imported so it's only loaded on that route.
-// Remove this branch + UiPreview.tsx + the server route to retire the gallery.
+// Isolated design routes, mounted INSTEAD of the console only when the server
+// explicitly exposes them (MESH_UI_PREVIEW=1): /__ui-preview = the C8 component
+// gallery; /__ui-mockup = the Step 6 high-fidelity page mockups. Neither opens the
+// WS / store / device-auth, so they cannot disrupt business flows. Dynamically
+// imported so they're only loaded on their route. Remove these branches + the
+// UiPreview/UiMockup files + the server routes to retire them.
 if (root) {
   if (window.location.pathname.startsWith("/__ui-preview")) {
     import("./UiPreview").then(({ UiPreview }) => createRoot(root).render(<UiPreview />));
+  } else if (window.location.pathname.startsWith("/__ui-mockup")) {
+    import("./UiMockup").then(({ UiMockup }) => createRoot(root).render(<UiMockup />));
   } else {
     // Boot gates on device authorization before mounting the console (and opening the WS).
     createRoot(root).render(<Boot />);
