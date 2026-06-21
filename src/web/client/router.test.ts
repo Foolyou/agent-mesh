@@ -26,12 +26,20 @@ test("parse: runtime overview / focus / canvas / full", () => {
   expect(parseBnwRoute("/bnw/mesh/alpha/canvas")).toEqual({ k: "runtime", mesh: "alpha", canvas: true });
 });
 
+const NOF = { status: undefined, label: undefined, assignee: undefined, epic: undefined, q: undefined, sort: undefined, group: undefined };
 test("parse: board list / kanban / issue", () => {
-  expect(parseBnwRoute("/bnw/mesh/alpha/board")).toEqual({ k: "board", mesh: "alpha", view: "list" });
-  expect(parseBnwRoute("/bnw/mesh/alpha/board", "?view=kanban")).toEqual({ k: "board", mesh: "alpha", view: "kanban" });
-  expect(parseBnwRoute("/bnw/mesh/alpha/board/issue/12")).toEqual({ k: "board", mesh: "alpha", view: "list", issue: 12 });
+  expect(parseBnwRoute("/bnw/mesh/alpha/board")).toEqual({ k: "board", mesh: "alpha", view: "list", filters: NOF });
+  expect(parseBnwRoute("/bnw/mesh/alpha/board", "?view=kanban")).toEqual({ k: "board", mesh: "alpha", view: "kanban", filters: NOF });
+  expect(parseBnwRoute("/bnw/mesh/alpha/board/issue/12")).toEqual({ k: "board", mesh: "alpha", view: "list", issue: 12, filters: NOF });
   // bad issue id → not a detail route → notFound
   expect(parseBnwRoute("/bnw/mesh/alpha/board/issue/x").k).toBe("notFound");
+});
+test("parse/serialize: board C4 filters round-trip via the query", () => {
+  const r = parseBnwRoute("/bnw/mesh/alpha/board", "?view=kanban&status=open&label=ui&assignee=codex-1&epic=epic-1&q=auth&sort=priority&group=epic");
+  expect(r).toEqual({ k: "board", mesh: "alpha", view: "kanban", filters: { status: "open", label: "ui", assignee: "codex-1", epic: "epic-1", q: "auth", sort: "priority", group: "epic" } });
+  const href = bnwHref(r);
+  const [path, search] = href.split("?");
+  expect(parseBnwRoute(path, "?" + search)).toEqual(r);
 });
 
 test("parse: new-mesh create vs edit (reserved id)", () => {
@@ -67,8 +75,8 @@ test("serialize: bnwHref builds /bnw-prefixed paths", () => {
   expect(bnwHref({ k: "runtime", mesh: "alpha" })).toBe("/bnw/mesh/alpha");
   expect(bnwHref({ k: "runtime", mesh: "alpha", agent: "codex-1", full: true })).toBe("/bnw/mesh/alpha/agent/codex-1?full=1");
   expect(bnwHref({ k: "runtime", mesh: "alpha", canvas: true })).toBe("/bnw/mesh/alpha/canvas");
-  expect(bnwHref({ k: "board", mesh: "alpha", view: "kanban" })).toBe("/bnw/mesh/alpha/board?view=kanban");
-  expect(bnwHref({ k: "board", mesh: "alpha", view: "list", issue: 12 })).toBe("/bnw/mesh/alpha/board/issue/12");
+  expect(bnwHref({ k: "board", mesh: "alpha", view: "kanban", filters: {} })).toBe("/bnw/mesh/alpha/board?view=kanban");
+  expect(bnwHref({ k: "board", mesh: "alpha", view: "list", issue: 12, filters: {} })).toBe("/bnw/mesh/alpha/board/issue/12");
   expect(bnwHref({ k: "newMesh" })).toBe("/bnw/mesh/new");
   expect(bnwHref({ k: "newMesh", editOf: "alpha" })).toBe("/bnw/mesh/alpha/edit");
   expect(bnwHref({ k: "settings", tab: "devices" })).toBe("/bnw/settings?tab=devices");
@@ -80,9 +88,9 @@ test("round-trip: parse(serialize(r)) === r for representative routes", () => {
     { k: "runtime", mesh: "alpha" },
     { k: "runtime", mesh: "alpha", agent: "codex-1", full: true },
     { k: "runtime", mesh: "alpha", canvas: true },
-    { k: "board", mesh: "alpha", view: "list" },
-    { k: "board", mesh: "alpha", view: "kanban" },
-    { k: "board", mesh: "alpha", view: "list", issue: 7 },
+    { k: "board", mesh: "alpha", view: "list", filters: NOF },
+    { k: "board", mesh: "alpha", view: "kanban", filters: NOF },
+    { k: "board", mesh: "alpha", view: "list", issue: 7, filters: { status: "open", label: "ui" } },
     { k: "newMesh" },
     { k: "newMesh", editOf: "alpha" },
     { k: "assistant", full: true },

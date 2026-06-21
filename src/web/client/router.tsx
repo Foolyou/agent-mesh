@@ -13,11 +13,13 @@ export const BNW_PREFIX = "/bnw";
 
 export type BoardView = "list" | "kanban";
 export type FileKind = "file" | "artifact";
+// C4 board filters carried in the query (status/label/assignee/epic/q/sort/group).
+export interface BoardFilters { status?: string; label?: string; assignee?: string; epic?: string; q?: string; sort?: string; group?: string }
 
 export type BnwRoute =
   | { k: "home" }
   | { k: "runtime"; mesh: string; agent?: string; canvas?: boolean; full?: boolean }
-  | { k: "board"; mesh: string; issue?: number; view: BoardView }
+  | { k: "board"; mesh: string; issue?: number; view: BoardView; filters: BoardFilters }
   | { k: "newMesh"; editOf?: string }
   | { k: "assistant"; full?: boolean }
   | { k: "harnesses" }
@@ -71,13 +73,15 @@ export function parseBnwRoute(pathname: string, search = ""): BnwRoute {
       if (segs.length === 3 && segs[2] === "edit") return { k: "newMesh", editOf: mesh };
       // /bnw/mesh/<id>/canvas
       if (segs.length === 3 && segs[2] === "canvas") return { k: "runtime", mesh, canvas: true };
-      // /bnw/mesh/<id>/board[/issue/<n>]
+      // /bnw/mesh/<id>/board[/issue/<n>]  (+ C4 filters in the query)
       if (segs[2] === "board") {
         const view: BoardView = q.get("view") === "kanban" ? "kanban" : "list";
-        if (segs.length === 3) return { k: "board", mesh, view };
+        const pick = (k: string) => q.get(k) || undefined;
+        const filters: BoardFilters = { status: pick("status"), label: pick("label"), assignee: pick("assignee"), epic: pick("epic"), q: pick("q"), sort: pick("sort"), group: pick("group") };
+        if (segs.length === 3) return { k: "board", mesh, view, filters };
         if (segs.length === 5 && segs[3] === "issue") {
           const n = Number(segs[4]);
-          if (Number.isInteger(n) && n > 0) return { k: "board", mesh, view, issue: n };
+          if (Number.isInteger(n) && n > 0) return { k: "board", mesh, view, issue: n, filters };
         }
       }
       // /bnw/mesh/<id>/agent/<agentId>[/file|artifact/<path...>]
@@ -111,7 +115,12 @@ export function bnwHref(r: BnwRoute): string {
     case "board": {
       let p = `${BNW_PREFIX}/mesh/${enc(r.mesh)}/board`;
       if (r.issue) p += `/issue/${r.issue}`;
-      return r.view === "kanban" ? p + "?view=kanban" : p;
+      const q = new URLSearchParams();
+      if (r.view === "kanban") q.set("view", "kanban");
+      const f = r.filters ?? {};
+      for (const k of ["status", "label", "assignee", "epic", "q", "sort", "group"] as const) { if (f[k]) q.set(k, f[k] as string); }
+      const qs = q.toString();
+      return qs ? `${p}?${qs}` : p;
     }
     case "newMesh": return r.editOf ? `${BNW_PREFIX}/mesh/${enc(r.editOf)}/edit` : `${BNW_PREFIX}/mesh/new`;
     case "assistant": return r.full ? `${BNW_PREFIX}/assistant?full=1` : `${BNW_PREFIX}/assistant`;
