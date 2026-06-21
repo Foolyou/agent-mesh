@@ -28,7 +28,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { MODES, ACCENTS, type Mode, type Accent, compose, applyComposition } from "./themes";
 import {
-  Button, StatusChip, Badge, SegmentedControl, StatusListRow, PanelFrame, ApprovalCard, Composer, ActionBar, Cluster,
+  Button, ConfirmButton, StatusChip, Badge, SegmentedControl, StatusListRow, PanelFrame, ApprovalCard, Composer, ActionBar, Cluster,
   ProgressBar, AssigneeTag, Spinner, Skeleton, EmptyState, ErrorBanner, Input, Textarea, Select,
   type Status,
 } from "./ui/index";
@@ -250,13 +250,20 @@ function ConnectionChip({ compact = false, connection = "connected" }: { compact
 type ShellState = "empty" | "loading" | "populated" | "error" | "permission" | "busy" | "offline" | "boundary";
 const SHELL_STATES: ShellState[] = ["empty", "loading", "populated", "error", "permission", "busy", "offline", "boundary"];
 // Boundary/scale fixture: many meshes incl. a very long name + overflow badge.
+// Ordered so page 0 (4/page) carries the long name — exercises both pagination and
+// the truncation treatment on the first page.
 const MANY_MESHES: { id: string; status: Status }[] = [
-  ...MESHES,
-  { id: "staging", status: "ready" }, { id: "release-candidate-2026-q3", status: "working" },
-  { id: "infra", status: "idle" }, { id: "research", status: "working" }, { id: "sandbox", status: "ready" },
+  { id: "dev-mesh", status: "working" },
   { id: "a-very-long-mesh-name-that-should-truncate-gracefully", status: "blocked" },
+  { id: "release-candidate-2026-q3", status: "working" },
+  { id: "alpha", status: "ready" },
+  { id: "beta", status: "blocked" }, { id: "docs-mesh", status: "idle" },
+  { id: "staging", status: "ready" }, { id: "infra", status: "idle" },
+  { id: "research", status: "working" }, { id: "sandbox", status: "ready" },
   { id: "perf", status: "idle" }, { id: "security-audit", status: "attention" }, { id: "docs-site", status: "ready" },
 ];
+// Left-nav mesh list pages (mirrors Sidebar.tsx PER_PAGE; audit #19).
+const NAV_PER_PAGE = 4;
 
 function StagePlaceholder({ view }: { view: View }) {
   return (
@@ -1208,6 +1215,11 @@ interface ShellChrome {
 function DesktopShell({ view, setView, mesh, setMesh, meshHref, stage, contextTitle, context, connection = "connected", meshes = MESHES, navMode = "rows", mutationsDisabled = false, meshBusy = false, notifCount = 3, banner }: { view: View; setView: (v: View) => void; mesh: string; setMesh: (m: string) => void; meshHref: (id: string) => string; stage: ReactNode; contextTitle: string; context: ReactNode } & ShellChrome) {
   const [navCollapsed, setNavCollapsed] = useState(false);
   const [ctxCollapsed, setCtxCollapsed] = useState(false);
+  const [navPage, setNavPage] = useState(0);
+  // Mesh-list pagination (audit #19): 4/page, clamp the page to the current count.
+  const navPages = Math.max(1, Math.ceil(meshes.length / NAV_PER_PAGE));
+  const pg = Math.min(navPage, navPages - 1);
+  const shownMeshes = meshes.slice(pg * NAV_PER_PAGE, pg * NAV_PER_PAGE + NAV_PER_PAGE);
   return (
     <div data-mockup="frame" data-device="desktop" className="w-[1280px] max-w-full overflow-hidden rounded-xl border border-border bg-surface text-text-primary shadow-sm">
       {/* topbar */}
@@ -1263,7 +1275,11 @@ function DesktopShell({ view, setView, mesh, setMesh, meshHref, stage, contextTi
           <nav aria-label="meshes" className="flex w-[232px] shrink-0 flex-col border-r border-border bg-surface-raised p-2">
             <div className="mb-2 flex items-center justify-between">
               <span className="px-1 text-xs uppercase tracking-wider text-text-muted">meshes</span>
-              <Button variant="ghost" size="sm" iconOnly aria-label="收起导航" onClick={() => setNavCollapsed(true)}>«</Button>
+              <Cluster>
+                {/* ↻ reload mesh definitions — two-click confirm (audit #20). */}
+                <ConfirmButton variant="ghost" size="sm" iconOnly aria-label="重新加载 mesh 定义" confirmLabel="确认?" onConfirm={() => {}} disabled={mutationsDisabled}>↻</ConfirmButton>
+                <Button variant="ghost" size="sm" iconOnly aria-label="收起导航" onClick={() => setNavCollapsed(true)}>«</Button>
+              </Cluster>
             </div>
             {navMode === "skeleton" ? (
               <div className="flex flex-col gap-2 p-1">{[0, 1, 2, 3].map((i) => <Skeleton key={i} variant="row" />)}</div>
@@ -1275,9 +1291,17 @@ function DesktopShell({ view, setView, mesh, setMesh, meshHref, stage, contextTi
             ) : (
               <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-auto">
                 {/* Primary mesh switcher: each row is a real link-like affordance (RouteLink <a>). */}
-                {meshes.map((m) => (
+                {shownMeshes.map((m) => (
                   <StatusListRow key={m.id} status={m.status} title={m.id} href={meshHref(m.id)} active={m.id === mesh} />
                 ))}
+                {/* Pagination — only when the list spills past one page (audit #19). */}
+                {navPages > 1 ? (
+                  <div data-mesh-pagination className="mt-1 flex items-center justify-center gap-2">
+                    <Button variant="ghost" size="sm" iconOnly aria-label="上一页 mesh" disabled={pg === 0} onClick={() => setNavPage(Math.max(0, pg - 1))}>‹</Button>
+                    <span className="text-xs tabular-nums text-text-muted">{pg + 1} / {navPages}</span>
+                    <Button variant="ghost" size="sm" iconOnly aria-label="下一页 mesh" disabled={pg >= navPages - 1} onClick={() => setNavPage(Math.min(navPages - 1, pg + 1))}>›</Button>
+                  </div>
+                ) : null}
                 <div className="mt-2"><Button variant="primary" size="sm" className="w-full" disabled={mutationsDisabled}>+ New mesh</Button></div>
               </div>
             )}
@@ -1335,6 +1359,8 @@ function MobileShell({ tab, setTab, mesh, setMesh, stage, stageTab, connection =
               <StatusListRow status="attention" title="🔔 通知" meta={String(notifCount)} href="/__ui-mockup?device=mobile" trailing={<Badge count={notifCount} max={99} tone="urgent" />} />
               <StatusListRow status="ready" title="管理 · Assistant / Harnesses / Channels / Doctor" href="/__ui-mockup?device=mobile" />
               <StatusListRow status="ready" title="设置 · 主题 / 语言 / 鉴权 / 设备" href="/__ui-mockup?device=mobile" />
+              {/* ↻ reload mesh definitions in the 更多 sheet — two-click confirm (audit #20). */}
+              <div className="pt-1"><ConfirmButton variant="secondary" size="sm" className="w-full" aria-label="重新加载 mesh 定义" confirmLabel="再次点击确认重新加载" onConfirm={() => {}} disabled={mutationsDisabled}>↻ 重新加载 mesh 定义</ConfirmButton></div>
             </div>
           </PanelFrame>
         ) : stage && tab === stageTab ? (
@@ -1432,8 +1458,8 @@ function ShellStage({ state, view = "runtime" }: { state: ShellState; view?: Vie
 const INDEX_TONE = "dark-slate&accent=signal-teal";
 type IndexRow = { label: string; base: string; states: ShellState[]; mobile: boolean };
 const INDEX_SECTIONS: { title: string; note: string; rows: IndexRow[] }[] = [
-  { title: "01 · 应用外壳", note: "topbar / nav / stage / context framing", rows: [
-    { label: "shell", base: "surface=shell", states: SHELL_STATES, mobile: true },
+  { title: "01 · 应用外壳", note: "topbar · 自适应 mesh 控件 · 左导航（分页 4/页 + ↻ 重载定义）· stage · 右上下文", rows: [
+    { label: "shell（含分页见 boundary / ↻ 重载见各态）", base: "surface=shell", states: SHELL_STATES, mobile: true },
   ] },
   { title: "02 · 运行态 A", note: "topology overview · focused transcript · fullscreen · canvas", rows: [
     { label: "overview", base: "surface=runtime&runtime=overview", states: SHELL_STATES, mobile: true },

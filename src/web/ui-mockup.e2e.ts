@@ -140,6 +140,40 @@ try {
     if (await page.getByText("99+", { exact: false }).count() === 0) throw new Error("badge overflow missing");
   });
 
+  // ── app-shell补漏 — pagination (#19) + reload (#20) ────────────────────────────
+  await step("app-shell补漏 desktop: ↻ reload two-click confirm in the left nav", async () => {
+    await page.goto(`${BASE}/__ui-mockup?surface=shell&state=populated&device=desktop`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[aria-label="meshes"]', { timeout: 8000 });
+    const reload = page.locator('[aria-label="重新加载 mesh 定义"]');
+    if (await reload.count() === 0) throw new Error("reload button missing");
+    await reload.click(); // arms (first click)
+    await sleep(80);
+    // armed → aria-pressed=true + label text swaps to 确认? (aria-label keeps the name)
+    if (await page.locator('[aria-label="重新加载 mesh 定义"][aria-pressed="true"]').count() === 0) throw new Error("reload did not arm two-click confirm");
+    if (await reload.innerText() !== "确认?") throw new Error("armed label did not swap to 确认?");
+  });
+
+  await step("app-shell补漏 desktop: mesh-list pagination pages through (boundary, 4/page)", async () => {
+    await page.goto(`${BASE}/__ui-mockup?surface=shell&state=boundary&device=desktop`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector("[data-mesh-pagination]", { timeout: 8000 });
+    if (await page.getByText("1 / 4", { exact: true }).count() === 0) throw new Error("page indicator missing");
+    await page.locator('[aria-label="下一页 mesh"]').click();
+    await sleep(80);
+    if (await page.getByText("2 / 4", { exact: true }).count() === 0) throw new Error("pagination did not advance");
+    // populated (4 meshes) shows no pager
+    await page.goto(`${BASE}/__ui-mockup?surface=shell&state=populated&device=desktop`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[aria-label="meshes"]', { timeout: 8000 });
+    if (await page.locator("[data-mesh-pagination]").count() !== 0) throw new Error("single page must not show a pager");
+  });
+
+  await step("app-shell补漏 mobile: ↻ reload in the 更多 sheet", async () => {
+    await page.goto(`${BASE}/__ui-mockup?device=mobile&surface=shell&state=populated`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-mockup="frame"][data-device="mobile"]', { timeout: 8000 });
+    await page.getByRole("tab", { name: "更多" }).click();
+    await sleep(80);
+    if (await page.locator('[aria-label="重新加载 mesh 定义"]').count() === 0) throw new Error("mobile reload entry missing in 更多 sheet");
+  });
+
   // ── runtime view (A) ──────────────────────────────────────────────────────────
   await step("runtime A desktop overview: topology of agents; node → focus interaction", async () => {
     await page.goto(`${BASE}/__ui-mockup?device=desktop&surface=runtime&runtime=overview`, { waitUntil: "domcontentloaded" });

@@ -193,6 +193,31 @@ test("shell state · mobile offline: slim topbar offline + banner", () => {
   expect(out).toContain("正在重连");
 });
 
+// ── app-shell补漏 — audited [E] capabilities (audit #19 pagination, #20 reload) ──
+test("app-shell补漏 · desktop nav has ↻ reload (two-click); populated = single page (no pager)", () => {
+  const out = renderAt("?surface=shell&state=populated&device=desktop");
+  expect(out).toContain('aria-label="重新加载 mesh 定义"'); // reload definitions (#20)
+  // 4 fixture meshes = exactly one page → no pagination control shown (matches Sidebar)
+  expect(out.includes("data-mesh-pagination")).toBe(false);
+});
+
+test("app-shell补漏 · boundary paginates the mesh list (4/page, ‹ ›, page indicator)", () => {
+  const out = renderAt("?surface=shell&state=boundary&device=desktop");
+  expect(out).toContain("data-mesh-pagination"); // pagination present (#19)
+  expect(out).toContain('aria-label="上一页 mesh"');
+  expect(out).toContain('aria-label="下一页 mesh"');
+  expect(out).toContain("1 / 4"); // 13 meshes / 4 per page
+  // page 0 still carries the long name (reordered fixture) → truncation visible
+  expect(out).toContain("a-very-long-mesh-name-that-should-truncate-gracefully");
+  // page 0 shows exactly 4 rows → a later-page-only mesh is NOT in the initial markup
+  expect(out.includes("security-audit")).toBe(false);
+});
+
+test("app-shell补漏 · offline/permission disable reload (mutations gated)", () => {
+  expect(renderAt("?surface=shell&state=offline&device=desktop")).toContain('aria-label="重新加载 mesh 定义" disabled=""');
+  expect(renderAt("?surface=shell&state=permission&device=desktop")).toContain('aria-label="重新加载 mesh 定义" disabled=""');
+});
+
 // ── runtime (02) states (Phase B) ────────────────────────────────────────────
 test("runtime overview state · empty/loading/error stand-ins", () => {
   expect(renderAt("?surface=runtime&runtime=overview&state=empty")).toContain('data-runtime-state="empty"');

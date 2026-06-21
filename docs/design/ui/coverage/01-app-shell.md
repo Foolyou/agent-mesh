@@ -60,3 +60,11 @@ preference.
 - Open: notifications [N] + default-view pref [N] carried per lead working assumptions (#680).
 - 2026-06-21 — backward-consistency completion (audit `14`): +mesh-list pagination (#19),
   +reload definitions (#20). `Sidebar.tsx`.
+- 2026-06-21 — Phase B Step 2 mockup补漏 (`UiMockup.tsx`): both #19/#20 rendered in the
+  guarded `/__ui-mockup` app-shell. Left nav now slices the mesh list 4/page with ‹ ›
+  + `{page}/{pages}` (shown only when >1 page; visible in the boundary state's many
+  meshes — fixture reordered so page 0 keeps the long name) and a two-click `↻` reload
+  (ConfirmButton, disabled offline/permission). Mobile: `↻ 重新加载 mesh 定义` added to
+  the 更多 sheet (pagination stays △ — the mobile mesh switcher is a select listing all).
+  Navigation index (`?index=1`) 01 row note updated to reflect the completed coverage.
+  All existing app-shell all-state desktop/mobile coverage intact.
