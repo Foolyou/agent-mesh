@@ -2475,6 +2475,8 @@ const NM_AGENTS: AgentRow[] = [
   { id: "reviewer", harness: "opencode", project: "~/projects/app", role: "member", model: "(default)", lazy: true, opencodePermission: "ask" },
 ];
 const NM_EDGES = [{ from: "router", to: "codex-1" }, { from: "router", to: "reviewer" }, { from: "codex-1", to: "reviewer" }];
+// Boundary = 12 agents (the long-form scrolling verification target, C3): the whole
+// page scrolls and every row stays reachable; the last row is the "just added" one.
 const NM_MANY_AGENTS: AgentRow[] = [
   ...NM_AGENTS,
   { id: "codex-2", harness: "codex", project: "~/projects/app", role: "member" },
@@ -2484,11 +2486,14 @@ const NM_MANY_AGENTS: AgentRow[] = [
   { id: "a-very-long-agent-identifier-for-truncation", harness: "claude", project: "~/projects/a/very/long/nested/project/path/that/wraps", role: "member" },
   { id: "reviewer-2", harness: "claude", project: "~/projects/app", role: "member" },
   { id: "security-1", harness: "codex", project: "~/projects/security", role: "member" },
+  { id: "docs-2", harness: "claude", project: "~/projects/docs", role: "member" },
+  { id: "infra-2", harness: "opencode", project: "~/projects/infra", role: "member" },
 ];
 const NM_MANY_EDGES = [
   ...NM_EDGES, { from: "router", to: "codex-2" }, { from: "router", to: "claude-2" }, { from: "router", to: "opencode-1" },
   { from: "router", to: "kimi-1" }, { from: "codex-1", to: "reviewer-2" }, { from: "codex-2", to: "reviewer-2" },
   { from: "claude-2", to: "security-1" }, { from: "security-1", to: "reviewer" },
+  { from: "router", to: "docs-2" }, { from: "router", to: "infra-2" },
 ];
 
 // Per-state form shape (loading is N/A for a local create form; offline locks the
@@ -2539,20 +2544,33 @@ function NewMeshFrame({ state, device, nmEditor = "off" }: { state: ShellState; 
   const f = nmForm(state);
   const mobile = device === "mobile";
   const ctrlDisabled = f.disabled || f.busy;
+  const saveDisabled = !f.valid || f.disabled;
+  // Action area (mesh name echo + Cancel/Save). C3: it must stay reachable while the
+  // long form scrolls. Desktop → sticky top action bar; mobile → fixed bottom footer.
+  // Cancel stays enabled even offline — it is purely local navigation (no mutation).
+  const actions = (
+    <Cluster>
+      <Button variant="ghost" size="sm">Cancel</Button>
+      <Button variant="primary" size="sm" disabled={saveDisabled} busy={f.busy}>Save</Button>
+    </Cluster>
+  );
   return (
-    <div data-mockup="frame" data-device={device} data-newmesh="builder" className={`relative ${mobile ? "flex h-[760px] w-[390px] flex-col rounded-[28px]" : "w-[1280px] rounded-xl"} max-w-full overflow-hidden border border-border bg-surface text-text-primary shadow-sm`}>
-      <header className="flex items-center gap-2 border-b border-border bg-surface-raised px-4 py-2.5">
+    <div data-mockup="frame" data-device={device} data-newmesh="builder" className={`relative flex flex-col ${mobile ? "h-[760px] w-[390px] rounded-[28px]" : "w-[1280px] rounded-xl"} max-w-full overflow-hidden border border-border bg-surface text-text-primary shadow-sm`}>
+      <header data-newmesh-actionbar={mobile ? "header" : "sticky"} className={`flex items-center gap-2 border-b border-border bg-surface-raised px-4 py-2.5 ${mobile ? "" : "sticky top-0 z-10"}`}>
         <Brand />
         <span className="text-text-muted">·</span>
         <span className="text-sm font-semibold">New mesh</span>
+        {!mobile && f.name ? <span className="max-w-[260px] truncate text-sm text-text-muted">· {f.name}</span> : null}
         <span className="flex-1" aria-hidden="true" />
-        {/* Cancel stays enabled even offline — it is purely local navigation (no mutation). */}
-        <Button variant="ghost" size="sm">Cancel</Button>
-        <Button variant="primary" size="sm" disabled={!f.valid || f.disabled} busy={f.busy}>Save</Button>
+        {/* Desktop keeps the actions in the sticky bar; mobile moves them to a fixed footer. */}
+        {!mobile ? actions : null}
       </header>
       {state === "permission" ? <div role="status" className="border-b border-border bg-danger-subtle px-4 py-1.5 text-xs text-danger">设备未授权 — 无法创建 mesh；请在「设置」批准本设备。</div> : null}
       {state === "offline" ? <div role="status" className="flex items-center gap-2 border-b border-border bg-warning-subtle px-4 py-1.5 text-xs text-warning"><Spinner size={12} label="reconnecting" /> 连接已断开 — 正在重连…（草稿保留，编辑与保存已禁用）</div> : null}
-      <div className="min-h-0 flex-1 overflow-auto p-4">
+      {/* Body: full-page scroll. Desktop grows so every agent stays reachable (no nested
+          fixed-height overflow trap); mobile scrolls within the phone frame above the
+          fixed Save footer. The agent list is NEVER its own scroll region. */}
+      <div className={`min-h-0 ${mobile ? "flex-1 overflow-auto" : ""} p-4`}>
         <div className={`mx-auto flex flex-col gap-5 ${mobile ? "" : "max-w-[820px]"}`}>
           {state === "error" ? <ErrorBanner title="Fix 2 errors to save">Duplicate mesh name and one agent is missing an id.</ErrorBanner> : null}
 
@@ -2563,18 +2581,22 @@ function NewMeshFrame({ state, device, nmEditor = "off" }: { state: ShellState; 
           </section>
 
           <section className="flex flex-col gap-2">
-            <div className="flex items-center justify-between">
+            <div className={`flex gap-1.5 ${mobile ? "flex-col" : "items-center justify-between"}`}>
               <span className="text-xs uppercase tracking-wider text-text-muted">agents · {f.agents.length}</span>
-              <Button variant="secondary" size="sm" disabled={ctrlDisabled}>+ Add agent</Button>
+              {/* C3: adding an agent scrolls the new row into view + focuses its first field.
+                  Represented statically by the highlighted "just-added" row below. */}
+              <Button variant="secondary" size="sm" disabled={ctrlDisabled} data-newmesh-addflow title="新增后自动滚动入视并聚焦 agent id" className={mobile ? "self-start whitespace-nowrap" : "whitespace-nowrap"}>+ Add agent</Button>
             </div>
             <div className="flex flex-col gap-2">
               {f.agents.map((a, i) => {
                 const missingId = state === "error" && i === f.agents.length - 1; // last row missing id in error state
+                const newest = f.boundary && i === f.agents.length - 1; // "just added" row (C3 add-flow demo)
                 return (
-                  <div key={i} className="flex flex-col gap-1.5 rounded-lg border border-border bg-surface-raised p-2.5">
+                  <div key={i} data-newmesh-newest={newest ? "true" : undefined} className={`flex scroll-mt-16 flex-col gap-1.5 rounded-lg border bg-surface-raised p-2.5 ${newest ? "border-accent ring-1 ring-accent" : "border-border"}`}>
+                    {newest ? <span data-newmesh-addhint className="text-xs font-medium text-accent">↳ 新增 agent · 已滚动入视并聚焦 agent id</span> : null}
                     {/* line 1: id · harness · role · delete */}
                     <div className={`flex gap-1.5 ${mobile ? "flex-wrap" : "items-center"}`}>
-                      <Input defaultValue={missingId ? "" : a.id} error={missingId} disabled={ctrlDisabled} aria-label={`agent ${i + 1} id`} placeholder="agent id" className={mobile ? "w-full" : "w-40"} />
+                      <Input defaultValue={missingId ? "" : a.id} error={missingId} disabled={ctrlDisabled} aria-label={`agent ${i + 1} id`} placeholder="agent id" className={`${mobile ? "w-full" : "w-40"} ${newest ? "ring-2 ring-accent" : ""}`} />
                       <Select defaultValue={a.harness} disabled={ctrlDisabled} aria-label={`agent ${i + 1} harness`} className={mobile ? "flex-1" : "w-32"}>{HARNESSES.map((h) => <option key={h}>{h}</option>)}</Select>
                       <Select defaultValue={a.role} disabled={ctrlDisabled} aria-label={`agent ${i + 1} role`} className={mobile ? "flex-1" : "w-28"}><option>router</option><option>member</option></Select>
                       {!mobile ? <span className="flex-1" aria-hidden="true" /> : null}
@@ -2655,6 +2677,13 @@ function NewMeshFrame({ state, device, nmEditor = "off" }: { state: ShellState; 
           </section>
         </div>
       </div>
+      {/* Mobile: Save fixed at the bottom (whole screen scrolls above it) — C3. */}
+      {mobile ? (
+        <div data-newmesh-actionbar="footer" className="flex shrink-0 items-center justify-between gap-2 border-t border-border bg-surface-raised px-4 py-2.5">
+          <span className="min-w-0 flex-1 truncate text-xs text-text-muted">{f.name || "未命名 mesh"}</span>
+          {actions}
+        </div>
+      ) : null}
       {nmEditor !== "off" ? <NmTextEditor kind={nmEditor} mobile={mobile} /> : null}
     </div>
   );

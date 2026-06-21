@@ -432,6 +432,23 @@ try {
     await page.goto(`${BASE}/__ui-mockup?surface=new-mesh&state=populated&nmEditor=charter&device=desktop`, { waitUntil: "domcontentloaded" });
     await page.waitForSelector('[data-newmesh-editor="charter"][role="dialog"]', { timeout: 8000 });
   });
+  await step("new-mesh C3: 12-agent long form — sticky action bar, fixed mobile Save, add-flow", async () => {
+    // Desktop boundary: 12 agents all reachable (no nested fixed-height trap), sticky bar.
+    await page.goto(`${BASE}/__ui-mockup?surface=new-mesh&state=boundary&device=desktop`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-newmesh="builder"]', { timeout: 8000 });
+    if (await page.locator('[aria-label="agent 12 id"]').count() === 0) throw new Error("12th agent row not present");
+    if (await page.locator('[data-newmesh-actionbar="sticky"]').count() === 0) throw new Error("desktop sticky action bar missing");
+    if (await page.locator('[data-newmesh-actionbar="footer"]').count() !== 0) throw new Error("desktop must not show the mobile footer");
+    // last agent row must be reachable in normal page flow (scrollIntoView resolves, no trap)
+    await page.locator('[data-newmesh-newest="true"]').scrollIntoViewIfNeeded();
+    if (await page.locator('[data-newmesh-newest="true"] [aria-label="agent 12 id"]').count() === 0) throw new Error("newest (just-added) row must be the 12th");
+    if (await page.locator('[data-newmesh-addflow]').count() === 0) throw new Error("+ Add agent add-flow affordance missing");
+    // Mobile: Save fixed in a bottom footer; body scrolls above.
+    await page.goto(`${BASE}/__ui-mockup?surface=new-mesh&state=populated&device=mobile`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-newmesh="builder"]', { timeout: 8000 });
+    if (await page.locator('[data-newmesh-actionbar="footer"]').count() === 0) throw new Error("mobile fixed Save footer missing");
+    if (await page.locator('[data-newmesh-actionbar="footer"]').getByRole("button", { name: "Save" }).count() === 0) throw new Error("mobile footer must carry Save");
+  });
   const NM_STATES = ["empty", "populated", "error", "permission", "busy", "offline", "boundary"];
   for (const device of ["desktop", "mobile"]) {
     for (const st of NM_STATES) {
@@ -443,6 +460,16 @@ try {
       });
     }
   }
+  // C3 proof: mobile boundary scrolled to the newest (12th) agent row, fixed Save footer still visible.
+  await step("screenshot new-mesh-boundary-mobile-newest (scroll to 12th row, footer pinned)", async () => {
+    await page.goto(`${BASE}/__ui-mockup?surface=new-mesh&state=boundary&device=mobile&mode=dark-slate&accent=signal-teal`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-mockup="frame"][data-device="mobile"][data-newmesh="builder"]', { timeout: 8000 });
+    await page.locator('[data-newmesh-newest="true"]').scrollIntoViewIfNeeded();
+    await sleep(130);
+    if (!(await page.locator('[data-newmesh-newest="true"] [aria-label="agent 12 id"]').isVisible())) throw new Error("12th agent id not visible after scroll");
+    if (!(await page.locator('[data-newmesh-actionbar="footer"]').isVisible())) throw new Error("fixed Save footer not visible while scrolled to the newest row");
+    await shotFrame(`${SHOTS}/new-mesh-boundary-mobile-newest-dark-slate-signal-teal.png`);
+  });
   // expanded text editor: charter (desktop modal) + instructions (mobile sheet)
   for (const [q, file] of [
     ["surface=new-mesh&state=populated&nmEditor=charter&device=desktop", "new-mesh-editor-charter-desktop-dark-slate-signal-teal.png"],

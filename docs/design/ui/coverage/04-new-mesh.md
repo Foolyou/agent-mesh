@@ -51,3 +51,15 @@ builder secondary on phone (creation is rare on mobile, △).
   +expanded text-editor modal (#2), +model (#3), +effort (#4), +lazy (#5), +opencode
   permission (#6), +auto-compact settings (#7, stays here per triage), +edge steer (#8).
   `MeshBuilder.tsx` (`TextEditorDialog`/`openExpandedText`), `acp/types.ts`, `auto-compact.ts`.
+- 2026-06-21 — Phase B user-review **C3 (long-form scrolling)**: boundary fixture raised to
+  **12 agents** (the long-form verification target). The whole page scrolls as one — the
+  agent list is **never** a nested fixed-height overflow region (no scroll-within-scroll
+  trap), so the last row is always reachable. The mesh-name echo + Cancel/Save action area
+  stays reachable while scrolling: **desktop** = a `sticky top-0` action bar
+  (`data-newmesh-actionbar="sticky"`); **mobile** = whole screen scrolls with Save in a
+  **fixed bottom footer** (`data-newmesh-actionbar="footer"`), agent cards keep the C1
+  vertical stacking. `+ Add agent` (`data-newmesh-addflow`) mocks the add flow as
+  *auto-scroll-the-new-row-into-view + focus its first field* — represented statically by
+  the highlighted "just-added" 12th row (`data-newmesh-newest`, accent ring + focused
+  `agent id`). Tradeoff: real `position:sticky` pins against the runtime viewport (Step 7);
+  in the static doc card the desktop frame grows so all 12 rows render in one screenshot.

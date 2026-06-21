@@ -1181,8 +1181,42 @@ test("new-mesh · offline: reconnecting banner + fields/Save disabled (Cancel st
 test("new-mesh · boundary: many agents + many edges + long name/id", () => {
   const out = renderAt("?surface=new-mesh&state=boundary&device=desktop");
   expect(out).toContain("a-very-long-agent-identifier-for-truncation");
-  expect(out).toContain("agents · 10");
+  expect(out).toContain("agents · 12"); // C3: 12-agent long-form target
   expect(out).toContain("release-candidate-2026-q3-extended-pipeline");
+  expect(out).toContain('aria-label="agent 12 id"'); // 12th row present/reachable
+});
+
+// ── C3: new-mesh long-form scrolling (sticky action bar / fixed Save / add-flow) ──
+test("new-mesh C3 · desktop: sticky action bar holds Cancel/Save; no mobile footer", () => {
+  const out = renderAt("?surface=new-mesh&state=boundary&device=desktop");
+  expect(out).toContain('data-newmesh-actionbar="sticky"');
+  expect(out).toContain("sticky top-0"); // pinned while the long form scrolls
+  expect(out).not.toContain('data-newmesh-actionbar="footer"'); // desktop keeps actions in the bar
+  // name echoed in the reachable action bar
+  expect(out).toContain("release-candidate-2026-q3-extended-pipeline");
+});
+
+test("new-mesh C3 · mobile: Save fixed at the bottom footer; whole body scrolls", () => {
+  const out = renderAt("?surface=new-mesh&state=populated&device=mobile");
+  expect(out).toContain('data-newmesh-actionbar="footer"'); // Save fixed at bottom
+  expect(out).toContain("flex-1 overflow-auto"); // body scrolls above the footer
+  // footer carries the Save action
+  const footerIdx = out.indexOf('data-newmesh-actionbar="footer"');
+  expect(out.slice(footerIdx)).toContain("Save");
+});
+
+test("new-mesh C3 · add-agent flow: + Add agent marked; newest row scrolls-in + focuses id", () => {
+  const out = renderAt("?surface=new-mesh&state=boundary&device=desktop");
+  expect(out).toContain("data-newmesh-addflow"); // + Add agent affordance
+  expect(out).toContain('data-newmesh-newest="true"'); // the just-added row highlighted
+  expect(out).toContain("已滚动入视并聚焦"); // add-flow caption
+  // newest marker + focus visual live on the LAST (12th) agent row
+  const newestIdx = out.indexOf('data-newmesh-newest="true"');
+  expect(out.slice(newestIdx)).toContain('aria-label="agent 12 id"');
+});
+
+test("new-mesh C3 · add-flow highlight only in boundary (not in plain populated)", () => {
+  expect(renderAt("?surface=new-mesh&state=populated&device=desktop")).not.toContain('data-newmesh-newest="true"');
 });
 
 test("new-mesh · mobile: simplified builder (from/to edge pickers)", () => {
