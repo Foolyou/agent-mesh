@@ -116,6 +116,30 @@ try {
     if ((await cssVar("--accent")) !== expected.accent) throw new Error(`--accent=${await cssVar("--accent")}`);
   });
 
+  // ── shell (01) states (Phase B) ─────────────────────────────────────────────
+  await step("shell empty: no-mesh empty state + New mesh", async () => {
+    await page.goto(`${BASE}/__ui-mockup?surface=shell&state=empty`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-mockup="frame"]', { timeout: 8000 });
+    if (await page.getByText("No meshes yet").count() === 0) throw new Error("empty state missing");
+  });
+  await step("shell offline: offline chip + reconnecting banner + disabled mgmt", async () => {
+    await page.goto(`${BASE}/__ui-mockup?surface=shell&state=offline`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-mockup="frame"]', { timeout: 8000 });
+    if (await page.getByText("正在重连", { exact: false }).count() === 0) throw new Error("reconnecting banner missing");
+    if (!(await page.getByRole("button", { name: "管理▾" }).isDisabled())) throw new Error("management should be disabled offline");
+  });
+  await step("shell permission: unauthorized banner + disabled management", async () => {
+    await page.goto(`${BASE}/__ui-mockup?surface=shell&state=permission`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-mockup="frame"]', { timeout: 8000 });
+    if (await page.getByText("设备未授权", { exact: false }).count() === 0) throw new Error("permission banner missing");
+  });
+  await step("shell boundary: long mesh name + 99+ notif overflow", async () => {
+    await page.goto(`${BASE}/__ui-mockup?surface=shell&state=boundary`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-mockup="frame"]', { timeout: 8000 });
+    if (await page.getByText("a-very-long-mesh-name-that-should-truncate-gracefully").count() === 0) throw new Error("long mesh name missing");
+    if (await page.getByText("99+", { exact: false }).count() === 0) throw new Error("badge overflow missing");
+  });
+
   // ── runtime view (A) ──────────────────────────────────────────────────────────
   await step("runtime A desktop overview: topology of agents; node → focus interaction", async () => {
     await page.goto(`${BASE}/__ui-mockup?device=desktop&surface=runtime&runtime=overview`, { waitUntil: "domcontentloaded" });
@@ -241,6 +265,19 @@ try {
       await sleep(150);
       await shotFrame(`${SHOTS}/${file}`);
     });
+  }
+
+  // ── shell (01) state × device screenshots (Phase B; default Dark·Slate × Signal Teal) ──
+  const SHELL_STATES = ["empty", "loading", "populated", "error", "permission", "busy", "offline", "boundary"];
+  for (const device of ["desktop", "mobile"]) {
+    for (const st of SHELL_STATES) {
+      await step(`screenshot app-shell-${st}-${device}`, async () => {
+        await page.goto(`${BASE}/__ui-mockup?surface=shell&state=${st}&device=${device}&mode=dark-slate&accent=signal-teal`, { waitUntil: "domcontentloaded" });
+        await page.waitForSelector(`[data-mockup="frame"][data-device="${device}"]`, { timeout: 8000 });
+        await sleep(150);
+        await shotFrame(`${SHOTS}/app-shell-${st}-${device}-dark-slate-signal-teal.png`);
+      });
+    }
   }
 
   await step("no page errors across the mockup", async () => {

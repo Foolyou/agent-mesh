@@ -22,7 +22,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { MODES, ACCENTS, type Mode, type Accent, compose, applyComposition } from "./themes";
 import {
   Button, StatusChip, Badge, SegmentedControl, StatusListRow, PanelFrame, ApprovalCard, Composer, ActionBar, Cluster,
-  ProgressBar, AssigneeTag,
+  ProgressBar, AssigneeTag, Spinner, Skeleton, EmptyState, ErrorBanner,
   type Status,
 } from "./ui/index";
 
@@ -112,6 +112,7 @@ interface Sel {
   surface: Surface;
   runtime: RuntimeState;
   board: BoardState;
+  state: ShellState;
   mesh: string;
   mode: Mode;
   accent: Accent;
@@ -128,12 +129,14 @@ function readSel(): Sel {
   const sfc = p.get("surface");
   const surface: Surface = sfc === "runtime" ? "runtime" : sfc === "board" ? "board" : "shell";
   const bs = p.get("board");
+  const st = p.get("state") as ShellState | null;
   return {
     device: p.get("device") === "mobile" ? "mobile" : "desktop",
     view: p.get("view") === "board" ? "board" : "runtime",
     surface,
     runtime: p.get("runtime") === "focus" ? "focus" : "overview",
     board: bs === "detail" ? "detail" : bs === "kanban" ? "kanban" : "list",
+    state: st && SHELL_STATES.includes(st) ? st : "populated",
     mesh: mesh && MESH_IDS.has(mesh) ? mesh : MESHES[0].id,
     mode: MODE_SET.has(m as Mode) ? (m as Mode) : "dark-slate",
     accent: ACCENT_SET.has(a as Accent) ? (a as Accent) : "signal-teal",
@@ -153,9 +156,28 @@ function Brand() {
   );
 }
 
-function ConnectionChip({ compact = false }: { compact?: boolean }) {
-  return compact ? <StatusChip status="ready" variant="dot" label="connected" /> : <StatusChip status="ready" variant="soft" label="connected" />;
+type Connection = "connected" | "connecting" | "offline";
+const CONN: Record<Connection, { status: Status; label: string }> = {
+  connected: { status: "ready", label: "connected" },
+  connecting: { status: "working", label: "connecting…" },
+  offline: { status: "blocked", label: "offline" },
+};
+function ConnectionChip({ compact = false, connection = "connected" }: { compact?: boolean; connection?: Connection }) {
+  const c = CONN[connection];
+  return compact ? <StatusChip status={c.status} variant="dot" label={c.label} /> : <StatusChip status={c.status} variant="soft" label={c.label} />;
 }
+
+// Shell display state (Phase B surface 01). Drives the deterministic ?state= switch.
+type ShellState = "empty" | "loading" | "populated" | "error" | "permission" | "busy" | "offline" | "boundary";
+const SHELL_STATES: ShellState[] = ["empty", "loading", "populated", "error", "permission", "busy", "offline", "boundary"];
+// Boundary/scale fixture: many meshes incl. a very long name + overflow badge.
+const MANY_MESHES: { id: string; status: Status }[] = [
+  ...MESHES,
+  { id: "staging", status: "ready" }, { id: "release-candidate-2026-q3", status: "working" },
+  { id: "infra", status: "idle" }, { id: "research", status: "working" }, { id: "sandbox", status: "ready" },
+  { id: "a-very-long-mesh-name-that-should-truncate-gracefully", status: "blocked" },
+  { id: "perf", status: "idle" }, { id: "security-audit", status: "attention" }, { id: "docs-site", status: "ready" },
+];
 
 function StagePlaceholder({ view }: { view: View }) {
   return (
@@ -581,7 +603,17 @@ function BoardDetailMobile() {
 }
 
 // ── desktop shell ────────────────────────────────────────────────────────────
-function DesktopShell({ view, setView, mesh, setMesh, meshHref, stage, contextTitle, context }: { view: View; setView: (v: View) => void; mesh: string; setMesh: (m: string) => void; meshHref: (id: string) => string; stage: ReactNode; contextTitle: string; context: ReactNode }) {
+interface ShellChrome {
+  connection?: Connection;
+  meshes?: { id: string; status: Status }[];
+  navMode?: "rows" | "skeleton" | "empty";
+  mutationsDisabled?: boolean;
+  meshBusy?: boolean;
+  notifCount?: number;
+  banner?: ReactNode;
+}
+
+function DesktopShell({ view, setView, mesh, setMesh, meshHref, stage, contextTitle, context, connection = "connected", meshes = MESHES, navMode = "rows", mutationsDisabled = false, meshBusy = false, notifCount = 3, banner }: { view: View; setView: (v: View) => void; mesh: string; setMesh: (m: string) => void; meshHref: (id: string) => string; stage: ReactNode; contextTitle: string; context: ReactNode } & ShellChrome) {
   const [navCollapsed, setNavCollapsed] = useState(false);
   const [ctxCollapsed, setCtxCollapsed] = useState(false);
   return (
@@ -589,22 +621,24 @@ function DesktopShell({ view, setView, mesh, setMesh, meshHref, stage, contextTi
       {/* topbar */}
       <header className="flex items-center gap-3 border-b border-border bg-surface-raised px-4 py-2.5">
         <Brand />
-        <ConnectionChip />
+        <ConnectionChip connection={connection} />
         <span className="mx-1 h-5 w-px bg-border" aria-hidden="true" />
         {/* Adaptive mesh control: when the left nav is expanded it IS the primary mesh
             switcher, so the topbar shows the current mesh as a non-interactive label.
-            When the nav is collapsed (list hidden), the topbar falls back to a select. */}
+            When the nav is collapsed (list hidden), the topbar falls back to a select.
+            busy → spinner; mutations disabled → select disabled. */}
         {navCollapsed ? (
           <label data-topbar-mesh="select" className="inline-flex items-center gap-1.5 text-sm">
             <span className="text-text-muted">mesh</span>
-            <select value={mesh} onChange={(e) => setMesh(e.target.value)} aria-label="active mesh" className="rounded-lg border border-border-strong bg-surface-sunken px-2 py-1 text-sm text-text-primary">
-              {MESHES.map((m) => <option key={m.id} value={m.id}>{m.id}</option>)}
+            <select value={mesh} disabled={mutationsDisabled} onChange={(e) => setMesh(e.target.value)} aria-label="active mesh" className="rounded-lg border border-border-strong bg-surface-sunken px-2 py-1 text-sm text-text-primary disabled:text-text-disabled disabled:cursor-not-allowed">
+              {meshes.map((m) => <option key={m.id} value={m.id}>{m.id}</option>)}
             </select>
           </label>
         ) : (
           <span data-topbar-mesh="label" aria-label="current mesh" className="inline-flex items-center gap-1.5 text-sm">
             <span className="text-text-muted">mesh</span>
-            <span className="font-medium text-text-primary">{mesh}</span>
+            <span className="max-w-[220px] truncate font-medium text-text-primary">{mesh}</span>
+            {meshBusy ? <Spinner size={12} label="switching" /> : null}
           </span>
         )}
         <SegmentedControl
@@ -615,12 +649,14 @@ function DesktopShell({ view, setView, mesh, setMesh, meshHref, stage, contextTi
           size="sm"
         />
         <span className="flex-1" aria-hidden="true" />
-        <Button variant="ghost" size="sm" iconOnly aria-label="通知 (3 未读)" className="relative">
-          🔔<span className="absolute -right-1 -top-1"><Badge count={3} tone="urgent" /></span>
+        <Button variant="ghost" size="sm" iconOnly aria-label={`通知 (${notifCount} 未读)`} className="relative">
+          🔔{notifCount > 0 ? <span className="absolute -right-1 -top-1"><Badge count={notifCount} max={99} tone="urgent" /></span> : null}
         </Button>
-        <Button variant="ghost" size="sm">管理▾</Button>
-        <Button variant="ghost" size="sm">设置▾</Button>
+        <Button variant="ghost" size="sm" disabled={mutationsDisabled}>管理▾</Button>
+        <Button variant="ghost" size="sm" disabled={mutationsDisabled}>设置▾</Button>
       </header>
+
+      {banner ? <div className="border-b border-border">{banner}</div> : null}
 
       {/* body: left nav · stage · right context */}
       <div className="relative flex min-h-[520px]">
@@ -632,18 +668,27 @@ function DesktopShell({ view, setView, mesh, setMesh, meshHref, stage, contextTi
             <Button data-nav-expand variant="secondary" size="sm" iconOnly aria-label="展开导航" onClick={() => setNavCollapsed(false)}>»</Button>
           </div>
         ) : (
-          <nav aria-label="meshes" className="w-[232px] shrink-0 border-r border-border bg-surface-raised p-2">
+          <nav aria-label="meshes" className="flex w-[232px] shrink-0 flex-col border-r border-border bg-surface-raised p-2">
             <div className="mb-2 flex items-center justify-between">
               <span className="px-1 text-xs uppercase tracking-wider text-text-muted">meshes</span>
               <Button variant="ghost" size="sm" iconOnly aria-label="收起导航" onClick={() => setNavCollapsed(true)}>«</Button>
             </div>
-            <div className="flex flex-col gap-1">
-              {/* Primary mesh switcher: each row is a real link-like affordance (RouteLink <a>). */}
-              {MESHES.map((m) => (
-                <StatusListRow key={m.id} status={m.status} title={m.id} href={meshHref(m.id)} active={m.id === mesh} />
-              ))}
-              <div className="mt-2"><Button variant="primary" size="sm" className="w-full">+ New mesh</Button></div>
-            </div>
+            {navMode === "skeleton" ? (
+              <div className="flex flex-col gap-2 p-1">{[0, 1, 2, 3].map((i) => <Skeleton key={i} variant="row" />)}</div>
+            ) : navMode === "empty" ? (
+              <div className="flex flex-1 flex-col">
+                <EmptyState title="No meshes" description="Create your first mesh." />
+                <div className="mt-auto"><Button variant="primary" size="sm" className="w-full">+ New mesh</Button></div>
+              </div>
+            ) : (
+              <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-auto">
+                {/* Primary mesh switcher: each row is a real link-like affordance (RouteLink <a>). */}
+                {meshes.map((m) => (
+                  <StatusListRow key={m.id} status={m.status} title={m.id} href={meshHref(m.id)} active={m.id === mesh} />
+                ))}
+                <div className="mt-2"><Button variant="primary" size="sm" className="w-full" disabled={mutationsDisabled}>+ New mesh</Button></div>
+              </div>
+            )}
           </nav>
         )}
 
@@ -672,28 +717,30 @@ function DesktopShell({ view, setView, mesh, setMesh, meshHref, stage, contextTi
 type MobileTab = "runtime" | "board" | "more";
 const MOBILE_TAB_LABEL: Record<MobileTab, string> = { runtime: "运行态", board: "看板", more: "更多" };
 
-function MobileShell({ tab, setTab, mesh, setMesh, stage, stageTab }: { tab: MobileTab; setTab: (t: MobileTab) => void; mesh: string; setMesh: (m: string) => void; stage?: ReactNode; stageTab?: MobileTab }) {
+function MobileShell({ tab, setTab, mesh, setMesh, stage, stageTab, connection = "connected", meshes = MESHES, mutationsDisabled = false, notifCount = 3, banner }: { tab: MobileTab; setTab: (t: MobileTab) => void; mesh: string; setMesh: (m: string) => void; stage?: ReactNode; stageTab?: MobileTab } & ShellChrome) {
   return (
     <div data-mockup="frame" data-device="mobile" className="relative flex h-[760px] w-[390px] max-w-full flex-col overflow-hidden rounded-[28px] border border-border bg-surface text-text-primary shadow-sm">
       {/* slim topbar */}
       <header className="flex items-center gap-2 border-b border-border bg-surface-raised px-3 py-2.5">
         <Brand />
-        <ConnectionChip compact />
+        <ConnectionChip compact connection={connection} />
         <span className="flex-1" aria-hidden="true" />
         {/* No left nav on mobile, so the topbar always keeps the mesh select. */}
         <label data-topbar-mesh="select" className="inline-flex items-center">
-          <select value={mesh} onChange={(e) => setMesh(e.target.value)} aria-label="active mesh" className="rounded-lg border border-border-strong bg-surface-sunken px-2 py-1 text-sm text-text-primary">
-            {MESHES.map((m) => <option key={m.id} value={m.id}>{m.id}</option>)}
+          <select value={mesh} disabled={mutationsDisabled} onChange={(e) => setMesh(e.target.value)} aria-label="active mesh" className="max-w-[150px] rounded-lg border border-border-strong bg-surface-sunken px-2 py-1 text-sm text-text-primary disabled:text-text-disabled disabled:cursor-not-allowed">
+            {meshes.map((m) => <option key={m.id} value={m.id}>{m.id}</option>)}
           </select>
         </label>
       </header>
+
+      {banner ? <div className="border-b border-border">{banner}</div> : null}
 
       {/* active view */}
       <div className="min-h-0 flex-1 overflow-auto p-3">
         {tab === "more" ? (
           <PanelFrame title="更多">
             <div className="flex flex-col gap-1">
-              <StatusListRow status="attention" title="🔔 通知" meta="3" href="/__ui-mockup?device=mobile" trailing={<Badge count={3} tone="urgent" />} />
+              <StatusListRow status="attention" title="🔔 通知" meta={String(notifCount)} href="/__ui-mockup?device=mobile" trailing={<Badge count={notifCount} max={99} tone="urgent" />} />
               <StatusListRow status="ready" title="管理 · Assistant / Harnesses / Channels / Doctor" href="/__ui-mockup?device=mobile" />
               <StatusListRow status="ready" title="设置 · 主题 / 语言 / 鉴权 / 设备" href="/__ui-mockup?device=mobile" />
             </div>
@@ -733,15 +780,61 @@ function selQuery(s: Sel): string {
   p.set("surface", s.surface);
   p.set("runtime", s.runtime);
   p.set("board", s.board);
+  p.set("state", s.state);
   p.set("mesh", s.mesh);
   p.set("mode", s.mode);
   p.set("accent", s.accent);
   return p.toString();
 }
 
+// ── shell (01) state → chrome flags + stage content (Phase B) ────────────────────
+const OfflineBanner = (
+  <div role="status" className="flex items-center gap-2 bg-warning-subtle px-4 py-1.5 text-xs text-warning">
+    <Spinner size={12} label="reconnecting" /> 连接已断开 — 正在重连…（变更已禁用，显示最近已知内容）
+  </div>
+);
+const PermBanner = (
+  <div role="status" className="bg-danger-subtle px-4 py-1.5 text-xs text-danger">
+    设备未授权 — 管理与变更已禁用；请在「设置」批准本设备。只读浏览可用。
+  </div>
+);
+
+function shellChromeFor(state: ShellState): ShellChrome {
+  switch (state) {
+    case "empty": return { navMode: "empty", notifCount: 0 };
+    case "loading": return { connection: "connecting", navMode: "skeleton" };
+    case "permission": return { mutationsDisabled: true, banner: PermBanner };
+    case "busy": return { meshBusy: true };
+    case "offline": return { connection: "offline", mutationsDisabled: true, banner: OfflineBanner };
+    case "boundary": return { meshes: MANY_MESHES, notifCount: 250 };
+    case "error":
+    case "populated":
+    default: return {};
+  }
+}
+
+function ShellStage({ state, view = "runtime" }: { state: ShellState; view?: View }) {
+  if (state === "empty") {
+    return <PanelFrame title="运行态" className="h-full"><EmptyState icon={<span className="text-2xl">📭</span>} title="No meshes yet" description="Create your first mesh to get started." action={<Button variant="primary">+ New mesh</Button>} /></PanelFrame>;
+  }
+  if (state === "loading") {
+    return <PanelFrame title="运行态" className="h-full"><div className="flex flex-col gap-3"><Skeleton variant="line" /><Skeleton variant="row" /><Skeleton variant="card" /></div></PanelFrame>;
+  }
+  if (state === "error") {
+    return <PanelFrame title="运行态" className="h-full"><ErrorBanner title="Failed to load mesh" onRetry={() => {}}>The snapshot request failed — the chrome stays usable.</ErrorBanner></PanelFrame>;
+  }
+  if (state === "offline") {
+    return <PanelFrame title="运行态" className="h-full"><p className="text-sm text-text-secondary">显示最近已知内容；连接恢复后自动刷新。变更操作在离线时禁用。</p></PanelFrame>;
+  }
+  if (state === "permission") {
+    return <PanelFrame title="运行态" className="h-full"><p className="text-sm text-text-secondary">只读浏览可用；创建/管理/生命周期操作需已授权设备（见顶部横幅）。</p></PanelFrame>;
+  }
+  return <StagePlaceholder view={view} />;
+}
+
 export function UiMockup() {
   const [sel, setSel] = useState<Sel>(readSel);
-  const { device, view, surface, runtime, board, mesh, mode, accent } = sel;
+  const { device, view, surface, runtime, board, state, mesh, mode, accent } = sel;
   const [mobileTab, setMobileTab] = useState<MobileTab>(surface === "board" || view === "board" ? "board" : "runtime");
 
   useEffect(() => {
@@ -776,7 +869,8 @@ export function UiMockup() {
     ? (runtime === "focus" ? <RuntimeFocusDesktop /> : <RuntimeOverviewDesktop focusHref={focusHref} />)
     : surface === "board"
     ? (board === "detail" ? <BoardDetailDesktop /> : board === "kanban" ? <BoardKanbanDesktop /> : <BoardListDesktop />)
-    : <StagePlaceholder view={view} />;
+    : <ShellStage state={state} view={view} />;
+  const shellChrome: ShellChrome = surface === "shell" ? shellChromeFor(state) : {};
   const contextTitle = surface === "runtime"
     ? (runtime === "focus" ? `${FOCUS_AGENT} · activity` : "Topology detail")
     : surface === "board" ? "Epics · dispatch" : "Context";
@@ -817,19 +911,19 @@ export function UiMockup() {
       )
     : <p className="text-sm text-text-secondary">按需上下文由当前视图拥有（运行态/看板各自填充）。</p>;
 
-  // Mobile functional stage (runtime or board); shell → no stage (placeholder).
+  // Mobile functional stage (runtime / board / shell-state); shown in the runtime/board tab.
   const mobileStage = surface === "runtime"
     ? (runtime === "focus" ? <RuntimeFocusMobile /> : <RuntimeListMobile focusHref={focusHref} />)
     : surface === "board"
     ? (board === "detail" ? <BoardDetailMobile /> : <BoardListMobile />)
-    : undefined;
+    : <ShellStage state={state} />;
   const mobileStageTab: MobileTab = surface === "board" ? "board" : "runtime";
 
   return (
     <div data-mockup="root" className="min-h-screen bg-surface text-text-primary font-sans p-6">
       {/* mockup tool chrome (outside the mocked app frame) */}
       <header className="mb-5">
-        <h1 className="mb-1 text-xl font-semibold">Agent Mesh — 终稿 mockup（Step 6 · {surface === "runtime" ? "运行态 A" : surface === "board" ? "看板 C" : "应用外壳"} · {device === "mobile" ? "移动" : "桌面"}）</h1>
+        <h1 className="mb-1 text-xl font-semibold">Agent Mesh — 终稿 mockup（{surface === "runtime" ? "运行态 A" : surface === "board" ? "看板 C" : `应用外壳 · ${state}`} · {device === "mobile" ? "移动" : "桌面"}）</h1>
         <p className="mb-3 text-xs text-text-muted">真实 C5–C7 组件 + v2 compose 运行时 · fixture 数据 · 不连后端。Live: <code className="text-syntax-string">MESH_UI_PREVIEW=1 … /__ui-mockup</code></p>
         <div className="flex flex-wrap items-start gap-5">
           <div>
@@ -868,13 +962,19 @@ export function UiMockup() {
               />
             </div>
           ) : null}
+          {surface === "shell" ? (
+            <div>
+              <div className="mb-1.5 text-xs uppercase tracking-wider text-text-muted">Shell state</div>
+              <SegmentedControl ariaLabel="Shell state" value={state} onChange={(s) => nav({ state: s as ShellState })} options={SHELL_STATES.map((s) => ({ value: s, label: s }))} size="sm" />
+            </div>
+          ) : null}
         </div>
       </header>
 
       <div className="flex justify-center">
         {device === "mobile"
-          ? <MobileShell tab={mobileTab} setTab={(t) => { setMobileTab(t); if (t === "runtime" || t === "board") nav({ view: t }); }} mesh={mesh} setMesh={setMesh} stage={mobileStage} stageTab={mobileStageTab} />
-          : <DesktopShell view={view} setView={setView} mesh={mesh} setMesh={setMesh} meshHref={meshHref} stage={desktopStage} contextTitle={contextTitle} context={desktopContext} />}
+          ? <MobileShell tab={mobileTab} setTab={(t) => { setMobileTab(t); if (t === "runtime" || t === "board") nav({ view: t }); }} mesh={mesh} setMesh={setMesh} stage={mobileStage} stageTab={mobileStageTab} {...shellChrome} />
+          : <DesktopShell view={view} setView={setView} mesh={mesh} setMesh={setMesh} meshHref={meshHref} stage={desktopStage} contextTitle={contextTitle} context={desktopContext} {...shellChrome} />}
       </div>
     </div>
   );

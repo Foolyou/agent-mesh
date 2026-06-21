@@ -141,6 +141,58 @@ test("board C · mobile list + detail (kanban is desktop-only)", () => {
   expect(renderAt("?device=mobile&surface=board&board=kanban")).toContain('data-board="list"');
 });
 
+// ── shell (01) states (Phase B) ──────────────────────────────────────────────
+test("shell state · empty: no-mesh empty state + New mesh CTA", () => {
+  const out = renderAt("?surface=shell&state=empty&device=desktop");
+  expect(out).toContain("No meshes yet");
+  expect(out).toContain("+ New mesh");
+});
+
+test("shell state · loading: skeletons + connecting chip", () => {
+  const out = renderAt("?surface=shell&state=loading&device=desktop");
+  expect(out).toContain("animate-pulse"); // Skeleton
+  expect(out).toContain("connecting"); // ConnectionChip
+});
+
+test("shell state · error: ErrorBanner in stage, chrome still present", () => {
+  const out = renderAt("?surface=shell&state=error&device=desktop");
+  expect(out).toContain('role="alert"');
+  expect(out).toContain("Failed to load mesh");
+  expect(out).toContain('aria-label="meshes"'); // chrome usable
+});
+
+test("shell state · offline: offline chip + reconnecting banner + disabled mutations", () => {
+  const out = renderAt("?surface=shell&state=offline&device=desktop");
+  expect(out).toContain("offline");
+  expect(out).toContain("正在重连");
+  expect(out).toContain("disabled"); // 管理/设置/New mesh disabled
+});
+
+test("shell state · permission: unauthorized banner + disabled management", () => {
+  const out = renderAt("?surface=shell&state=permission&device=desktop");
+  expect(out).toContain("设备未授权");
+  expect(out).toContain("disabled");
+});
+
+test("shell state · busy: mesh-switch spinner", () => {
+  const out = renderAt("?surface=shell&state=busy&device=desktop");
+  expect(out).toContain('aria-label="switching"'); // Spinner on mesh control
+});
+
+test("shell state · boundary: many meshes incl long name + badge overflow 99+", () => {
+  const out = renderAt("?surface=shell&state=boundary&device=desktop");
+  expect(out).toContain("a-very-long-mesh-name-that-should-truncate-gracefully");
+  expect(out).toContain("99+"); // notif badge overflow (count 250, max 99)
+  expect(out).toContain("truncate"); // long-name truncation class
+});
+
+test("shell state · mobile offline: slim topbar offline + banner", () => {
+  const out = renderAt("?surface=shell&state=offline&device=mobile");
+  expect(out).toContain('data-device="mobile"');
+  expect(out).toContain("offline");
+  expect(out).toContain("正在重连");
+});
+
 test("mockup uses v2 semantic utilities and emits no raw-* class", () => {
   expect(desktop).toContain("bg-surface");
   expect(desktop).toContain("text-text-primary");
