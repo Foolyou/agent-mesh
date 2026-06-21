@@ -439,6 +439,48 @@ try {
     if (await page.locator('[data-bnw-approval]').count() === 0) throw new Error("C2 docked approval bar must remain above the composer");
   });
 
+  await step("7.4-A.2a harnesses: probe/reprobe/install-stream/respawn wired (stubbed probe)", async () => {
+    // The harness probe hits the REAL probeHarnesses (host-dependent); intercept at the browser
+    // so the surface paints deterministic rows + recovery state (same approach as harness-ui.e2e).
+    const HROWS = [
+      { id: "claude", label: "Claude", installed: true, version: "1.4.2", toolVersion: "0.141.0", latest: "1.4.2", outdated: false, auth: "ok", installable: "npm", lastProbeAt: 0, runningAgentsUsingOldVersion: [] },
+      { id: "codex", label: "Codex", installed: true, version: "1.2.3", toolVersion: "0.140.0", latest: "1.2.5", outdated: true, auth: "required", installable: "npm", lastProbeAt: 0, runningAgentsUsingOldVersion: ["demo/codex-1"] },
+      { id: "opencode", label: "OpenCode", installed: false, auth: "unknown", installable: "self", installHint: { command: "npm i -g opencode", docsUrl: "https://opencode.example/docs" }, lastProbeAt: 0, runningAgentsUsingOldVersion: [] },
+      { id: "kimi", label: "Kimi", installed: true, auth: "unknown", installable: "self", installHint: { command: "npm i -g @moonshot/kimi", docsUrl: "https://kimi.example/docs" }, lastProbeAt: 0, runningAgentsUsingOldVersion: [] },
+    ];
+    await page.route("**/api/harnesses", (r) => r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(HROWS) }));
+    await page.route("**/api/harnesses/codex/install", (r) => r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ jobId: "job-1", status: "running", harnessId: "codex", pkgSpec: "codex-acp@1.2.5" }) }));
+    await page.route("**/api/harnesses/codex/install/job-1/stream", (r) => r.fulfill({ status: 200, contentType: "application/x-ndjson", body: [JSON.stringify({ step: "fetch", harnessId: "codex", pkgSpec: "codex-acp@1.2.5", stdoutLine: "fetching codex-acp@1.2.5" }), JSON.stringify({ step: "done", harnessId: "codex", pkgSpec: "codex-acp@1.2.5", installedVersion: "1.2.5" })].join("\n") }));
+    await page.route("**/api/harnesses/*/reprobe", (r) => r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true }) }));
+    await page.route("**/api/meshes/demo/agents/codex-1/respawn", (r) => { const b = JSON.parse(r.request().postData() || "{}"); rec(`respawn:demo:codex-1:${b.mode}`); return r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ mode: b.mode, scheduled: b.mode === "after-idle" }) }); });
+
+    await page.goto(`${BASE}/bnw/harnesses`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-harnesses="panel"]', { timeout: 8000 });
+    await page.waitForSelector('[data-harness-row]', { timeout: 8000 });
+    assert(await page.locator('[data-harness-row]').count() === 4, "4 harness rows render");
+    await page.waitForSelector('[aria-label="update codex"]', { timeout: 8000 }); // outdated npm → update CTA
+    await page.waitForSelector('[data-self-installer]', { timeout: 8000 });       // self-install guide (opencode/kimi)
+    await page.waitForSelector('[data-old-agents] [data-old-agent]', { timeout: 8000 }); // old-version agent
+    await sleep(120); await page.screenshot({ path: `${SHOTS}/bnw-harnesses-desktop.png`, fullPage: true });
+
+    // reprobe → POST /reprobe
+    const reprobeResp = page.waitForResponse((r) => r.url().includes("/api/harnesses/codex/reprobe") && r.request().method() === "POST", { timeout: 8000 });
+    await page.locator('[aria-label="reprobe codex"]').click();
+    await reprobeResp;
+
+    // update → install POST + NDJSON stream → live progress card → done → close (#26)
+    const installResp = page.waitForResponse((r) => r.url().includes("/api/harnesses/codex/install") && r.request().method() === "POST", { timeout: 8000 });
+    await page.locator('[aria-label="update codex"]').click();
+    await installResp;
+    await page.waitForSelector('[data-install-progress]', { timeout: 8000 });
+    await page.waitForSelector('[aria-label="close install progress"]', { timeout: 8000 }); // reached done
+    await page.locator('[aria-label="close install progress"]').click();
+
+    // restart old-version agent (after-idle) → respawn reaches the backend (#28)
+    await page.locator('[aria-label="restart demo/codex-1 after idle"]').click();
+    await waitCall("respawn:demo:codex-1:after-idle");
+  });
+
   await step("7.4-A doctor: real fetchDoctor+fetchPsDetail; reap orphan + restart daemon reach backend", async () => {
     await page.goto(`${BASE}/bnw/doctor`, { waitUntil: "domcontentloaded" });
     // wired (not placeholder): the summary only renders once fetchDoctor + fetchPsDetail resolve
@@ -542,6 +584,9 @@ try {
     await page.goto(`${BASE}/bnw/doctor`, { waitUntil: "domcontentloaded" });
     await page.waitForSelector('[data-doctor-summary]', { timeout: 8000 });
     await sleep(120); await page.screenshot({ path: `${SHOTS}/bnw-doctor-mobile.png`, fullPage: true });
+    await page.goto(`${BASE}/bnw/harnesses`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-harness-row]', { timeout: 8000 });
+    await sleep(120); await page.screenshot({ path: `${SHOTS}/bnw-harnesses-mobile.png`, fullPage: true });
   });
 
   if (errors.length) throw new Error(`page errors:\n${errors.join("\n")}`);

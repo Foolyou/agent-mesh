@@ -116,6 +116,14 @@ async function crawl(page: Page, label: string) {
 try {
   const ctx = await authedContext(browser, auth.token, { viewport: { width: 1440, height: 900 } });
   const page = await ctx.newPage();
+  // The harness probe is host-dependent; stub it so /bnw/harnesses paints deterministic rows
+  // (ok / outdated+auth / self-install + old-version agent) for the contrast crawl.
+  await page.route("**/api/harnesses", (r) => r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([
+    { id: "claude", label: "Claude", installed: true, version: "1.4.2", toolVersion: "0.141.0", latest: "1.4.2", outdated: false, auth: "ok", installable: "npm", lastProbeAt: 0, runningAgentsUsingOldVersion: [] },
+    { id: "codex", label: "Codex", installed: true, version: "1.2.3", toolVersion: "0.140.0", latest: "1.2.5", outdated: true, auth: "required", installable: "npm", lastProbeAt: 0, runningAgentsUsingOldVersion: ["demo/codex-1"] },
+    { id: "opencode", label: "OpenCode", installed: false, auth: "unknown", installable: "self", installHint: { command: "npm i -g opencode", docsUrl: "https://opencode.example/docs" }, lastProbeAt: 0, runningAgentsUsingOldVersion: [] },
+    { id: "kimi", label: "Kimi", installed: true, auth: "unknown", installable: "self", installHint: { command: "npm i -g @moonshot/kimi", docsUrl: "https://kimi.example/docs" }, lastProbeAt: 0, runningAgentsUsingOldVersion: [] },
+  ]) }));
   await page.goto(`${BASE}/bnw/`, { waitUntil: "domcontentloaded" }); // establish origin for localStorage
 
   for (const mode of MODES) {
@@ -160,6 +168,10 @@ try {
         await page.goto(`${BASE}/bnw/doctor`, { waitUntil: "domcontentloaded" });
         await page.waitForSelector('[data-recovery] [data-leak]', { timeout: 8000 });
         await sleep(60); await crawl(page, `${combo} · doctor`);
+        // 7.4-A.2a — harnesses (rows + status/auth chips + self-install guide + old-version agents)
+        await page.goto(`${BASE}/bnw/harnesses`, { waitUntil: "domcontentloaded" });
+        await page.waitForSelector('[data-old-agents] [data-old-agent]', { timeout: 8000 });
+        await sleep(60); await crawl(page, `${combo} · harnesses`);
         pass++; console.log(`  ✓ ${combo}`);
       } catch (e: any) {
         fails.push(combo); console.log(`  ✗ ${combo} — ${String(e?.message ?? e).split("\n")[0]}`);
