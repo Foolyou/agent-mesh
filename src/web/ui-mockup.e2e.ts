@@ -241,6 +241,24 @@ try {
     }
   });
 
+  await step("canvas C5: directed edges + recent-traffic pulse + force-directed toolbar + pinned node", async () => {
+    await page.goto(`${BASE}/__ui-mockup?surface=runtime&runtime=canvas&state=populated&device=desktop`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-mockup="frame"][data-runtime="canvas"]', { timeout: 8000 });
+    if (await page.locator('[data-canvas-edges]').count() === 0) throw new Error("SVG edge layer missing");
+    if (await page.locator('[data-canvas-edge]').count() < 3) throw new Error("directed edges missing");
+    if (await page.locator('[data-edge-recent="true"]').count() === 0) throw new Error("recent-traffic edge highlight missing");
+    if (await page.locator('marker#arrow').count() === 0) throw new Error("arrowhead marker missing");
+    for (const lbl of ["force-directed layout", "重新布局"]) {
+      if (await page.locator(`[aria-label="${lbl}"]`).count() === 0) throw new Error(`canvas layout control missing: ${lbl}`);
+    }
+    if (!(await page.locator('[aria-label="force-directed layout"]').isChecked())) throw new Error("force-directed must default ON");
+    if (await page.locator('[data-canvas-pinned="true"]').count() === 0) throw new Error("pinned (dragged) node missing");
+    // no regression: existing per-window controls still present
+    for (const lbl of ["stop codex-1", "wake kimi-cold", "close canvas"]) {
+      if (await page.locator(`[aria-label="${lbl}"]`).count() === 0) throw new Error(`regressed canvas control: ${lbl}`);
+    }
+  });
+
   await step("navigation index skeleton: surfaces + deep links; link → surface", async () => {
     await page.goto(`${BASE}/__ui-mockup?index=1`, { waitUntil: "domcontentloaded" });
     await page.waitForSelector("[data-mockup-index]", { timeout: 8000 });
@@ -440,6 +458,28 @@ try {
     if (await page.locator('[aria-label="meshes"]').count() !== 0) throw new Error("left nav should be collapsed");
     if (await page.locator('[data-nav-expand]').count() !== 1) throw new Error("floating expand button missing after nav collapse");
     await shotFrame(`${SHOTS}/board-list-boundary-collapsed-desktop-dark-slate-signal-teal.png`);
+  });
+  // C4 follow-up: high-resolution element screenshots of ONLY the board filter toolbar
+  // region (not the full frame) so the user can inspect details without compression.
+  await step("screenshot board-filter-toolbar-boundary (default + menu) — high-res element shots", async () => {
+    const hi = await browser.newContext({ viewport: { width: 1440, height: 1000 }, deviceScaleFactor: 3 });
+    const hp = await hi.newPage();
+    hp.on("pageerror", (e) => errors.push(String(e)));
+    // default (menu closed)
+    await hp.goto(`${BASE}/__ui-mockup?surface=board&board=list&state=boundary&device=desktop&mode=dark-slate&accent=signal-teal`, { waitUntil: "domcontentloaded" });
+    await hp.waitForSelector('[data-board-filters]', { timeout: 8000 });
+    await sleep(140);
+    const f1 = `${SHOTS}/board-filter-toolbar-boundary-default.png`;
+    await hp.locator('[data-board-filters]').screenshot({ path: f1 });
+    shots.push(f1);
+    // 筛选▾ menu open (collapsed secondary controls visible)
+    await hp.goto(`${BASE}/__ui-mockup?surface=board&board=list&state=boundary&boardFilters=1&device=desktop&mode=dark-slate&accent=signal-teal`, { waitUntil: "domcontentloaded" });
+    await hp.waitForSelector('[data-board-filter-menu]', { timeout: 8000 });
+    await sleep(140);
+    const f2 = `${SHOTS}/board-filter-toolbar-boundary-menu.png`;
+    await hp.locator('[data-board-filters]').screenshot({ path: f2 });
+    shots.push(f2);
+    await hi.close();
   });
 
   // ── new-mesh (04) builder: assertions + state × device screenshots (loading N/A; offline covered) ──

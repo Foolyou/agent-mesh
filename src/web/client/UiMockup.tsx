@@ -93,6 +93,25 @@ const AGENTS: RuntimeAgent[] = [
 ];
 const FOCUS_AGENT = "codex-1"; // the agent whose transcript the focus state shows
 
+// Directed mail edges between agents (who can mail whom). `recent` = edge has live mail
+// traffic right now → highlighted/pulsing on the topology canvas to show information flow.
+type RuntimeEdge = { from: string; to: string; recent?: boolean };
+const EDGES: RuntimeEdge[] = [
+  { from: "router", to: "codex-1", recent: true },
+  { from: "router", to: "claude-1", recent: true },
+  { from: "router", to: "opencode-1" },
+  { from: "router", to: "kimi-cold" },
+  { from: "codex-1", to: "claude-1" },
+];
+const MANY_EDGES: RuntimeEdge[] = [
+  ...EDGES,
+  { from: "router", to: "claude-2" }, { from: "router", to: "codex-2", recent: true },
+  { from: "router", to: "opencode-2" }, { from: "router", to: "router-2" },
+  { from: "codex-2", to: "reviewer-1", recent: true }, { from: "claude-2", to: "kimi-1" },
+  { from: "claude-3", to: "reviewer-1" }, { from: "codex-3", to: "reviewer-1" },
+  { from: "router-2", to: "claude-3" },
+];
+
 // Queued turns waiting behind the in-flight one (pending-turn queue, audit #13).
 const QUEUED_TURNS = [
   { text: "after the gate, bump the harness versions and re-probe" },
@@ -754,38 +773,111 @@ function RuntimeFullFrame({ state, backHref }: { state: ShellState; backHref: st
 
 // Zoomable topology canvas (audit #16) — standalone desktop overlay frame: draggable /
 // resizable agent windows, per-window stop / wake / actions (⋯), zoom toolbar, Esc close.
-function CanvasWindow({ a, index, disabled }: { a: RuntimeAgent; index: number; disabled: boolean }) {
-  const left = 16 + (index % 3) * 392;
-  const top = 16 + Math.floor(index / 3) * 176;
+// C5: force-directed layout + directed mail edges (arrowheads) + recent-traffic pulse +
+// a pinned (manually-dragged) node.
+const CANVAS_WIN_W = 264; // narrower nodes on the canvas so the graph + edges read clearly
+const CANVAS_WIN_H = 84;
+// Force-directed result for the populated set: router central, members radiating out (a
+// decluttered static layout — no live physics needed in the mockup).
+const CANVAS_LAYOUT: Record<string, { x: number; y: number }> = {
+  router: { x: 560, y: 350 },
+  "codex-1": { x: 140, y: 110 },
+  "opencode-1": { x: 950, y: 110 },
+  "claude-1": { x: 950, y: 560 },
+  "kimi-cold": { x: 140, y: 560 },
+};
+// Boundary: a staggered organic spread (decluttered, overlap-free) for many nodes.
+function canvasPositions(agents: RuntimeAgent[], boundary: boolean) {
+  if (!boundary) return agents.map((a) => ({ a, ...(CANVAS_LAYOUT[a.id] ?? { x: 200, y: 200 }) }));
+  return agents.map((a, i) => {
+    const col = i % 4, row = Math.floor(i / 4);
+    return { a, x: 40 + col * 300 + (row % 2) * 70, y: 30 + row * 168 };
+  });
+}
+const PINNED_AGENT = "codex-1"; // a node the operator dragged → pinned (kept out of force-layout)
+function canvasCenter(p: { x: number; y: number }) { return { cx: p.x + CANVAS_WIN_W / 2, cy: p.y + CANVAS_WIN_H / 2 }; }
+
+function CanvasWindow({ a, x, y, pinned, disabled }: { a: RuntimeAgent; x: number; y: number; pinned: boolean; disabled: boolean }) {
   return (
     <div
       data-canvas-window
-      className="absolute flex w-[372px] flex-col rounded-lg border border-border-strong bg-surface-raised shadow-sm"
-      style={{ left, top }}
+      data-canvas-pinned={pinned ? "true" : undefined}
+      className={`absolute flex flex-col rounded-lg border bg-surface-raised shadow-sm ${pinned ? "border-accent ring-1 ring-accent" : "border-border-strong"}`}
+      style={{ left: x, top: y, width: CANVAS_WIN_W }}
     >
       <div data-canvas-drag className="flex cursor-move items-center gap-1.5 border-b border-border px-2 py-1.5">
         <StatusChip status={a.status} variant="dot" />
         <span className="min-w-0 flex-1 truncate text-sm font-medium text-text-primary">{a.id}</span>
+        {pinned ? <span data-canvas-pin title="已固定（手动拖拽位置，不参与力导向）" aria-label={`${a.id} pinned`} className="text-xs text-accent">📌</span> : null}
         {a.cold
           ? <Button size="sm" variant="secondary" disabled={disabled} aria-label={`wake ${a.id}`}>Wake</Button>
           : <Button size="sm" variant="ghost" iconOnly disabled={disabled} aria-label={`stop ${a.id}`}>■</Button>}
         <Button size="sm" variant="ghost" iconOnly disabled={disabled} aria-label={`${a.id} actions`}>⋯</Button>
       </div>
-      <div className="px-2 py-2 text-xs text-text-muted">{a.cold ? "cold — wake to resume" : `${a.status} · ${a.pending} 待审批`}</div>
+      <div className="px-2 py-1.5 text-xs text-text-muted">{a.cold ? "cold — wake to resume" : `${a.status} · ${a.pending} 待审批`}{pinned ? " · 已固定" : ""}</div>
       <span data-resize-handle aria-hidden="true" className="absolute bottom-0 right-0 cursor-nwse-resize p-1 text-text-muted">⌟</span>
     </div>
   );
 }
+
+// Directed edge layer (SVG) — arrowheads point from→to; recent-mail edges pulse in accent.
+function CanvasEdges({ positions, edges }: { positions: { a: RuntimeAgent; x: number; y: number }[]; edges: RuntimeEdge[] }) {
+  const at = new Map(positions.map((p) => [p.a.id, canvasCenter(p)]));
+  const maxX = Math.max(...positions.map((p) => p.x)) + CANVAS_WIN_W + 60;
+  const maxY = Math.max(...positions.map((p) => p.y)) + CANVAS_WIN_H + 60;
+  return (
+    <svg data-canvas-edges width={maxX} height={maxY} className="pointer-events-none absolute left-0 top-0" aria-hidden="true">
+      <defs>
+        <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" className="fill-text-muted" />
+        </marker>
+        <marker id="arrow-recent" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" className="fill-accent" />
+        </marker>
+      </defs>
+      {edges.map((e, i) => {
+        const s = at.get(e.from), t = at.get(e.to);
+        if (!s || !t) return null;
+        // shorten the segment so the arrowhead lands at the node border, not its center
+        const dx = t.cx - s.cx, dy = t.cy - s.cy; const len = Math.hypot(dx, dy) || 1;
+        const ux = dx / len, uy = dy / len; const pad = 46;
+        const x1 = s.cx + ux * pad, y1 = s.cy + uy * pad, x2 = t.cx - ux * pad, y2 = t.cy - uy * pad;
+        return (
+          <line
+            key={i}
+            data-canvas-edge
+            data-edge-recent={e.recent ? "true" : undefined}
+            x1={x1} y1={y1} x2={x2} y2={y2}
+            className={e.recent ? "stroke-accent animate-pulse" : "stroke-border-strong"}
+            strokeWidth={e.recent ? 2.5 : 1.5}
+            markerEnd={e.recent ? "url(#arrow-recent)" : "url(#arrow)"}
+          />
+        );
+      })}
+    </svg>
+  );
+}
+
 function MeshCanvasFrame({ state, backHref }: { state: ShellState; backHref: string }) {
-  const agents = state === "boundary" ? MANY_AGENTS : AGENTS;
+  const boundary = state === "boundary";
+  const agents = boundary ? MANY_AGENTS : AGENTS;
+  const edges = boundary ? MANY_EDGES : EDGES;
   const disabled = state === "permission" || state === "offline";
+  const positions = canvasPositions(agents, boundary);
+  const recentCount = edges.filter((e) => e.recent).length;
+  const contentW = Math.max(...positions.map((p) => p.x)) + CANVAS_WIN_W + 60;
+  const contentH = Math.max(...positions.map((p) => p.y)) + CANVAS_WIN_H + 60;
   return (
     <div data-mockup="frame" data-device="desktop" data-runtime="canvas" className="flex h-[720px] w-[1280px] max-w-full flex-col overflow-hidden rounded-xl border border-border bg-surface text-text-primary shadow-sm">
       <header className="flex items-center gap-2 border-b border-border bg-surface-raised px-4 py-2.5">
         <Brand /><span className="text-text-muted">·</span>
         <span className="text-sm font-semibold">Topology canvas</span>
-        <span className="text-xs text-text-muted">{agents.length} windows · drag / resize</span>
+        <span className="text-xs text-text-muted">{agents.length} agents · {edges.length} edges · {recentCount} 活跃</span>
         <span className="flex-1" aria-hidden="true" />
+        {/* C5 layout controls: force-directed default-on + re-run layout. */}
+        <label className="inline-flex items-center gap-1.5 text-xs text-text-secondary"><input type="checkbox" defaultChecked disabled={disabled} aria-label="force-directed layout" data-canvas-autolayout className="accent-accent" /> 力导向</label>
+        <Button size="sm" variant="ghost" disabled={disabled} aria-label="重新布局" data-canvas-relayout>重新布局</Button>
+        <span className="mx-1 h-5 w-px bg-border" aria-hidden="true" />
         <Button size="sm" variant="ghost" iconOnly aria-label="zoom out">－</Button>
         <span className="text-xs text-text-muted tabular-nums">100%</span>
         <Button size="sm" variant="ghost" iconOnly aria-label="zoom in">＋</Button>
@@ -794,8 +886,17 @@ function MeshCanvasFrame({ state, backHref }: { state: ShellState; backHref: str
       </header>
       {state === "permission" ? PermBanner : null}
       {state === "offline" ? OfflineBanner : null}
+      {/* edge legend: arrowhead = mail direction; pulsing accent = recent traffic */}
+      <div className="flex items-center gap-3 border-b border-border bg-surface-sunken px-4 py-1 text-xs text-text-muted">
+        <span className="inline-flex items-center gap-1"><span className="text-accent">▶</span> 信息流方向（mail）</span>
+        <span className="inline-flex items-center gap-1"><span className="text-accent">●</span> 高亮 = 近期有 mail 流动</span>
+        <span className="inline-flex items-center gap-1"><span className="text-accent">📌</span> 已固定（手动拖拽）</span>
+      </div>
       <div data-canvas className="relative min-h-0 flex-1 overflow-auto bg-surface-sunken">
-        {agents.map((a, i) => <CanvasWindow key={a.id} a={a} index={i} disabled={disabled} />)}
+        <div className="relative" style={{ width: contentW, height: contentH }}>
+          <CanvasEdges positions={positions} edges={edges} />
+          {positions.map(({ a, x, y }) => <CanvasWindow key={a.id} a={a} x={x} y={y} pinned={a.id === PINNED_AGENT} disabled={disabled} />)}
+        </div>
       </div>
     </div>
   );

@@ -89,3 +89,21 @@ virtualized scroll), `mesh-canvas` (topology), lifecycle API/CLI.
   cold `kimi-cold` node. Mobile: full→focus, canvas→list (desktop-only per matrix).
   Also added a route-guarded navigation index (`?index=1`) skeleton.
 - 2026-06-21 — Phase B user-review C2: ApprovalCard moved OUT of the inline transcript into a fixed composer-adjacent **docked ApprovalBar** (desktop + mobile focus). FIFO — only the oldest approval renders in the bar; the rest show as 「还有 N 个待授权」 (+ right-context approval-queue badge). Sticky/scroll contract: transcript scrolls above; the docked jump-to-latest + approval bar + composer never scroll away; long approval content is capped (max-h-44 + overflow-auto) so it can't push the composer offscreen (shown in boundary). Mobile: bar stays above the composer/keyboard, ordinary input stays available. Shared pattern `ApprovalBar` (see `00-index.md`). Mockup-layer only (UiMockup.tsx).
+- 2026-06-21 — Phase B user-review **C5 (canvas information-flow edges + force-directed
+  layout)** — desktop topology canvas (`MeshCanvasFrame`/`CanvasWindow`/`CanvasEdges` in
+  `UiMockup.tsx`). The canvas now draws **directed mail edges** (`EDGES`/`MANY_EDGES`,
+  `data-canvas-edges` SVG layer, `data-canvas-edge` lines) with **arrowheads** pointing
+  from→to (markers `#arrow` / `#arrow-recent`); edges with **recent mail traffic**
+  (`data-edge-recent`) are highlighted in accent and **pulse** (`animate-pulse`) to show
+  information-flow direction (header shows `N 活跃`; a legend row explains direction /
+  highlight / pinned). **Force-directed layout is default-on**: a decluttered static result
+  (populated = router-central diamond via `CANVAS_LAYOUT`; boundary = staggered organic
+  spread) — no live physics in the mockup. Toolbar gains **力导向** toggle
+  (`data-canvas-autolayout`, default checked) + **重新布局** (`data-canvas-relayout`). A
+  manually-dragged node is **pinned** (`data-canvas-pinned`, 📌 + accent ring + 「已固定」,
+  `PINNED_AGENT`=codex-1) and kept out of the force layout while the rest stay
+  force-directed. All补漏-pass canvas controls preserved (per-window stop/wake/⋯,
+  drag/resize handle, zoom −/+/fit, Esc close) — no regression. Mockup-layer only; nodes
+  narrowed to 264px so the graph + edges read clearly. New/updated screenshots
+  `runtime-canvas-{populated,boundary,permission,offline}-desktop`. No new capability gap
+  found while touching the canvas.

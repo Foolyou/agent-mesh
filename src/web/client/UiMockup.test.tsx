@@ -324,6 +324,47 @@ test("runtime canvas补漏 · zoomable canvas: windows + per-window stop/wake/ac
   expect(out).toContain('aria-label="zoom in"');
 });
 
+// ── C5: canvas information-flow edges + force-directed layout ──────────────────
+test("canvas C5 · directed mail edges with arrowheads; recent traffic highlighted", () => {
+  const out = renderAt("?surface=runtime&runtime=canvas&state=populated&device=desktop");
+  expect(out).toContain("data-canvas-edges"); // SVG edge layer
+  expect(out).toContain("data-canvas-edge"); // an edge line
+  expect(out).toContain('id="arrow"'); // arrowhead marker (direction)
+  expect(out).toContain('id="arrow-recent"'); // recent-edge arrowhead
+  expect(out).toContain('data-edge-recent="true"'); // recent-mail edge highlighted
+  expect(out).toContain("animate-pulse"); // recent edges pulse
+  expect(out).toContain('marker-end="url(#arrow-recent)"'); // recent edge points its arrow
+});
+
+test("canvas C5 · force-directed toolbar (default-on) + 重新布局; existing controls intact", () => {
+  const out = renderAt("?surface=runtime&runtime=canvas&state=populated&device=desktop");
+  expect(out).toContain("data-canvas-autolayout"); // 力导向 toggle
+  expect(out).toContain('aria-label="force-directed layout"');
+  expect(out).toContain('checked=""'); // default-on
+  expect(out).toContain("data-canvas-relayout"); // 重新布局
+  expect(out).toContain('aria-label="重新布局"');
+  // do not regress existing canvas controls
+  for (const lbl of ["stop codex-1", "wake kimi-cold", "codex-1 actions", "close canvas", "zoom in"]) {
+    expect(out).toContain(`aria-label="${lbl}"`);
+  }
+  expect(out).toContain("data-resize-handle");
+});
+
+test("canvas C5 · a dragged node is pinned (kept out of force-layout)", () => {
+  const out = renderAt("?surface=runtime&runtime=canvas&state=populated&device=desktop");
+  expect(out).toContain('data-canvas-pinned="true"'); // pinned node state
+  expect(out).toContain("data-canvas-pin"); // 📌 marker
+  expect(out).toContain('aria-label="codex-1 pinned"'); // the pinned (dragged) agent
+});
+
+test("canvas C5 · boundary scales edges + nodes (information flow stays legible)", () => {
+  const out = renderAt("?surface=runtime&runtime=canvas&state=boundary&device=desktop");
+  expect(out).toContain("data-canvas-edges");
+  expect(out).toContain('data-edge-recent="true"'); // recent traffic still highlighted at scale
+  // more nodes than the populated set
+  expect(out).toContain('aria-label="reviewer-1 actions"'); // a boundary-only agent window
+});
+
 test("runtime补漏 mobile · full degrades to focus, canvas to list; controls present", () => {
   expect(renderAt("?surface=runtime&runtime=full&state=populated&device=mobile")).toContain('data-runtime="focus"');
   expect(renderAt("?surface=runtime&runtime=canvas&state=populated&device=mobile")).toContain('data-runtime="overview"');
