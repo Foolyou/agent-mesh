@@ -149,6 +149,44 @@ try {
     if (await page.locator('[aria-label="Message composer"]').count() === 0) throw new Error("composer missing");
   });
 
+  // ── board view (C) ──────────────────────────────────────────────────────────
+  await step("board C desktop list: filter/bulk/epic groups/rich rows; row → detail interaction", async () => {
+    await page.goto(`${BASE}/__ui-mockup?device=desktop&surface=board&board=list`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-board="list"]', { timeout: 8000 });
+    if (await page.locator('[aria-label="search issues"]').count() === 0) throw new Error("filter bar missing");
+    if (await page.locator('[aria-label="select all"]').count() === 0) throw new Error("bulk toolbar missing");
+    if (await page.getByText("Epic: Onboarding").count() === 0) throw new Error("epic group header missing");
+    if (await page.getByText("Dispatch ▾").count() === 0) throw new Error("router dispatch entry missing");
+    await page.getByRole("link", { name: "Add device-auth page" }).click();
+    await page.waitForSelector('[data-board="detail"]', { timeout: 8000 });
+  });
+
+  await step("board C desktop detail: lifecycle path + timeline + deps + comment", async () => {
+    await page.goto(`${BASE}/__ui-mockup?device=desktop&surface=board&board=detail`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-board="detail"]', { timeout: 8000 });
+    if (await page.getByText("activity timeline").count() === 0) throw new Error("activity timeline missing");
+    if (await page.getByText("blocked-by").count() === 0) throw new Error("deps missing");
+    if (await page.locator('[aria-label="Message composer"]').count() === 0) throw new Error("comment box missing");
+  });
+
+  await step("board C desktop kanban: 5 lifecycle columns + cards", async () => {
+    await page.goto(`${BASE}/__ui-mockup?device=desktop&surface=board&board=kanban`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-board="kanban"]', { timeout: 8000 });
+    for (const col of ["todo", "in_progress", "in_review", "done", "cancelled"]) {
+      if (await page.getByText(col, { exact: true }).count() === 0) throw new Error(`kanban column ${col} missing`);
+    }
+  });
+
+  await step("board C mobile list + detail (kanban desktop-only)", async () => {
+    await page.goto(`${BASE}/__ui-mockup?device=mobile&surface=board&board=list`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-device="mobile"] [data-board="list"]', { timeout: 8000 });
+    await page.goto(`${BASE}/__ui-mockup?device=mobile&surface=board&board=detail`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-device="mobile"] [data-board="detail"]', { timeout: 8000 });
+    // kanban on mobile must degrade to the list
+    await page.goto(`${BASE}/__ui-mockup?device=mobile&surface=board&board=kanban`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-device="mobile"] [data-board="list"]', { timeout: 8000 });
+  });
+
   await step("screenshot desktop · expanded nav (dark-slate × signal-teal)", async () => {
     await page.goto(`${BASE}/__ui-mockup?device=desktop&view=runtime&mode=dark-slate&accent=signal-teal`, { waitUntil: "domcontentloaded" });
     await page.waitForSelector('[data-topbar-mesh="label"]', { timeout: 8000 });
@@ -183,6 +221,23 @@ try {
     await step(`screenshot ${file}`, async () => {
       await page.goto(`${BASE}/__ui-mockup?${q}&mode=dark-slate&accent=signal-teal`, { waitUntil: "domcontentloaded" });
       await page.waitForSelector('[data-mockup="frame"] [data-runtime]', { timeout: 8000 });
+      await sleep(150);
+      await shotFrame(`${SHOTS}/${file}`);
+    });
+  }
+
+  // ── board (C) screenshots (default Dark·Slate × Signal Teal) ────────────────────
+  const BOARD_SHOTS: [string, string][] = [
+    ["device=desktop&surface=board&board=list", "board-desktop-list-dark-slate-signal-teal.png"],
+    ["device=desktop&surface=board&board=detail", "board-desktop-detail-dark-slate-signal-teal.png"],
+    ["device=desktop&surface=board&board=kanban", "board-desktop-kanban-dark-slate-signal-teal.png"],
+    ["device=mobile&surface=board&board=list", "board-mobile-list-dark-slate-signal-teal.png"],
+    ["device=mobile&surface=board&board=detail", "board-mobile-detail-dark-slate-signal-teal.png"],
+  ];
+  for (const [q, file] of BOARD_SHOTS) {
+    await step(`screenshot ${file}`, async () => {
+      await page.goto(`${BASE}/__ui-mockup?${q}&mode=dark-slate&accent=signal-teal`, { waitUntil: "domcontentloaded" });
+      await page.waitForSelector('[data-mockup="frame"] [data-board]', { timeout: 8000 });
       await sleep(150);
       await shotFrame(`${SHOTS}/${file}`);
     });

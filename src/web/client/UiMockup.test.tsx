@@ -91,6 +91,56 @@ test("runtime A · mobile focus: approval pinned above transcript + composer", (
   expect(out.indexOf("Allow")).toBeLessThan(out.indexOf("Transcript"));
 });
 
+test("board C · desktop list: filter/sort bar, bulk toolbar, epic groups, rich issue rows", () => {
+  const out = renderAt("?device=desktop&surface=board&board=list");
+  expect(out).toContain('data-board="list"');
+  expect(out).toContain('aria-label="search issues"'); // query/filter bar
+  expect(out).toContain('aria-label="sort"');
+  expect(out).toContain('aria-label="select all"'); // bulk toolbar
+  expect(out).toContain("Epic: Onboarding"); // epic group header (aggregation)
+  expect(out).toContain("#12");
+  expect(out).toContain("Add device-auth page");
+  expect(out).toContain("⛔"); // blocked indicator
+  expect(out).toContain('role="progressbar"'); // subtask progress
+  expect(out).toContain("Dispatch ▾"); // router dispatch entry
+  expect(out).toContain("open · "); // open/closed counts
+});
+
+test("board C · desktop detail: meta + lifecycle path + subtasks + deps + timeline + comment", () => {
+  const out = renderAt("?device=desktop&surface=board&board=detail");
+  expect(out).toContain('data-board="detail"');
+  expect(out).toContain("#12");
+  expect(out).toContain("epic: Onboarding");
+  expect(out).toContain("in_progress"); // lifecycle auto-flow path strip
+  expect(out).toContain("activity timeline");
+  expect(out).toContain("review_requested → in_review"); // lifecycle history
+  expect(out).toContain("blocked-by"); // deps
+  expect(out).toContain('aria-label="Message composer"'); // comment box
+});
+
+test("board C · desktop kanban: lifecycle columns + condensed cards", () => {
+  const out = renderAt("?device=desktop&surface=board&board=kanban");
+  expect(out).toContain('data-board="kanban"');
+  for (const col of ["todo", "in_progress", "in_review", "done", "cancelled"]) {
+    expect(out).toContain(col);
+  }
+  expect(out).toContain("#12"); // a card
+});
+
+test("board C · mobile list + detail (kanban is desktop-only)", () => {
+  const list = renderAt("?device=mobile&surface=board&board=list");
+  expect(list).toContain('data-device="mobile"');
+  expect(list).toContain('data-board="list"');
+  expect(list).toContain("#12");
+  expect(list).toContain('aria-label="search issues"');
+  const detail = renderAt("?device=mobile&surface=board&board=detail");
+  expect(detail).toContain('data-board="detail"');
+  expect(detail).toContain("Activity");
+  expect(detail).toContain('aria-label="Message composer"');
+  // kanban on mobile degrades to the list (desktop-only)
+  expect(renderAt("?device=mobile&surface=board&board=kanban")).toContain('data-board="list"');
+});
+
 test("mockup uses v2 semantic utilities and emits no raw-* class", () => {
   expect(desktop).toContain("bg-surface");
   expect(desktop).toContain("text-text-primary");
