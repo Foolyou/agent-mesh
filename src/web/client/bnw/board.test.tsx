@@ -67,13 +67,44 @@ test("board kanban: status columns + cards", () => {
   expect(out).toContain("#12");
 });
 
-test("board detail: meta + subtasks + lifecycle + comments + deferred note", () => {
+test("board detail: meta + subtasks + lifecycle + comments + 7.2-B real mutation controls", () => {
   const out = renderToStaticMarkup(<BnwBoard store={STUB} state={state()} mesh="demo" route={r("list", {}, 12)} />);
   expect(out).toContain("data-bnw-board-detail");
   expect(out).toContain("Add device-auth page");
   expect(out).toContain("gate"); // subtask
   expect(out).toContain("dispatched"); // lifecycle + comment
-  expect(out).toContain("接线于 7.2-B"); // mutations deferred
+  expect(out).toContain('aria-label="task status"');     // set_task_status
+  expect(out).toContain('aria-label="task priority"');   // set_task_priority
+  expect(out).toContain('aria-label="task assignee"');   // assign_task
+  expect(out).toContain('aria-label="dispatch task"');   // dispatch_task
+  expect(out).toContain('aria-label="comment input"');   // add_comment
+  expect(out).toContain('aria-label="close done"');      // set_task_status done
+  expect(out.includes("接线于 7.2-B")).toBe(false);
+});
+
+test("board detail: terminal issue shows reopen (record_lifecycle_event)", () => {
+  const out = renderToStaticMarkup(<BnwBoard store={STUB} state={state()} mesh="demo" route={r("list", {}, 5)} />); // #5 done
+  expect(out).toContain('aria-label="reopen issue"');
+  expect(out.includes('aria-label="close done"')).toBe(false);
+});
+
+test("board 7.2-B: create row + manage-labels + fullscreen affordances in the toolbar", () => {
+  const out = renderToStaticMarkup(<BnwBoard store={STUB} state={state()} mesh="demo" route={r("list")} />);
+  expect(out).toContain('aria-label="manage labels"');
+  expect(out).toContain('aria-label="new issue"');
+  expect(out).toContain('aria-label="fullscreen"');
+});
+
+test("board 7.2-B: kanban cards draggable + columns are drop targets (→ set_task_status)", () => {
+  const out = renderToStaticMarkup(<BnwBoard store={STUB} state={state()} mesh="demo" route={r("kanban")} />);
+  expect(out).toContain("data-bnw-card");
+  expect(out).toContain('draggable="true"');
+  expect(out).toContain('data-bnw-kanban-col="in_review"');
+});
+
+test("board 7.2-B: row links preserve the active filter query (GH-style context)", () => {
+  const out = renderToStaticMarkup(<BnwBoard store={STUB} state={state()} mesh="demo" route={r("list", { status: "open", label: "ui" })} />);
+  expect(out).toMatch(/href="\/bnw\/mesh\/demo\/board\/issue\/\d+\?[^"]*status=open[^"]*label=ui/);
 });
 
 test("board detail: unknown issue → not-found", () => {
