@@ -153,7 +153,7 @@ function CreateRow({ apply }: { apply: Apply }) {
   return (
     <div data-bnw-board-create className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-surface-sunken p-2">
       <Input aria-label="new task" placeholder="new task…" value={task} className="w-48" onChange={(e) => setTask(e.target.value)} />
-      <Button size="sm" variant="secondary" busy={busy} disabled={!task.trim()} aria-label="create task" onClick={async () => { await run(apply({ type: "create_task", title: task.trim() })); setTask(""); }}>+ task</Button>
+      <Button size="sm" variant="primary" busy={busy} disabled={!task.trim()} aria-label="create task" onClick={async () => { await run(apply({ type: "create_task", title: task.trim() })); setTask(""); }}>+ task</Button>
       <span className="mx-1 h-5 w-px bg-border" aria-hidden="true" />
       <Input aria-label="new epic" placeholder="new epic…" value={epic} className="w-40" onChange={(e) => setEpic(e.target.value)} />
       <Button size="sm" variant="secondary" busy={busy} disabled={!epic.trim()} aria-label="create epic" onClick={async () => { await run(apply({ type: "create_epic", title: epic.trim() })); setEpic(""); }}>+ epic</Button>
@@ -332,7 +332,7 @@ function DetailView({ mesh, board, issue, view, filters, apply, agents }: { mesh
         </div>
       </div>
       {/* comment composer (real add_comment) */}
-      <Composer ariaLabel="comment composer" actions={<Button size="sm" variant="secondary" busy={busy} disabled={!comment.trim()} aria-label="add comment" onClick={async () => { await run(apply({ type: "add_comment", target: { kind: "task", id: task.id }, expectedRevision: rev, text: comment.trim() })); setComment(""); }}>评论</Button>}>
+      <Composer ariaLabel="comment composer" actions={<Button size="sm" variant="primary" busy={busy} disabled={!comment.trim()} aria-label="add comment" onClick={async () => { await run(apply({ type: "add_comment", target: { kind: "task", id: task.id }, expectedRevision: rev, text: comment.trim() })); setComment(""); }}>评论</Button>}>
         <Textarea aria-label="comment input" rows={2} value={comment} placeholder="写条评论…" onChange={(e) => setComment(e.target.value)} />
       </Composer>
       {/* close / reopen — the sanctioned terminal transitions */}

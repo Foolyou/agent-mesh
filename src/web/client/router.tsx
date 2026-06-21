@@ -20,7 +20,7 @@ export type BnwRoute =
   | { k: "home" }
   | { k: "runtime"; mesh: string; agent?: string; canvas?: boolean; full?: boolean }
   | { k: "board"; mesh: string; issue?: number; view: BoardView; filters: BoardFilters }
-  | { k: "newMesh"; editOf?: string }
+  | { k: "newMesh"; editOf?: string; nmEditor?: "charter" | "instructions" }
   | { k: "assistant"; full?: boolean }
   | { k: "harnesses" }
   | { k: "channels" }
@@ -65,12 +65,13 @@ export function parseBnwRoute(pathname: string, search = ""): BnwRoute {
   // mesh-scoped surfaces: /bnw/mesh/...
   if (segs[0] === "mesh") {
     // /bnw/mesh/new
-    if (segs.length === 2 && segs[1] === "new") return { k: "newMesh" };
+    const nmEditor = q.get("nmEditor") === "charter" ? "charter" as const : q.get("nmEditor") === "instructions" ? "instructions" as const : undefined;
+    if (segs.length === 2 && segs[1] === "new") return { k: "newMesh", nmEditor };
     const mesh = segs[1];
     if (mesh && mesh !== "new") {
       if (segs.length === 2) return { k: "runtime", mesh }; // overview
       // /bnw/mesh/<id>/edit
-      if (segs.length === 3 && segs[2] === "edit") return { k: "newMesh", editOf: mesh };
+      if (segs.length === 3 && segs[2] === "edit") return { k: "newMesh", editOf: mesh, nmEditor };
       // /bnw/mesh/<id>/canvas
       if (segs.length === 3 && segs[2] === "canvas") return { k: "runtime", mesh, canvas: true };
       // /bnw/mesh/<id>/board[/issue/<n>]  (+ C4 filters in the query)
@@ -122,7 +123,7 @@ export function bnwHref(r: BnwRoute): string {
       const qs = q.toString();
       return qs ? `${p}?${qs}` : p;
     }
-    case "newMesh": return r.editOf ? `${BNW_PREFIX}/mesh/${enc(r.editOf)}/edit` : `${BNW_PREFIX}/mesh/new`;
+    case "newMesh": { const p = r.editOf ? `${BNW_PREFIX}/mesh/${enc(r.editOf)}/edit` : `${BNW_PREFIX}/mesh/new`; return r.nmEditor ? `${p}?nmEditor=${r.nmEditor}` : p; }
     case "assistant": return r.full ? `${BNW_PREFIX}/assistant?full=1` : `${BNW_PREFIX}/assistant`;
     case "harnesses": return `${BNW_PREFIX}/harnesses`;
     case "channels": return `${BNW_PREFIX}/channels`;

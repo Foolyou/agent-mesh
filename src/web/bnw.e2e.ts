@@ -76,9 +76,12 @@ function fakeManager() {
       rec(`boardCommand:${command.type}:board=${expectedBoardRevision}:rev=${command.expectedRevision ?? "-"}`);
       return { ok: true, state: BOARD_DOC, change: {} };
     },
-    async defineMesh() {}, async deleteMesh() {}, async loadDefinitions() {}, async stopAll() {},
+    async defineMesh(config: { name: string }) { rec(`defineMesh:${config.name}`); },
+    async deleteMesh() {}, async loadDefinitions() {}, async stopAll() {},
   };
 }
+// Assistant stub (WebGateway AssistantLike) so promptAssistant/interrupt reach a recorder.
+const asstStub = { on() { return () => {}; }, async prompt(text: string) { rec(`assistantPrompt:${text}`); }, cancel() { rec("assistantCancel"); } };
 
 function assert(cond: unknown, msg: string) { if (!cond) throw new Error(`BNW E2E FAIL: ${msg}`); }
 // Poll the in-process call log until the gateway forwards the expected mutation (or time out).
@@ -118,7 +121,7 @@ const SEED_CANVAS = {
 };
 
 const auth = await provisionE2eAuth();
-const gw = new WebGateway(fakeManager() as any, undefined, { root: auth.authRoot });
+const gw = new WebGateway(fakeManager() as any, asstStub as any, { root: auth.authRoot });
 const handle = startWebServer({ gateway: gw, port: 0, dev: false }); // no HMR (prod-like serving)
 const BASE = handle.url;
 const browser = await launchChromium();
@@ -381,6 +384,34 @@ try {
     if (!(backUrl.searchParams.get("status") === "open" && backUrl.searchParams.get("label") === "ui")) throw new Error(`back link dropped the filter query: ${page.url()}`);
   });
 
+  await step("7.3 new-mesh: real defineMesh + focus-trap editor + add-agent; assistant promptAssistant", async () => {
+    // new-mesh create → real defineMesh
+    await page.goto(`${BASE}/bnw/mesh/new`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-bnw-newmesh]', { timeout: 8000 });
+    await page.locator('[aria-label="mesh name"]').fill("e2e-mesh");
+    await page.locator('[aria-label="agent 1 id"]').fill("router");
+    await page.locator('[aria-label="agent 1 project"]').fill("~/projects/app");
+    // #2 expanded editor (focus-trap dialog)
+    await page.locator('[aria-label="expand agent 1 instructions"]').click();
+    await page.waitForSelector('[data-bnw-editor][role="dialog"]', { timeout: 8000 });
+    await page.locator('[aria-label="close editor"]').click();
+    // C3 add-agent (row appended)
+    await page.locator('[aria-label="add agent"]').click();
+    await page.waitForSelector('[aria-label="agent 2 id"]', { timeout: 8000 });
+    await page.locator('[aria-label="agent 2 id"]').fill("codex-1");
+    await page.locator('[aria-label="agent 2 project"]').fill("~/projects/app");
+    await page.locator('[data-bnw-newmesh-actionbar] [aria-label="save mesh"]').click();
+    await waitCall("defineMesh:e2e-mesh");
+    // assistant → real promptAssistant + fullscreen
+    await page.goto(`${BASE}/bnw/assistant`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-bnw-assistant="panel"]', { timeout: 8000 });
+    await page.locator('[aria-label="assistant input"]').fill("build an app mesh");
+    await page.getByRole("button", { name: "Send" }).click();
+    await waitCall("assistantPrompt:build an app mesh");
+    await page.goto(`${BASE}/bnw/assistant?full=1`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-bnw-assistant="full"]', { timeout: 8000 });
+  });
+
   // ── user-review screenshots (<=1500 wide, in artifacts) ──
   await step("7.1 focus-layout correction: single `<agent> · activity` context, queue chip, no stub", async () => {
     // overview must NOT render the old generic context stub
@@ -421,6 +452,12 @@ try {
     await page.goto(`${BASE}/bnw/mesh/demo/board`, { waitUntil: "domcontentloaded" });
     await page.waitForSelector('[data-bnw-board-list]', { timeout: 8000 });
     await sleep(120); await page.screenshot({ path: `${SHOTS}/bnw-board-list-desktop.png`, fullPage: true });
+    // restored primary CTA, enabled (accent): open create row (+ 新建) and fill it so "+ task" lights up
+    await page.locator('[aria-label="new issue"]').click();
+    await page.waitForSelector('[data-bnw-board-create]', { timeout: 8000 });
+    await page.locator('[aria-label="new task"]').fill("draft the device-auth enrollment page");
+    await sleep(80); await page.screenshot({ path: `${SHOTS}/bnw-board-list-cta-enabled-desktop.png`, fullPage: true });
+    await page.locator('[aria-label="new issue"]').click(); // close create row
     await page.locator('[aria-label="manage labels"]').click();
     await page.waitForSelector('[data-bnw-board-labels]', { timeout: 8000 });
     await sleep(120); await page.screenshot({ path: `${SHOTS}/bnw-board-labels-desktop.png`, fullPage: true });
@@ -430,7 +467,31 @@ try {
     await page.goto(`${BASE}/bnw/mesh/demo/board/issue/12`, { waitUntil: "domcontentloaded" });
     await page.waitForSelector('[data-bnw-board-detail]', { timeout: 8000 });
     await sleep(120); await page.screenshot({ path: `${SHOTS}/bnw-board-detail-desktop.png`, fullPage: true });
-    // mobile overview + mobile board list
+    // restored primary CTA, enabled (accent): type a comment so "评论" lights up
+    await page.locator('[aria-label="comment input"]').fill("looks good — merging once CI is green");
+    await sleep(80); await page.screenshot({ path: `${SHOTS}/bnw-board-detail-cta-enabled-desktop.png`, fullPage: true });
+    // 7.3 new-mesh (desktop) + expanded editor + assistant (desktop) + assistant fullscreen
+    await page.goto(`${BASE}/bnw/mesh/new`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-bnw-newmesh]', { timeout: 8000 });
+    await page.locator('[aria-label="mesh name"]').fill("app");
+    await page.locator('[aria-label="agent 1 id"]').fill("router");
+    await sleep(120); await page.screenshot({ path: `${SHOTS}/bnw-newmesh-desktop.png`, fullPage: true });
+    // restored primary CTA, enabled (accent): a valid project makes Save/Create accent
+    await page.locator('[aria-label="agent 1 project"]').fill("/repo/app");
+    await sleep(80); await page.screenshot({ path: `${SHOTS}/bnw-newmesh-cta-enabled-desktop.png`, fullPage: true });
+    await page.locator('[aria-label="expand charter"]').click();
+    await page.waitForSelector('[data-bnw-editor]', { timeout: 8000 });
+    await sleep(120); await page.screenshot({ path: `${SHOTS}/bnw-newmesh-editor-desktop.png`, fullPage: true });
+    await page.goto(`${BASE}/bnw/assistant`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-bnw-assistant="panel"]', { timeout: 8000 });
+    await sleep(120); await page.screenshot({ path: `${SHOTS}/bnw-assistant-desktop.png`, fullPage: true });
+    // restored primary CTA, enabled (accent): typing a message makes Send accent
+    await page.locator('[aria-label="assistant input"]').fill("build a router(claude) + codex member app mesh");
+    await sleep(80); await page.screenshot({ path: `${SHOTS}/bnw-assistant-cta-enabled-desktop.png`, fullPage: true });
+    await page.goto(`${BASE}/bnw/assistant?full=1`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-bnw-assistant="full"]', { timeout: 8000 });
+    await sleep(120); await page.screenshot({ path: `${SHOTS}/bnw-assistant-fullscreen-desktop.png`, fullPage: true });
+    // mobile overview + mobile board list + mobile new-mesh + mobile assistant
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(`${BASE}/bnw/mesh/demo`, { waitUntil: "domcontentloaded" });
     await page.waitForSelector('[data-bnw-surface="runtime"]', { timeout: 8000 });
@@ -438,6 +499,12 @@ try {
     await page.goto(`${BASE}/bnw/mesh/demo/board`, { waitUntil: "domcontentloaded" });
     await page.waitForSelector('[data-bnw-board-list]', { timeout: 8000 });
     await sleep(120); await page.screenshot({ path: `${SHOTS}/bnw-board-list-mobile.png`, fullPage: true });
+    await page.goto(`${BASE}/bnw/mesh/new`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-bnw-newmesh]', { timeout: 8000 });
+    await sleep(120); await page.screenshot({ path: `${SHOTS}/bnw-newmesh-mobile.png`, fullPage: true });
+    await page.goto(`${BASE}/bnw/assistant`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-bnw-assistant="panel"]', { timeout: 8000 });
+    await sleep(120); await page.screenshot({ path: `${SHOTS}/bnw-assistant-mobile.png`, fullPage: true });
   });
 
   if (errors.length) throw new Error(`page errors:\n${errors.join("\n")}`);

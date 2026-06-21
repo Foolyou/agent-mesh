@@ -6,10 +6,15 @@ import { Spinner } from "./Feedback";
 export type ButtonVariant = "primary" | "secondary" | "danger" | "ghost" | "link";
 export type ButtonSize = "sm" | "md";
 
+// Filled variants (primary/danger) must drop their accent/danger fill when disabled:
+// an accent fill under dimmed text-disabled fails the 3:1 DISABLED_FLOOR. The disabled:*
+// utilities carry the :disabled pseudo-class so they win over the plain bg-* by specificity,
+// landing on the same neutral surface-raised treatment secondary's disabled already passes.
+const DISABLED_FILL = "disabled:bg-surface-raised disabled:border disabled:border-border-strong";
 const VARIANT: Record<ButtonVariant, string> = {
-  primary: "bg-accent text-on-accent hover:bg-accent-hover active:bg-accent-active",
+  primary: `bg-accent text-on-accent hover:bg-accent-hover active:bg-accent-active ${DISABLED_FILL}`,
   secondary: "bg-surface-raised text-text-primary border border-border-strong hover:bg-hover",
-  danger: "bg-danger text-on-danger",
+  danger: `bg-danger text-on-danger ${DISABLED_FILL}`,
   ghost: "bg-transparent text-text-secondary hover:bg-hover",
   link: "bg-transparent text-link underline-offset-2 hover:underline",
 };

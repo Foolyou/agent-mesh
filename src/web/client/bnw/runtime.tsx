@@ -111,7 +111,7 @@ export function RuntimeOverview({ store, state, mesh }: { store: Store; state: G
 // #14: thought / tool-call / mail / attachment are collapsible (expand toggles).
 const clip = (s: string, n = 140) => (s.length > n ? s.slice(0, n) + "…" : s);
 
-function TranscriptItemView({ it }: { it: TranscriptItem }) {
+export function TranscriptItemView({ it }: { it: TranscriptItem }) {
   const [open, setOpen] = useState(false);
   const Toggle = ({ label }: { label: string }) => (
     <button type="button" data-bnw-expand aria-expanded={open} onClick={() => setOpen((v) => !v)}
