@@ -127,6 +127,8 @@ try {
   // Feishu channel is absent in the fake gateway → stub status so /bnw/channels paints a running
   // channel with a binding (auth-admin sections are static placeholders) for the contrast crawl.
   await page.route("**/api/channels/feishu/status", (r) => r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ state: "running", configPath: "channels/feishu.json", configured: true, enabled: true, appId: "cli_demo", domain: "feishu", bindings: [{ mesh: "demo", chatId: "oc_demo123", name: "demo 群", source: "auto", requireMention: true }], updatedAt: "" }) }));
+  // file-viewer: stub a markdown artifact so /bnw/.../file/report.md paints rendered content.
+  await page.route("**/api/agents/router/files/report.md", (r) => r.fulfill({ status: 200, contentType: "text/markdown", body: "# Gate summary\n\nThe device-auth gate is ready for review.\n" }));
   await page.goto(`${BASE}/bnw/`, { waitUntil: "domcontentloaded" }); // establish origin for localStorage
 
   for (const mode of MODES) {
@@ -179,6 +181,10 @@ try {
         await page.goto(`${BASE}/bnw/channels`, { waitUntil: "domcontentloaded" });
         await page.waitForSelector('[data-bindings] [data-binding]', { timeout: 8000 });
         await sleep(60); await crawl(page, `${combo} · channels`);
+        // 7.4-A.2b-ii — file/artifact viewer (rendered markdown + header/back)
+        await page.goto(`${BASE}/bnw/mesh/demo/agent/router/file/report.md`, { waitUntil: "domcontentloaded" });
+        await page.waitForSelector('[data-artifact-kind="markdown"]', { timeout: 8000 });
+        await sleep(60); await crawl(page, `${combo} · file-viewer`);
         pass++; console.log(`  ✓ ${combo}`);
       } catch (e: any) {
         fails.push(combo); console.log(`  ✗ ${combo} — ${String(e?.message ?? e).split("\n")[0]}`);

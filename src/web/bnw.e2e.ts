@@ -251,9 +251,41 @@ try {
     assert(new URL(page.url()).pathname === "/bnw/mesh/demo/board", `URL updated (got ${page.url()})`);
   });
 
-  await step("file-viewer deep link with a dotted path resolves (not 404)", async () => {
-    await page.goto(`${BASE}/bnw/mesh/demo/agent/router/artifact/topology.png`, { waitUntil: "domcontentloaded" });
+  await step("7.4-A.2b-ii file-viewer: markdown/code/image + lightbox + back + 404 (Bearer fetch)", async () => {
+    // Stub the gated agent-file / artifact fetches so the viewer renders deterministic content.
+    const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", "base64");
+    await page.route("**/api/agents/router/files/report.md", (r) => r.fulfill({ status: 200, contentType: "text/markdown", body: "# Gate summary\n\nThe device-auth gate is ready.\n" }));
+    await page.route("**/api/agents/router/files/server.ts", (r) => r.fulfill({ status: 200, contentType: "text/plain", body: "export const answer = 42;\n" }));
+    await page.route("**/api/agents/router/files/missing.md", (r) => r.fulfill({ status: 404, contentType: "application/json", body: JSON.stringify({ error: { message: "agent file not found" } }) }));
+    await page.route("**/api/meshes/demo/agents/router/artifacts/topology.png", (r) => r.fulfill({ status: 200, contentType: "image/png", body: PNG }));
+
+    // markdown
+    await page.goto(`${BASE}/bnw/mesh/demo/agent/router/file/report.md`, { waitUntil: "domcontentloaded" });
     await page.waitForSelector('[data-bnw-surface="file"]', { timeout: 8000 });
+    await page.waitForSelector('[data-artifact-kind="markdown"]', { timeout: 8000 });
+    if (await page.getByText("Gate summary").count() === 0) throw new Error("markdown body not rendered");
+    await page.waitForSelector('[data-artifact-back]', { timeout: 8000 });
+    await sleep(120); await page.screenshot({ path: `${SHOTS}/bnw-file-viewer-desktop.png`, fullPage: true });
+
+    // code (plain mono pre per mockup 11)
+    await page.goto(`${BASE}/bnw/mesh/demo/agent/router/file/server.ts`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-artifact-kind="code"]', { timeout: 8000 });
+    if (await page.getByText("export const answer = 42;").count() === 0) throw new Error("code body not rendered");
+
+    // image → lightbox via ?lb=1 → close
+    await page.goto(`${BASE}/bnw/mesh/demo/agent/router/artifact/topology.png`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-artifact-image]', { timeout: 8000 });
+    await page.locator('[data-artifact-image]').click();
+    await page.waitForSelector('[data-artifact-lightbox]', { timeout: 8000 });
+    assert(new URL(page.url()).search.includes("lb=1"), "lightbox is URL-addressable (?lb=1)");
+    await sleep(120); await page.screenshot({ path: `${SHOTS}/bnw-file-viewer-lightbox-desktop.png`, fullPage: true });
+    await page.locator('[aria-label="close lightbox"]').click();
+    await page.waitForFunction(() => !document.querySelector('[data-artifact-lightbox]'), { timeout: 8000 });
+
+    // 404 → not found + back affordance
+    await page.goto(`${BASE}/bnw/mesh/demo/agent/router/file/missing.md`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-artifact="viewer"]', { timeout: 8000 });
+    if (await page.getByText("File not found").count() === 0) throw new Error("404 state not rendered");
   });
 
   await step("7.1-C canvas: real edges + recent highlight + toolbar; add-edge/add-agent reach gateway", async () => {
@@ -628,6 +660,9 @@ try {
     await page.goto(`${BASE}/bnw/channels`, { waitUntil: "domcontentloaded" });
     await page.waitForSelector('[data-channel-status]', { timeout: 8000 });
     await sleep(120); await page.screenshot({ path: `${SHOTS}/bnw-channels-mobile.png`, fullPage: true });
+    await page.goto(`${BASE}/bnw/mesh/demo/agent/router/file/report.md`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-artifact-kind="markdown"]', { timeout: 8000 });
+    await sleep(120); await page.screenshot({ path: `${SHOTS}/bnw-file-viewer-mobile.png`, fullPage: true });
   });
 
   if (errors.length) throw new Error(`page errors:\n${errors.join("\n")}`);

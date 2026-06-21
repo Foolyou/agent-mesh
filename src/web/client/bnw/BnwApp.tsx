@@ -19,6 +19,7 @@ import { BnwAssistant } from "./assistant";
 import { BnwDoctor } from "./doctor";
 import { BnwHarnesses } from "./harnesses";
 import { BnwChannels } from "./channels";
+import { BnwFileViewer } from "./file-viewer";
 
 // Map the gateway MeshStatus → the C5 StatusChip vocabulary used by the component library.
 function meshDot(s: MeshStatus): Status {
@@ -125,6 +126,8 @@ export function BnwApp() {
   else if (route.k === "harnesses") body = <BnwHarnesses store={store} />;
   // 7.4-A.2b-i — Channels (Feishu) wired to real status/bindings/sync/provision (Option B).
   else if (route.k === "channels") body = <BnwChannels store={store} />;
+  // 7.4-A.2b-ii — File / artifact viewer (deep-linkable; markdown/code/image + lightbox).
+  else if (route.k === "file") body = <BnwFileViewer route={route} />;
   else body = <SurfacePlaceholder route={route} />;
 
   return (
