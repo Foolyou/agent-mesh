@@ -2,7 +2,7 @@ import { test, expect } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { FeishuChannelController, feishuMeshChatName, isMeshConfigFile } from "./controller";
+import { FeishuChannelController, feishuMeshChatName, isMeshConfigFile, meshNamesOnDisk } from "./controller";
 import { feishuConfigPath } from "./config";
 import type { Channel, MeshGateway } from "./types";
 import type { MeshEvent } from "../acp/types";
@@ -416,5 +416,46 @@ test("ensureMeshChat skips createChat for an already-bound mesh (idempotent; no 
     const res = await ctl.ensureMeshChat("m");
     expect(res).toMatchObject({ mesh: "m", chatId: "oc_existing", created: false, ok: true });
     expect(createCalls).toBe(0); // existing binding → no createChat, no invite
+  } finally { cleanup(); }
+});
+
+// ── Blocker 2: CLI / hand-edited meshes/*.json coverage via the on-disk reader ──
+
+test("meshNamesOnDisk lists <mesh>.json names, ignoring sessions/temp/non-json and a missing dir", () => {
+  const { dir, cleanup } = root();
+  try {
+    expect(meshNamesOnDisk(dir)).toEqual([]); // missing meshes/ → []
+    writeMesh(dir, "ops.json");
+    writeMesh(dir, "qa.json");
+    writeMesh(dir, "ops.sessions.json");      // session state → excluded
+    writeMesh(dir, "half.json.tmp");          // atomic-write temp → excluded
+    writeFileSync(join(dir, "meshes", "notes.txt"), "x"); // non-json → excluded
+    expect(meshNamesOnDisk(dir).sort()).toEqual(["ops", "qa"]);
+  } finally { cleanup(); }
+});
+
+test("meshes watcher: a CLI/hand-edited meshes/<name>.json NOT in listMeshes is still synced (on-disk reader)", async () => {
+  const { dir, cleanup } = root();
+  try {
+    writeConfig(dir, { enabled: true, appId: "cli_1", appSecret: "secret", allowSenders: ["ou_me"] });
+    const created: string[] = [];
+    const names = ["m"]; // in-memory MeshManager only knows "m"
+    const { gw } = dynamicMesh(names);
+    const timer = controllableTimer();
+    const ctl = new FeishuChannelController(gw, {
+      root: dir, watch: true,
+      buildChannel: () => ({ start() {}, stop() {} }),
+      createChat: async (_c, name) => { created.push(name); return { chatId: `oc_${name}` }; },
+      setTimer: timer.setTimer,
+    });
+    await ctl.start();
+    expect(created).toEqual(["m"]);
+
+    // CLI / hand-edit: the file exists on disk but listMeshes() does NOT include it (in-memory lag)
+    writeMesh(dir, "cli-mesh.json"); // names stays ["m"]
+    expect(await waitFor(timer.hasPending)).toBe(true);
+    timer.flush();
+    expect(await waitFor(() => created.includes("cli-mesh"))).toBe(true); // synced via meshNamesOnDisk, no restart/reload
+    await ctl.stop();
   } finally { cleanup(); }
 });
