@@ -80,3 +80,11 @@ virtualized scroll), `mesh-canvas` (topology), lifecycle API/CLI.
   +topology canvas controls (#16), +live add agent/edge (#17, runtime per triage),
   +start strategy/new-all-sessions (#18). `MeshDetail.tsx`/`ChatPane.tsx`/`MeshCanvas.tsx`/
   `Transcript.tsx`/`VirtualTranscript.tsx`/`health`.
+- 2026-06-21 — Phase B Step 2 mockup补漏 (`UiMockup.tsx`): all of #9–#18 now rendered in
+  the guarded `/__ui-mockup` runtime surface. New `runtime=full` (session fullscreen
+  frame, ⊟ exit) and `runtime=canvas` (zoomable topology: draggable/resizable windows,
+  per-window stop/wake/actions, zoom toolbar, Esc close) standalone desktop frames;
+  focus gains selectors + context/health + queue + transcript expanders + load-older/
+  jump + ⊞ full; overview gains start-strategy + add agent/edge + new-all + wake on the
+  cold `kimi-cold` node. Mobile: full→focus, canvas→list (desktop-only per matrix).
+  Also added a route-guarded navigation index (`?index=1`) skeleton.

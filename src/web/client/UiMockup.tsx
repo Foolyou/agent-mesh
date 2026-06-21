@@ -7,14 +7,21 @@
 // applyComposition() runtime, with FIXTURE data only — no backend, no store, no WS,
 // no business-page migration. Surfaces delivered so far:
 //   - application shell (01-app-shell.md): topbar/nav/stage/context framing.
-//   - runtime view A (02-runtime-view.md): overview topology + focused transcript.
+//   - runtime view A (02-runtime-view.md): overview topology + focused transcript,
+//     plus the audited [E] abilities — per-agent mode/model/effort/kimi selectors,
+//     wake cold agent, context/health usage, pending-turn queue, transcript expanders,
+//     jump/load-older, session fullscreen (runtime=full) and the zoomable topology
+//     canvas (runtime=canvas), live add agent/edge, start strategy + new-all-sessions.
 //   - board view C (03-board-view.md): issue list / detail / kanban (desktop) +
 //     list / detail (mobile), GH-Issues maturity, fixture data.
+//   - new mesh builder (04): agents / edges / charter / per-agent controls.
+//   - navigation index (?index=1): a directory of every surface + state/device deep links.
 //
 // Query deep links for deterministic screenshots: ?device=desktop|mobile,
-// ?surface=shell|runtime|board, ?runtime=overview|focus, ?board=list|detail|kanban,
-// ?view=runtime|board, ?mesh=<id>, ?mode=<mode>, ?accent=<accent>. No raw-*
-// utilities (passes `bun run lint:tokens`); all classes literal so Tailwind emits them.
+// ?surface=shell|runtime|board|new-mesh, ?runtime=overview|focus|full|canvas,
+// ?board=list|detail|kanban, ?state=<shell-state>, ?index=1, ?view=runtime|board,
+// ?mesh=<id>, ?mode=<mode>, ?accent=<accent>. No raw-* utilities (passes
+// `bun run lint:tokens`); all classes literal so Tailwind emits them.
 //
 // Live review: `MESH_UI_PREVIEW=1 bun run src/main.ts run --fake --port 15080`
 // then open http://localhost:15080/__ui-mockup (404s without the flag).
@@ -34,7 +41,10 @@ const ACCENT_SET = new Set<Accent>(ACCENTS);
 type Device = "desktop" | "mobile";
 type View = "runtime" | "board";
 type Surface = "shell" | "runtime" | "board" | "new-mesh";
-type RuntimeState = "overview" | "focus";
+// overview/focus = the two in-shell runtime states; full/canvas = desktop-only standalone
+// frames (session fullscreen / zoomable topology canvas) reached from the focus / overview.
+type RuntimeState = "overview" | "focus" | "full" | "canvas";
+const RUNTIME_VIEWS: RuntimeState[] = ["overview", "focus", "full", "canvas"];
 type BoardState = "list" | "detail" | "kanban";
 const VIEW_LABEL: Record<View, string> = { runtime: "运行态", board: "看板" };
 
@@ -46,17 +56,26 @@ const MESHES: { id: string; status: Status }[] = [
   { id: "docs-mesh", status: "idle" },
 ];
 
-// Fixture agents for the runtime cockpit (status + pending approvals).
-const AGENTS: { id: string; status: Status; pending: number }[] = [
+// Fixture agents for the runtime cockpit (status + pending approvals). `cold` agents
+// are lazy/asleep and expose a Wake affordance instead of a focus link (audit #11).
+type RuntimeAgent = { id: string; status: Status; pending: number; cold?: boolean };
+const AGENTS: RuntimeAgent[] = [
   { id: "router", status: "ready", pending: 0 },
   { id: "codex-1", status: "working", pending: 1 },
   { id: "opencode-1", status: "blocked", pending: 0 },
   { id: "claude-1", status: "working", pending: 2 },
+  { id: "kimi-cold", status: "idle", pending: 0, cold: true },
 ];
 const FOCUS_AGENT = "codex-1"; // the agent whose transcript the focus state shows
 
+// Queued turns waiting behind the in-flight one (pending-turn queue, audit #13).
+const QUEUED_TURNS = [
+  { text: "after the gate, bump the harness versions and re-probe" },
+  { text: "then open a PR against main and ping me" },
+];
+
 // Boundary/scale: many agents (several pending) for the overview/list at scale.
-const MANY_AGENTS: { id: string; status: Status; pending: number }[] = [
+const MANY_AGENTS: RuntimeAgent[] = [
   ...AGENTS,
   { id: "claude-2", status: "working", pending: 1 }, { id: "codex-2", status: "ready", pending: 0 },
   { id: "opencode-2", status: "attention", pending: 3 }, { id: "kimi-1", status: "working", pending: 0 },
@@ -168,6 +187,7 @@ interface Sel {
   board: BoardState;
   state: ShellState;
   nmEditor: NmEditor;
+  index: boolean;
   mesh: string;
   mode: Mode;
   accent: Accent;
@@ -185,15 +205,17 @@ function readSel(): Sel {
   const sfc = p.get("surface");
   const surface: Surface = sfc === "runtime" ? "runtime" : sfc === "board" ? "board" : sfc === "new-mesh" ? "new-mesh" : "shell";
   const bs = p.get("board");
+  const rt = p.get("runtime") as RuntimeState | null;
   const st = p.get("state") as ShellState | null;
   return {
     device: p.get("device") === "mobile" ? "mobile" : "desktop",
     view: p.get("view") === "board" ? "board" : "runtime",
     surface,
-    runtime: p.get("runtime") === "focus" ? "focus" : "overview",
+    runtime: rt && RUNTIME_VIEWS.includes(rt) ? rt : "overview",
     board: bs === "detail" ? "detail" : bs === "kanban" ? "kanban" : "list",
     state: st && SHELL_STATES.includes(st) ? st : "populated",
     nmEditor: p.get("nmEditor") === "charter" ? "charter" : p.get("nmEditor") === "instructions" ? "instructions" : "off",
+    index: p.get("index") === "1",
     mesh: mesh && MESH_IDS.has(mesh) ? mesh : MESHES[0].id,
     mode: MODE_SET.has(m as Mode) ? (m as Mode) : "dark-slate",
     accent: ACCENT_SET.has(a as Accent) ? (a as Accent) : "signal-teal",
@@ -332,7 +354,7 @@ const boardNote = (state: ShellState): ReactNode =>
 const boardEditable = (state: ShellState) => !(state === "permission" || state === "offline");
 
 // Desktop runtime — overview: all-agent topology/status with approval red-dots.
-function RuntimeOverviewDesktop({ focusHref, state = "populated" }: { focusHref: (id: string) => string; state?: ShellState }) {
+function RuntimeOverviewDesktop({ focusHref, canvasHref = "#", state = "populated" }: { focusHref: (id: string) => string; canvasHref?: string; state?: ShellState }) {
   const panel = runtimeStatePanel(state, "Topology · 全体 agent", "No agents", "This mesh has no agents yet — start it or add agents.");
   if (panel) return <div data-runtime="overview" className="h-full">{panel}</div>;
   const agents = state === "boundary" ? MANY_AGENTS : AGENTS;
@@ -343,13 +365,30 @@ function RuntimeOverviewDesktop({ focusHref, state = "populated" }: { focusHref:
       <PanelFrame
         title="Topology · 全体 agent"
         description={`${agents.length} agents · ${pending} 待审批`}
-        actions={<Cluster><Button size="sm" variant="ghost" disabled={disabled}>⤢ 展开</Button><Button size="sm" variant="primary" disabled={disabled} busy={state === "busy"}>Start</Button></Cluster>}
+        actions={<Cluster><LinkButton href={canvasHref} label="open topology canvas" dataKey="canvas-open">⤢ 展开</LinkButton><Button size="sm" variant="primary" disabled={disabled} busy={state === "busy"}>Start</Button></Cluster>}
         className="h-full"
       >
         {runtimeNote(state)}
+        {/* Runtime ops: start strategy + live add agent / add edge + new-all-sessions (audit #17/#18). */}
+        <div data-runtime-ops className="mb-3 flex flex-wrap items-center gap-2">
+          <label className="inline-flex items-center gap-1 text-xs text-text-muted">start
+            <Select defaultValue="resume" disabled={disabled} aria-label="start strategy" className="w-24"><option>resume</option><option>fresh</option></Select>
+          </label>
+          <Button size="sm" variant="secondary" disabled={disabled} aria-label="add agent">+ agent</Button>
+          <Button size="sm" variant="secondary" disabled={disabled} aria-label="add edge">+ edge</Button>
+          <Button size="sm" variant="ghost" disabled={disabled} aria-label="new all sessions">new all sessions</Button>
+        </div>
         {state === "busy" ? <div className="mb-2 inline-flex items-center gap-2 text-xs text-text-secondary"><Spinner size={12} label="restarting" /> restarting codex-1…</div> : null}
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-          {agents.map((a) => (
+          {agents.map((a) => a.cold ? (
+            // Cold/lazy agent: no focus link — expose Wake instead (audit #11).
+            <div key={a.id} className="relative flex flex-col items-center gap-1.5 rounded-xl border border-border bg-surface-raised px-4 py-4">
+              <StatusChip status={a.status} variant="dot" />
+              <span className="max-w-full truncate text-sm font-medium text-text-primary">{a.id}</span>
+              <span className="text-xs text-text-muted">cold</span>
+              <Button size="sm" variant="secondary" disabled={disabled} aria-label={`wake ${a.id}`}>Wake</Button>
+            </div>
+          ) : (
             <a key={a.id} href={focusHref(a.id)} className="relative flex flex-col items-center gap-1.5 rounded-xl border border-border bg-surface-raised px-4 py-4 no-underline hover:bg-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus-ring">
               <StatusChip status={a.status} variant="dot" />
               <span className="max-w-full truncate text-sm font-medium text-text-primary">{a.id}</span>
@@ -363,8 +402,9 @@ function RuntimeOverviewDesktop({ focusHref, state = "populated" }: { focusHref:
   );
 }
 
-// Desktop runtime — focus: header + transcript + inline approval + composer.
-function RuntimeFocusDesktop({ state = "populated" }: { state?: ShellState }) {
+// Desktop runtime — focus: header + runtime selectors + context/health + queue +
+// transcript (with expanders / load-older / jump) + inline approval + composer.
+function RuntimeFocusDesktop({ state = "populated", fullHref = "#" }: { state?: ShellState; fullHref?: string }) {
   const panel = runtimeStatePanel(state, `运行态 · ${FOCUS_AGENT}`, "No messages yet", "Send the first instruction to start the conversation.");
   if (panel) return <div data-runtime="focus" className="h-full">{panel}</div>;
   const disabled = state === "permission" || state === "offline";
@@ -373,13 +413,19 @@ function RuntimeFocusDesktop({ state = "populated" }: { state?: ShellState }) {
       <PanelFrame
         title={`运行态 · ${FOCUS_AGENT}`}
         description="focused transcript"
-        actions={<Cluster><StatusChip status="working" variant="soft" /><Button size="sm" variant="ghost" disabled={disabled} busy={state === "busy"}>Interrupt</Button><Button size="sm" variant="ghost" disabled={disabled}>Restart</Button></Cluster>}
+        actions={<Cluster><StatusChip status="working" variant="soft" /><LinkButton href={fullHref} label="enter fullscreen" dataKey="full-enter">⊞ full</LinkButton><Button size="sm" variant="ghost" disabled={disabled} busy={state === "busy"}>Interrupt</Button><Button size="sm" variant="ghost" disabled={disabled}>Restart</Button></Cluster>}
         className="flex-1"
         bodyClassName="flex flex-col gap-3"
         footer={<ComposerFixture disabled={disabled} busy={state === "busy"} />}
       >
         {runtimeNote(state)}
+        <RuntimeControls disabled={disabled} busy={state === "busy"} />
+        <ContextHealth near={state === "boundary"} />
+        <PendingTurnQueue disabled={disabled} />
+        <LoadOlderBar />
         <Transcript long={state === "boundary"} busy={state === "busy"} disabled={disabled} />
+        <TranscriptExpanders />
+        <JumpToBottom disabled={disabled} />
       </PanelFrame>
     </div>
   );
@@ -392,6 +438,7 @@ function RuntimeListMobile({ focusHref, state = "populated" }: { focusHref: (id:
   const agents = state === "boundary" ? MANY_AGENTS : AGENTS;
   const pending = agents.filter((a) => a.pending > 0);
   const totalP = agents.reduce((n, a) => n + a.pending, 0);
+  const disabled = state === "permission" || state === "offline";
   return (
     <div data-runtime="overview" className="flex flex-col gap-3">
       {runtimeNote(state)}
@@ -404,6 +451,15 @@ function RuntimeListMobile({ focusHref, state = "populated" }: { focusHref: (id:
           </div>
         </PanelFrame>
       ) : null}
+      {/* Runtime ops (mobile, simplified): start strategy + add agent + new-all (audit #17/#18). */}
+      <div data-runtime-ops>
+        <ActionBar ariaLabel="runtime ops" end={<Button size="sm" variant="ghost" disabled={disabled} aria-label="new all sessions">new all</Button>}>
+          <label className="inline-flex items-center gap-1 text-xs text-text-muted">start
+            <Select defaultValue="resume" disabled={disabled} aria-label="start strategy" className="w-20"><option>resume</option><option>fresh</option></Select>
+          </label>
+          <Button size="sm" variant="secondary" disabled={disabled} aria-label="add agent">+ agent</Button>
+        </ActionBar>
+      </div>
       <PanelFrame title="Agents">
         <div className="flex flex-col gap-1">
           {agents.map((a) => (
@@ -411,9 +467,11 @@ function RuntimeListMobile({ focusHref, state = "populated" }: { focusHref: (id:
               key={a.id}
               status={a.status}
               title={a.id}
-              meta={a.status}
-              href={focusHref(a.id)}
-              trailing={a.pending ? <Badge count={a.pending} tone="urgent" /> : undefined}
+              meta={a.cold ? "cold" : a.status}
+              href={a.cold ? undefined : focusHref(a.id)}
+              trailing={a.cold
+                ? <Button size="sm" variant="secondary" disabled={disabled} aria-label={`wake ${a.id}`}>Wake</Button>
+                : a.pending ? <Badge count={a.pending} tone="urgent" /> : undefined}
             />
           ))}
         </div>
@@ -435,9 +493,15 @@ function RuntimeFocusMobile({ state = "populated" }: { state?: ShellState }) {
       </ActionBar>
       {runtimeNote(state)}
       <ApprovalFixture busy={state === "busy" || disabled} />
+      <RuntimeControls disabled={disabled} busy={state === "busy"} />
+      <ContextHealth near={state === "boundary"} />
+      <PendingTurnQueue disabled={disabled} />
       <PanelFrame title="Transcript">
         <div className="flex flex-col gap-2">
+          <LoadOlderBar />
           {(state === "boundary" ? LONG_TRANSCRIPT : TRANSCRIPT).map((m, i) => <MessageBubble key={i} who={m.who} text={m.text} />)}
+          <TranscriptExpanders />
+          <JumpToBottom disabled={disabled} />
         </div>
       </PanelFrame>
       <ComposerFixture disabled={disabled} busy={state === "busy"} />
@@ -453,6 +517,185 @@ function runtimeChromeFor(state: ShellState): ShellChrome {
     case "offline": return { connection: "offline", mutationsDisabled: true, banner: OfflineBanner };
     default: return {};
   }
+}
+
+// Anchor styled like a small ghost button — used for in-mockup navigation between
+// runtime sub-views (focus ⇄ full ⇄ canvas) so the deep links are real and clickable.
+function LinkButton({ href, children, label, dataKey }: { href: string; children: ReactNode; label?: string; dataKey?: string }) {
+  const attrs = dataKey ? { [`data-${dataKey}`]: "" } : {};
+  return (
+    <a
+      href={href}
+      aria-label={label}
+      {...attrs}
+      className="inline-flex items-center gap-1 rounded-lg border border-border-strong bg-surface-sunken px-2 py-1 text-xs text-text-primary no-underline hover:bg-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus-ring"
+    >
+      {children}
+    </a>
+  );
+}
+
+// Per-agent live runtime selectors: mode / model / effort / kimi-thinking (audit #10).
+function RuntimeControls({ disabled = false, busy = false, kimi = true }: { disabled?: boolean; busy?: boolean; kimi?: boolean }) {
+  return (
+    <div data-runtime-controls className="flex flex-wrap items-center gap-2">
+      <label className="inline-flex items-center gap-1 text-xs text-text-muted">mode
+        <Select defaultValue="default" disabled={disabled} aria-label="agent mode" className="w-24"><option>default</option><option>plan</option><option>bypass</option></Select>
+      </label>
+      <label className="inline-flex items-center gap-1 text-xs text-text-muted">model
+        <Select defaultValue="(default)" disabled={disabled} aria-label="agent model" className="w-28">{NM_MODELS.map((m) => <option key={m}>{m}</option>)}</Select>
+      </label>
+      <label className="inline-flex items-center gap-1 text-xs text-text-muted">effort
+        <Select defaultValue="medium" disabled={disabled} aria-label="agent effort" className="w-20">{NM_EFFORTS.map((e) => <option key={e}>{e}</option>)}</Select>
+      </label>
+      {kimi ? (
+        <label className="inline-flex items-center gap-1 text-xs text-text-muted">thinking
+          <Select defaultValue="on" disabled={disabled} aria-label="kimi thinking" className="w-16"><option>on</option><option>off</option></Select>
+        </label>
+      ) : null}
+      {busy ? <Spinner size={12} label="applying" /> : null}
+    </div>
+  );
+}
+
+// Context / health usage: usage chip + waterline + near-limit warning + silent-stop
+// watch badge (audit #12). `near` (boundary) flips it into the near-limit treatment.
+function ContextHealth({ near = false }: { near?: boolean }) {
+  const pct = near ? 94 : 62;
+  return (
+    <div data-context-usage className="flex flex-wrap items-center gap-2">
+      <StatusChip status={near ? "attention" : "ready"} variant="soft" label={`ctx ${pct}%`} />
+      <span className="inline-flex w-28 items-center"><ProgressBar value={pct} max={100} label={`context ${pct}%`} /></span>
+      {near ? <span className="text-xs text-warning">接近上限 — 将自动 compact</span> : null}
+      <StatusChip status="idle" variant="soft" label="silent-stop watch" />
+    </div>
+  );
+}
+
+// Pending-turn queue: count + prev/next nav + remove (audit #13).
+function PendingTurnQueue({ disabled = false }: { disabled?: boolean }) {
+  return (
+    <div data-queue className="flex items-center gap-2 rounded-lg border border-border bg-surface-sunken px-2.5 py-1.5 text-xs">
+      <span className="shrink-0 text-text-muted">queued · {QUEUED_TURNS.length}</span>
+      <Button size="sm" variant="ghost" iconOnly aria-label="prev queued" disabled={disabled}>‹</Button>
+      <span className="min-w-0 flex-1 truncate text-text-secondary">{QUEUED_TURNS[0].text}</span>
+      <Button size="sm" variant="ghost" iconOnly aria-label="next queued" disabled={disabled}>›</Button>
+      <Button size="sm" variant="ghost" iconOnly aria-label="remove queued" disabled={disabled}>×</Button>
+    </div>
+  );
+}
+
+// Transcript item expanders: thought / tool input·output·files / long mail (audit #14).
+function TranscriptExpanders() {
+  return (
+    <div data-transcript-expanders className="flex flex-col gap-1.5">
+      <details className="rounded-lg border border-border bg-surface-raised px-2.5 py-1.5 text-xs text-text-secondary">
+        <summary className="cursor-pointer text-text-muted">▸ thought</summary>
+        <p className="mt-1">Planning the gate order: tsc → unit → e2e before touching config.json.</p>
+      </details>
+      <details className="rounded-lg border border-border bg-surface-raised px-2.5 py-1.5 text-xs">
+        <summary className="cursor-pointer text-text-muted">▸ tool · write_file (input / output / files)</summary>
+        <pre className="mt-1 overflow-x-auto rounded bg-surface-sunken px-2 py-1 font-mono text-text-secondary">{"{ path: \"config.json\", bytes: 184 } → ok"}</pre>
+      </details>
+      <div className="rounded-lg border border-border bg-surface-raised px-2.5 py-1.5 text-xs text-text-secondary">
+        <span className="text-text-muted">✉ mail from router — </span>proceed with the gate; ping me before pushing…
+        <Button size="sm" variant="ghost" data-mail-expand aria-label="expand mail">expand</Button>
+      </div>
+    </div>
+  );
+}
+
+// Top "load older" affordance + bottom "jump to latest" (audit #15).
+function LoadOlderBar() {
+  return <div className="flex justify-center"><Button size="sm" variant="ghost" data-load-older aria-label="load older">↑ 加载更早</Button></div>;
+}
+function JumpToBottom({ disabled = false }: { disabled?: boolean }) {
+  return <div className="flex justify-end"><Button size="sm" variant="secondary" data-jump-bottom aria-label="jump to bottom" disabled={disabled}>↓ 最新</Button></div>;
+}
+
+// Session fullscreen (audit #9) — standalone desktop frame: the conversation pane
+// fills the whole frame (no topology/context split); `⊟ exit` restores the split.
+function RuntimeFullFrame({ state, backHref }: { state: ShellState; backHref: string }) {
+  const disabled = state === "permission" || state === "offline";
+  const near = state === "boundary";
+  const panel = runtimeStatePanel(state, `运行态 · ${FOCUS_AGENT} · 全屏`, "No messages yet", "Send the first instruction to start the conversation.");
+  return (
+    <div data-mockup="frame" data-device="desktop" data-runtime="full" className="flex h-[720px] w-[1280px] max-w-full flex-col overflow-hidden rounded-xl border border-border bg-surface text-text-primary shadow-sm">
+      <header className="flex items-center gap-2 border-b border-border bg-surface-raised px-4 py-2.5">
+        <Brand /><span className="text-text-muted">·</span>
+        <span className="text-sm font-semibold">运行态 · {FOCUS_AGENT} · 全屏</span>
+        <StatusChip status="working" variant="soft" />
+        <span className="flex-1" aria-hidden="true" />
+        <RuntimeControls disabled={disabled} busy={state === "busy"} />
+        <LinkButton href={backHref} label="exit fullscreen" dataKey="full-exit">⊟ exit</LinkButton>
+      </header>
+      {state === "permission" ? PermBanner : null}
+      {state === "offline" ? OfflineBanner : null}
+      <div className="min-h-0 flex-1 overflow-auto p-4">
+        {panel ? <div className="mx-auto max-w-[900px]">{panel}</div> : (
+          <div className="mx-auto flex max-w-[900px] flex-col gap-3">
+            {runtimeNote(state)}
+            <ContextHealth near={near} />
+            <PendingTurnQueue disabled={disabled} />
+            <LoadOlderBar />
+            <Transcript long={state === "boundary"} busy={state === "busy"} disabled={disabled} />
+            <TranscriptExpanders />
+            <JumpToBottom disabled={disabled} />
+          </div>
+        )}
+      </div>
+      <div className="border-t border-border bg-surface-raised p-3"><ComposerFixture disabled={disabled} busy={state === "busy"} /></div>
+    </div>
+  );
+}
+
+// Zoomable topology canvas (audit #16) — standalone desktop overlay frame: draggable /
+// resizable agent windows, per-window stop / wake / actions (⋯), zoom toolbar, Esc close.
+function CanvasWindow({ a, index, disabled }: { a: RuntimeAgent; index: number; disabled: boolean }) {
+  const left = 16 + (index % 3) * 392;
+  const top = 16 + Math.floor(index / 3) * 176;
+  return (
+    <div
+      data-canvas-window
+      className="absolute flex w-[372px] flex-col rounded-lg border border-border-strong bg-surface-raised shadow-sm"
+      style={{ left, top }}
+    >
+      <div data-canvas-drag className="flex cursor-move items-center gap-1.5 border-b border-border px-2 py-1.5">
+        <StatusChip status={a.status} variant="dot" />
+        <span className="min-w-0 flex-1 truncate text-sm font-medium text-text-primary">{a.id}</span>
+        {a.cold
+          ? <Button size="sm" variant="secondary" disabled={disabled} aria-label={`wake ${a.id}`}>Wake</Button>
+          : <Button size="sm" variant="ghost" iconOnly disabled={disabled} aria-label={`stop ${a.id}`}>■</Button>}
+        <Button size="sm" variant="ghost" iconOnly disabled={disabled} aria-label={`${a.id} actions`}>⋯</Button>
+      </div>
+      <div className="px-2 py-2 text-xs text-text-muted">{a.cold ? "cold — wake to resume" : `${a.status} · ${a.pending} 待审批`}</div>
+      <span data-resize-handle aria-hidden="true" className="absolute bottom-0 right-0 cursor-nwse-resize p-1 text-text-muted">⌟</span>
+    </div>
+  );
+}
+function MeshCanvasFrame({ state, backHref }: { state: ShellState; backHref: string }) {
+  const agents = state === "boundary" ? MANY_AGENTS : AGENTS;
+  const disabled = state === "permission" || state === "offline";
+  return (
+    <div data-mockup="frame" data-device="desktop" data-runtime="canvas" className="flex h-[720px] w-[1280px] max-w-full flex-col overflow-hidden rounded-xl border border-border bg-surface text-text-primary shadow-sm">
+      <header className="flex items-center gap-2 border-b border-border bg-surface-raised px-4 py-2.5">
+        <Brand /><span className="text-text-muted">·</span>
+        <span className="text-sm font-semibold">Topology canvas</span>
+        <span className="text-xs text-text-muted">{agents.length} windows · drag / resize</span>
+        <span className="flex-1" aria-hidden="true" />
+        <Button size="sm" variant="ghost" iconOnly aria-label="zoom out">－</Button>
+        <span className="text-xs text-text-muted tabular-nums">100%</span>
+        <Button size="sm" variant="ghost" iconOnly aria-label="zoom in">＋</Button>
+        <Button size="sm" variant="ghost" aria-label="fit to window">fit</Button>
+        <LinkButton href={backHref} label="close canvas" dataKey="canvas-close">Esc 关闭</LinkButton>
+      </header>
+      {state === "permission" ? PermBanner : null}
+      {state === "offline" ? OfflineBanner : null}
+      <div data-canvas className="relative min-h-0 flex-1 overflow-auto bg-surface-sunken">
+        {agents.map((a, i) => <CanvasWindow key={a.id} a={a} index={i} disabled={disabled} />)}
+      </div>
+    </div>
+  );
 }
 
 // ── board (A) fixtures — local, token-clean parts (label colors are board data,
@@ -1131,6 +1374,7 @@ function selQuery(s: Sel): string {
   p.set("board", s.board);
   p.set("state", s.state);
   p.set("nmEditor", s.nmEditor);
+  if (s.index) p.set("index", "1");
   p.set("mesh", s.mesh);
   p.set("mode", s.mode);
   p.set("accent", s.accent);
@@ -1182,9 +1426,72 @@ function ShellStage({ state, view = "runtime" }: { state: ShellState; view?: Vie
   return <StagePlaceholder view={view} />;
 }
 
+// ── navigation / index skeleton (Phase B unified review) ─────────────────────────
+// A route-guarded directory of every implemented surface + its state/device deep
+// links. Skeleton: extended per surface as later Phase-B补漏 checkpoints land.
+const INDEX_TONE = "dark-slate&accent=signal-teal";
+type IndexRow = { label: string; base: string; states: ShellState[]; mobile: boolean };
+const INDEX_SECTIONS: { title: string; note: string; rows: IndexRow[] }[] = [
+  { title: "01 · 应用外壳", note: "topbar / nav / stage / context framing", rows: [
+    { label: "shell", base: "surface=shell", states: SHELL_STATES, mobile: true },
+  ] },
+  { title: "02 · 运行态 A", note: "topology overview · focused transcript · fullscreen · canvas", rows: [
+    { label: "overview", base: "surface=runtime&runtime=overview", states: SHELL_STATES, mobile: true },
+    { label: "focus", base: "surface=runtime&runtime=focus", states: SHELL_STATES, mobile: true },
+    { label: "full (桌面)", base: "surface=runtime&runtime=full", states: ["populated", "boundary", "permission", "offline", "empty", "loading", "error"], mobile: false },
+    { label: "canvas (桌面)", base: "surface=runtime&runtime=canvas", states: ["populated", "boundary", "permission", "offline"], mobile: false },
+  ] },
+  { title: "03 · 看板 C", note: "issue list / detail / kanban", rows: [
+    { label: "list", base: "surface=board&board=list", states: SHELL_STATES, mobile: true },
+    { label: "detail", base: "surface=board&board=detail", states: SHELL_STATES, mobile: true },
+    { label: "kanban (桌面)", base: "surface=board&board=kanban", states: SHELL_STATES, mobile: false },
+  ] },
+  { title: "04 · 新建 mesh", note: "builder: agents / edges / charter / per-agent controls", rows: [
+    { label: "builder", base: "surface=new-mesh", states: ["empty", "populated", "error", "permission", "busy", "offline", "boundary"], mobile: true },
+  ] },
+];
+
+function MockupIndex({ backHref }: { backHref: string }) {
+  const dl = (base: string, device: Device, state: ShellState) =>
+    `/__ui-mockup?${base}&device=${device}&state=${state}&mode=${INDEX_TONE}`;
+  return (
+    <div data-mockup-index className="mx-auto flex w-full max-w-[1100px] flex-col gap-5">
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-text-secondary">每个 surface 的已实现状态 / 设备深链（fixture-only · 路由受 <code className="text-syntax-string">MESH_UI_PREVIEW</code> 保护）。</p>
+        <LinkButton href={backHref} label="back to mockup">← 返回 mockup</LinkButton>
+      </div>
+      {INDEX_SECTIONS.map((sec) => (
+        <section key={sec.title} className="rounded-xl border border-border bg-surface-raised p-4">
+          <div className="mb-2 flex items-baseline gap-2">
+            <h2 className="text-sm font-semibold text-text-primary">{sec.title}</h2>
+            <span className="text-xs text-text-muted">{sec.note}</span>
+          </div>
+          <div className="flex flex-col gap-2">
+            {sec.rows.map((row) => (
+              <div key={row.label} className="flex flex-col gap-1 border-t border-border pt-2 first:border-0 first:pt-0">
+                <span className="text-xs font-medium uppercase tracking-wider text-text-secondary">{row.label}</span>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="text-xs text-text-muted">桌面:</span>
+                  {row.states.map((st) => <LinkButton key={st} href={dl(row.base, "desktop", st)}>{st}</LinkButton>)}
+                </div>
+                {row.mobile ? (
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="text-xs text-text-muted">移动:</span>
+                    {row.states.map((st) => <LinkButton key={st} href={dl(row.base, "mobile", st)}>{st}</LinkButton>)}
+                  </div>
+                ) : <span className="text-xs text-text-muted">移动: —（桌面专属）</span>}
+              </div>
+            ))}
+          </div>
+        </section>
+      ))}
+    </div>
+  );
+}
+
 export function UiMockup() {
   const [sel, setSel] = useState<Sel>(readSel);
-  const { device, view, surface, runtime, board, state, nmEditor, mesh, mode, accent } = sel;
+  const { device, view, surface, runtime, board, state, nmEditor, index, mesh, mode, accent } = sel;
   const [mobileTab, setMobileTab] = useState<MobileTab>(surface === "board" || view === "board" ? "board" : "runtime");
 
   useEffect(() => {
@@ -1206,6 +1513,12 @@ export function UiMockup() {
   const meshHref = (id: string) => `/__ui-mockup?${selQuery({ ...sel, mesh: id })}`;
   // Topology/agent node → focus that agent's transcript (runtime focus state).
   const focusHref = (_agentId: string) => `/__ui-mockup?${selQuery({ ...sel, surface: "runtime", runtime: "focus" })}`;
+  // Runtime sub-view deep links (focus → fullscreen; overview → canvas; and back).
+  const fullHref = `/__ui-mockup?${selQuery({ ...sel, surface: "runtime", runtime: "full" })}`;
+  const canvasHref = `/__ui-mockup?${selQuery({ ...sel, surface: "runtime", runtime: "canvas" })}`;
+  const focusBackHref = `/__ui-mockup?${selQuery({ ...sel, surface: "runtime", runtime: "focus" })}`;
+  const overviewHref = `/__ui-mockup?${selQuery({ ...sel, surface: "runtime", runtime: "overview" })}`;
+  const indexBackHref = `/__ui-mockup?${selQuery({ ...sel, index: false })}`;
   const setMesh = (m: string) => nav({ mesh: m });
 
   const setView = (v: View) => {
@@ -1216,7 +1529,7 @@ export function UiMockup() {
   // Stage + right-context content: the empty shell placeholder, the runtime (A)
   // mockup, or the board (C) mockup.
   const desktopStage = surface === "runtime"
-    ? (runtime === "focus" ? <RuntimeFocusDesktop state={state} /> : <RuntimeOverviewDesktop focusHref={focusHref} state={state} />)
+    ? (runtime === "focus" ? <RuntimeFocusDesktop state={state} fullHref={fullHref} /> : <RuntimeOverviewDesktop focusHref={focusHref} canvasHref={canvasHref} state={state} />)
     : surface === "board"
     ? (board === "detail" ? <BoardDetailDesktop state={state} /> : board === "kanban" ? <BoardKanbanDesktop state={state} /> : <BoardListDesktop state={state} />)
     : <ShellStage state={state} view={view} />;
@@ -1263,8 +1576,9 @@ export function UiMockup() {
     : <p className="text-sm text-text-secondary">按需上下文由当前视图拥有（运行态/看板各自填充）。</p>;
 
   // Mobile functional stage (runtime / board / shell-state); shown in the runtime/board tab.
+  // Mobile has no split to expand and no canvas → full degrades to focus, canvas to list.
   const mobileStage = surface === "runtime"
-    ? (runtime === "focus" ? <RuntimeFocusMobile state={state} /> : <RuntimeListMobile focusHref={focusHref} state={state} />)
+    ? ((runtime === "focus" || runtime === "full") ? <RuntimeFocusMobile state={state} /> : <RuntimeListMobile focusHref={focusHref} state={state} />)
     : surface === "board"
     ? (board === "detail" ? <BoardDetailMobile state={state} /> : <BoardListMobile state={state} />)
     : <ShellStage state={state} />;
@@ -1274,8 +1588,11 @@ export function UiMockup() {
     <div data-mockup="root" className="min-h-screen bg-surface text-text-primary font-sans p-6">
       {/* mockup tool chrome (outside the mocked app frame) */}
       <header className="mb-5">
-        <h1 className="mb-1 text-xl font-semibold">Agent Mesh — 终稿 mockup（{surface === "runtime" ? "运行态 A" : surface === "board" ? "看板 C" : surface === "new-mesh" ? "新建 mesh" : "应用外壳"} · {state} · {device === "mobile" ? "移动" : "桌面"}）</h1>
+        <h1 className="mb-1 text-xl font-semibold">Agent Mesh — 终稿 mockup（{index ? "导航索引" : surface === "runtime" ? `运行态 A · ${runtime}` : surface === "board" ? "看板 C" : surface === "new-mesh" ? "新建 mesh" : "应用外壳"}{index ? "" : ` · ${state} · ${device === "mobile" ? "移动" : "桌面"}`}）</h1>
         <p className="mb-3 text-xs text-text-muted">真实 C5–C7 组件 + v2 compose 运行时 · fixture 数据 · 不连后端。Live: <code className="text-syntax-string">MESH_UI_PREVIEW=1 … /__ui-mockup</code></p>
+        <div className="mb-3">
+          <SegmentedControl ariaLabel="View mode" value={index ? "index" : "mockup"} onChange={(v) => nav({ index: v === "index" })} options={[{ value: "mockup", label: "Mockup" }, { value: "index", label: "▤ 索引" }]} size="sm" />
+        </div>
         <div className="flex flex-wrap items-start gap-5">
           <div>
             <div className="mb-1.5 text-xs uppercase tracking-wider text-text-muted">设备</div>
@@ -1295,8 +1612,16 @@ export function UiMockup() {
           </div>
           {surface === "runtime" ? (
             <div>
-              <div className="mb-1.5 text-xs uppercase tracking-wider text-text-muted">Runtime state</div>
-              <SegmentedControl ariaLabel="Runtime state" value={runtime} onChange={(r) => nav({ runtime: r as RuntimeState })} options={[{ value: "overview", label: "Overview" }, { value: "focus", label: "Focus" }]} size="sm" />
+              <div className="mb-1.5 text-xs uppercase tracking-wider text-text-muted">Runtime view</div>
+              <SegmentedControl
+                ariaLabel="Runtime view"
+                value={runtime}
+                onChange={(r) => nav({ runtime: r as RuntimeState })}
+                options={device === "mobile"
+                  ? [{ value: "overview", label: "Overview" }, { value: "focus", label: "Focus" }]
+                  : [{ value: "overview", label: "Overview" }, { value: "focus", label: "Focus" }, { value: "full", label: "Full" }, { value: "canvas", label: "Canvas" }]}
+                size="sm"
+              />
             </div>
           ) : null}
           {surface === "board" ? (
@@ -1335,8 +1660,14 @@ export function UiMockup() {
       </header>
 
       <div className="flex justify-center">
-        {surface === "new-mesh"
+        {index
+          ? <MockupIndex backHref={indexBackHref} />
+          : surface === "new-mesh"
           ? <NewMeshFrame state={state} device={device} nmEditor={nmEditor} />
+          : surface === "runtime" && device === "desktop" && runtime === "full"
+          ? <RuntimeFullFrame state={state} backHref={focusBackHref} />
+          : surface === "runtime" && device === "desktop" && runtime === "canvas"
+          ? <MeshCanvasFrame state={state} backHref={overviewHref} />
           : device === "mobile"
           ? <MobileShell tab={mobileTab} setTab={(t) => { setMobileTab(t); if (t === "runtime" || t === "board") nav({ view: t }); }} mesh={mesh} setMesh={setMesh} stage={mobileStage} stageTab={mobileStageTab} {...shellChrome} />
           : <DesktopShell view={view} setView={setView} mesh={mesh} setMesh={setMesh} meshHref={meshHref} stage={desktopStage} contextTitle={contextTitle} context={desktopContext} {...shellChrome} />}

@@ -173,6 +173,47 @@ try {
     if (await page.locator('[aria-label="Message composer"]').count() === 0) throw new Error("composer missing");
   });
 
+  // ── runtime补漏 — audited [E] capabilities (audit #9–#18) ──────────────────────
+  await step("runtime focus补漏: selectors + context/health + queue + expanders + ⊞ full → fullscreen", async () => {
+    await page.goto(`${BASE}/__ui-mockup?surface=runtime&runtime=focus&state=populated&device=desktop`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-runtime="focus"]', { timeout: 8000 });
+    for (const lbl of ["agent mode", "agent model", "agent effort", "kimi thinking", "prev queued", "load older", "jump to bottom", "enter fullscreen"]) {
+      if (await page.locator(`[aria-label="${lbl}"]`).count() === 0) throw new Error(`runtime control missing: ${lbl}`);
+    }
+    if (await page.locator("[data-context-usage]").count() === 0) throw new Error("context/health usage missing");
+    if (await page.locator("[data-queue]").count() === 0) throw new Error("pending-turn queue missing");
+    if (await page.locator("[data-transcript-expanders]").count() === 0) throw new Error("transcript expanders missing");
+    // ⊞ full navigates to the standalone fullscreen frame
+    await page.locator('[aria-label="enter fullscreen"]').click();
+    await page.waitForSelector('[data-mockup="frame"][data-runtime="full"]', { timeout: 8000 });
+    if (await page.locator('[aria-label="exit fullscreen"]').count() === 0) throw new Error("⊟ exit missing in fullscreen");
+  });
+
+  await step("runtime overview补漏: start strategy + add agent/edge + new-all + wake cold; ⤢ → canvas", async () => {
+    await page.goto(`${BASE}/__ui-mockup?surface=runtime&runtime=overview&state=populated&device=desktop`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-runtime="overview"]', { timeout: 8000 });
+    for (const lbl of ["start strategy", "add agent", "add edge", "new all sessions", "wake kimi-cold", "open topology canvas"]) {
+      if (await page.locator(`[aria-label="${lbl}"]`).count() === 0) throw new Error(`overview op missing: ${lbl}`);
+    }
+    await page.locator('[aria-label="open topology canvas"]').click();
+    await page.waitForSelector('[data-mockup="frame"][data-runtime="canvas"]', { timeout: 8000 });
+    if (await page.locator("[data-canvas-window]").count() === 0) throw new Error("canvas windows missing");
+    for (const lbl of ["stop codex-1", "wake kimi-cold", "codex-1 actions", "close canvas", "zoom in"]) {
+      if (await page.locator(`[aria-label="${lbl}"]`).count() === 0) throw new Error(`canvas control missing: ${lbl}`);
+    }
+  });
+
+  await step("navigation index skeleton: surfaces + deep links; link → surface", async () => {
+    await page.goto(`${BASE}/__ui-mockup?index=1`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector("[data-mockup-index]", { timeout: 8000 });
+    for (const t of ["01 · 应用外壳", "02 · 运行态 A", "03 · 看板 C", "04 · 新建 mesh"]) {
+      if (await page.getByText(t, { exact: false }).count() === 0) throw new Error(`index section missing: ${t}`);
+    }
+    // a runtime canvas deep link is listed and navigates to the canvas frame
+    await page.locator('[data-mockup-index] a[href*="runtime=canvas"]').first().click();
+    await page.waitForSelector('[data-mockup="frame"][data-runtime="canvas"]', { timeout: 8000 });
+  });
+
   // ── board view (C) ──────────────────────────────────────────────────────────
   await step("board C desktop list: filter/bulk/epic groups/rich rows; row → detail interaction", async () => {
     await page.goto(`${BASE}/__ui-mockup?device=desktop&surface=board&board=list`, { waitUntil: "domcontentloaded" });
@@ -248,6 +289,30 @@ try {
       }
     }
   }
+
+  // ── runtime补漏 full / canvas standalone frames (desktop-only) × key states ──
+  const RT_FRAME_STATES = ["populated", "boundary", "permission", "offline", "empty", "loading", "error"];
+  for (const sub of ["full", "canvas"]) {
+    const states = sub === "canvas" ? ["populated", "boundary", "permission", "offline"] : RT_FRAME_STATES;
+    for (const st of states) {
+      await step(`screenshot runtime-${sub}-${st}-desktop`, async () => {
+        await page.goto(`${BASE}/__ui-mockup?surface=runtime&runtime=${sub}&state=${st}&device=desktop&mode=dark-slate&accent=signal-teal`, { waitUntil: "domcontentloaded" });
+        await page.waitForSelector(`[data-mockup="frame"][data-runtime="${sub}"]`, { timeout: 8000 });
+        await sleep(140);
+        await shotFrame(`${SHOTS}/runtime-${sub}-${st}-desktop-dark-slate-signal-teal.png`);
+      });
+    }
+  }
+
+  // ── navigation index skeleton screenshot (full page, not a single frame) ──
+  await step("screenshot mockup-index", async () => {
+    await page.goto(`${BASE}/__ui-mockup?index=1&mode=dark-slate&accent=signal-teal`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector("[data-mockup-index]", { timeout: 8000 });
+    await sleep(150);
+    const file = `${SHOTS}/mockup-index-dark-slate-signal-teal.png`;
+    await page.locator("[data-mockup-index]").screenshot({ path: file });
+    shots.push(file);
+  });
 
   // ── board (C) subview × state × device screenshots (Phase B; Dark·Slate × Signal Teal) ──
   // Desktop: list/detail/kanban. Mobile: list/detail (kanban degrades to list).

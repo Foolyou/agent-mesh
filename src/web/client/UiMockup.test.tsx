@@ -220,7 +220,7 @@ test("runtime focus state · busy shows resolving/in-flight affordances", () => 
 test("runtime boundary · many agents (overview) + long transcript (focus)", () => {
   const ov = renderAt("?surface=runtime&runtime=overview&state=boundary&device=desktop");
   expect(ov).toContain("reviewer-1"); // a MANY_AGENTS-only agent
-  expect(ov).toContain("12 agents · "); // count grows
+  expect(ov).toContain("13 agents · "); // count grows (AGENTS now incl. kimi-cold)
   const fo = renderAt("?surface=runtime&runtime=focus&state=boundary");
   expect(fo).toContain("exercise wrapping and truncation"); // long transcript line
 });
@@ -232,6 +232,93 @@ test("runtime mobile · list pins approvals; focus pins approval above transcrip
   const focus = renderAt("?surface=runtime&runtime=focus&state=populated&device=mobile");
   expect(focus).toContain("Transcript");
   expect(focus.indexOf("Allow")).toBeLessThan(focus.indexOf("Transcript"));
+});
+
+// ── runtime补漏 — audited [E] capabilities (audit #9–#18) ─────────────────────
+test("runtime focus补漏 · selectors + context/health + queue + expanders + jump/load-older + ⊞ full", () => {
+  const out = renderAt("?surface=runtime&runtime=focus&state=populated&device=desktop");
+  expect(out).toContain('aria-label="agent mode"'); // mode/model/effort selectors (#10)
+  expect(out).toContain('aria-label="agent model"');
+  expect(out).toContain('aria-label="agent effort"');
+  expect(out).toContain('aria-label="kimi thinking"'); // kimi-thinking (#10)
+  expect(out).toContain("data-context-usage"); // context/health usage (#12)
+  expect(out).toContain("ctx 62%");
+  expect(out).toContain("silent-stop watch");
+  expect(out).toContain("data-queue"); // pending-turn queue (#13)
+  expect(out).toContain('aria-label="prev queued"');
+  expect(out).toContain('aria-label="remove queued"');
+  expect(out).toContain("data-transcript-expanders"); // expanders (#14)
+  expect(out).toContain('aria-label="expand mail"');
+  expect(out).toContain("data-load-older"); // load-older (#15)
+  expect(out).toContain("data-jump-bottom"); // jump-to-bottom (#15)
+  expect(out).toContain('aria-label="enter fullscreen"'); // ⊞ full link (#9)
+});
+
+test("runtime focus补漏 · near-limit context warning at boundary; permission disables selectors", () => {
+  const b = renderAt("?surface=runtime&runtime=focus&state=boundary&device=desktop");
+  expect(b).toContain("ctx 94%");
+  expect(b).toContain("接近上限"); // near-limit warning
+  const perm = renderAt("?surface=runtime&runtime=focus&state=permission&device=desktop");
+  // selectors are disabled when unauthorized (disabled attr precedes aria-label)
+  expect(perm).toContain('disabled="" aria-label="agent model"');
+});
+
+test("runtime overview补漏 · start strategy + add agent/edge + new-all + wake cold + canvas link", () => {
+  const out = renderAt("?surface=runtime&runtime=overview&state=populated&device=desktop");
+  expect(out).toContain('aria-label="start strategy"'); // resume/fresh (#18)
+  expect(out).toContain('aria-label="add agent"'); // live add agent (#17)
+  expect(out).toContain('aria-label="add edge"'); // live add edge (#17)
+  expect(out).toContain('aria-label="new all sessions"'); // new-all-sessions (#18)
+  expect(out).toContain('aria-label="wake kimi-cold"'); // wake cold/lazy agent (#11)
+  expect(out).toContain('aria-label="open topology canvas"'); // ⤢ → canvas (#16)
+});
+
+test("runtime full补漏 · standalone fullscreen frame with ⊟ exit + transcript fills", () => {
+  const out = renderAt("?surface=runtime&runtime=full&state=populated&device=desktop");
+  expect(out).toContain('data-runtime="full"');
+  expect(out).toContain('aria-label="exit fullscreen"'); // ⊟ exit (#9)
+  expect(out).toContain("restart the alpha mesh"); // transcript present
+  expect(out).toContain('aria-label="Message composer"');
+  // empty state still renders inside the fullscreen frame
+  expect(renderAt("?surface=runtime&runtime=full&state=empty&device=desktop")).toContain('data-runtime-state="empty"');
+});
+
+test("runtime canvas补漏 · zoomable canvas: windows + per-window stop/wake/actions + Esc close", () => {
+  const out = renderAt("?surface=runtime&runtime=canvas&state=populated&device=desktop");
+  expect(out).toContain('data-runtime="canvas"');
+  expect(out).toContain("data-canvas-window"); // draggable/resizable windows (#16)
+  expect(out).toContain("data-resize-handle");
+  expect(out).toContain('aria-label="stop codex-1"'); // per-window stop
+  expect(out).toContain('aria-label="wake kimi-cold"'); // per-window wake
+  expect(out).toContain('aria-label="codex-1 actions"'); // actions menu
+  expect(out).toContain('aria-label="close canvas"'); // Esc close
+  expect(out).toContain('aria-label="zoom in"');
+});
+
+test("runtime补漏 mobile · full degrades to focus, canvas to list; controls present", () => {
+  expect(renderAt("?surface=runtime&runtime=full&state=populated&device=mobile")).toContain('data-runtime="focus"');
+  expect(renderAt("?surface=runtime&runtime=canvas&state=populated&device=mobile")).toContain('data-runtime="overview"');
+  const focus = renderAt("?surface=runtime&runtime=focus&state=populated&device=mobile");
+  expect(focus).toContain("data-context-usage"); // compact health on mobile
+  expect(focus).toContain("data-queue");
+  const ov = renderAt("?surface=runtime&runtime=overview&state=populated&device=mobile");
+  expect(ov).toContain('aria-label="wake kimi-cold"'); // cold agent wake in mobile list
+  expect(ov).toContain('aria-label="start strategy"');
+});
+
+// ── navigation / index skeleton ──────────────────────────────────────────────
+test("index skeleton · lists every surface with state/device deep links", () => {
+  const out = renderAt("?index=1");
+  expect(out).toContain("data-mockup-index");
+  expect(out).toContain("01 · 应用外壳");
+  expect(out).toContain("02 · 运行态 A");
+  expect(out).toContain("03 · 看板 C");
+  expect(out).toContain("04 · 新建 mesh");
+  expect(out).toContain("runtime=canvas"); // a runtime补漏 deep link (& is HTML-escaped in href)
+  expect(out).toContain("device=mobile"); // mobile links
+  expect(out).toContain("← 返回 mockup");
+  // index frame replaces the app frame
+  expect(out.includes('data-mockup="frame"')).toBe(false);
 });
 
 test("mockup uses v2 semantic utilities and emits no raw-* class", () => {
