@@ -102,7 +102,27 @@ for mockup patches (M) in Step 2.
   auto-compact stays in `04-new-mesh`; #12 context/health → `02-runtime`. Mockup patches
   (M) deferred to a later released step.
 
+## Status (Step 7.5-D parity regression)
+- **2026-06-22 — all 28 [E] abilities now reach the real `/bnw` console + are guarded by a
+  consolidated regression gate.** During the audit two App-shell abilities were found genuinely
+  missing from `/bnw` (present in old UI + mockup-01 but never ported): **#19 mesh-list
+  pagination** and **#20 reload mesh definitions**. Both were implemented in `bnw/BnwApp.tsx`
+  this slice (desktop left-nav 4/page pager `[data-bnw-mesh-pager]` + two-click `↻` reload
+  `[aria-label="reload mesh definitions"]`; mobile reload lives in 更多, pagination N/A as the
+  mobile mesh `<select>` lists all). The remaining 26 were already implemented in 7.1–7.4.
+- **Regression gate:** one consolidated `bnw.e2e` step ("7.5-D parity regression: coverage/14
+  ×28 + C1–C5") presence-asserts every ability's `/bnw` control/marker + the five C1–C5 review
+  constraints, so a future change that drops a control fails the gate. Per decision #5 it
+  consolidates rather than re-driving the 28 full mutation flows (those stay in their 7.1–7.4
+  steps). All 28 + C1–C5 pass.
+- C1–C5 (Phase-B review constraints) verified in `/bnw`: C1 mobile bottom-tab shell / no desktop
+  rails at 390px; C2 docked approval bar in focus; C3 new-mesh fixed mobile Save footer; C4 board
+  filter toolbar no horizontal overflow (`scrollWidth<=clientWidth`); C5 canvas information-flow
+  edges (recent-mail highlight) + force-directed layout + relayout.
+
 ## Change log / sources read
+- 2026-06-22 — Step 7.5-D: #19/#20 implemented in `/bnw`; consolidated 28+C1–C5 parity
+  regression added to `bnw.e2e`; status section above. No old root UI touched.
 - 2026-06-21 — created (backward-consistency audit, step 1+2 only). Sources audited +
   grep-verified per the list above; one fabricated claim dropped. No coverage/mockup
   files modified at audit time.

@@ -6,7 +6,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createStore, useStore, useConnected, type Store } from "../store";
 import {
-  Badge, Button, Cluster, EmptyState, PanelFrame, RouteLink, Select, Spinner,
+  Badge, Button, Cluster, ConfirmButton, EmptyState, PanelFrame, RouteLink, Select, Spinner,
   StatusListRow, type Status,
 } from "../ui/index";
 import type { MeshStatus } from "../../types";
@@ -138,6 +138,15 @@ export function BnwApp() {
     if (!m) return;
     navigate(route.k === "board" ? { k: "board", mesh: m, view: "list", filters: {} } : { k: "runtime", mesh: m });
   };
+  // #19 — desktop left-nav mesh-list pagination (4/page, ‹ ›; mobile select lists all).
+  const PER_PAGE = 4;
+  const [meshPage, setMeshPage] = useState(0);
+  const pageCount = Math.max(1, Math.ceil(state.meshes.length / PER_PAGE));
+  useEffect(() => { if (meshPage > pageCount - 1) setMeshPage(pageCount - 1); }, [pageCount, meshPage]);
+  const pageMeshes = state.meshes.slice(meshPage * PER_PAGE, meshPage * PER_PAGE + PER_PAGE);
+  // #20 — reload mesh definitions from the server (two-click confirm; disabled offline).
+  const [reloading, setReloading] = useState(false);
+  const doReload = async () => { setReloading(true); try { await store.reload(); } finally { setReloading(false); } };
 
   let body: ReactNode;
   if (route.k === "notFound") body = <NotFound path={route.path} />;
@@ -219,14 +228,18 @@ export function BnwApp() {
       <div className="relative flex min-h-0 flex-1">
         {/* desktop left mesh nav — fully hidden on mobile (the topbar select + bottom tabs cover it) */}
         <nav aria-label="meshes" className="hidden w-[232px] shrink-0 flex-col gap-1 overflow-auto border-r border-border bg-surface-raised p-2 lg:flex">
-          <div className="mb-1 flex items-center justify-between px-1">
+          <div className="mb-1 flex items-center justify-between gap-1 px-1">
             <span className="text-xs uppercase tracking-wider text-text-muted">meshes</span>
-            <RouteLink href={bnwHref({ k: "newMesh" })} className="text-xs">+ 新建</RouteLink>
+            <div className="flex items-center gap-1">
+              {/* #20 — reload mesh definitions (two-click confirm; disabled offline) */}
+              <ConfirmButton size="sm" variant="ghost" confirmLabel="重新加载?" disabled={!connected} busy={reloading} aria-label="reload mesh definitions" onConfirm={() => void doReload()}>↻</ConfirmButton>
+              <RouteLink href={bnwHref({ k: "newMesh" })} className="text-xs">+ 新建</RouteLink>
+            </div>
           </div>
           {state.meshes.length === 0 ? (
             <div className="px-1 py-2 text-xs text-text-muted">{connected ? "无 mesh" : "连接中…"}</div>
           ) : (
-            state.meshes.map((m) => (
+            pageMeshes.map((m) => (
               <StatusListRow
                 key={m.name}
                 status={meshDot(m.status)}
@@ -236,6 +249,14 @@ export function BnwApp() {
               />
             ))
           )}
+          {/* #19 — pagination (only when >1 page) */}
+          {pageCount > 1 ? (
+            <div data-bnw-mesh-pager className="mt-1 flex items-center justify-between px-1 text-xs text-text-muted">
+              <Button size="sm" variant="ghost" iconOnly disabled={meshPage <= 0} aria-label="previous mesh page" onClick={() => setMeshPage((p) => Math.max(0, p - 1))}>‹</Button>
+              <span className="tabular-nums" aria-label={`mesh page ${meshPage + 1} of ${pageCount}`}>{meshPage + 1}/{pageCount}</span>
+              <Button size="sm" variant="ghost" iconOnly disabled={meshPage >= pageCount - 1} aria-label="next mesh page" onClick={() => setMeshPage((p) => Math.min(pageCount - 1, p + 1))}>›</Button>
+            </div>
+          ) : null}
         </nav>
 
         {/* extra bottom padding on mobile so the fixed bottom tab bar never covers content */}
@@ -258,7 +279,7 @@ export function BnwApp() {
         {/* No generic right-context stub — each surface owns its own context (e.g. runtime
             focus renders an `<agent> · activity` panel; overview/canvas are full-width). */}
         {/* 7.5-A — mobile 更多 overlay covers the body region (under the fixed bottom tabs) */}
-        {moreOpen ? <MoreMenu onClose={() => setMoreOpen(false)} unreadCount={state.notifications?.unreadCount ?? 0} /> : null}
+        {moreOpen ? <MoreMenu onClose={() => setMoreOpen(false)} unreadCount={state.notifications?.unreadCount ?? 0} onReload={() => void doReload()} reloadDisabled={!connected} reloading={reloading} /> : null}
       </div>
 
       {/* 7.5-A — mobile bottom tab bar (hidden at lg+) */}

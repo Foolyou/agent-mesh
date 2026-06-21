@@ -5,7 +5,7 @@
 // Accepted deviation (lead-released 7.5-A): mockup 01 sketches 更多 as a bottom *sheet*; we
 // ship it as a full-screen route list (no router change — a local overlay toggled from the
 // bottom bar). Recorded in coverage/01-app-shell.md.
-import { Badge, RouteLink } from "../ui/index";
+import { Badge, ConfirmButton, RouteLink } from "../ui/index";
 import { bnwHref, type BnwRoute } from "../router";
 
 // Management surfaces that live under 更多 on mobile (mirror of the desktop topbar nav +
@@ -87,7 +87,13 @@ export function BottomTabs({ route, tabMesh, moreOpen, onToggleMore, onNavigate 
  * Full-screen 更多 management list (mobile only). Overlays the surface stage; each row is a real
  * RouteLink that SPA-navigates and closes the overlay. Hidden at `lg` and up.
  */
-export function MoreMenu({ onClose, unreadCount }: { onClose: () => void; unreadCount: number }) {
+export function MoreMenu({ onClose, unreadCount, onReload, reloadDisabled, reloading }: {
+  onClose: () => void;
+  unreadCount: number;
+  onReload: () => void;
+  reloadDisabled: boolean;
+  reloading: boolean;
+}) {
   return (
     <div data-bnw-more className="absolute inset-0 z-20 flex flex-col bg-surface lg:hidden">
       <div className="flex items-center justify-between border-b border-border px-4 py-3">
@@ -112,6 +118,12 @@ export function MoreMenu({ onClose, unreadCount }: { onClose: () => void; unread
             </RouteLink>
           </li>
         ))}
+        {/* #20 — reload mesh definitions (mobile lives in 更多 per coverage 01; two-click confirm) */}
+        <li className="flex items-center gap-3 border-b border-border px-4 py-3 text-sm text-text-primary">
+          <span aria-hidden="true" className="w-5 text-center text-base leading-none">↻</span>
+          <span className="flex-1">重新加载 mesh 定义</span>
+          <ConfirmButton size="sm" variant="ghost" confirmLabel="重新加载?" disabled={reloadDisabled} busy={reloading} aria-label="reload mesh definitions (mobile)" onConfirm={onReload}>↻</ConfirmButton>
+        </li>
       </ul>
     </div>
   );

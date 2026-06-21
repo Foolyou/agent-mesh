@@ -79,7 +79,7 @@ function fakeManager() {
       return { ok: true, state: BOARD_DOC, change: {} };
     },
     async defineMesh(config: { name: string }) { rec(`defineMesh:${config.name}`); },
-    async deleteMesh() {}, async loadDefinitions() {}, async stopAll() {},
+    async deleteMesh() {}, async loadDefinitions() { rec("reload"); }, async stopAll() {},
   };
 }
 // Assistant stub (WebGateway AssistantLike) so promptAssistant/interrupt reach a recorder.
@@ -108,6 +108,56 @@ const SEED_FOCUS = {
     queues: { router: { count: 1, items: [{ id: "q1", source: "operator", preview: "queued prompt", ts: "1" }] } },
     board: null,
   } },
+};
+
+// 7.5-D parity seeds. Overview: running mesh w/ a cold (lazy) agent (#11 wake), usage (#12),
+// health near-limit (#12), silent-complete (#12), running → new-all-sessions (#18).
+const SEED_PARITY_OVERVIEW = {
+  meshes: [{ name: "demo", defined: true, status: "running", router: "router",
+    agents: [
+      { id: "router", harness: "claude", role: "router", status: "ready", activity: "idle" },
+      { id: "lazy-1", harness: "codex", role: "member", status: "cold", activity: "idle" },
+    ], edges: [] }],
+  assistant: { status: "absent", transcript: [] },
+  perMesh: { demo: {
+    config: { name: "demo", agents: [], edges: [] },
+    transcripts: {}, activity: [], mail: [], history: [], pending: [],
+    modes: {}, models: {}, efforts: {}, capabilities: {},
+    usage: { router: { used: 120000, size: 200000, cost: 0.42 } },
+    health: { router: { signal: "near_limit" } },
+    selfAwareness: { router: { silentTaskCompletes: { count: 2 } } },
+    queues: {}, board: null,
+  } },
+};
+// Focus: long transcript (jump-to-bottom #15) incl. thought/tool/mail expand kinds (#14),
+// mode/model/effort selectors (#10), a queue (#13), a pending approval (C2 docked bar).
+const SEED_PARITY_FOCUS = {
+  meshes: [{ name: "demo", defined: true, status: "running", router: "router",
+    agents: [{ id: "router", harness: "claude", role: "router", status: "ready", activity: "idle" }], edges: [] }],
+  assistant: { status: "absent", transcript: [] },
+  perMesh: { demo: {
+    config: { name: "demo", agents: [], edges: [] },
+    transcripts: { router: { items: [
+      ...Array.from({ length: 80 }, (_, i) => ({ id: `m${i}`, kind: "message", role: i % 2 ? "agent" : "user", text: `transcript line ${i}`, complete: true, ts: "1" })),
+      { id: "th1", kind: "thought", text: "weighing the plan", complete: true, ts: "1" },
+      { id: "tc1", kind: "tool_call", title: "write_file", status: "done", input: "in", output: "out", ts: "1" },
+      { id: "ml1", kind: "mail", from: "router", to: "codex-1", body: "go build it now", ts: "1" },
+    ], hasMore: true, oldestSeq: "m0" } },
+    activity: [], mail: [], history: [],
+    pending: [{ requestId: "rq1", agent: "router", question: "write config.json?", options: [{ id: "allow", name: "Allow" }, { id: "deny", name: "Deny" }], ts: "1" }],
+    modes: { router: { current: "default", available: [{ id: "default", name: "default" }, { id: "plan", name: "plan" }] } },
+    models: { router: { current: "opus-4.8", available: [{ id: "opus-4.8", name: "Opus 4.8" }] } },
+    efforts: { router: { configId: "c", current: "high", available: [{ id: "high", name: "high" }, { id: "low", name: "low" }] } },
+    capabilities: {}, usage: {}, health: {}, selfAwareness: {},
+    queues: { router: { count: 1, items: [{ id: "q1", source: "operator", preview: "queued prompt", ts: "1" }] } },
+    board: null,
+  } },
+};
+// 5 meshes → the desktop left-nav pager (#19) appears (4/page).
+const SEED_PAGES = {
+  meshes: ["demo", "alpha", "beta", "gamma", "delta"].map((name) => ({ name, defined: true, status: "stopped", router: "router", agents: [{ id: "router", harness: "claude", role: "router", status: "cold", activity: "idle" }], edges: [] })),
+  assistant: { status: "absent", transcript: [] },
+  perMesh: {},
 };
 
 // A running mesh with edges + recent mail, so the canvas renders directed/highlighted edges
@@ -795,6 +845,159 @@ try {
       await op.setViewportSize({ width: 390, height: 844 });
       await sleep(120); await op.screenshot({ path: `${SHOTS}/bnw-offline-mobile.png`, fullPage: true });
     } finally { await offCtx.close(); }
+  });
+
+  // 7.5-D — consolidated parity regression: coverage/14 all 28 [E] abilities + C1–C5 review
+  // constraints, each asserted as a present /bnw control/marker (presence-gate; the full
+  // mutation flows live in their own 7.1–7.4 steps — this consolidates so a regression can't
+  // silently drop a control). Decision #5: consolidate + assert, do not re-drive 28 flows.
+  await step("7.5-D parity regression: coverage/14 ×28 + C1–C5", async () => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    const has = async (sel: string, id: string) => assert(await page.locator(sel).count() > 0, `parity ${id}: ${sel}`);
+
+    // ── new-mesh (04): #1–#8 ──────────────────────────────────────────────────
+    await page.goto(`${BASE}/bnw/mesh/new`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-bnw-newmesh]', { timeout: 8000 });
+    await page.locator('[aria-label="add agent"]').click(); // need ≥2 agents to add an edge
+    await page.locator('[aria-label="agent 2 harness"]').selectOption("opencode"); // reveal #6 on agent 2
+    await page.locator('[aria-label="add edge"]').click(); // reveal #8
+    await has('[aria-label="agent 1 instructions"]', "#1 per-agent instructions");
+    await has('[aria-label="expand agent 1 instructions"]', "#2 expanded editor (instructions)");
+    await has('[aria-label="expand charter"]', "#2 expanded editor (charter)");
+    await has('[aria-label="agent 1 model"]', "#3 per-agent model");
+    await has('[aria-label="agent 1 effort"]', "#4 per-agent effort"); // claude supports effort
+    await has('[aria-label="agent 1 lazy"]', "#5 lazy");
+    await has('[aria-label="agent 2 opencode permission"]', "#6 opencode permission");
+    await has('[aria-label="auto-compact enabled"]', "#7 auto-compact toggle");
+    await has('[aria-label="auto-compact threshold"]', "#7 auto-compact threshold");
+    await has('[aria-label="edge 1 steer"]', "#8 mail-edge steer");
+    // C3 — long-form: mobile fixed Save footer keeps Create reachable
+    await page.setViewportSize({ width: 390, height: 844 });
+    await has('[data-bnw-newmesh-footer] [aria-label="save mesh"]', "C3 sticky mobile Save footer");
+    await page.setViewportSize({ width: 1440, height: 900 });
+
+    // ── runtime overview (02): #11 #12 #18 ───────────────────────────────────
+    await page.goto(`${BASE}/bnw/mesh/demo`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-bnw-surface="runtime"]', { timeout: 8000 });
+    await has('[aria-label="start strategy"]', "#18 start-strategy select (stopped)");
+    await page.evaluate((s) => (window as any).__meshStore.apply({ t: "snapshot", state: s }), SEED_PARITY_OVERVIEW);
+    await page.waitForSelector('[aria-label="wake lazy-1"]', { timeout: 8000 });
+    await has('[aria-label="wake lazy-1"]', "#11 wake cold agent");
+    await has('[aria-label="new all sessions demo"]', "#18 new-all-sessions (running)");
+    await has('text=near_limit', "#12 near-limit health warning");
+    await has('text=静默完成', "#12 silent-complete badge");
+    await has('text=% context', "#12 context usage chip");
+
+    // ── runtime focus (02): #9 #10 #13 #14 #15 + C2 ──────────────────────────
+    await page.goto(`${BASE}/bnw/mesh/demo/agent/router`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-bnw-focus="split"]', { timeout: 8000 });
+    // The store marks a transcript "loaded" only when loadInitialTranscript resolves (and only
+    // when hasMore + a ready agent / fetched items). Apply the seed (ready router + hasMore +
+    // items), explicitly run loadInitial (marks loaded, but sets hasMore=false), then re-apply
+    // the seed so hasMore is restored for the load-older control while the loaded marker sticks.
+    await page.evaluate((s) => (window as any).__meshStore.apply({ t: "snapshot", state: s }), SEED_PARITY_FOCUS);
+    await page.evaluate(() => (window as any).__meshStore.loadInitialTranscript("demo", "router"));
+    await page.evaluate((s) => (window as any).__meshStore.apply({ t: "snapshot", state: s }), SEED_PARITY_FOCUS);
+    await page.waitForSelector('[data-bnw-expand]', { timeout: 8000 }); // items rendered (loaded)
+    await has('[href*="full=1"]', "#9 session fullscreen toggle");
+    await has('[aria-label="router mode"]', "#10 mode selector");
+    await has('[aria-label="router model"]', "#10 model selector");
+    await has('[aria-label="router effort"]', "#10 effort selector");
+    await has('[data-bnw-queue-chip]', "#13 pending-turns queue");
+    await has('[data-bnw-expand]', "#14 transcript expand toggles");
+    await has('text=载入更早', "#15 load-older transcript control");
+    await has('[data-bnw-approval]', "C2 docked approval bar (focus)");
+    // #15 jump-to-bottom appears after scrolling the transcript up
+    await page.locator('[data-bnw-transcript]').evaluate((el) => { (el as HTMLElement).scrollTop = 0; el.dispatchEvent(new Event("scroll")); });
+    await page.waitForSelector('[data-bnw-jump]', { timeout: 8000 });
+    await has('[data-bnw-jump]', "#15 jump-to-bottom");
+
+    // ── canvas (02): #16 #17 + C5 ────────────────────────────────────────────
+    await page.goto(`${BASE}/bnw/mesh/demo/canvas`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-bnw-canvas]', { timeout: 8000 });
+    await page.evaluate((s) => (window as any).__meshStore.apply({ t: "snapshot", state: s }), SEED_CANVAS);
+    await page.waitForSelector('[data-bnw-node]', { timeout: 8000 });
+    await has('[data-bnw-node]', "#16 zoomable topology canvas (nodes)");
+    await has('[aria-label="add agent"]', "#17 live add agent");
+    await has('[aria-label="add edge"]', "#17 live add edge");
+    await page.waitForSelector('[data-edge-recent]', { state: "attached", timeout: 8000 });
+    await has('[data-edge-recent]', "C5 information-flow edges (recent highlight)");
+    await has('[aria-label="force-directed layout"]', "C5 force-directed layout");
+    await has('[aria-label="重新布局"]', "C5 relayout");
+
+    // ── app shell (01): #19 pagination (functional), #20 reload (functional) ──
+    await page.goto(`${BASE}/bnw/mesh/demo`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-bnw-surface="runtime"]', { timeout: 8000 });
+    await page.evaluate((s) => (window as any).__meshStore.apply({ t: "snapshot", state: s }), SEED_PAGES); // 5 meshes → pager
+    await page.waitForSelector('[data-bnw-mesh-pager]', { timeout: 8000 });
+    const meshNav = page.locator('nav[aria-label="meshes"]');
+    // #19 — page 1 shows page-1 meshes, hides page-2 (delta); next → delta visible; prev restores.
+    assert(await meshNav.getByText("demo", { exact: true }).count() > 0, "#19 page 1 shows demo");
+    assert(await meshNav.getByText("delta", { exact: true }).count() === 0, "#19 page 1 hides page-2 (delta)");
+    await page.locator('[data-bnw-mesh-pager] [aria-label="next mesh page"]').click();
+    await meshNav.getByText("delta", { exact: true }).waitFor({ timeout: 8000 });
+    assert(await meshNav.getByText("delta", { exact: true }).count() > 0, "#19 next → delta (page 2) visible");
+    assert(await meshNav.getByText("demo", { exact: true }).count() === 0, "#19 page 2 hides page-1 (demo)");
+    await page.locator('[data-bnw-mesh-pager] [aria-label="previous mesh page"]').click();
+    await meshNav.getByText("demo", { exact: true }).waitFor({ timeout: 8000 });
+    assert(await meshNav.getByText("delta", { exact: true }).count() === 0, "#19 prev → page 1 restored");
+    // #20 — desktop reload ConfirmButton (two-click) reaches manager.loadDefinitions → rec("reload")
+    const reloadBtn = meshNav.locator('[aria-label="reload mesh definitions"]');
+    await reloadBtn.click(); // arm
+    await reloadBtn.click(); // confirm
+    await waitCall("reload");
+
+    // ── assistant (05): #21 ──────────────────────────────────────────────────
+    await page.goto(`${BASE}/bnw/assistant?full=1`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-bnw-assistant="full"]', { timeout: 8000 });
+    await has('[data-bnw-assistant="full"]', "#21 assistant fullscreen");
+
+    // ── board (03): #22 #23 #24 #25 + C4 ─────────────────────────────────────
+    await page.goto(`${BASE}/bnw/mesh/demo/board`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-bnw-board-list]', { timeout: 8000 });
+    await has('[aria-label="fullscreen"]', "#22 board fullscreen");
+    await has('[aria-label="manage labels"]', "#24 manage-labels CRUD");
+    await page.locator('[data-bnw-filter-toggle]').click(); // #23 lives in the filter menu
+    await has('[aria-label="group by epic"]', "#23 group-by-epic");
+    await page.locator('[aria-label="new issue"]').click();
+    await has('[aria-label="new task"]', "#25 create task");
+    await has('[aria-label="new epic"]', "#25 create epic");
+    // C4 — filter toolbar never overflows its container
+    const board = page.locator('[aria-label="board filters"]');
+    assert(await board.evaluate((el) => el.scrollWidth <= el.clientWidth + 1), "C4 board filter no horizontal overflow");
+    await page.goto(`${BASE}/bnw/mesh/demo/board/issue/5`, { waitUntil: "domcontentloaded" }); // task 5 = done
+    await page.waitForSelector('[data-bnw-board-detail]', { timeout: 8000 });
+    await has('[aria-label="reopen issue"]', "#25 reopen closed task");
+
+    // ── harnesses (06): #26 #27 #28 ──────────────────────────────────────────
+    await page.goto(`${BASE}/bnw/harnesses`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-harness-row]', { timeout: 8000 });
+    await has('[data-self-installer]', "#27 self-install guide (copy/docs/reprobe)");
+    await has('[data-old-agents] [data-old-agent]', "#28 restart old-version agents (force/after-idle/cancel)");
+    await has('[aria-label^="force restart"]', "#28 force restart");
+    await has('[aria-label^="restart"][aria-label$="after idle"]', "#28 after-idle restart");
+    // #26 install-progress: trigger codex's install stream (stubbed), assert the live log + close
+    await page.locator('[aria-label="update codex"]').click();
+    await page.waitForSelector('[data-install-progress]', { timeout: 8000 });
+    await has('[data-install-progress]', "#26 install progress live log");
+    await has('[aria-label="close install progress"]', "#26 install progress close");
+
+    // ── C1 — mobile anti-pattern: shell stacks (bottom tabs, no desktop rails) ─
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(`${BASE}/bnw/mesh/demo`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-bnw-bottomtabs]', { timeout: 8000 });
+    assert(await page.locator('[data-bnw-bottomtabs]').isVisible(), "C1 mobile bottom tabs");
+    assert(!(await page.locator('nav[aria-label="meshes"]').isVisible()), "C1 desktop left rail hidden on mobile");
+    // #20 (mobile) — reload lives in the 更多 menu; drive its two-click confirm → manager reload
+    calls.length = 0;
+    await page.locator('[data-bnw-more-toggle]').click();
+    await page.waitForSelector('[data-bnw-more]', { timeout: 8000 });
+    const mReload = page.locator('[data-bnw-more] [aria-label="reload mesh definitions (mobile)"]');
+    assert(await mReload.count() > 0, "#20 mobile reload row in 更多");
+    await mReload.click(); // arm
+    await mReload.click(); // confirm
+    await waitCall("reload");
+    await page.setViewportSize({ width: 1440, height: 900 });
   });
 
   await step("screenshots: overview / focus (C2 docked approval) / canvas / mobile overview", async () => {
