@@ -20,19 +20,66 @@ const cfgOf = (name: string): MeshConfig => ({
   edges: [],
 });
 
+// Records every mutation the gateway forwards, so the browser smoke can prove a clicked
+// control reaches the real store→API→gateway→manager path (not just renders).
+const calls: string[] = [];
+const rec = (s: string) => { calls.push(s); };
+const okMut = { saved: true, applied: true } as const;
+// Capture the gateway's event listener so the e2e can emit real MeshEvents (e.g. a queued
+// turn) — the gateway folds them into its own state + broadcasts, which is what some
+// server-side guards (removeQueuedTurn) validate against.
+let mgrListener: ((n: string, e: MeshEvent) => void) | null = null;
+const emit = (name: string, event: MeshEvent) => mgrListener?.(name, event);
+
 function fakeManager() {
   return {
-    on(_l: (n: string, e: MeshEvent) => void) { return () => {}; },
+    on(l: (n: string, e: MeshEvent) => void) { mgrListener = l; return () => { mgrListener = null; }; },
     listMeshes() { return MESHES.map((name) => ({ name, defined: true, status: "stopped" as const })); },
     configOf(name: string) { return cfgOf(name); },
     routerOf() { return "router"; },
-    async startMesh() {}, async stopMesh() {}, async promptRouter() {}, promptAgent() {},
-    resolvePermission() {}, async setMode() {}, async setModel() {}, async setAgentEffort() {},
-    interruptAgent() {}, async defineMesh() {}, async deleteMesh() {}, async loadDefinitions() {}, async stopAll() {},
+    async startMesh(name: string, opts?: { sessionStrategy?: string }) { rec(`startMesh:${name}:${opts?.sessionStrategy ?? "resume"}`); },
+    async stopMesh(name: string) { rec(`stopMesh:${name}`); },
+    async promptRouter() {},
+    promptAgent(name: string, agentId: string, text: string) { rec(`promptAgent:${name}:${agentId}:${text}`); },
+    steerAgent(name: string, agentId: string, text: string) { rec(`steerAgent:${name}:${agentId}:${text}`); },
+    removeQueuedTurn(name: string, agentId: string, turnId: string) { rec(`removeQueuedTurn:${name}:${agentId}:${turnId}`); },
+    resolvePermission(name: string, requestId: string, optionId: string) { rec(`resolvePermission:${name}:${requestId}:${optionId}`); },
+    async setMode(name: string, agentId: string, modeId: string) { rec(`setMode:${name}:${agentId}:${modeId}`); return okMut; },
+    async setModel(name: string, agentId: string, modelId: string) { rec(`setModel:${name}:${agentId}:${modelId}`); return okMut; },
+    async setAgentEffort(name: string, agentId: string, effort?: string) { rec(`setEffort:${name}:${agentId}:${effort}`); return okMut; },
+    wakeAgent(name: string, agentId: string) { rec(`wakeAgent:${name}:${agentId}`); },
+    interruptAgent(name: string, agentId: string) { rec(`interruptAgent:${name}:${agentId}`); },
+    async newAgentSession(name: string, agentId: string) { rec(`newAgentSession:${name}:${agentId}`); },
+    async newAllSessions(name: string) { rec(`newAllSessions:${name}`); },
+    stopAgent() {}, async addEdge() {}, async addAgent() {},
+    async defineMesh() {}, async deleteMesh() {}, async loadDefinitions() {}, async stopAll() {},
   };
 }
 
 function assert(cond: unknown, msg: string) { if (!cond) throw new Error(`BNW E2E FAIL: ${msg}`); }
+// Poll the in-process call log until the gateway forwards the expected mutation (or time out).
+async function waitCall(sub: string, ms = 4000) {
+  const t0 = Date.now();
+  while (Date.now() - t0 < ms) { if (calls.some((c) => c.includes(sub))) return; await new Promise((r) => setTimeout(r, 50)); }
+  throw new Error(`BNW E2E FAIL: expected manager call containing "${sub}"; got: [${calls.join(" | ")}]`);
+}
+// A rich client-side snapshot so the focus controls render enabled (running mesh, ready
+// agent, model options, a pending approval, a queued turn). Applied via __meshStore.apply.
+const SEED_FOCUS = {
+  meshes: [{ name: "demo", defined: true, status: "running", router: "router",
+    agents: [{ id: "router", harness: "claude", role: "router", status: "ready", activity: "idle" }], edges: [] }],
+  assistant: { status: "absent", transcript: [] },
+  perMesh: { demo: {
+    config: { name: "demo", agents: [], edges: [] },
+    transcripts: { router: { items: [], hasMore: false } },
+    activity: [], mail: [], history: [],
+    pending: [{ requestId: "rq1", agent: "router", question: "write config.json?", options: [{ id: "allow", name: "Allow" }, { id: "deny", name: "Deny" }], ts: "1" }],
+    modes: {}, models: { router: { current: "opus-4.8", available: [{ id: "opus-4.8", name: "Opus 4.8" }, { id: "sonnet-4.6", name: "Sonnet 4.6" }] } }, efforts: {},
+    capabilities: {}, usage: {}, health: {}, selfAwareness: {},
+    queues: { router: { count: 1, items: [{ id: "q1", source: "operator", preview: "queued prompt", ts: "1" }] } },
+    board: null,
+  } },
+};
 
 const auth = await provisionE2eAuth();
 const gw = new WebGateway(fakeManager() as any, undefined, { root: auth.authRoot });
@@ -88,6 +135,62 @@ try {
     await page.goto(`${BASE}/bnw/mesh/demo/agent/router?full=1`, { waitUntil: "domcontentloaded" });
     await page.waitForSelector('[data-bnw-focus="full"]', { timeout: 8000 });
     if (await page.locator('[data-bnw-focus="split"]').count() !== 0) throw new Error("full=1 must not render the split frame");
+  });
+
+  await step("7.1-B mutations reach the gateway: lifecycle Start (overview)", async () => {
+    // real gateway snapshot = stopped → Start + strategy select; choose fresh, click Start.
+    await page.goto(`${BASE}/bnw/mesh/demo`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-bnw-lifecycle]', { timeout: 8000 });
+    await page.locator('[aria-label="start strategy"]').selectOption("fresh");
+    await page.getByRole("button", { name: "Start" }).click();
+    await waitCall("startMesh:demo:fresh");
+  });
+
+  await step("7.1-B mutations reach the gateway: focus selectors / composer / approval / queue", async () => {
+    await page.goto(`${BASE}/bnw/mesh/demo/agent/router`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-bnw-focus="split"]', { timeout: 8000 });
+    const seed = () => page.evaluate((s) => (window as any).__meshStore.apply({ t: "snapshot", state: s }), SEED_FOCUS);
+
+    // #10 selector → setModel
+    await seed();
+    await page.waitForSelector('[aria-label="router model"]', { timeout: 8000 });
+    await page.locator('[aria-label="router model"]').selectOption("sonnet-4.6");
+    await waitCall("setModel:demo:router:sonnet-4.6");
+
+    // composer → promptAgent (router idle → prompt, not steer)
+    await seed();
+    await page.locator('[aria-label="message input"]').fill("hello from bnw e2e");
+    await page.getByRole("button", { name: "Send" }).click();
+    await waitCall("promptAgent:demo:router:hello from bnw e2e");
+
+    // C2 approval first option → resolvePermission (FIFO bar visible first)
+    await seed();
+    await page.waitForSelector('[data-bnw-approval]', { timeout: 8000 });
+    await page.locator('[aria-label="resolve allow"]').click();
+    await waitCall("resolvePermission:demo:rq1:allow");
+
+    // queue remove → removeQueuedTurn. The gateway validates against ITS OWN queue, so emit
+    // a real queued-turn MeshEvent: the gateway folds it + broadcasts agent.queue to the client.
+    await seed();
+    emit("demo", { kind: "agent_turn", phase: "queued", ts: "1",
+      turn: { id: "q1", agent: "router", source: "operator", from: "operator", text: "queued prompt", preview: "queued prompt", ts: "1" } } as MeshEvent);
+    await page.waitForSelector('[aria-label="remove queued q1"]', { timeout: 8000 });
+    await page.locator('[aria-label="remove queued q1"]').click();
+    await waitCall("removeQueuedTurn:demo:router:q1");
+  });
+
+  await step("7.1-B mutations reach the gateway: wake cold agent (overview)", async () => {
+    await page.goto(`${BASE}/bnw/mesh/demo`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-bnw-agents]', { timeout: 8000 });
+    // seed a cold agent so the overview renders a real Wake button
+    await page.evaluate(() => (window as any).__meshStore.apply({ t: "snapshot", state: {
+      meshes: [{ name: "demo", defined: true, status: "running", router: "router",
+        agents: [{ id: "kimi-1", harness: "kimi", role: "member", status: "cold", activity: "idle" }], edges: [] }],
+      assistant: { status: "absent", transcript: [] }, perMesh: {},
+    } }));
+    await page.waitForSelector('[aria-label="wake kimi-1"]', { timeout: 8000 });
+    await page.locator('[aria-label="wake kimi-1"]').click();
+    await waitCall("wakeAgent:demo:kimi-1");
   });
 
   await step("RouteLink does same-origin SPA nav (no full reload) runtime→board", async () => {

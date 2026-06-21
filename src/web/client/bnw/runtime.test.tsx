@@ -54,7 +54,7 @@ test("RuntimeOverview: unknown mesh → not-found state", () => {
   expect(out).toContain("mesh 不存在");
 });
 
-test("RuntimeFocus split: transcript items + side summaries + fullscreen toggle link", () => {
+test("RuntimeFocus split: transcript + real selectors + composer + side summaries + fullscreen toggle", () => {
   const items: TranscriptItem[] = [
     { id: "m1", kind: "message", role: "user", text: "restart alpha", ts: "", complete: true },
     { id: "m2", kind: "message", role: "agent", text: "on it", ts: "", complete: true },
@@ -62,7 +62,7 @@ test("RuntimeFocus split: transcript items + side summaries + fullscreen toggle 
   ];
   const s = state({ demo: pm({
     transcripts: { router: { items, hasMore: false } },
-    models: { router: { current: "opus-4.8", available: [] } },
+    models: { router: { current: "opus-4.8", available: [{ id: "opus-4.8", name: "Opus 4.8" }, { id: "sonnet-4.6", name: "Sonnet 4.6" }] } },
     activity: [{ id: "a1", ts: "", kind: "mail", text: "→ codex-1" }],
   }) });
   const out = renderToStaticMarkup(<RuntimeFocus store={STUB} state={s} mesh="demo" agent="router" full={false} />);
@@ -70,10 +70,51 @@ test("RuntimeFocus split: transcript items + side summaries + fullscreen toggle 
   expect(out).toContain("data-bnw-transcript");
   expect(out).toContain("restart alpha");
   expect(out).toContain("on it");
-  expect(out).toContain("bun test"); // tool-call card
-  expect(out).toContain("model: opus-4.8"); // read-only selector value from store
+  expect(out).toContain("bun test"); // tool-call card (collapsed)
+  expect(out).toContain("data-bnw-selectors"); // #10 real selectors
+  expect(out).toContain('aria-label="router model"'); // real model <select>
+  expect(out).toContain('aria-label="Message composer"'); // real composer
+  expect(out).toContain('aria-label="message input"');
   expect(out).toContain('href="/bnw/mesh/demo/agent/router?full=1"'); // fullscreen toggle
   expect(out).toContain("活动"); // side summary
+});
+
+test("RuntimeFocus: #14 transcript items expose expand toggles", () => {
+  const items: TranscriptItem[] = [
+    { id: "th1", kind: "thought", text: "let me think about this carefully", ts: "", complete: true },
+    { id: "t1", kind: "tool_call", toolCallId: "c1", title: "grep", status: "completed", input: "pattern", output: "match", ts: "", updatedTs: "" },
+  ];
+  const s = state({ demo: pm({ transcripts: { router: { items, hasMore: false } } }) });
+  const out = renderToStaticMarkup(<RuntimeFocus store={STUB} state={s} mesh="demo" agent="router" full={false} />);
+  expect(out).toContain("data-bnw-expand");
+  expect(out).toContain('aria-expanded="false"'); // collapsed by default
+});
+
+test("RuntimeFocus: C2 docked approval bar shows FIFO oldest + 还有 N + resolve options", () => {
+  const s = state({ demo: pm({
+    transcripts: { router: { items: [], hasMore: false } },
+    pending: [
+      { requestId: "r1", agent: "router", question: "write config.json?", options: [{ id: "allow", name: "Allow" }, { id: "deny", name: "Deny" }], ts: "1" },
+      { requestId: "r2", agent: "router", question: "second one", options: [{ id: "allow", name: "Allow" }], ts: "2" },
+    ],
+  }) });
+  const out = renderToStaticMarkup(<RuntimeFocus store={STUB} state={s} mesh="demo" agent="router" full={false} />);
+  expect(out).toContain("data-bnw-approval");
+  expect(out).toContain("write config.json?"); // oldest only
+  expect(out).not.toContain("second one"); // FIFO — the rest are summarized
+  expect(out).toContain("还有 1 个待授权");
+  expect(out).toContain('aria-label="resolve allow"');
+});
+
+test("RuntimeOverview: #18 lifecycle controls present; cold agent gets a real Wake", () => {
+  const running = renderToStaticMarkup(<RuntimeOverview store={STUB} state={state({ demo: pm() })} mesh="demo" />);
+  expect(running).toContain("data-bnw-lifecycle");
+  expect(running).toContain('aria-label="stop demo"'); // SUMMARY is running → Stop
+  const coldSummary: MeshSummary = { ...SUMMARY, status: "stopped", agents: [{ id: "kimi-1", harness: "kimi", role: "member", status: "cold", activity: "idle" }] };
+  const coldState: GatewayState = { meshes: [coldSummary], assistant: { status: "absent", transcript: [] }, perMesh: { demo: pm() } };
+  const cold = renderToStaticMarkup(<RuntimeOverview store={STUB} state={coldState} mesh="demo" />);
+  expect(cold).toContain('aria-label="start strategy"'); // stopped → Start strategy
+  expect(cold).toContain('aria-label="wake kimi-1"'); // cold agent → real Wake
 });
 
 test("RuntimeFocus full=1: switches to the full frame (no side summaries)", () => {

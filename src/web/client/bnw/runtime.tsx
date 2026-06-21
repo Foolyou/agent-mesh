@@ -1,13 +1,14 @@
-// Step 7.1-A — new `/bnw/` Runtime A views (overview + focus), wired to the REAL store.
+// Step 7.1-A/B — new `/bnw/` Runtime A views (overview + focus), wired to the REAL store.
 // Independent view layer: this file does NOT import or mutate the old runtime components
 // (MeshDetail/ChatPane/Transcript/Topology/MeshCanvas) — it reads the same store/per-mesh
 // state and renders fresh views from the C5–C8 component library + v2 tokens.
 //
-// 7.1-A is READ + navigation + the transcript load path (real). All MUTATIONS
-// (start/stop, mode/model/effort, wake, interrupt, new-session, queue remove, approvals,
-// canvas physics) are deferred to 7.1-B/C — they are surfaced read-only or marked, never
-// faked. See docs/design/ui/step7-routing-plan.md §2 7.1.
-import { useEffect } from "react";
+// 7.1-A = read + nav + transcript load. 7.1-B adds the real interactions (mode/model/
+// effort/kimi selectors, wake, queue remove, transcript expand toggles, jump-to-bottom,
+// composer send/steer/interrupt/new-session, C2 docked approval bar, mesh lifecycle) —
+// every one a real store mutation, no fakes (see runtime-controls.tsx). Canvas (#16) and
+// live add-agent/edge (#17) remain deferred to 7.1-C.
+import { useEffect, useRef, useState } from "react";
 import {
   Badge, Cluster, EmptyState, PanelFrame, ProgressBar, RouteLink, Spinner,
   StatusChip, type Status,
@@ -16,6 +17,7 @@ import type { Store } from "../store";
 import type { GatewayState, MeshSummary, PerMeshState, TranscriptItem } from "../../types";
 import type { AgentStatus, AgentActivity } from "../../../acp/types";
 import { bnwHref } from "../router";
+import { ApprovalBar, FocusComposer, LifecycleControls, QueueList, RuntimeSelectors, WakeButton } from "./runtime-controls";
 
 // ── status mapping (gateway vocab → C5 StatusChip vocab) ──────────────────────
 function agentDot(status: AgentStatus, activity: AgentActivity): Status {
@@ -53,7 +55,7 @@ function UsageLine({ pm, agent }: { pm: PerMeshState | undefined; agent: string 
 }
 
 // ── overview: /bnw/mesh/<id> ──────────────────────────────────────────────────
-export function RuntimeOverview({ state, mesh }: { store: Store; state: GatewayState; mesh: string }) {
+export function RuntimeOverview({ store, state, mesh }: { store: Store; state: GatewayState; mesh: string }) {
   const summary = state.meshes.find((m) => m.name === mesh);
   const pm = state.perMesh[mesh];
   if (!summary) {
@@ -66,6 +68,7 @@ export function RuntimeOverview({ state, mesh }: { store: Store; state: GatewayS
       description={`${summary.agents.length} agents · ${pending} 待审批`}
       actions={<Cluster>
         <StatusChip status={meshDot(summary.status)} variant="soft" label={summary.status} />
+        <LifecycleControls store={store} mesh={mesh} status={summary.status} />
         <RouteLink href={bnwHref({ k: "runtime", mesh, canvas: true })} className="text-sm">画布 ↗</RouteLink>
       </Cluster>}
     >
@@ -89,7 +92,7 @@ export function RuntimeOverview({ state, mesh }: { store: Store; state: GatewayS
                 <UsageLine pm={pm} agent={a.id} />
                 {health?.signal && health.signal !== "compact_done" ? <span className="text-xs text-warning">⚠ {health.signal}</span> : null}
                 {sa?.silentTaskCompletes?.count ? <span className="text-xs text-warning">静默完成 ×{sa.silentTaskCompletes.count}</span> : null}
-                {cold ? <span className="text-xs text-text-muted">cold — 唤醒控件接线于 7.1-B</span> : null}
+                {cold ? <div><WakeButton store={store} mesh={mesh} agent={a.id} /></div> : null}
               </div>
             );
             // cold agents have no live session to focus → no focus link (wake lands in 7.1-B).
@@ -99,13 +102,23 @@ export function RuntimeOverview({ state, mesh }: { store: Store; state: GatewayS
           })}
         </div>
       )}
-      <p className="mt-3 text-xs text-text-muted">启停 / 启动策略 / 加 agent·edge 等变更控件接线于 7.1-B（本切片只读，不伪造 store 变更）。</p>
+      <p className="mt-3 text-xs text-text-muted">实时加 agent / 加 edge（#17）接线于 7.1-C。</p>
     </PanelFrame>
   );
 }
 
 // ── transcript item rendering (fresh, minimal; not the old Transcript.tsx) ─────
+// #14: thought / tool-call / mail / attachment are collapsible (expand toggles).
+const clip = (s: string, n = 140) => (s.length > n ? s.slice(0, n) + "…" : s);
+
 function TranscriptItemView({ it }: { it: TranscriptItem }) {
+  const [open, setOpen] = useState(false);
+  const Toggle = ({ label }: { label: string }) => (
+    <button type="button" data-bnw-expand aria-expanded={open} onClick={() => setOpen((v) => !v)}
+      className="inline-flex items-center gap-1 rounded-sm text-left hover:text-text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus-ring">
+      <span aria-hidden="true">{open ? "▾" : "▸"}</span>{label}
+    </button>
+  );
   switch (it.kind) {
     case "message":
       return (
@@ -114,20 +127,41 @@ function TranscriptItemView({ it }: { it: TranscriptItem }) {
         </div>
       );
     case "thought":
-      return <div className="px-1 text-xs italic text-text-muted">💭 {it.text}</div>;
+      return (
+        <div className="px-1 text-xs italic text-text-muted">
+          <Toggle label={`💭 ${open ? "思考" : clip(it.text, 80)}`} />
+          {open ? <div className="mt-0.5 whitespace-pre-wrap">{it.text}</div> : null}
+        </div>
+      );
     case "tool_call":
       return (
         <div className="rounded-lg border border-border bg-surface-sunken px-2.5 py-1.5 text-xs">
-          <div className="flex items-center gap-1.5"><span className="font-medium text-text-secondary">🔧 {it.title}</span><span className="text-text-muted">· {it.status}</span></div>
-          {it.output ? <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap text-text-muted">{it.output}</pre> : null}
+          <div className="flex items-center gap-1.5 text-text-secondary"><Toggle label={`🔧 ${it.title}`} /><span className="text-text-muted">· {it.status}</span></div>
+          {open ? (
+            <div className="mt-1 flex flex-col gap-1">
+              {it.input ? <pre className="max-h-32 overflow-auto whitespace-pre-wrap text-text-muted">in: {it.input}</pre> : null}
+              {it.output ? <pre className="max-h-40 overflow-auto whitespace-pre-wrap text-text-muted">out: {it.output}</pre> : null}
+              {it.locations?.length ? <div className="text-text-muted">files: {it.locations.join(", ")}</div> : null}
+            </div>
+          ) : null}
         </div>
       );
     case "mail":
-      return <div className="rounded border border-border px-2 py-1 text-xs text-text-secondary">✉ {it.from} → {it.to}: <span className="text-text-muted">{it.body}</span></div>;
+      return (
+        <div className="rounded border border-border px-2 py-1 text-xs text-text-secondary">
+          <Toggle label={`✉ ${it.from} → ${it.to}`} />
+          <div className="mt-0.5 whitespace-pre-wrap text-text-muted">{open ? it.body : clip(it.body)}</div>
+        </div>
+      );
     case "plan":
       return <div className="rounded border border-border px-2 py-1 text-xs text-text-secondary">📋 plan · {it.entries.length} 步</div>;
     case "attachment":
-      return <div className="rounded border border-border px-2 py-1 text-xs text-text-secondary">📎 {it.name ?? it.path}</div>;
+      return (
+        <div className="rounded border border-border px-2 py-1 text-xs text-text-secondary">
+          <Toggle label={`📎 ${it.name ?? it.path}`} />
+          {open ? <div className="mt-0.5 text-text-muted">{it.path}{it.caption ? ` · ${it.caption}` : ""}</div> : null}
+        </div>
+      );
     case "compact":
       return <div className="text-center text-xs text-text-muted">— compact {it.status} —</div>;
     case "divider":
@@ -142,76 +176,92 @@ export function RuntimeFocus({ store, state, mesh, agent, full }: { store: Store
   const summary = state.meshes.find((m) => m.name === mesh);
   const pm = state.perMesh[mesh];
   const a = summary?.agents.find((x) => x.id === agent);
+  const snap = pm?.transcripts[agent];
+  const itemCount = snap?.items.length ?? 0;
 
-  // real transcript load path (read-only): fetch the initial page once per agent.
+  // real transcript load path: fetch the initial page once per agent.
   useEffect(() => {
     if (summary && a && !store.isTranscriptInitialLoaded(mesh, agent)) void store.loadInitialTranscript(mesh, agent);
   }, [store, mesh, agent, summary, a]);
+
+  // #15 — jump-to-bottom: track whether the scroll region is pinned to the bottom; keep it
+  // pinned as new items arrive, and expose a button to return when scrolled up.
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const [atBottom, setAtBottom] = useState(true);
+  const onScroll = () => {
+    const el = scrollRef.current;
+    if (el) setAtBottom(el.scrollHeight - el.scrollTop - el.clientHeight < 40);
+  };
+  const scrollToBottom = () => {
+    const el = scrollRef.current;
+    if (el) { el.scrollTop = el.scrollHeight; setAtBottom(true); }
+  };
+  useEffect(() => { if (atBottom) scrollToBottom(); }, [itemCount, atBottom]);
 
   if (!summary || !a) {
     return <PanelFrame title="运行态 · focus"><EmptyState title="agent 不存在" description={`mesh “${mesh}” 没有 agent “${agent}”。`} action={<RouteLink href={bnwHref({ k: "runtime", mesh })}>返回概览</RouteLink>} /></PanelFrame>;
   }
 
-  const snap = pm?.transcripts[agent];
   const loaded = store.isTranscriptInitialLoaded(mesh, agent);
-  const model = pm?.models[agent]?.current;
-  const mode = pm?.modes[agent]?.current;
-  const effort = pm?.efforts[agent]?.current;
   const queue = pm?.queues[agent];
   const myPending = pm?.pending.filter((p) => p.agent === agent) ?? [];
+  const working = a.activity === "working";
+  const cold = a.status === "cold";
+  const editable = a.status !== "dead"; // can't mutate a dead agent
 
-  const transcript = (
+  const focusColumn = (
     <PanelFrame
       title={`${agent}`}
       description={`${a.harness} · ${a.role} · ${a.status}`}
       actions={<Cluster>
         <StatusChip status={agentDot(a.status, a.activity)} variant="dot" />
+        {cold ? <WakeButton store={store} mesh={mesh} agent={agent} /> : null}
         <RouteLink href={bnwHref({ k: "runtime", mesh, agent, full: !full })} className="text-sm">{full ? "⊟ 退出全屏" : "⊞ 全屏"}</RouteLink>
         <RouteLink href={bnwHref({ k: "runtime", mesh })} className="text-sm">‹ 概览</RouteLink>
       </Cluster>}
-      bodyClassName="flex flex-col gap-2"
+      className="h-full"
+      bodyClassName="flex min-h-0 flex-1 flex-col gap-2"
     >
-      {/* read-only runtime selectors (mutation wiring lands in 7.1-B) */}
-      <div className="flex flex-wrap items-center gap-2 text-xs text-text-muted">
-        {model ? <span className="rounded border border-border px-1.5 py-0.5">model: {model}</span> : null}
-        {mode ? <span className="rounded border border-border px-1.5 py-0.5">mode: {mode}</span> : null}
-        {effort ? <span className="rounded border border-border px-1.5 py-0.5">effort: {effort}</span> : null}
-        <span className="text-text-muted">· 选择器/唤醒/打断/新会话接线于 7.1-B</span>
-      </div>
+      {/* #10 — real runtime selectors (mode/model/effort/kimi thinking) */}
+      <RuntimeSelectors store={store} mesh={mesh} agent={agent} harness={a.harness}
+        modes={pm?.modes[agent]} models={pm?.models[agent]} efforts={pm?.efforts[agent]} disabled={!editable} />
       <UsageLine pm={pm} agent={agent} />
-      <div data-bnw-transcript className="flex flex-1 flex-col gap-2 overflow-auto">
-        {!loaded ? (
-          <div className="flex items-center gap-2 text-sm text-text-muted"><Spinner size={14} label="loading transcript" /> 载入转写…</div>
-        ) : !snap || snap.items.length === 0 ? (
-          <EmptyState title="暂无消息" description="该 agent 还没有转写记录。" />
-        ) : (
-          <>
-            {snap.hasMore ? <button type="button" onClick={() => void store.loadOlderTranscript(mesh, agent)} className="self-center rounded-lg border border-border-strong bg-surface-sunken px-2 py-1 text-xs text-text-primary hover:bg-hover">载入更早</button> : null}
-            {snap.items.map((it) => <TranscriptItemView key={it.id} it={it} />)}
-          </>
-        )}
+      {/* transcript scroll region (relative for the jump-to-bottom affordance) */}
+      <div className="relative flex min-h-0 flex-1 flex-col">
+        <div ref={scrollRef} onScroll={onScroll} data-bnw-transcript className="flex flex-1 flex-col gap-2 overflow-auto">
+          {!loaded ? (
+            <div className="flex items-center gap-2 text-sm text-text-muted"><Spinner size={14} label="loading transcript" /> 载入转写…</div>
+          ) : !snap || snap.items.length === 0 ? (
+            <EmptyState title="暂无消息" description="该 agent 还没有转写记录。" />
+          ) : (
+            <>
+              {snap.hasMore ? <button type="button" onClick={() => void store.loadOlderTranscript(mesh, agent)} className="self-center rounded-lg border border-border-strong bg-surface-sunken px-2 py-1 text-xs text-text-primary hover:bg-hover">载入更早</button> : null}
+              {snap.items.map((it) => <TranscriptItemView key={it.id} it={it} />)}
+            </>
+          )}
+        </div>
+        {loaded && !atBottom ? (
+          <button type="button" data-bnw-jump onClick={scrollToBottom}
+            className="absolute bottom-2 right-2 rounded-full border border-border-strong bg-surface-raised px-3 py-1 text-xs text-text-primary shadow-sm hover:bg-hover">跳到底部 ↓</button>
+        ) : null}
       </div>
-      <p className="border-t border-border pt-2 text-xs text-text-muted">输入框 / 审批条（C2）/ 展开切换 / 跳到底部接线于 7.1-B（不伪造发送）。</p>
+      {/* C2 — docked approval bar + composer, adjacent at the bottom (never scrolls away) */}
+      <ApprovalBar store={store} mesh={mesh} agent={agent} pending={myPending} disabled={!editable} />
+      <FocusComposer store={store} mesh={mesh} agent={agent} working={working} disabled={!editable} />
     </PanelFrame>
   );
 
   if (full) {
-    return <div data-bnw-focus="full" className="h-full">{transcript}</div>;
+    return <div data-bnw-focus="full" className="h-full">{focusColumn}</div>;
   }
 
-  // split: transcript + side summaries (activity / mail / pending / queue), all real reads.
+  // split: focus column + side summaries (queue / activity / mail), all real reads.
   return (
     <div data-bnw-focus="split" className="flex h-full min-h-0 gap-3">
-      <div className="min-w-0 flex-1">{transcript}</div>
+      <div className="min-w-0 flex-1">{focusColumn}</div>
       <aside className="hidden w-[300px] shrink-0 flex-col gap-3 overflow-auto lg:flex">
-        <PanelFrame title="待审批" description={myPending.length ? undefined : "无"}>
-          {myPending.length === 0 ? <p className="text-xs text-text-muted">没有待处理的审批。</p> : myPending.map((p) => (
-            <div key={p.requestId} className="mb-1 rounded border border-border px-2 py-1 text-xs text-text-secondary">{p.question}</div>
-          ))}
-          {myPending.length ? <p className="mt-1 text-xs text-text-muted">就地批准接线于 7.1-B（C2 docked bar）。</p> : null}
-        </PanelFrame>
         <PanelFrame title="队列" description={queue?.count ? `${queue.count} 排队` : "空"}>
-          {queue?.latestPreview ? <p className="truncate text-xs text-text-secondary">下一条：{queue.latestPreview}</p> : <p className="text-xs text-text-muted">无排队 prompt。</p>}
+          <QueueList store={store} mesh={mesh} agent={agent} queue={queue} disabled={!editable} />
         </PanelFrame>
         <PanelFrame title="活动">
           <div className="flex flex-col gap-1">
