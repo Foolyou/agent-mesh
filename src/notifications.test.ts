@@ -1,12 +1,12 @@
 // Step 7.4-C.1 — notification store: pure reducers (emit/dedup/mark/cleanup/pagination) + fs
 // concurrency/atomicity (mirrors auth-store discipline).
 import { test, expect, beforeEach, afterEach } from "bun:test";
-import { mkdtemp, rm, readFile } from "node:fs/promises";
+import { mkdtemp, rm, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   emptyNotifications, mutateEmit, mutateMarkRead, mutateMarkAll, mutateCleanup, pageList, countUnread,
-  readNotifications, updateNotifications, notificationsPath, MAX_HISTORY, READ_TTL_MS,
+  readNotifications, readNotificationsSync, updateNotifications, notificationsPath, validateSource, MAX_HISTORY, READ_TTL_MS,
   type NotificationsFile, type NotificationDraft,
 } from "./notifications";
 
@@ -115,4 +115,41 @@ test("updateNotifications: concurrent emits are lock-serialized — none are los
 
 test("readNotifications: missing / corrupt file → empty store (no throw)", async () => {
   expect(await readNotifications(join(dir, "nope"))).toEqual(emptyNotifications());
+});
+
+// ── amend: strict validation + deterministic sync load ───────────────────────────
+test("validateSource: only structured /bnw shapes; URL-like escape hatches rejected", () => {
+  expect(validateSource({ surface: "harnesses" })).toEqual({ surface: "harnesses" });
+  expect(validateSource({ surface: "settings", tab: "devices" })).toEqual({ surface: "settings", tab: "devices" });
+  expect(validateSource({ surface: "settings", tab: "bogus" })).toEqual({ surface: "settings" }); // bad tab stripped
+  expect(validateSource({ surface: "runtime", mesh: "m", agent: "a" })).toEqual({ surface: "runtime", mesh: "m", agent: "a" });
+  expect(validateSource({ surface: "runtime" })).toBeUndefined();                         // missing mesh
+  expect(validateSource({ surface: "board", mesh: "m", issue: "3" })).toEqual({ surface: "board", mesh: "m" }); // non-int issue dropped
+  expect(validateSource({ surface: "external", url: "http://evil.test" })).toBeUndefined(); // poisoned
+  expect(validateSource({ url: "http://evil.test" })).toBeUndefined();
+  expect(validateSource("nope")).toBeUndefined();
+});
+
+test("sanitize: poisoned persisted records are dropped/normalized (unknown type, bad severity, poisoned source)", async () => {
+  const poisoned = {
+    version: 1, revision: 7, seq: 9, notifications: [
+      { id: "ntf-1", type: "system-alert", severity: "BOOM", title: "t", createdAt: "2026-06-22", dedupKey: "k1", source: { surface: "external", url: "http://evil.test" } },
+      { id: "ntf-2", type: "totally-bogus", severity: "info", title: "x", createdAt: "2026-06-22", dedupKey: "k2" },
+      { id: "ntf-3", type: "device-auth", severity: "warning", title: "ok", createdAt: "2026-06-22", dedupKey: "k3", source: { surface: "settings", tab: "devices" } },
+      { id: "ntf-4", title: "missing type/dedup" }, // missing required fields
+    ],
+  };
+  await writeFile(notificationsPath(dir), JSON.stringify(poisoned));
+  const f = readNotificationsSync(dir);
+  expect(f.notifications.map((n) => n.id)).toEqual(["ntf-1", "ntf-3"]); // ntf-2 (bad type) + ntf-4 (missing) dropped
+  const n1 = f.notifications.find((n) => n.id === "ntf-1")!;
+  expect(n1.severity).toBe("info");        // invalid severity coerced
+  expect(n1.source).toBeUndefined();        // poisoned source stripped
+  expect(f.notifications.find((n) => n.id === "ntf-3")!.source).toEqual({ surface: "settings", tab: "devices" });
+});
+
+test("readNotificationsSync: persisted records are visible synchronously (deterministic load)", async () => {
+  await updateNotifications(dir, (f) => { mutateEmit(f, draft({ dedupKey: "k1", title: "persisted" }), T0); }, T0);
+  const f = readNotificationsSync(dir);
+  expect(f.notifications[0].title).toBe("persisted");
 });

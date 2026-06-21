@@ -3,6 +3,7 @@
 // an in-memory cache and broadcasts deltas. Type-only re-exported into web/types.ts so the client
 // bundle shares the model without pulling node:fs (same pattern as src/diagnostics.ts).
 import { readFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { atomicWriteFile, withFileLock } from "./auth-codes";
 
@@ -92,18 +93,18 @@ function byNewest(a: NotificationRecord, b: NotificationRecord): number {
  *  existing record's CONTENT but PRESERVES its readAt + position — the version/state is encoded
  *  in the key, so a genuinely new event is a new key (new unread row), and re-detecting the same
  *  event never re-nags an already-read row. Returns the record + whether anything changed. */
-export function mutateEmit(file: NotificationsFile, draft: NotificationDraft, now: number): { record: NotificationRecord; changed: boolean } {
+export function mutateEmit(file: NotificationsFile, draft: NotificationDraft, now: number): { record: NotificationRecord; changed: boolean; created: boolean } {
   const existing = file.notifications.find((n) => n.dedupKey === draft.dedupKey);
   const severity = draft.severity ?? "info";
   if (existing) {
     const changed = existing.title !== draft.title || existing.body !== draft.body || existing.severity !== severity || JSON.stringify(existing.source) !== JSON.stringify(draft.source);
-    if (!changed) return { record: existing, changed: false };
+    if (!changed) return { record: existing, changed: false, created: false };
     existing.title = draft.title;
     existing.body = draft.body;
     existing.severity = severity;
     existing.source = draft.source;
     file.revision += 1;
-    return { record: existing, changed: true };
+    return { record: existing, changed: true, created: false };
   }
   file.seq += 1;
   const record: NotificationRecord = {
@@ -113,7 +114,7 @@ export function mutateEmit(file: NotificationsFile, draft: NotificationDraft, no
   file.notifications.unshift(record);
   file.revision += 1;
   mutateCleanup(file, now);
-  return { record, changed: true };
+  return { record, changed: true, created: true };
 }
 
 /** Mark one record read (idempotent). Returns true if a record's readAt changed. */
@@ -166,8 +167,17 @@ export function pageList(file: NotificationsFile, opts: { unread?: boolean; limi
 
 export async function readNotifications(root: string): Promise<NotificationsFile> {
   try {
-    const parsed = JSON.parse(await readFile(notificationsPath(root), "utf8"));
-    return sanitize(parsed);
+    return sanitize(JSON.parse(await readFile(notificationsPath(root), "utf8")));
+  } catch {
+    return emptyNotifications();
+  }
+}
+
+/** Synchronous load — used at gateway construction so the very first snapshot/list after a
+ *  restart already reflects persisted records (no empty-then-fills race). */
+export function readNotificationsSync(root: string): NotificationsFile {
+  try {
+    return sanitize(JSON.parse(readFileSync(notificationsPath(root), "utf8")));
   } catch {
     return emptyNotifications();
   }
@@ -190,18 +200,54 @@ export async function updateNotifications(root: string, mutator: (file: Notifica
   });
 }
 
+// ── strict validation at the persistence boundary ────────────────────────────────
+// A poisoned notifications.json must never push an arbitrary `source` (the safety property is
+// "structured /bnw source only" — same discipline as the device-auth ?next guard), an unknown
+// `type`, or a bad `severity` into GatewayState / the WS stream.
+const NOTIF_TYPES = new Set<NotificationType>(["harness-upgrade", "frontend-update", "service-status", "system-alert", "device-auth"]);
+const NOTIF_SEVERITIES = new Set<NotificationSeverity>(["info", "warning", "error"]);
+const SETTINGS_TABS = new Set(["appearance", "language", "prefs", "devices"]);
+
+/** Returns a valid structured source, or undefined (the field is dropped — never trusted). */
+export function validateSource(s: unknown): NotificationSource | undefined {
+  if (!s || typeof s !== "object") return undefined;
+  const o = s as Record<string, unknown>;
+  switch (o.surface) {
+    case "harnesses": case "doctor": case "channels": return { surface: o.surface };
+    case "settings": return typeof o.tab === "string" && SETTINGS_TABS.has(o.tab) ? { surface: "settings", tab: o.tab as any } : { surface: "settings" };
+    case "runtime": return typeof o.mesh === "string" ? { surface: "runtime", mesh: o.mesh, ...(typeof o.agent === "string" ? { agent: o.agent } : {}) } : undefined;
+    case "board": return typeof o.mesh === "string" ? { surface: "board", mesh: o.mesh, ...(Number.isInteger(o.issue) ? { issue: o.issue as number } : {}) } : undefined;
+    default: return undefined; // unknown surface / URL-like escape hatch → dropped
+  }
+}
+
+/** Normalize a persisted record: drop it entirely on a missing required field or unknown type;
+ *  coerce an invalid severity to "info"; strip a poisoned source. Returns null ⇒ drop. */
+function normalizeRecord(v: unknown): NotificationRecord | null {
+  if (!v || typeof v !== "object") return null;
+  const r = v as Record<string, unknown>;
+  if (typeof r.id !== "string" || typeof r.title !== "string" || typeof r.createdAt !== "string" || typeof r.dedupKey !== "string") return null;
+  if (typeof r.type !== "string" || !NOTIF_TYPES.has(r.type as NotificationType)) return null;
+  const out: NotificationRecord = {
+    id: r.id, type: r.type as NotificationType,
+    severity: typeof r.severity === "string" && NOTIF_SEVERITIES.has(r.severity as NotificationSeverity) ? (r.severity as NotificationSeverity) : "info",
+    title: r.title, createdAt: r.createdAt, dedupKey: r.dedupKey,
+  };
+  if (typeof r.body === "string") out.body = r.body;
+  if (typeof r.readAt === "string") out.readAt = r.readAt;
+  const source = validateSource(r.source);
+  if (source) out.source = source;
+  return out;
+}
+
 function sanitize(v: unknown): NotificationsFile {
   if (!v || typeof v !== "object") return emptyNotifications();
   const f = v as Partial<NotificationsFile>;
-  const notifications = Array.isArray(f.notifications) ? f.notifications.filter(isRecord) : [];
+  const notifications = (Array.isArray(f.notifications) ? f.notifications.map(normalizeRecord).filter((r): r is NotificationRecord => r !== null) : []);
   return {
     version: typeof f.version === "number" ? f.version : NOTIF_SCHEMA_VERSION,
     revision: typeof f.revision === "number" ? f.revision : 0,
     seq: typeof f.seq === "number" ? f.seq : notifications.length,
     notifications,
   };
-}
-function isRecord(v: unknown): v is NotificationRecord {
-  const r = v as Partial<NotificationRecord>;
-  return !!r && typeof r.id === "string" && typeof r.type === "string" && typeof r.title === "string" && typeof r.createdAt === "string" && typeof r.dedupKey === "string";
 }

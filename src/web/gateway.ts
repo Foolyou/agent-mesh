@@ -15,7 +15,7 @@ import { resolveArtifactFile } from "./artifacts";
 import { defaultAppVersion } from "./version";
 import {
   emptyNotifications, notificationsView, pageList, mutateEmit, mutateMarkRead, mutateMarkAll, mutateCleanup,
-  readNotifications, updateNotifications, type NotificationsFile, type NotificationDraft, type NotificationsPage,
+  readNotificationsSync, updateNotifications, type NotificationsFile, type NotificationDraft, type NotificationsPage,
 } from "../notifications";
 import type {
   GatewayState,
@@ -161,28 +161,26 @@ export class WebGateway {
     this.refreshMeshes();
     this.unsubMgr = manager.on((name, e) => this.ingest(name, e));
     if (assistant) this.unsubAssistant = assistant.on((u) => this.ingestAssistant(u));
-    void this.loadNotifications();
+    // Deterministic: load persisted notifications synchronously so the FIRST snapshot/list/
+    // subscription after a restart already reflects them (no empty-then-fills race).
+    if (this.opts.root) this.notif = readNotificationsSync(this.opts.root);
   }
 
   // ── Notification center (Step 7.4-C) ─────────────────────────────────────────
-  /** Load the persisted notifications into the in-memory cache, then nudge clients with the
-   *  current unread count. Safe to await in tests; fire-and-forget at construction. */
-  async loadNotifications(): Promise<void> {
-    if (!this.opts.root) return;
-    this.notif = await readNotifications(this.opts.root);
-    this.broadcast({ t: "notification.unread", unreadCount: notificationsView(this.notif).unreadCount, revision: this.notif.revision });
-  }
   /** Producer entry point: emit (or idempotently refresh) a notification. Persists under lock
-   *  when a root is configured, updates the cache, and broadcasts a `notification.add` delta. */
+   *  when a root is configured, updates the cache, then broadcasts a protocol-clean delta:
+   *  `notification.add` for a newly allocated record, `notification.update` for a same-key
+   *  content refresh (readAt preserved), and nothing for an identical re-emit. */
   async emitNotification(draft: NotificationDraft, at: number = Date.now()): Promise<void> {
-    let changed = false;
-    let recordId = "";
-    const apply = (f: NotificationsFile) => { const r = mutateEmit(f, draft, at); changed = r.changed; recordId = r.record.id; };
+    let changed = false, created = false, recordId = "";
+    const apply = (f: NotificationsFile) => { const r = mutateEmit(f, draft, at); changed = r.changed; created = r.created; recordId = r.record.id; };
     this.notif = this.opts.root ? await updateNotifications(this.opts.root, apply, at) : (apply(this.notif), mutateCleanup(this.notif, at), this.notif);
     if (!changed) return;
     const v = notificationsView(this.notif);
     const item = this.notif.notifications.find((n) => n.id === recordId);
-    if (item) this.broadcast({ t: "notification.add", item, unreadCount: v.unreadCount, revision: v.revision });
+    if (!item) return;
+    if (created) this.broadcast({ t: "notification.add", item, unreadCount: v.unreadCount, revision: v.revision });
+    else this.broadcast({ t: "notification.update", id: item.id, patch: { title: item.title, body: item.body, severity: item.severity, source: item.source }, unreadCount: v.unreadCount, revision: v.revision });
   }
   listNotifications(opts: { unread?: boolean; limit?: number; cursor?: string } = {}): NotificationsPage {
     return pageList(this.notif, opts);
