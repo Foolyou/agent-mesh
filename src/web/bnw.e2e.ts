@@ -309,7 +309,11 @@ try {
       // open-redirect guard: a non-/bnw ?next must NOT be honored (falls back to the current path)
       await ap.goto(`${BASE}/bnw/device-auth?next=https://evil.example/x`, { waitUntil: "domcontentloaded" });
       await ap.waitForSelector('[data-remembered]', { timeout: 8000 });
-      if (await ap.getByText("evil.example").count() !== 0) throw new Error("open-redirect: non-/bnw ?next must be rejected");
+      if (await ap.getByText("evil.example").count() !== 0) throw new Error("open-redirect: external ?next must be rejected");
+      // namespace guard: `/bnw.evil` look-alike (startsWith "/bnw" but outside the /bnw/ namespace) is rejected
+      await ap.goto(`${BASE}/bnw/device-auth?next=/bnw.evil/x`, { waitUntil: "domcontentloaded" });
+      await ap.waitForSelector('[data-remembered]', { timeout: 8000 });
+      if (await ap.getByText("/bnw.evil").count() !== 0) throw new Error("namespace guard: /bnw.evil ?next must be rejected (strict isBnwPath)");
       // mobile shot
       await ap.setViewportSize({ width: 390, height: 844 });
       await ap.goto(`${BASE}/bnw/`, { waitUntil: "domcontentloaded" });

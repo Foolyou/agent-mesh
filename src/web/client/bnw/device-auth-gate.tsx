@@ -11,7 +11,7 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { Button, Input, Spinner } from "../ui/index";
 import { bootAuthorized, runEnrollment, submitBootstrap, type DeviceAuthPhase } from "../device-auth";
-import { BNW_PREFIX } from "../router";
+import { BNW_PREFIX, isBnwPath } from "../router";
 
 type BootPhase = "checking" | "authorized" | "unauthorized";
 const DEVICE_AUTH_PATH = `${BNW_PREFIX}/device-auth`;
@@ -20,7 +20,9 @@ const DEVICE_AUTH_PATH = `${BNW_PREFIX}/device-auth`;
 function rememberedTarget(): string {
   const here = window.location.pathname + window.location.search;
   const next = new URLSearchParams(window.location.search).get("next");
-  if (next && next.startsWith(BNW_PREFIX)) return next; // open-redirect guard: same-origin /bnw only
+  // open-redirect guard: honor ONLY targets inside the /bnw namespace. `isBnwPath` is strict
+  // (`/bnw` or `/bnw/…`), so it rejects both external origins and look-alikes like `/bnw.evil`.
+  if (next && isBnwPath(next.split(/[?#]/, 1)[0])) return next;
   if (window.location.pathname === DEVICE_AUTH_PATH) return BNW_PREFIX;
   return here.startsWith(BNW_PREFIX) ? here : BNW_PREFIX;
 }
