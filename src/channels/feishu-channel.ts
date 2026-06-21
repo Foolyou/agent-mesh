@@ -159,6 +159,13 @@ interface BindingRuntime {
   toolCount: number;
   /** Distinct tool names this turn, in first-seen order (for `toolDisplay: "inline"`). */
   toolNames: string[];
+  /** True iff a NEW visible prose chunk has been accepted since the last commit — i.e. there is
+   *  un-finalized prose the lost-idle fallback must still deliver. Set ONLY when `appendRouterChunk`
+   *  accepts new prose; tool calls/updates never set it. Reset at every commit (streamFinish/flush/
+   *  clearOutboundBuffer/teardown). A fallback fire with this FALSE = pure tool-only activity → keep the
+   *  live card, don't commit (the regression fix); with this TRUE = deliver prose (lost-idle protection).
+   *  This is the implementation source of truth, NOT a derived `rt.buffer.trim()` check. */
+  finalizableProseSinceCommit: boolean;
 }
 
 export class FeishuChannel implements Channel {
@@ -260,7 +267,7 @@ export class FeishuChannel implements Channel {
         continue;
       }
       if (this.byChat.has(binding.chatId) || this.byMesh.has(binding.mesh)) continue;
-      const rt: BindingRuntime = { binding, sender, routerId: "", buffer: "", currentMessageStart: 0, flushSeq: 0, replaying: false, streamTurnActive: false, committing: false, commitGen: 0, queuedEvents: [], seenToolCalls: new Set(), toolCount: 0, toolNames: [] };
+      const rt: BindingRuntime = { binding, sender, routerId: "", buffer: "", currentMessageStart: 0, flushSeq: 0, replaying: false, streamTurnActive: false, committing: false, commitGen: 0, queuedEvents: [], seenToolCalls: new Set(), toolCount: 0, toolNames: [], finalizableProseSinceCommit: false };
       this.runtimes.push(rt);
       this.byChat.set(binding.chatId, rt);
       this.byMesh.set(binding.mesh, rt);
@@ -545,7 +552,7 @@ export class FeishuChannel implements Channel {
     const existing = this.p2pRuntimes.get(chatId);
     if (existing) return existing;
     if (!this.makeSender) return undefined;
-    const rt: BindingRuntime = { binding: { mesh: "", chatId }, sender: this.makeSender(chatId), routerId: "", buffer: "", currentMessageStart: 0, flushSeq: 0, replaying: false, streamTurnActive: false, committing: false, commitGen: 0, queuedEvents: [], seenToolCalls: new Set(), toolCount: 0, toolNames: [] };
+    const rt: BindingRuntime = { binding: { mesh: "", chatId }, sender: this.makeSender(chatId), routerId: "", buffer: "", currentMessageStart: 0, flushSeq: 0, replaying: false, streamTurnActive: false, committing: false, commitGen: 0, queuedEvents: [], seenToolCalls: new Set(), toolCount: 0, toolNames: [], finalizableProseSinceCommit: false };
     this.p2pRuntimes.set(chatId, rt);
     return rt;
   }
@@ -779,6 +786,11 @@ export class FeishuChannel implements Channel {
         | undefined;
       if (u && u.sessionUpdate === "agent_message_chunk") {
         if (appendRouterChunk(rt, u)) {
+          // New visible prose accepted since the last commit → the lost-idle fallback must deliver it.
+          // (Duplicate/replay chunks return false above and never reach here, so they don't set this.)
+          // NOTE: the prose-after-tools streamSealSegment below seals the prior tool card but does NOT
+          // commit this new prose, so the flag stays set until a real commit (streamSealSegment special case).
+          rt.finalizableProseSinceCommit = true;
           this.tlog(rt, "chunk-append");
           if (this.useStreaming(rt)) {
             // New visible prose after a tool group starts a NEW annotation group (group-by-segment):
@@ -843,8 +855,17 @@ export class FeishuChannel implements Channel {
     rt.cancelStreamFinish = this.setTimer(() => {
       rt.cancelStreamFinish = undefined;
       this.tlog(rt, "stream-fallback-fired");
-      // Mid-turn silence seal: deliver the card (INV-1) but KEEP the running tool group — a later tool
-      // batch with no new prose accumulates onto it instead of restarting the count.
+      // Lost-idle protection delivers PROSE. A pure tool-only silence (no finalizable prose since the
+      // last commit) must NOT seal the card — keep the live tool annotation card open for in-place
+      // updates and let a REAL turn boundary (idle / next agent_turn / pre-prompt / prompt-resolve /
+      // replay-clear) commit it. So consecutive tool batches stay on ONE card instead of one card per
+      // >streamCommitDebounceMs gap (the real-machine regression). Skip = pure return: no streamCommit,
+      // no buffer/currentMessage clear, no commit barrier, no tool-group reset, no flag reset.
+      if (!rt.finalizableProseSinceCommit) {
+        this.tlog(rt, "stream-fallback-skip-toolonly");
+        return;
+      }
+      // There IS un-finalized prose → deliver it (lost-idle protection); KEEP the running tool group.
       this.streamFinish(rt, false);
     }, this.streamCommitDebounceMs);
     this.tlog(rt, "stream-fallback-scheduled", ` ms=${this.streamCommitDebounceMs}`);
@@ -876,6 +897,7 @@ export class FeishuChannel implements Channel {
     if (rt.buffer.trim()) rt.sender.streamUpdate!(rt.buffer);
     rt.sender.streamCommit!();
     rt.buffer = "";
+    rt.finalizableProseSinceCommit = false; // prose (if any) committed/cleared here
     rt.currentMessageId = undefined;
     rt.currentMessageStart = 0;
     if (endsGroup) this.resetToolGroup(rt);
@@ -961,6 +983,7 @@ export class FeishuChannel implements Channel {
     const hadLive = this.useStreaming(rt) && rt.streamTurnActive;
     if (hadLive) rt.sender.streamCommit!(); // seal a live message before dropping (else nothing to seal)
     rt.buffer = "";
+    rt.finalizableProseSinceCommit = false; // prose (if any) committed/cleared here
     rt.currentMessageId = undefined;
     rt.currentMessageStart = 0;
     rt.streamTurnActive = false;
@@ -988,6 +1011,7 @@ export class FeishuChannel implements Channel {
     rt.cancelDebounce = undefined;
     const text = rt.buffer.trim();
     rt.buffer = "";
+    rt.finalizableProseSinceCommit = false; // prose (if any) committed/cleared here
     rt.currentMessageId = undefined;
     rt.currentMessageStart = 0;
     rt.seenToolCalls.clear();
@@ -1036,6 +1060,7 @@ function teardownRuntime(rt: BindingRuntime): void {
   rt.cancelStreamFinish?.(); // drop the streaming fallback timer so it can't fire after teardown
   rt.cancelStreamFinish = undefined;
   rt.buffer = ""; // drop any un-flushed tail rather than sending during teardown
+  rt.finalizableProseSinceCommit = false;
   rt.currentMessageId = undefined;
   rt.currentMessageStart = 0;
   rt.streamTurnActive = false;
