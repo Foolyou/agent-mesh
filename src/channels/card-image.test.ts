@@ -107,8 +107,8 @@ test("over-byte-limit degrades to link (viewerUrl present) WITHOUT uploading", a
   expect(uploads).toHaveLength(0);
 });
 
-test("aspect ratio out of range (very tall) degrades without uploading", async () => {
-  const { resolver, uploads } = fakes({ readImage: async () => raw({ bytes: PNG(100, 2000) }), limits: LIMITS }); // h/w=20 > 16/9
+test("aspect-too-tall with NO scaler degrades without uploading (cannot pad)", async () => {
+  const { resolver, uploads } = fakes({ readImage: async () => raw({ bytes: PNG(100, 2000) }), limits: LIMITS }); // h/w=20 > 16/9, no scaler wired
   expect((await resolver.resolve(boundary("artifact:tall.png"))).kind).not.toBe("image");
   expect(uploads).toHaveLength(0);
 });
@@ -148,15 +148,49 @@ test("autoscale: salvageable oversize (wide PNG, aspect OK) runs the scaler and 
   expect(uploads[0]!.bytes).toBe(scaledBytes); // the SCALED bytes were uploaded, not the original
 });
 
-test("autoscale: aspect too tall degrades WITHOUT consulting the scaler (no crop/reshape)", async () => {
-  let called = 0;
+test("aspect-pad: aspect-too-tall WITH a scaler routes through scale/pad and uploads (not degrade)", async () => {
+  const padded = PNG(1125, 2000); // fake scaler output: padded so h/w = 1.777 ≤ 16/9
+  const calls: ScaleRequest[] = [];
   const { resolver, uploads } = fakes({
-    readImage: async () => raw({ bytes: PNG(100, 2000) }), // h/w = 20 > 16/9
-    scaler: async () => { called++; return null; },
+    readImage: async () => raw({ bytes: PNG(100, 2000), size: 5000 }), // h/w = 20 > 16/9
+    scaler: async (req) => { calls.push(req); return { bytes: padded, contentType: "image/png", width: 1125, height: 2000 }; },
+    limits: LIMITS,
+  });
+  expect((await resolver.resolve(boundary("artifact:tall.png"))).kind).toBe("image");
+  expect(calls).toHaveLength(1); // scaler consulted for the aspect-too-tall image
+  expect(calls[0]).toMatchObject({ maxAspect: LIMITS.maxAspect }); // maxAspect threaded through
+  expect(uploads).toHaveLength(1);
+  expect(uploads[0]!.bytes).toBe(padded); // the PADDED bytes were uploaded, not the original
+});
+
+test("aspect-pad: aspect-too-tall + scaler returns null → degrade", async () => {
+  const { resolver, uploads } = fakes({
+    readImage: async () => raw({ bytes: PNG(100, 2000) }),
+    scaler: async () => null,
     limits: LIMITS,
   });
   expect((await resolver.resolve(boundary("artifact:tall.png"))).kind).not.toBe("image");
-  expect(called).toBe(0);
+  expect(uploads).toHaveLength(0);
+});
+
+test("aspect-pad: aspect-too-tall + scaler throws → degrade", async () => {
+  const { resolver, uploads } = fakes({
+    readImage: async () => raw({ bytes: PNG(100, 2000) }),
+    scaler: async () => { throw new Error("boom"); },
+    limits: LIMITS,
+  });
+  expect((await resolver.resolve(boundary("artifact:tall.png"))).kind).not.toBe("image");
+  expect(uploads).toHaveLength(0);
+});
+
+test("aspect-pad: scaler output STILL too tall (aspect) is rejected by re-validation → degrade", async () => {
+  const { resolver, uploads } = fakes({
+    readImage: async () => raw({ bytes: PNG(100, 2000) }),
+    // a buggy/injected scaler that claims success but returns a still-too-tall image
+    scaler: async () => ({ bytes: PNG(300, 2000), contentType: "image/png", width: 300, height: 2000 }), // h/w = 6.67 > 16/9
+    limits: LIMITS,
+  });
+  expect((await resolver.resolve(boundary("artifact:tall.png"))).kind).not.toBe("image");
   expect(uploads).toHaveLength(0);
 });
 
@@ -305,6 +339,26 @@ test("integration: real jimpScaler scales a real oversize PNG through the resolv
   expect(uploaded[0]!.contentType).toBe("image/png"); // PNG container preserved (no JPEG conversion)
   expect(uploaded[0]!.bytes.length).toBeLessThanOrEqual(LIMITS.maxBytes);
   expect(uploaded[0]!.bytes.length).not.toBe(big.bytes.length); // not the original bytes
+});
+
+test("integration: real jimpScaler letterbox-pads a real 390×760 vertical PNG through the resolver and uploads a compliant image", async () => {
+  const tall = await makeImage(390, 760, 255, "image/png"); // h/w = 1.95 > 16:9 → would have degraded before
+  const uploaded: RawImage[] = [];
+  const resolver = createImageResolver({
+    mesh: "m1",
+    defaultAgent: "router",
+    readImage: async () => ({ bytes: tall.bytes, contentType: "image/png", size: tall.bytes.length, mtimeMs: 1 }),
+    upload: async (i) => { uploaded.push(i); return { imgKey: "img_pad" }; },
+    scaler: jimpScaler(), // REAL scaler (does the letterbox pad)
+    limits: LIMITS,
+  });
+  expect(await resolver.resolve(boundary("artifact:tall.png"))).toEqual({ kind: "image", imgKey: "img_pad" }); // NOT a placeholder
+  expect(uploaded).toHaveLength(1);
+  const dims = imageDims(uploaded[0]!.bytes, uploaded[0]!.contentType)!;
+  expect(dims.h / dims.w).toBeLessThanOrEqual(LIMITS.maxAspect + 1e-9); // padded into aspect range
+  expect(dims.w).toBeLessThanOrEqual(LIMITS.maxWidth);
+  expect(dims.h).toBeLessThanOrEqual(LIMITS.maxHeight);
+  expect(uploaded[0]!.contentType).toBe("image/png");
 });
 
 // ── jimpScaler adapter (real in-memory images; no disk fixtures) ──

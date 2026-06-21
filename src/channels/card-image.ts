@@ -172,14 +172,12 @@ export function createImageResolver(deps: ImageResolverDeps): ImageResolver {
       // and let Feishu's own upload validation backstop — preserving prior behavior with NO local autoscale.
       const dims = imageDims(raw.bytes, raw.contentType);
       if (dims) {
-        if (limits.maxAspect > 0 && dims.h / dims.w > limits.maxAspect) {
-          log("feishu image: aspect out of range; degrading"); // not salvageable here (no crop/reshape)
-          return degrade(ref, boundary.alt);
-        }
+        const aspectOver = limits.maxAspect > 0 && dims.h / dims.w > limits.maxAspect;
         const dimOver = (limits.maxWidth > 0 && dims.w > limits.maxWidth) || (limits.maxHeight > 0 && dims.h > limits.maxHeight);
-        if (dimOver) {
-          // Salvageable (aspect OK, only too big): proportionally downscale to fit, then re-check
-          // dims + bytes before trusting the (injectable) scaler's output.
+        if (aspectOver || dimOver) {
+          // Salvageable: proportionally downscale a too-big image and/or letterbox-pad an aspect-too-tall
+          // one, then re-validate (dims + aspect + bytes) before trusting the (injectable) scaler's
+          // output. Degrade only if there's no scaler or it can't produce a compliant image.
           const scaled = await runScaler(deps.scaler, raw, limits, log);
           if (!scaled) return degrade(ref, boundary.alt);
           raw = scaled;
@@ -216,7 +214,7 @@ export function createImageResolver(deps: ImageResolverDeps): ImageResolver {
  *  injectable scaler blindly). Zero-leak: every log is a generic status, never bytes/ref/path. */
 async function runScaler(scaler: ImageScaler | undefined, raw: RawImage, limits: ImageLimits, log: (m: string) => void): Promise<RawImage | null> {
   if (!scaler) {
-    log("feishu image: oversize and no scaler; degrading");
+    log("feishu image: needs scale/pad and no scaler; degrading");
     return null;
   }
   let scaled: ScaleResult | null;
@@ -234,6 +232,7 @@ async function runScaler(scaler: ImageScaler | undefined, raw: RawImage, limits:
   const stillOver =
     (limits.maxWidth > 0 && sd.w > limits.maxWidth) ||
     (limits.maxHeight > 0 && sd.h > limits.maxHeight) ||
+    (limits.maxAspect > 0 && sd.h / sd.w > limits.maxAspect + 1e-9) || // letterbox-pad must bring aspect into range
     scaled.bytes.length > limits.maxBytes;
   if (stillOver) {
     log("feishu image: scaled image still out of range; degrading");
