@@ -297,12 +297,13 @@ onRouterToolCall(rt, u):
 - **`rt.streamTurnActive`**：有未终结内容（`scheduleStreamFinish` 置 true；`streamFinish` 起手 `if(!streamTurnActive) return` 防重复 commit）。
 - **CardSender live 状态是私有**（`live.sentText`/`live.sentAnnotation`/`streamPending`/`streamBaseOffset`/`toolAnnotation`/`streamCommitting`）：纯工具卡在 sender 侧表现为 `live.sentText===""`+`live.sentAnnotation!==undefined`（card-sender.ts:632 创建、`composeLiveDisplay("")` annotation-only 775-777）——这是**佐证**，但 **FeishuChannel 不得 introspect CardSender 私有状态**（保持分层）；判据只用 channel 自有字段。
 
-**采纳的判据 — 显式 BindingRuntime 标志 `finalizableProseSinceCommit`**（aka `hasUncommittedProse`/`streamProseDirty`）：
-- **set = true**：仅当 `appendRouterChunk` 对**可见正文**返回 `true`（即 chunk 分支 781 命中、buffer 实质变非空）时置位。**工具事件不置位。**
-- **reset = false**：在 `streamFinish`/`flush`/`clearOutboundBuffer`/teardown/runtime 初始化（BindingRuntime 创建）处复位（与 buffer 清空同处）。
+**采纳的判据 — 显式 BindingRuntime 标志 `finalizableProseSinceCommit`**（aka `hasUncommittedProse`/`streamProseDirty`）—— **这是实现的真理之源（source of truth），不是 `rt.buffer.trim()` 派生量**：
+- **初始化 = `false`**（BindingRuntime 创建时；channel 自有字段，非 sender 状态）。
+- **set = true**：**仅当** `appendRouterChunk` 对**新可见正文** chunk 返回 `true`（chunk 分支 781 命中、prose 自上次 commit 起实质可终结）时置位。**`appendRouterChunk` 返回 `false` 的 chunk（重复/replay/全量重发）不置位；工具 call/update 永不置位。**
+- **reset = false**：在 `streamFinish`/`flush`/`clearOutboundBuffer`/teardown/runtime reset 处复位（与 buffer 清空同处）。**绝不**因"工具 fallback 触发并跳过"而复位——跳过路径只 `return`、不动此标志（见 §11.3）。
 - **streamSealSegment 特例**：prose-after-tools（chunk 分支 788-792）刚 `streamSealSegment` 封了旧工具卡，但**新可见正文已 append 进 buffer 且尚未提交** → 此时**不要**因 seal 而清 `finalizableProseSinceCommit`（它要保护这段新正文直到被真正 commit）。即：seal 段卡 ≠ 提交新正文。
-- 于是：**"纯工具活动、无可终结正文" ⟺ `!finalizableProseSinceCommit`**（且必然 `rt.toolCount>0` 才有 live 工具卡）；**"有新可终结正文" ⟺ `finalizableProseSinceCommit===true`**（lost-idle 保护对象）。off 档无正文且 `toolCount===0` → 见 §11.4。
-- 与我初版 `rt.buffer.trim()===""` **语义等价**，但显式标志：①不依赖对 buffer 的派生推断（呼应 prdmgr"不猜 buffer"）；②能精确表达 streamSealSegment 特例；③零 sender introspection。
+- 于是：**"纯工具活动、无可终结正文" ⟺ `!finalizableProseSinceCommit`**；**"有新可终结正文" ⟺ `finalizableProseSinceCommit===true`**（lost-idle 保护对象）。
+- **`rt.buffer.trim()==="" && rt.toolCount>0` 仅作为解释/测试症状提及**（语义上与本标志等价，便于理解真机表现），**不是实现判据**——实现以本标志为准（不依赖对 buffer 的派生推断、零 sender introspection、能精确表达 streamSealSegment 特例）。
 
 ### 11.3 修复方案（仅设计）
 **仅改兜底定时器的回调语义**：fallback fire 时，若**纯工具活动且无可终结正文**，**不封卡**（不 `streamCommit`）——保持同一张 live 卡、工具注解继续 in-place 更新，等**真实轮边界**再提交；保留对正文的 lost-idle 保护。
@@ -328,7 +329,7 @@ this.streamFinish(rt, false); // 有未终结正文 → 照旧交付(lost-idle �
 > 说明：`streamSegmentBreak`/`proseSeal` 状态**不参与**本判据——它只在"prose-after-tools"（chunk 分支 788-792）触发，与 fallback 无关；fallback 时无 pending segment break。
 
 ### 11.4 不破坏清单（逐项核实）
-- **INV-1（需显式说明的"细化"，非静默破坏）**：INV-1 的**核心**（工具调用不开新消息、与"开新消息"解耦）**保留并强化**；但 INV-1 早前的子断言"**纯工具收尾轮经 fallback 提交**"**被有意改变**——纯工具轮不再经 fallback 封卡，改为等真实边界提交。对应测试 `feishu-channel.test.ts:853` "a tool_call with no following text finalizes via the fallback timer" **必须更新**（见 §11.5 测试 T4）。**这是本修复的核心语义变化，需 prdmgr 确认**（开放问题 O2）。
+- **INV-1（显式"细化"，非静默破坏）**：INV-1 的**核心**（工具调用不开新消息、与"开新消息"解耦）**保留并强化**。INV-1 重述为：**"lost-idle 正文仍经 fallback 提交（`finalizableProseSinceCommit` 时）；纯工具(no-finalizable-prose)的 fallback **有意推迟**到真实轮边界提交。"** 即早前子断言"纯工具收尾轮经 fallback 提交"被有意改变。对应测试 `feishu-channel.test.ts:853` "a tool_call with no following text finalizes via the fallback timer" **必须更新**（见 §11.5 T4b）。**这是核心语义变化，需 prdmgr 确认**（开放问题 O2）。
 - **commit barrier / queuedEvents / commitGen**：跳过分支**不**调 `beginCommitBarrier` → `committing` 保持 false → 后续工具事件正常 dispatch（不入队）；真实边界提交时照旧 begin 一次 barrier。语义不变。
 - **seenToolCalls 去重**：`onRouterToolCall` 路径完全不动；去重不变。
 - **replay 不镜像**：`clearOutboundBuffer`(963 区) 不变；replay 仍清 buffer+组。
