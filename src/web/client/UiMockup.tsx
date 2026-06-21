@@ -13,7 +13,9 @@
 //     jump/load-older, session fullscreen (runtime=full) and the zoomable topology
 //     canvas (runtime=canvas), live add agent/edge, start strategy + new-all-sessions.
 //   - board view C (03-board-view.md): issue list / detail / kanban (desktop) +
-//     list / detail (mobile), GH-Issues maturity, fixture data.
+//     list / detail (mobile), GH-Issues maturity, fixture data, plus the audited [E]
+//     abilities — fullscreen (?boardFs=1), group-by-epic, label CRUD + palette
+//     (?boardManage=1), create-epic, and reopen of closed (terminal) issues.
 //   - new mesh builder (04): agents / edges / charter / per-agent controls.
 //   - navigation index (?index=1): a directory of every surface + state/device deep links.
 //
@@ -150,6 +152,24 @@ const MANY_ISSUES: Issue[] = [
 ];
 
 const DETAIL_ISSUE = ISSUES[0]; // #12 — the issue the detail state shows
+
+// Accessible label palette (mirrors board.ts LABEL_PALETTE — each clears AA against
+// whichever of black/white wins) + fixture labels for the CRUD/recolor manager (audit #24).
+const LABEL_PALETTE = ["#fde68a", "#ffd6a5", "#fecaca", "#e9d5ff", "#bae6fd", "#b7e4c7", "#d9f99d", "#a5f3fc", "#1e3a8a", "#6d28d9", "#b91c1c", "#047857", "#92400e", "#374151"];
+const BOARD_LABELS: { id: string; name: string; color: string }[] = [
+  { id: "label-1", name: "auth", color: "#bae6fd" },
+  { id: "label-2", name: "ui", color: "#e9d5ff" },
+  { id: "label-3", name: "infra", color: "#374151" },
+  { id: "label-4", name: "a11y", color: "#b7e4c7" },
+  { id: "label-5", name: "perf", color: "#ffd6a5" },
+  { id: "label-6", name: "security", color: "#fecaca" },
+];
+// Pick black/white ink for a swatch by luminance (mirrors BoardPanel.labelForeground).
+function labelText(bg: string): string {
+  const r = parseInt(bg.slice(1, 3), 16), g = parseInt(bg.slice(3, 5), 16), b = parseInt(bg.slice(5, 7), 16);
+  return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255 > 0.52 ? "#000000" : "#ffffff";
+}
+
 const TIMELINE: { kind: "lifecycle" | "comment"; text: string; when: string }[] = [
   { kind: "lifecycle", text: "dispatched → in_progress · by router", when: "3d" },
   { kind: "comment", text: "@codex-1: branch up, wiring the page", when: "2d" },
@@ -187,6 +207,8 @@ interface Sel {
   board: BoardState;
   state: ShellState;
   nmEditor: NmEditor;
+  boardFs: boolean;
+  boardManage: boolean;
   index: boolean;
   mesh: string;
   mode: Mode;
@@ -215,6 +237,8 @@ function readSel(): Sel {
     board: bs === "detail" ? "detail" : bs === "kanban" ? "kanban" : "list",
     state: st && SHELL_STATES.includes(st) ? st : "populated",
     nmEditor: p.get("nmEditor") === "charter" ? "charter" : p.get("nmEditor") === "instructions" ? "instructions" : "off",
+    boardFs: p.get("boardFs") === "1",
+    boardManage: p.get("boardManage") === "1",
     index: p.get("index") === "1",
     mesh: mesh && MESH_IDS.has(mesh) ? mesh : MESHES[0].id,
     mode: MODE_SET.has(m as Mode) ? (m as Mode) : "dark-slate",
@@ -725,8 +749,9 @@ function SubtaskProgress({ done, total }: { done: number; total: number }) {
 }
 
 // Desktop issue row — local (richer than StatusListRow's fixed shape), token-clean.
-function IssueRow({ issue }: { issue: Issue }) {
+function IssueRow({ issue, editable = true }: { issue: Issue; editable?: boolean }) {
   const life = lifeOf(issue.status);
+  const terminal = issue.status === "done" || issue.status === "cancelled";
   return (
     <div className="flex items-center gap-2.5 border-b border-border px-3 py-2 hover:bg-hover">
       <input type="checkbox" aria-label={`select #${issue.n}`} className="accent-accent" />
@@ -739,6 +764,8 @@ function IssueRow({ issue }: { issue: Issue }) {
       <AssigneeTag name={issue.assignee || "—"} size="sm" iconOnly />
       <PrioTag prio={issue.prio} />
       <SubtaskProgress done={issue.subDone} total={issue.subTotal} />
+      {/* Reopen — the one sanctioned backward move for a closed (terminal) issue (audit #25). */}
+      {terminal ? <Button size="sm" variant="ghost" disabled={!editable} aria-label={`reopen #${issue.n}`}>↺ reopen</Button> : null}
       <span className="w-8 shrink-0 text-right text-xs text-text-muted">{issue.updated}</span>
     </div>
   );
@@ -755,11 +782,16 @@ function EpicGroupHeader({ epicId }: { epicId: string }) {
   );
 }
 
-function BoardFilterBar({ disabled = false }: { disabled?: boolean }) {
+function BoardFilterBar({ disabled = false, manageHref = "#", manage = false }: { disabled?: boolean; manageHref?: string; manage?: boolean }) {
   return (
     <ActionBar
       ariaLabel="board filters"
-      end={<Cluster><Button size="sm" variant="secondary" disabled={disabled}>Dispatch ▾</Button><Button size="sm" variant="primary" disabled={disabled}>+ Issue</Button></Cluster>}
+      end={<Cluster>
+        {/* 管理标签 toggle → label CRUD/palette panel (audit #24). */}
+        <LinkButton href={manageHref} label="管理标签" dataKey="board-manage-labels">{manage ? "✓ 标签" : "🏷 标签"}</LinkButton>
+        <Button size="sm" variant="secondary" disabled={disabled}>Dispatch ▾</Button>
+        <Button size="sm" variant="primary" disabled={disabled}>+ Issue</Button>
+      </Cluster>}
     >
       <input aria-label="search issues" placeholder="search…" className="rounded-lg border border-border-strong bg-surface-sunken px-2 py-1 text-sm text-text-primary placeholder:text-text-muted" />
       <select aria-label="status filter" className="rounded-lg border border-border-strong bg-surface-sunken px-2 py-1 text-sm text-text-primary"><option>status</option></select>
@@ -767,7 +799,71 @@ function BoardFilterBar({ disabled = false }: { disabled?: boolean }) {
       <select aria-label="assignee filter" className="rounded-lg border border-border-strong bg-surface-sunken px-2 py-1 text-sm text-text-primary"><option>assignee</option></select>
       <select aria-label="epic filter" className="rounded-lg border border-border-strong bg-surface-sunken px-2 py-1 text-sm text-text-primary"><option>epic</option></select>
       <select aria-label="sort" className="rounded-lg border border-border-strong bg-surface-sunken px-2 py-1 text-sm text-text-primary"><option>updated</option></select>
+      {/* Group-by-epic toggle (audit #23). */}
+      <label className="inline-flex items-center gap-1.5 text-xs text-text-secondary"><input type="checkbox" defaultChecked disabled={disabled} aria-label="group by epic" className="accent-accent" /> 按 Epic 分组</label>
     </ActionBar>
+  );
+}
+
+// Label CRUD + accessible palette picker (audit #24) — create / rename / recolor / delete.
+function PaletteRow({ selected, disabled = false, ariaLabel }: { selected: string; disabled?: boolean; ariaLabel: string }) {
+  return (
+    <span role="group" aria-label={ariaLabel} data-palette className="inline-flex flex-wrap items-center gap-1">
+      {LABEL_PALETTE.map((c) => (
+        <button key={c} type="button" disabled={disabled} aria-label={`color ${c}`} aria-pressed={c === selected}
+          className={`h-5 w-5 rounded-full border ${c === selected ? "border-border-strong" : "border-border"} disabled:cursor-not-allowed`}
+          style={{ background: c }} />
+      ))}
+    </span>
+  );
+}
+function BoardLabelManager({ disabled = false }: { disabled?: boolean }) {
+  return (
+    <div data-board-labels className="flex flex-col gap-2 rounded-lg border border-border bg-surface-sunken p-3">
+      <span className="text-xs uppercase tracking-wider text-text-muted">管理标签 · 创建 / 重命名 / 改色 / 删除</span>
+      <div className="flex flex-wrap items-center gap-2">
+        <Input placeholder="标签名" disabled={disabled} aria-label="new label name" className="w-40" />
+        <PaletteRow selected={LABEL_PALETTE[4]} disabled={disabled} ariaLabel="new label color" />
+        <Button size="sm" variant="secondary" disabled={disabled} aria-label="add label">+ 添加标签</Button>
+      </div>
+      <div className="flex flex-col gap-1.5">
+        {BOARD_LABELS.map((l) => (
+          <div key={l.id} className="flex flex-wrap items-center gap-2">
+            <span className="inline-flex items-center rounded px-1.5 py-0.5 text-xs" style={{ background: l.color, color: labelText(l.color) }}>🏷 {l.name}</span>
+            <Input defaultValue={l.name} disabled={disabled} aria-label={`rename ${l.name}`} className="w-32" />
+            <PaletteRow selected={l.color} disabled={disabled} ariaLabel={`recolor ${l.name}`} />
+            <Button size="sm" variant="ghost" iconOnly disabled={disabled} aria-label={`delete ${l.name}`}>×</Button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+// Create epic / task inline row (running mesh; audit #25).
+function BoardCreateRow({ disabled = false }: { disabled?: boolean }) {
+  return (
+    <div data-board-create className="flex flex-wrap items-center gap-2">
+      <Input placeholder="new task…" disabled={disabled} aria-label="new task" className="w-48" />
+      <Input placeholder="new epic…" disabled={disabled} aria-label="new epic" className="w-40" />
+      <span className="text-xs text-text-muted">Enter 创建（running mesh）</span>
+    </div>
+  );
+}
+
+// Board fullscreen toggle (audit #22) — 🗖 enter / 🗕 restore the board panel.
+function BoardFsToggle({ href, fs }: { href: string; fs: boolean }) {
+  return <LinkButton href={href} label={fs ? "退出全屏" : "全屏"} dataKey="board-fs">{fs ? "🗕" : "🗖"}</LinkButton>;
+}
+// Board fullscreen (audit #22) — the board panel expanded to a standalone desktop frame
+// (more rows/cards visible); 🗕 in the subview header restores the split shell.
+function BoardFullFrame({ board, state, backHref, manage = false, manageHref = "#" }: { board: BoardState; state: ShellState; backHref: string; manage?: boolean; manageHref?: string }) {
+  const sub = board === "detail" ? <BoardDetailDesktop state={state} fs fsHref={backHref} />
+    : board === "kanban" ? <BoardKanbanDesktop state={state} fs fsHref={backHref} />
+    : <BoardListDesktop state={state} fs fsHref={backHref} manage={manage} manageHref={manageHref} />;
+  return (
+    <div data-mockup="frame" data-device="desktop" data-board-fs="1" className="flex h-[720px] w-[1280px] max-w-full flex-col overflow-hidden rounded-xl border border-border bg-surface text-text-primary shadow-sm">
+      <div className="min-h-0 flex-1 overflow-auto p-3">{sub}</div>
+    </div>
   );
 }
 
@@ -788,7 +884,7 @@ function BoardBulkToolbar({ disabled = false }: { disabled?: boolean }) {
 }
 
 // Desktop board — List (GitHub-Issues maturity).
-function BoardListDesktop({ state = "populated" }: { state?: ShellState }) {
+function BoardListDesktop({ state = "populated", fs = false, fsHref = "#", manage = false, manageHref = "#" }: { state?: ShellState; fs?: boolean; fsHref?: string; manage?: boolean; manageHref?: string }) {
   const panel = boardStatePanel(state, "Board · Issues", "No issues", "Create the first issue or dispatch from runtime.");
   if (panel) return <div data-board="list" className="h-full">{panel}</div>;
   const editable = boardEditable(state);
@@ -796,15 +892,17 @@ function BoardListDesktop({ state = "populated" }: { state?: ShellState }) {
   const issues = state === "boundary" ? MANY_ISSUES : ISSUES;
   return (
     <div data-board="list" className="h-full">
-      <PanelFrame title="Board · Issues" actions={<SegmentedControl ariaLabel="Board view" value="list" onChange={() => {}} size="sm" options={[{ value: "list", label: "List" }, { value: "kanban", label: "Board" }]} />} className="h-full" bodyClassName="flex flex-col gap-2">
+      <PanelFrame title="Board · Issues" actions={<Cluster><BoardFsToggle href={fsHref} fs={fs} /><SegmentedControl ariaLabel="Board view" value="list" onChange={() => {}} size="sm" options={[{ value: "list", label: "List" }, { value: "kanban", label: "Board" }]} /></Cluster>} className="h-full" bodyClassName="flex flex-col gap-2">
         {boardNote(state)}
-        <BoardFilterBar disabled={!editable} />
+        <BoardFilterBar disabled={!editable} manage={manage} manageHref={manageHref} />
+        {manage ? <BoardLabelManager disabled={!editable} /> : null}
+        <BoardCreateRow disabled={!editable} />
         <BoardBulkToolbar disabled={!editable} />
         <div className="flex flex-col gap-2">
           {epics.map((e) => (
             <div key={e.id} className="flex flex-col">
               <EpicGroupHeader epicId={e.id} />
-              {issues.filter((i) => i.epic === e.id).map((i) => <IssueRow key={i.n} issue={i} />)}
+              {issues.filter((i) => i.epic === e.id).map((i) => <IssueRow key={i.n} issue={i} editable={editable} />)}
             </div>
           ))}
         </div>
@@ -828,18 +926,19 @@ function LifecyclePath({ current }: { current: Lifecycle }) {
 }
 
 // Desktop board — Detail.
-function BoardDetailDesktop({ state = "populated" }: { state?: ShellState }) {
+function BoardDetailDesktop({ state = "populated", fs = false, fsHref = "#" }: { state?: ShellState; fs?: boolean; fsHref?: string }) {
   const panel = boardStatePanel(state, "Issue", "No issue selected", "Pick an issue from the list to see its detail.");
   if (panel) return <div data-board="detail" className="h-full">{panel}</div>;
   const boundary = state === "boundary";
   const it = boundary ? DETAIL_BOUNDARY : DETAIL_ISSUE;
   const timeline = boundary ? BOUNDARY_TIMELINE : TIMELINE;
   const editable = boardEditable(state);
+  const terminal = it.status === "done" || it.status === "cancelled";
   return (
     <div data-board="detail" className="h-full">
       <PanelFrame
         title={<span><a href="/__ui-mockup?surface=board&board=list" className="text-link no-underline">◀</a> #{it.n} · {it.title}</span>}
-        actions={<Cluster><StatusChip status={lifeOf(it.status).status} variant="soft" label={it.status} /><Button size="sm" variant="secondary" disabled={!editable} busy={state === "busy"}>close ▾</Button></Cluster>}
+        actions={<Cluster><BoardFsToggle href={fsHref} fs={fs} /><StatusChip status={lifeOf(it.status).status} variant="soft" label={it.status} />{terminal ? <Button size="sm" variant="secondary" disabled={!editable} aria-label={`reopen #${it.n}`}>↺ reopen</Button> : <Button size="sm" variant="secondary" disabled={!editable} busy={state === "busy"}>close ▾</Button>}</Cluster>}
         className="h-full"
         bodyClassName="flex flex-col gap-3"
       >
@@ -893,13 +992,13 @@ function KanbanCard({ issue }: { issue: Issue }) {
 }
 
 // Desktop board — Kanban (lifecycle columns; horizontal scroll keeps columns roomy).
-function BoardKanbanDesktop({ state = "populated" }: { state?: ShellState }) {
+function BoardKanbanDesktop({ state = "populated", fs = false, fsHref = "#" }: { state?: ShellState; fs?: boolean; fsHref?: string }) {
   const panel = boardStatePanel(state, "Board · Kanban", "No issues", "Create the first issue or dispatch from runtime.");
   if (panel) return <div data-board="kanban" className="h-full">{panel}</div>;
   const issues = state === "boundary" ? MANY_ISSUES : ISSUES;
   return (
     <div data-board="kanban" className="h-full">
-      <PanelFrame title="Board · Kanban" description="swimlanes: epic ▾ · drag = set_status (perm-gated)" actions={<SegmentedControl ariaLabel="Board view" value="kanban" onChange={() => {}} size="sm" options={[{ value: "list", label: "List" }, { value: "kanban", label: "Board" }]} />} className="h-full">
+      <PanelFrame title="Board · Kanban" description="swimlanes: epic ▾ · drag = set_status (perm-gated)" actions={<Cluster><BoardFsToggle href={fsHref} fs={fs} /><SegmentedControl ariaLabel="Board view" value="kanban" onChange={() => {}} size="sm" options={[{ value: "list", label: "List" }, { value: "kanban", label: "Board" }]} /></Cluster>} className="h-full">
         {boardNote(state)}
         <div className="flex gap-3 overflow-x-auto pb-2">
           {LIFECYCLE.map((col) => {
@@ -955,6 +1054,8 @@ function BoardListMobile({ state = "populated" }: { state?: ShellState }) {
         <input aria-label="search issues" placeholder="search…" className="min-w-0 flex-1 rounded-lg border border-border-strong bg-surface-sunken px-2 py-1 text-sm text-text-primary placeholder:text-text-muted" />
         <select aria-label="status filter" className="rounded-lg border border-border-strong bg-surface-sunken px-2 py-1 text-sm text-text-primary"><option>status</option></select>
       </ActionBar>
+      {/* Group-by-epic toggle (audit #23) — in the mobile filter row (△ filter sheet). */}
+      <label className="inline-flex items-center gap-1.5 text-xs text-text-secondary"><input type="checkbox" defaultChecked disabled={!editable} aria-label="group by epic" className="accent-accent" /> 按 Epic 分组</label>
       <PanelFrame title={`Issues · ${open} open`}>
         <div className="flex flex-col gap-2">
           {issues.map((i) => <MobileIssueCard key={i.n} issue={i} />)}
@@ -1400,6 +1501,8 @@ function selQuery(s: Sel): string {
   p.set("board", s.board);
   p.set("state", s.state);
   p.set("nmEditor", s.nmEditor);
+  if (s.boardFs) p.set("boardFs", "1");
+  if (s.boardManage) p.set("boardManage", "1");
   if (s.index) p.set("index", "1");
   p.set("mesh", s.mesh);
   p.set("mode", s.mode);
@@ -1467,10 +1570,13 @@ const INDEX_SECTIONS: { title: string; note: string; rows: IndexRow[] }[] = [
     { label: "full (桌面)", base: "surface=runtime&runtime=full", states: ["populated", "boundary", "permission", "offline", "empty", "loading", "error"], mobile: false },
     { label: "canvas (桌面)", base: "surface=runtime&runtime=canvas", states: ["populated", "boundary", "permission", "offline"], mobile: false },
   ] },
-  { title: "03 · 看板 C", note: "issue list / detail / kanban", rows: [
+  { title: "03 · 看板 C", note: "list / detail / kanban · 全屏 🗖 · 按 Epic 分组 · 标签 CRUD+调色 · 建 Epic · reopen", rows: [
     { label: "list", base: "surface=board&board=list", states: SHELL_STATES, mobile: true },
     { label: "detail", base: "surface=board&board=detail", states: SHELL_STATES, mobile: true },
     { label: "kanban (桌面)", base: "surface=board&board=kanban", states: SHELL_STATES, mobile: false },
+    { label: "list · 管理标签 (桌面)", base: "surface=board&board=list&boardManage=1", states: ["populated", "permission", "offline", "boundary"], mobile: false },
+    { label: "list · 全屏 (桌面)", base: "surface=board&board=list&boardFs=1", states: ["populated", "boundary"], mobile: false },
+    { label: "kanban · 全屏 (桌面)", base: "surface=board&board=kanban&boardFs=1", states: ["populated", "boundary"], mobile: false },
   ] },
   { title: "04 · 新建 mesh", note: "builder: agents / edges / charter / per-agent controls", rows: [
     { label: "builder", base: "surface=new-mesh", states: ["empty", "populated", "error", "permission", "busy", "offline", "boundary"], mobile: true },
@@ -1517,7 +1623,7 @@ function MockupIndex({ backHref }: { backHref: string }) {
 
 export function UiMockup() {
   const [sel, setSel] = useState<Sel>(readSel);
-  const { device, view, surface, runtime, board, state, nmEditor, index, mesh, mode, accent } = sel;
+  const { device, view, surface, runtime, board, state, nmEditor, boardFs, boardManage, index, mesh, mode, accent } = sel;
   const [mobileTab, setMobileTab] = useState<MobileTab>(surface === "board" || view === "board" ? "board" : "runtime");
 
   useEffect(() => {
@@ -1545,6 +1651,10 @@ export function UiMockup() {
   const focusBackHref = `/__ui-mockup?${selQuery({ ...sel, surface: "runtime", runtime: "focus" })}`;
   const overviewHref = `/__ui-mockup?${selQuery({ ...sel, surface: "runtime", runtime: "overview" })}`;
   const indexBackHref = `/__ui-mockup?${selQuery({ ...sel, index: false })}`;
+  // Board sub-view deep links: fullscreen enter/exit + label-manager toggle.
+  const boardFsHref = `/__ui-mockup?${selQuery({ ...sel, surface: "board", boardFs: true })}`;
+  const boardExitFsHref = `/__ui-mockup?${selQuery({ ...sel, surface: "board", boardFs: false })}`;
+  const boardManageHref = `/__ui-mockup?${selQuery({ ...sel, surface: "board", boardManage: !boardManage })}`;
   const setMesh = (m: string) => nav({ mesh: m });
 
   const setView = (v: View) => {
@@ -1557,7 +1667,7 @@ export function UiMockup() {
   const desktopStage = surface === "runtime"
     ? (runtime === "focus" ? <RuntimeFocusDesktop state={state} fullHref={fullHref} /> : <RuntimeOverviewDesktop focusHref={focusHref} canvasHref={canvasHref} state={state} />)
     : surface === "board"
-    ? (board === "detail" ? <BoardDetailDesktop state={state} /> : board === "kanban" ? <BoardKanbanDesktop state={state} /> : <BoardListDesktop state={state} />)
+    ? (board === "detail" ? <BoardDetailDesktop state={state} fsHref={boardFsHref} /> : board === "kanban" ? <BoardKanbanDesktop state={state} fsHref={boardFsHref} /> : <BoardListDesktop state={state} fsHref={boardFsHref} manage={boardManage} manageHref={boardManageHref} />)
     : <ShellStage state={state} view={view} />;
   // Runtime + board share the same chrome-by-state behavior (mesh nav stays populated).
   const shellChrome: ShellChrome = surface === "shell" ? shellChromeFor(state) : (surface === "runtime" || surface === "board") ? runtimeChromeFor(state) : {};
@@ -1694,6 +1804,8 @@ export function UiMockup() {
           ? <RuntimeFullFrame state={state} backHref={focusBackHref} />
           : surface === "runtime" && device === "desktop" && runtime === "canvas"
           ? <MeshCanvasFrame state={state} backHref={overviewHref} />
+          : surface === "board" && device === "desktop" && boardFs
+          ? <BoardFullFrame board={board} state={state} backHref={boardExitFsHref} manage={boardManage} manageHref={boardManageHref} />
           : device === "mobile"
           ? <MobileShell tab={mobileTab} setTab={(t) => { setMobileTab(t); if (t === "runtime" || t === "board") nav({ view: t }); }} mesh={mesh} setMesh={setMesh} stage={mobileStage} stageTab={mobileStageTab} {...shellChrome} />
           : <DesktopShell view={view} setView={setView} mesh={mesh} setMesh={setMesh} meshHref={meshHref} stage={desktopStage} contextTitle={contextTitle} context={desktopContext} {...shellChrome} />}

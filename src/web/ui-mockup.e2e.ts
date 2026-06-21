@@ -286,6 +286,30 @@ try {
     await page.waitForSelector('[data-device="mobile"] [data-board="list"]', { timeout: 8000 });
   });
 
+  // ── board补漏 — audited [E] capabilities (audit #22–#25) ────────────────────────
+  await step("board list补漏: group-by-epic + create epic/task + reopen terminal + 管理标签 toggle → manager", async () => {
+    await page.goto(`${BASE}/__ui-mockup?surface=board&board=list&state=populated&device=desktop`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-board="list"]', { timeout: 8000 });
+    for (const lbl of ["group by epic", "new epic", "new task", "reopen #7", "reopen #5", "管理标签", "全屏"]) {
+      if (await page.locator(`[aria-label="${lbl}"]`).count() === 0) throw new Error(`board control missing: ${lbl}`);
+    }
+    // 管理标签 toggle opens the CRUD/palette manager
+    await page.locator('[data-board-manage-labels]').click();
+    await page.waitForSelector("[data-board-labels]", { timeout: 8000 });
+    for (const lbl of ["new label name", "add label", "rename auth", "recolor auth", "delete auth"]) {
+      if (await page.locator(`[aria-label="${lbl}"]`).count() === 0) throw new Error(`label manager control missing: ${lbl}`);
+    }
+    if (await page.locator("[data-palette]").first().getByRole("button").count() === 0) throw new Error("palette swatches missing");
+  });
+
+  await step("board补漏: 🗖 fullscreen → standalone board frame with 🗕 exit", async () => {
+    await page.goto(`${BASE}/__ui-mockup?surface=board&board=list&state=populated&device=desktop`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-board="list"]', { timeout: 8000 });
+    await page.locator('[data-board-fs]').first().click();
+    await page.waitForSelector('[data-mockup="frame"][data-board-fs="1"]', { timeout: 8000 });
+    if (await page.locator('[aria-label="退出全屏"]').count() === 0) throw new Error("🗕 exit missing in board fullscreen");
+  });
+
   await step("screenshot desktop · expanded nav (dark-slate × signal-teal)", async () => {
     await page.goto(`${BASE}/__ui-mockup?device=desktop&view=runtime&mode=dark-slate&accent=signal-teal`, { waitUntil: "domcontentloaded" });
     await page.waitForSelector('[data-topbar-mesh="label"]', { timeout: 8000 });
@@ -363,6 +387,20 @@ try {
         });
       }
     }
+  }
+
+  // ── board补漏 desktop screenshots: fullscreen (list/kanban) + label manager ──
+  for (const [q, file] of [
+    ["surface=board&board=list&state=populated&boardFs=1&device=desktop", "board-list-fullscreen-populated-desktop-dark-slate-signal-teal.png"],
+    ["surface=board&board=kanban&state=boundary&boardFs=1&device=desktop", "board-kanban-fullscreen-boundary-desktop-dark-slate-signal-teal.png"],
+    ["surface=board&board=list&state=populated&boardManage=1&device=desktop", "board-list-manage-labels-populated-desktop-dark-slate-signal-teal.png"],
+  ] as [string, string][]) {
+    await step(`screenshot ${file}`, async () => {
+      await page.goto(`${BASE}/__ui-mockup?${q}&mode=dark-slate&accent=signal-teal`, { waitUntil: "domcontentloaded" });
+      await page.waitForSelector('[data-mockup="frame"] [data-board], [data-mockup="frame"][data-board-fs="1"]', { timeout: 8000 });
+      await sleep(140);
+      await shotFrame(`${SHOTS}/${file}`);
+    });
   }
 
   // ── new-mesh (04) builder: assertions + state × device screenshots (loading N/A; offline covered) ──

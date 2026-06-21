@@ -72,3 +72,12 @@ repo: `src/board.ts` (model/lifecycle), `src/web/client/BoardPanel.tsx`
 - 2026-06-21 — backward-consistency completion (audit `14`): +board fullscreen (#22),
   +group-by-epic toggle (#23), +label CRUD/palette (#24), +create-epic & reopen (#25,
   explicit in board per triage). `BoardPanel.tsx` (`LabelManager`/`PalettePicker`/`CreateRow`).
+- 2026-06-21 — Phase B Step 2 mockup补漏 (`UiMockup.tsx`): #22–#25 rendered in the guarded
+  `/__ui-mockup` board. Each board subview header gets a 🗖/🗕 fullscreen toggle →
+  standalone desktop `BoardFullFrame` (`?boardFs=1`); the filter bar gets a 「按 Epic
+  分组」checkbox (#23) and a 「🏷 标签」toggle → `BoardLabelManager` (`?boardManage=1`):
+  create/rename/recolor/delete with the AA `LABEL_PALETTE` swatch picker (#24); a
+  `BoardCreateRow` adds new task + new epic inputs (#25); terminal (done/cancelled)
+  issue rows + detail expose 「↺ reopen」 (#25). Mobile keeps group-by-epic in the filter
+  row; fullscreen/manager stay desktop-only (matrix △). Index (`?index=1`) 03 row synced
+  with the new deep links. All prior board all-state desktop/mobile coverage intact.

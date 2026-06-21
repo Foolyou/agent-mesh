@@ -340,10 +340,70 @@ test("index skeleton · lists every surface with state/device deep links", () =>
   expect(out).toContain("03 · 看板 C");
   expect(out).toContain("04 · 新建 mesh");
   expect(out).toContain("runtime=canvas"); // a runtime补漏 deep link (& is HTML-escaped in href)
+  expect(out).toContain("boardManage=1"); // board补漏 deep link
+  expect(out).toContain("boardFs=1");
   expect(out).toContain("device=mobile"); // mobile links
   expect(out).toContain("← 返回 mockup");
   // index frame replaces the app frame
   expect(out.includes('data-mockup="frame"')).toBe(false);
+});
+
+// ── board补漏 — audited [E] capabilities (audit #22–#25) ───────────────────────
+test("board list补漏 · group-by-epic + 管理标签 toggle + create epic/task + 全屏 toggle + reopen terminal", () => {
+  const out = renderAt("?surface=board&board=list&state=populated&device=desktop");
+  expect(out).toContain('aria-label="group by epic"'); // group-by-epic (#23)
+  expect(out).toContain('data-board-manage-labels'); // 管理标签 toggle (#24)
+  expect(out).toContain('data-board-create'); // create epic/task row (#25)
+  expect(out).toContain('aria-label="new epic"');
+  expect(out).toContain('aria-label="new task"');
+  expect(out).toContain('data-board-fs'); // fullscreen toggle (#22)
+  expect(out).toContain('aria-label="reopen #7"'); // reopen on a done issue (#25)
+  expect(out).toContain('aria-label="reopen #5"'); // reopen on a cancelled issue
+});
+
+test("board list补漏 · ?boardManage=1 opens the label CRUD + palette manager", () => {
+  const out = renderAt("?surface=board&board=list&state=populated&boardManage=1&device=desktop");
+  expect(out).toContain("data-board-labels"); // LabelManager (#24)
+  expect(out).toContain('aria-label="new label name"');
+  expect(out).toContain('aria-label="add label"');
+  expect(out).toContain('aria-label="rename auth"');
+  expect(out).toContain('aria-label="recolor auth"'); // PalettePicker per label
+  expect(out).toContain('aria-label="delete auth"');
+  expect(out).toContain("data-palette"); // accessible palette swatches
+  expect(out).toContain('aria-label="color #bae6fd"'); // a palette color
+  // off by default
+  expect(renderAt("?surface=board&board=list&state=populated").includes("data-board-labels")).toBe(false);
+});
+
+test("board补漏 · fullscreen frame (#22) is a standalone desktop frame with 🗕 exit", () => {
+  const out = renderAt("?surface=board&board=list&state=populated&boardFs=1&device=desktop");
+  expect(out).toContain('data-board-fs="1"'); // standalone fullscreen frame
+  expect(out).toContain('aria-label="退出全屏"'); // 🗕 restore
+  expect(out).toContain('data-board="list"'); // the board subview fills it
+  // kanban fullscreen too
+  expect(renderAt("?surface=board&board=kanban&state=populated&boardFs=1&device=desktop")).toContain('data-board="kanban"');
+});
+
+test("board detail补漏 · fs toggle present; reopen replaces close for terminal issues", () => {
+  const det = renderAt("?surface=board&board=detail&state=populated&device=desktop");
+  expect(det).toContain('data-board-fs'); // fullscreen toggle in detail (#22)
+  // #12 (in_review, open) → close ▾, not reopen
+  expect(det).toContain("close ▾");
+  expect(det.includes('aria-label="reopen #12"')).toBe(false);
+});
+
+test("board补漏 · permission disables label manager + create + group-by-epic; offline too", () => {
+  const perm = renderAt("?surface=board&board=list&state=permission&boardManage=1&device=desktop");
+  expect(perm).toContain('disabled="" aria-label="new label name"'); // create-label input disabled
+  expect(perm).toContain('disabled="" aria-label="group by epic"'); // checkbox disabled
+  expect(renderAt("?surface=board&board=list&state=offline&device=desktop")).toContain('disabled="" aria-label="new epic"');
+});
+
+test("board补漏 mobile · group-by-epic in the filter row (fullscreen/manager are desktop-only)", () => {
+  const out = renderAt("?surface=board&board=list&state=populated&device=mobile");
+  expect(out).toContain('aria-label="group by epic"');
+  // fullscreen flag is ignored on mobile (no standalone frame)
+  expect(renderAt("?surface=board&board=list&state=populated&boardFs=1&device=mobile").includes('data-board-fs="1"')).toBe(false);
 });
 
 test("mockup uses v2 semantic utilities and emits no raw-* class", () => {
