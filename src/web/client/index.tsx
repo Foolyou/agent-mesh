@@ -25,10 +25,11 @@ if (root) {
   } else if (window.location.pathname.startsWith("/__ui-mockup")) {
     import("./UiMockup").then(({ UiMockup }) => createRoot(root).render(<UiMockup />));
   } else if (isBnwPath(window.location.pathname)) {
-    // Step 7.0 — the new `/bnw/` console (parallel namespace). Same device-auth Boot gate,
-    // a separate view tree; the old root UI below is untouched. Dynamically imported so the
-    // new shell only loads on `/bnw/` paths.
-    import("./bnw/BnwApp").then(({ BnwApp }) => createRoot(root).render(<Boot><BnwApp /></Boot>));
+    // Step 7.0 — the new `/bnw/` console (parallel namespace). Its OWN device-auth gate (7.4-A.2b-ii
+    // BnwBoot, mockup 12 styling + ?next) wraps the new view tree; the old root UI + old Boot below
+    // are untouched. Dynamically imported so the new shell only loads on `/bnw/` paths.
+    Promise.all([import("./bnw/BnwApp"), import("./bnw/device-auth-gate")]).then(([{ BnwApp }, { BnwBoot }]) =>
+      createRoot(root).render(<BnwBoot><BnwApp /></BnwBoot>));
   } else {
     // Boot gates on device authorization before mounting the console (and opening the WS).
     createRoot(root).render(<Boot />);

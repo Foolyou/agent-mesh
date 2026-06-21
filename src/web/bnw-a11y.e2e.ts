@@ -8,6 +8,9 @@ import { WebGateway } from "./gateway";
 import { startWebServer } from "./server";
 import { authedContext, launchChromium, provisionE2eAuth } from "./e2e-playwright";
 import { rm } from "node:fs/promises";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { writeRecord } from "../mesh-registry";
 import type { Page } from "playwright";
 import type { MeshEvent, MeshConfig } from "../acp/types";
 
@@ -89,6 +92,13 @@ const CRAWL = () => {
 const installColorMath = (page: Page) => page.evaluate(`window.__a11y = (function(){ ${COLOR_MATH} return { parse, over, lum, ratio, effBg }; })();`);
 
 const auth = await provisionE2eAuth();
+// Seed the diagnostics run dir so the real /bnw/doctor surface paints a populated daemon +
+// recovery panel (live daemon record + orphan socket) for the contrast crawl.
+const RUN_DIR = join(auth.authRoot, "run");
+mkdirSync(RUN_DIR, { recursive: true });
+await writeRecord(RUN_DIR, { name: "dev-mesh", pid: process.pid, socketPath: join(RUN_DIR, "dev-mesh.sock"), proto: 2, startedAt: new Date(Date.now() - 3_600_000).toISOString() });
+writeFileSync(join(RUN_DIR, "dev-mesh.sock"), "");
+writeFileSync(join(RUN_DIR, "old-mesh.sock"), ""); // orphan socket → leak row
 const gw = new WebGateway(fake, undefined, { root: auth.authRoot });
 const handle = startWebServer({ gateway: gw, port: 0, dev: false });
 const BASE = handle.url;
@@ -106,7 +116,26 @@ async function crawl(page: Page, label: string) {
 try {
   const ctx = await authedContext(browser, auth.token, { viewport: { width: 1440, height: 900 } });
   const page = await ctx.newPage();
+  // The harness probe is host-dependent; stub it so /bnw/harnesses paints deterministic rows
+  // (ok / outdated+auth / self-install + old-version agent) for the contrast crawl.
+  await page.route("**/api/harnesses", (r) => r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([
+    { id: "claude", label: "Claude", installed: true, version: "1.4.2", toolVersion: "0.141.0", latest: "1.4.2", outdated: false, auth: "ok", installable: "npm", lastProbeAt: 0, runningAgentsUsingOldVersion: [] },
+    { id: "codex", label: "Codex", installed: true, version: "1.2.3", toolVersion: "0.140.0", latest: "1.2.5", outdated: true, auth: "required", installable: "npm", lastProbeAt: 0, runningAgentsUsingOldVersion: ["demo/codex-1"] },
+    { id: "opencode", label: "OpenCode", installed: false, auth: "unknown", installable: "self", installHint: { command: "npm i -g opencode", docsUrl: "https://opencode.example/docs" }, lastProbeAt: 0, runningAgentsUsingOldVersion: [] },
+    { id: "kimi", label: "Kimi", installed: true, auth: "unknown", installable: "self", installHint: { command: "npm i -g @moonshot/kimi", docsUrl: "https://kimi.example/docs" }, lastProbeAt: 0, runningAgentsUsingOldVersion: [] },
+  ]) }));
+  // Feishu channel is absent in the fake gateway → stub status so /bnw/channels paints a running
+  // channel with a binding (auth-admin sections are static placeholders) for the contrast crawl.
+  await page.route("**/api/channels/feishu/status", (r) => r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ state: "running", configPath: "channels/feishu.json", configured: true, enabled: true, appId: "cli_demo", domain: "feishu", bindings: [{ mesh: "demo", chatId: "oc_demo123", name: "demo 群", source: "auto", requireMention: true }], updatedAt: "" }) }));
+  // file-viewer: stub a markdown artifact so /bnw/.../file/report.md paints rendered content.
+  await page.route("**/api/agents/router/files/report.md", (r) => r.fulfill({ status: 200, contentType: "text/markdown", body: "# Gate summary\n\nThe device-auth gate is ready for review.\n" }));
   await page.goto(`${BASE}/bnw/`, { waitUntil: "domcontentloaded" }); // establish origin for localStorage
+
+  // A separate UNAUTHENTICATED page (no device token) so the /bnw device-auth gate (mockup 12)
+  // renders for the contrast crawl — the gate replaces the console until a device is approved.
+  const anonCtx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const anonPage = await anonCtx.newPage();
+  await anonPage.goto(`${BASE}/bnw/`, { waitUntil: "domcontentloaded" });
 
   for (const mode of MODES) {
     for (const accent of ACCENTS) {
@@ -146,6 +175,27 @@ try {
         await page.goto(`${BASE}/bnw/assistant`, { waitUntil: "domcontentloaded" });
         await page.waitForSelector('[data-bnw-assistant="panel"]', { timeout: 8000 });
         await sleep(60); await crawl(page, `${combo} · assistant`);
+        // 7.4-A — doctor (summary + findings + daemon table + recovery/leak rows)
+        await page.goto(`${BASE}/bnw/doctor`, { waitUntil: "domcontentloaded" });
+        await page.waitForSelector('[data-recovery] [data-leak]', { timeout: 8000 });
+        await sleep(60); await crawl(page, `${combo} · doctor`);
+        // 7.4-A.2a — harnesses (rows + status/auth chips + self-install guide + old-version agents)
+        await page.goto(`${BASE}/bnw/harnesses`, { waitUntil: "domcontentloaded" });
+        await page.waitForSelector('[data-old-agents] [data-old-agent]', { timeout: 8000 });
+        await sleep(60); await crawl(page, `${combo} · harnesses`);
+        // 7.4-A.2b-i — channels (status + bindings + auth-admin placeholders)
+        await page.goto(`${BASE}/bnw/channels`, { waitUntil: "domcontentloaded" });
+        await page.waitForSelector('[data-bindings] [data-binding]', { timeout: 8000 });
+        await sleep(60); await crawl(page, `${combo} · channels`);
+        // 7.4-A.2b-ii — file/artifact viewer (rendered markdown + header/back)
+        await page.goto(`${BASE}/bnw/mesh/demo/agent/router/file/report.md`, { waitUntil: "domcontentloaded" });
+        await page.waitForSelector('[data-artifact-kind="markdown"]', { timeout: 8000 });
+        await sleep(60); await crawl(page, `${combo} · file-viewer`);
+        // 7.4-A.2b-ii — device-auth gate (unauthenticated page; mockup 12)
+        await anonPage.evaluate(([m, a]) => { localStorage.setItem("mesh.theme.mode", m); localStorage.setItem("mesh.theme.accent", a); localStorage.removeItem("mesh.theme"); }, [mode, accent]);
+        await anonPage.goto(`${BASE}/bnw/`, { waitUntil: "domcontentloaded" });
+        await anonPage.waitForSelector('[data-device-code]', { timeout: 8000 });
+        await sleep(60); await crawl(anonPage, `${combo} · device-auth`);
         pass++; console.log(`  ✓ ${combo}`);
       } catch (e: any) {
         fails.push(combo); console.log(`  ✗ ${combo} — ${String(e?.message ?? e).split("\n")[0]}`);

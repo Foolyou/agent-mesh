@@ -333,7 +333,8 @@ test("isPreAuthApiPath matches only the device-auth endpoints", () => {
     expect(isPreAuthApiPath(p)).toBe(true);
   for (const p of ["/api/state", "/api/auth/device", "/api/auth/device/start/x", "/api/meshes", "/ws", "/api/auth/devices"])
     expect(isPreAuthApiPath(p)).toBe(false);
-  // System diagnostics MUST be gated (not pre-auth): an unapproved device must never read ps/doctor.
-  for (const p of ["/api/diagnostics/ps", "/api/diagnostics/doctor"])
+  // System diagnostics MUST be gated (not pre-auth): an unapproved device must never read ps/doctor
+  // nor invoke the reap recovery action.
+  for (const p of ["/api/diagnostics/ps", "/api/diagnostics/doctor", "/api/diagnostics/reap"])
     expect(isPreAuthApiPath(p)).toBe(false);
 });

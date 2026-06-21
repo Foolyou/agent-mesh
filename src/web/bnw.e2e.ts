@@ -6,7 +6,9 @@ import { WebGateway } from "./gateway";
 import { startWebServer } from "./server";
 import { authedContext, launchChromium, provisionE2eAuth } from "./e2e-playwright";
 import { rm } from "node:fs/promises";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { writeRecord } from "../mesh-registry";
 import type { MeshEvent, MeshConfig } from "../acp/types";
 
 const SHOTS = process.env.AGENT_MESH_ARTIFACTS || "/tmp/mesh-shots";
@@ -121,6 +123,13 @@ const SEED_CANVAS = {
 };
 
 const auth = await provisionE2eAuth();
+// Seed the diagnostics run dir so the REAL doctor/ps path returns deterministic recovery
+// fixtures: a live daemon (record → this alive pid) + an orphan socket (leak with no owner).
+const RUN_DIR = join(auth.authRoot, "run");
+mkdirSync(RUN_DIR, { recursive: true });
+await writeRecord(RUN_DIR, { name: "dev-mesh", pid: process.pid, socketPath: join(RUN_DIR, "dev-mesh.sock"), proto: 2, startedAt: new Date(Date.now() - 3_600_000).toISOString() });
+writeFileSync(join(RUN_DIR, "dev-mesh.sock"), "");
+writeFileSync(join(RUN_DIR, "old-mesh.sock"), ""); // orphan socket → a reapable leak
 const gw = new WebGateway(fakeManager() as any, asstStub as any, { root: auth.authRoot });
 const handle = startWebServer({ gateway: gw, port: 0, dev: false }); // no HMR (prod-like serving)
 const BASE = handle.url;
@@ -242,9 +251,75 @@ try {
     assert(new URL(page.url()).pathname === "/bnw/mesh/demo/board", `URL updated (got ${page.url()})`);
   });
 
-  await step("file-viewer deep link with a dotted path resolves (not 404)", async () => {
-    await page.goto(`${BASE}/bnw/mesh/demo/agent/router/artifact/topology.png`, { waitUntil: "domcontentloaded" });
+  await step("7.4-A.2b-ii file-viewer: markdown/code/image + lightbox + back + 404 (Bearer fetch)", async () => {
+    // Stub the gated agent-file / artifact fetches so the viewer renders deterministic content.
+    const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", "base64");
+    await page.route("**/api/agents/router/files/report.md", (r) => r.fulfill({ status: 200, contentType: "text/markdown", body: "# Gate summary\n\nThe device-auth gate is ready.\n" }));
+    await page.route("**/api/agents/router/files/server.ts", (r) => r.fulfill({ status: 200, contentType: "text/plain", body: "export const answer = 42;\n" }));
+    await page.route("**/api/agents/router/files/missing.md", (r) => r.fulfill({ status: 404, contentType: "application/json", body: JSON.stringify({ error: { message: "agent file not found" } }) }));
+    await page.route("**/api/meshes/demo/agents/router/artifacts/topology.png", (r) => r.fulfill({ status: 200, contentType: "image/png", body: PNG }));
+
+    // markdown
+    await page.goto(`${BASE}/bnw/mesh/demo/agent/router/file/report.md`, { waitUntil: "domcontentloaded" });
     await page.waitForSelector('[data-bnw-surface="file"]', { timeout: 8000 });
+    await page.waitForSelector('[data-artifact-kind="markdown"]', { timeout: 8000 });
+    if (await page.getByText("Gate summary").count() === 0) throw new Error("markdown body not rendered");
+    await page.waitForSelector('[data-artifact-back]', { timeout: 8000 });
+    await sleep(120); await page.screenshot({ path: `${SHOTS}/bnw-file-viewer-desktop.png`, fullPage: true });
+
+    // code (plain mono pre per mockup 11)
+    await page.goto(`${BASE}/bnw/mesh/demo/agent/router/file/server.ts`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-artifact-kind="code"]', { timeout: 8000 });
+    if (await page.getByText("export const answer = 42;").count() === 0) throw new Error("code body not rendered");
+
+    // image → lightbox via ?lb=1 → close
+    await page.goto(`${BASE}/bnw/mesh/demo/agent/router/artifact/topology.png`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-artifact-image]', { timeout: 8000 });
+    await page.locator('[data-artifact-image]').click();
+    await page.waitForSelector('[data-artifact-lightbox]', { timeout: 8000 });
+    assert(new URL(page.url()).search.includes("lb=1"), "lightbox is URL-addressable (?lb=1)");
+    await sleep(120); await page.screenshot({ path: `${SHOTS}/bnw-file-viewer-lightbox-desktop.png`, fullPage: true });
+    await page.locator('[aria-label="close lightbox"]').click();
+    await page.waitForFunction(() => !document.querySelector('[data-artifact-lightbox]'), { timeout: 8000 });
+
+    // 404 → not found + back affordance
+    await page.goto(`${BASE}/bnw/mesh/demo/agent/router/file/missing.md`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-artifact="viewer"]', { timeout: 8000 });
+    if (await page.getByText("File not found").count() === 0) throw new Error("404 state not rendered");
+  });
+
+  await step("7.4-A.2b-ii device-auth gate: unauth /bnw shows mockup-12 gate (code/bootstrap/remembered/?next)", async () => {
+    // A fresh context with NO device token → bootAuthorized() probe (GET /api/state) 401s → the
+    // /bnw BnwBoot replaces the console with the device-auth gate (real device/start issues a code).
+    const anon = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    try {
+      const ap = await anon.newPage();
+      await ap.goto(`${BASE}/bnw/channels`, { waitUntil: "domcontentloaded" });
+      await ap.waitForSelector('[data-device-auth="gate"]', { timeout: 8000 });
+      await ap.waitForSelector('[data-device-code]', { timeout: 8000 });   // real device/start code
+      await ap.waitForSelector('[data-bootstrap]', { timeout: 8000 });     // body-only bootstrap form
+      await ap.waitForSelector('[data-remembered]', { timeout: 8000 });
+      if (await ap.getByText("mesh device approve").count() === 0) throw new Error("host-CLI approve instruction missing");
+      if (await ap.getByText("/bnw/channels").count() === 0) throw new Error("remembered deep-link not preserved");
+      await sleep(120); await ap.screenshot({ path: `${SHOTS}/bnw-device-auth-desktop.png`, fullPage: true });
+      // ?next is honored (open-redirect-guarded to /bnw)
+      await ap.goto(`${BASE}/bnw/device-auth?next=/bnw/mesh/demo`, { waitUntil: "domcontentloaded" });
+      await ap.waitForSelector('[data-remembered]', { timeout: 8000 });
+      if (await ap.getByText("/bnw/mesh/demo").count() === 0) throw new Error("?next not remembered");
+      // open-redirect guard: a non-/bnw ?next must NOT be honored (falls back to the current path)
+      await ap.goto(`${BASE}/bnw/device-auth?next=https://evil.example/x`, { waitUntil: "domcontentloaded" });
+      await ap.waitForSelector('[data-remembered]', { timeout: 8000 });
+      if (await ap.getByText("evil.example").count() !== 0) throw new Error("open-redirect: external ?next must be rejected");
+      // namespace guard: `/bnw.evil` look-alike (startsWith "/bnw" but outside the /bnw/ namespace) is rejected
+      await ap.goto(`${BASE}/bnw/device-auth?next=/bnw.evil/x`, { waitUntil: "domcontentloaded" });
+      await ap.waitForSelector('[data-remembered]', { timeout: 8000 });
+      if (await ap.getByText("/bnw.evil").count() !== 0) throw new Error("namespace guard: /bnw.evil ?next must be rejected (strict isBnwPath)");
+      // mobile shot
+      await ap.setViewportSize({ width: 390, height: 844 });
+      await ap.goto(`${BASE}/bnw/`, { waitUntil: "domcontentloaded" });
+      await ap.waitForSelector('[data-device-code]', { timeout: 8000 });
+      await sleep(120); await ap.screenshot({ path: `${SHOTS}/bnw-device-auth-mobile.png`, fullPage: true });
+    } finally { await anon.close(); }
   });
 
   await step("7.1-C canvas: real edges + recent highlight + toolbar; add-edge/add-agent reach gateway", async () => {
@@ -430,6 +505,111 @@ try {
     if (await page.locator('[data-bnw-approval]').count() === 0) throw new Error("C2 docked approval bar must remain above the composer");
   });
 
+  await step("7.4-A.2b-i channels: real status/bindings/sync/ensure/provision wired; auth-admin placeholders", async () => {
+    // gw.feishuChannel() is absent in the fake gateway → intercept the feishu API at the browser
+    // so the surface paints a configured/running channel with bindings (Option B scope).
+    const STATUS = { state: "running", configPath: "channels/feishu.json", configured: true, enabled: true, appId: "cli_demo", domain: "feishu", bindings: [{ mesh: "demo", chatId: "oc_demo123", name: "demo 群", source: "auto", requireMention: true }], updatedAt: "" };
+    await page.route("**/api/channels/feishu/status", (r) => r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(STATUS) }));
+    await page.route("**/api/channels/feishu/sync", (r) => { rec("feishu:sync"); return r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([{ mesh: "demo", chatId: "oc_demo123", ok: true, created: false }]) }); });
+    await page.route("**/api/channels/feishu/meshes/demo/group", (r) => { rec("feishu:ensure:demo"); return r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ mesh: "demo", chatId: "oc_demo123", ok: true, created: true }) }); });
+    await page.route("**/api/channels/feishu/provision", (r) => { rec("feishu:provision"); return r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ id: "job-f1", state: "waiting", createdAt: "", updatedAt: "", verificationUrl: "https://open.feishu.cn/verify?t=demo", expireIn: 272 }) }); });
+    await page.route("**/api/channels/feishu/provision/job-f1", (r) => r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ id: "job-f1", state: "waiting", createdAt: "", updatedAt: "", verificationUrl: "https://open.feishu.cn/verify?t=demo", expireIn: 260 }) }));
+    await page.route("**/api/channels/feishu/provision/job-f1/cancel", (r) => { rec("feishu:cancel"); return r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ id: "job-f1", state: "cancelled", createdAt: "", updatedAt: "" }) }); });
+
+    await page.goto(`${BASE}/bnw/channels`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-channels="panel"]', { timeout: 8000 });
+    await page.waitForSelector('[data-channel-status]', { timeout: 8000 });
+    await page.waitForSelector('[data-bindings] [data-binding]', { timeout: 8000 });
+    // Option B: auth-admin sections are explicit placeholders — present, but NO approve/revoke actions
+    await page.waitForSelector('[data-pending-senders]', { timeout: 8000 });
+    await page.waitForSelector('[data-authorized-senders]', { timeout: 8000 });
+    assert(await page.locator('[data-pending-senders] button, [data-authorized-senders] button').count() === 0, "auth-admin placeholders have no action buttons");
+    await sleep(120); await page.screenshot({ path: `${SHOTS}/bnw-channels-desktop.png`, fullPage: true });
+
+    // sync + ensure-group reach the backend
+    const syncResp = page.waitForResponse((r) => r.url().includes("/api/channels/feishu/sync") && r.request().method() === "POST", { timeout: 8000 });
+    await page.locator('[aria-label="sync feishu groups"]').click();
+    await syncResp; await waitCall("feishu:sync");
+    const ensureResp = page.waitForResponse((r) => r.url().includes("/api/channels/feishu/meshes/demo/group") && r.request().method() === "POST", { timeout: 8000 });
+    await page.locator('[aria-label="ensure group demo"]').click();
+    await ensureResp; await waitCall("feishu:ensure:demo");
+
+    // provision (bind) → QR/verify card appears (poll) → cancel reaches backend
+    await page.locator('[aria-label="bind chat to mesh"]').click();
+    await waitCall("feishu:provision");
+    await page.waitForSelector('[data-provision]', { timeout: 8000 });
+    const cancelResp = page.waitForResponse((r) => r.url().includes("/api/channels/feishu/provision/job-f1/cancel") && r.request().method() === "POST", { timeout: 8000 });
+    await page.locator('[aria-label="cancel provision"]').click();
+    await cancelResp; await waitCall("feishu:cancel");
+  });
+
+  await step("7.4-A.2a harnesses: probe/reprobe/install-stream/respawn wired (stubbed probe)", async () => {
+    // The harness probe hits the REAL probeHarnesses (host-dependent); intercept at the browser
+    // so the surface paints deterministic rows + recovery state (same approach as harness-ui.e2e).
+    const HROWS = [
+      { id: "claude", label: "Claude", installed: true, version: "1.4.2", toolVersion: "0.141.0", latest: "1.4.2", outdated: false, auth: "ok", installable: "npm", lastProbeAt: 0, runningAgentsUsingOldVersion: [] },
+      { id: "codex", label: "Codex", installed: true, version: "1.2.3", toolVersion: "0.140.0", latest: "1.2.5", outdated: true, auth: "required", installable: "npm", lastProbeAt: 0, runningAgentsUsingOldVersion: ["demo/codex-1"] },
+      { id: "opencode", label: "OpenCode", installed: false, auth: "unknown", installable: "self", installHint: { command: "npm i -g opencode", docsUrl: "https://opencode.example/docs" }, lastProbeAt: 0, runningAgentsUsingOldVersion: [] },
+      { id: "kimi", label: "Kimi", installed: true, auth: "unknown", installable: "self", installHint: { command: "npm i -g @moonshot/kimi", docsUrl: "https://kimi.example/docs" }, lastProbeAt: 0, runningAgentsUsingOldVersion: [] },
+    ];
+    await page.route("**/api/harnesses", (r) => r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(HROWS) }));
+    await page.route("**/api/harnesses/codex/install", (r) => r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ jobId: "job-1", status: "running", harnessId: "codex", pkgSpec: "codex-acp@1.2.5" }) }));
+    await page.route("**/api/harnesses/codex/install/job-1/stream", (r) => r.fulfill({ status: 200, contentType: "application/x-ndjson", body: [JSON.stringify({ step: "fetch", harnessId: "codex", pkgSpec: "codex-acp@1.2.5", stdoutLine: "fetching codex-acp@1.2.5" }), JSON.stringify({ step: "done", harnessId: "codex", pkgSpec: "codex-acp@1.2.5", installedVersion: "1.2.5" })].join("\n") }));
+    await page.route("**/api/harnesses/*/reprobe", (r) => r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true }) }));
+    await page.route("**/api/meshes/demo/agents/codex-1/respawn", (r) => { const b = JSON.parse(r.request().postData() || "{}"); rec(`respawn:demo:codex-1:${b.mode}`); return r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ mode: b.mode, scheduled: b.mode === "after-idle" }) }); });
+
+    await page.goto(`${BASE}/bnw/harnesses`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-harnesses="panel"]', { timeout: 8000 });
+    await page.waitForSelector('[data-harness-row]', { timeout: 8000 });
+    assert(await page.locator('[data-harness-row]').count() === 4, "4 harness rows render");
+    await page.waitForSelector('[aria-label="update codex"]', { timeout: 8000 }); // outdated npm → update CTA
+    await page.waitForSelector('[data-self-installer]', { timeout: 8000 });       // self-install guide (opencode/kimi)
+    await page.waitForSelector('[data-old-agents] [data-old-agent]', { timeout: 8000 }); // old-version agent
+    await sleep(120); await page.screenshot({ path: `${SHOTS}/bnw-harnesses-desktop.png`, fullPage: true });
+
+    // reprobe → POST /reprobe
+    const reprobeResp = page.waitForResponse((r) => r.url().includes("/api/harnesses/codex/reprobe") && r.request().method() === "POST", { timeout: 8000 });
+    await page.locator('[aria-label="reprobe codex"]').click();
+    await reprobeResp;
+
+    // update → install POST + NDJSON stream → live progress card → done → close (#26)
+    const installResp = page.waitForResponse((r) => r.url().includes("/api/harnesses/codex/install") && r.request().method() === "POST", { timeout: 8000 });
+    await page.locator('[aria-label="update codex"]').click();
+    await installResp;
+    await page.waitForSelector('[data-install-progress]', { timeout: 8000 });
+    await page.waitForSelector('[aria-label="close install progress"]', { timeout: 8000 }); // reached done
+    await page.locator('[aria-label="close install progress"]').click();
+
+    // restart old-version agent (after-idle) → respawn reaches the backend (#28)
+    await page.locator('[aria-label="restart demo/codex-1 after idle"]').click();
+    await waitCall("respawn:demo:codex-1:after-idle");
+  });
+
+  await step("7.4-A doctor: real fetchDoctor+fetchPsDetail; reap orphan + restart daemon reach backend", async () => {
+    await page.goto(`${BASE}/bnw/doctor`, { waitUntil: "domcontentloaded" });
+    // wired (not placeholder): the summary only renders once fetchDoctor + fetchPsDetail resolve
+    await page.waitForSelector('[data-doctor-summary]', { timeout: 8000 });
+    await page.waitForSelector('[data-doctor-findings]', { timeout: 8000 });
+    // seeded live daemon (record → this alive pid) → ps row with a restart control
+    await page.waitForSelector('[aria-label="restart daemon dev-mesh"]', { timeout: 8000 });
+    // seeded orphan socket → a reapable leak row in the recovery panel
+    await page.waitForSelector('[data-recovery] [data-leak]', { timeout: 8000 });
+    assert(await page.locator('[data-leak]').count() >= 1, "orphan leak row present before reap");
+    await sleep(120); await page.screenshot({ path: `${SHOTS}/bnw-doctor-desktop.png`, fullPage: true });
+
+    // reap all → POST /api/diagnostics/reap → orphan leak removed; the live daemon is never touched
+    const reapResp = page.waitForResponse((r) => r.url().includes("/api/diagnostics/reap") && r.request().method() === "POST", { timeout: 8000 });
+    await page.locator('[aria-label="reap all orphans"]').click();
+    await reapResp;
+    await page.waitForFunction(() => document.querySelectorAll("[data-leak]").length === 0, { timeout: 8000 });
+    assert(await page.locator('[aria-label="restart daemon dev-mesh"]').count() === 1, "live daemon survived the reap (reapLeaks skips live pids)");
+
+    // restart daemon → stop+start reach the manager (existing approved lifecycle APIs)
+    await page.locator('[aria-label="restart daemon dev-mesh"]').click();
+    await waitCall("stopMesh:dev-mesh");
+    await waitCall("startMesh:dev-mesh");
+  });
+
   await step("screenshots: overview / focus (C2 docked approval) / canvas / mobile overview", async () => {
     await page.setViewportSize({ width: 1440, height: 900 });
     // desktop overview
@@ -505,6 +685,18 @@ try {
     await page.goto(`${BASE}/bnw/assistant`, { waitUntil: "domcontentloaded" });
     await page.waitForSelector('[data-bnw-assistant="panel"]', { timeout: 8000 });
     await sleep(120); await page.screenshot({ path: `${SHOTS}/bnw-assistant-mobile.png`, fullPage: true });
+    await page.goto(`${BASE}/bnw/doctor`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-doctor-summary]', { timeout: 8000 });
+    await sleep(120); await page.screenshot({ path: `${SHOTS}/bnw-doctor-mobile.png`, fullPage: true });
+    await page.goto(`${BASE}/bnw/harnesses`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-harness-row]', { timeout: 8000 });
+    await sleep(120); await page.screenshot({ path: `${SHOTS}/bnw-harnesses-mobile.png`, fullPage: true });
+    await page.goto(`${BASE}/bnw/channels`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-channel-status]', { timeout: 8000 });
+    await sleep(120); await page.screenshot({ path: `${SHOTS}/bnw-channels-mobile.png`, fullPage: true });
+    await page.goto(`${BASE}/bnw/mesh/demo/agent/router/file/report.md`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-artifact-kind="markdown"]', { timeout: 8000 });
+    await sleep(120); await page.screenshot({ path: `${SHOTS}/bnw-file-viewer-mobile.png`, fullPage: true });
   });
 
   if (errors.length) throw new Error(`page errors:\n${errors.join("\n")}`);

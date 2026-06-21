@@ -226,6 +226,11 @@ export interface Store {
   fetchDoctor(): Promise<DoctorReport>;
   /** Running meshes + agents + orphan/leak detail (ps -v), live-enriched from the gateway. */
   fetchPsDetail(): Promise<PsDetail>;
+  /** Targeted recovery: reap stale records / orphan sockets (never a live daemon). Returns the
+   *  reaped names + a freshly re-collected PsDetail. Pass names to reap a subset; omit for all. */
+  reapLeaks(names?: string[]): Promise<{ reaped: string[]; ps: PsDetail }>;
+  /** Restart a single mesh-host daemon = stop then start (existing approved lifecycle APIs). */
+  restartDaemon(name: string): Promise<void>;
 }
 
 export function createStore(): Store {
@@ -655,6 +660,8 @@ export function createStore(): Store {
     ensureFeishuMeshChat: (mesh) => guard(post(`/api/channels/feishu/meshes/${enc(mesh)}/group`), `create Feishu group ${mesh}`),
     fetchDoctor: () => guard(send("GET", "/api/diagnostics/doctor"), "system health check"),
     fetchPsDetail: () => guard(send("GET", "/api/diagnostics/ps"), "process detail"),
+    reapLeaks: (names) => guard(post("/api/diagnostics/reap", names && names.length ? { names } : {}), names && names.length === 1 ? `reap ${names[0]}` : "reap orphans"),
+    restartDaemon: async (n) => { await guard(post(`/api/meshes/${enc(n)}/stop`), `restart ${n}`); await guard(post(`/api/meshes/${enc(n)}/start`), `restart ${n}`); },
   };
 }
 

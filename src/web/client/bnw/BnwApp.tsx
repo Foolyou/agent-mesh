@@ -16,6 +16,10 @@ import { MeshCanvas } from "./canvas";
 import { BnwBoard } from "./board";
 import { BnwNewMesh } from "./new-mesh";
 import { BnwAssistant } from "./assistant";
+import { BnwDoctor } from "./doctor";
+import { BnwHarnesses } from "./harnesses";
+import { BnwChannels } from "./channels";
+import { BnwFileViewer } from "./file-viewer";
 
 // Map the gateway MeshStatus → the C5 StatusChip vocabulary used by the component library.
 function meshDot(s: MeshStatus): Status {
@@ -116,6 +120,14 @@ export function BnwApp() {
   // 7.3 — new/edit-mesh builder + Mesh Assistant B (real defineMesh / promptAssistant).
   else if (route.k === "newMesh") body = <BnwNewMesh store={store} state={state} route={route} />;
   else if (route.k === "assistant") body = <BnwAssistant store={store} state={state} full={!!route.full} />;
+  // 7.4-A — Doctor / system wired to real diagnostics (fetchDoctor + fetchPsDetail + reap/restart).
+  else if (route.k === "doctor") body = <BnwDoctor store={store} state={state} />;
+  // 7.4-A.2a — Harnesses wired to real probe/install/reprobe/respawn.
+  else if (route.k === "harnesses") body = <BnwHarnesses store={store} />;
+  // 7.4-A.2b-i — Channels (Feishu) wired to real status/bindings/sync/provision (Option B).
+  else if (route.k === "channels") body = <BnwChannels store={store} />;
+  // 7.4-A.2b-ii — File / artifact viewer (deep-linkable; markdown/code/image + lightbox).
+  else if (route.k === "file") body = <BnwFileViewer route={route} />;
   else body = <SurfacePlaceholder route={route} />;
 
   return (

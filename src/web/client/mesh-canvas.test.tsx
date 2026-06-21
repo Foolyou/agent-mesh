@@ -102,6 +102,8 @@ function store(state: GatewayState): Store {
     ensureFeishuMeshChat: async (mesh) => ({ mesh, ok: true, created: false }),
     fetchDoctor: async () => ({ checks: [], summary: { total: 0, ok: 0, warnings: 0, errors: 0, worst: "ok" } }),
     fetchPsDetail: async () => ({ running: [], leaks: [] }),
+    reapLeaks: async () => ({ reaped: [], ps: { running: [], leaks: [] } }),
+    restartDaemon: async () => {},
   };
 }
 

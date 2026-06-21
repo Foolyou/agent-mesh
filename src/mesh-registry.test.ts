@@ -5,7 +5,7 @@ import { existsSync } from "node:fs";
 import { spawn, type ChildProcess } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { writeRecord, readRecord, removeRecord, removeRecordIfDead, listLiveRecords, pidAlive, reapAllHosts } from "./mesh-registry";
+import { writeRecord, readRecord, removeRecord, removeRecordIfDead, listLiveRecords, pidAlive, reapAllHosts, reapLeaks } from "./mesh-registry";
 
 let dir: string;
 const spawned: ChildProcess[] = [];
@@ -184,4 +184,54 @@ test("reapAllHosts: a live host whose record was already lost still gets swept (
 test("reapAllHosts: empty / missing run dir is a no-op", async () => {
   const r = await reapAllHosts(join(dir, "does-not-exist"), fast);
   expect(r).toEqual({ killed: 0, cleaned: 0, survived: [] });
+});
+
+// ── reapLeaks: targeted recovery (WebUI/Doctor scope) — leaks only, never a live daemon ──
+test("reapLeaks: reaps stale records + orphan sockets but never signals/removes a live daemon", async () => {
+  const livePid = await spawnStub("live");
+  await writeRecord(dir, rec("live", livePid));   // live daemon — must be left alone
+  await writeRecord(dir, rec("stale", 2147483646)); // record → dead pid
+  await touchSock("orphan");                        // socket with no record
+
+  const r = await reapLeaks(dir);
+
+  expect(r.reaped.sort()).toEqual(["orphan", "stale"]);
+  expect(r.skipped).toEqual(["live"]);
+  expect(pidAlive(livePid)).toBe(true);                       // never killed
+  expect(await readRecord(dir, "live")).toBeDefined();        // record kept
+  expect(await readRecord(dir, "stale")).toBeUndefined();     // stale record removed
+  expect(existsSync(join(dir, "orphan.sock"))).toBe(false);   // orphan socket swept
+});
+
+test("reapLeaks(names): reaps only the named leak, leaving other leaks intact", async () => {
+  await writeRecord(dir, rec("staleA", 2147483646));
+  await writeRecord(dir, rec("staleB", 2147483646));
+
+  const r = await reapLeaks(dir, ["staleA"]);
+
+  expect(r.reaped).toEqual(["staleA"]);
+  expect(await readRecord(dir, "staleA")).toBeUndefined();
+  expect(await readRecord(dir, "staleB")).toBeDefined();
+});
+
+test("reapLeaks: a stale record's out-of-runDir socketPath is NEVER deleted (path-escape guard)", async () => {
+  const victim = join(tmpdir(), `reapleaks-victim-${process.pid}-${Date.now()}.txt`);
+  await writeFile(victim, "do not delete");
+  try {
+    // a poisoned/corrupted stale record (dead pid) whose socketPath points OUTSIDE runDir
+    await writeRecord(dir, { name: "evil", pid: 2147483646, socketPath: victim, proto: 2, startedAt: "T" });
+
+    const r = await reapLeaks(dir);
+
+    expect(r.reaped).toContain("evil");                       // the stale record is still reaped
+    expect(await readRecord(dir, "evil")).toBeUndefined();    // canonical record removed
+    expect(existsSync(victim)).toBe(true);                    // the out-of-runDir file is untouched
+    expect(existsSync(join(dir, "evil.sock"))).toBe(false);   // only the canonical socket is targeted
+  } finally {
+    await rm(victim, { force: true });
+  }
+});
+
+test("reapLeaks: missing run dir is a no-op", async () => {
+  expect(await reapLeaks(join(dir, "nope"))).toEqual({ reaped: [], skipped: [] });
 });
