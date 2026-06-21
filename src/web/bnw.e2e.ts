@@ -74,6 +74,22 @@ try {
     }
   });
 
+  await step("7.1-A runtime overview + focus wired to the real store", async () => {
+    // overview reads the snapshot: agents grid + the store-fed agent id "router"
+    await page.goto(`${BASE}/bnw/mesh/demo`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-bnw-surface="runtime"]', { timeout: 8000 });
+    await page.waitForSelector('[data-bnw-agents]', { timeout: 8000 });
+    if (await page.locator('[data-bnw-agents]').getByText("router", { exact: false }).count() === 0) throw new Error("store-fed agent missing in /bnw overview");
+    // focus reads the per-agent store + the transcript region renders
+    await page.goto(`${BASE}/bnw/mesh/demo/agent/router`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-bnw-focus="split"]', { timeout: 8000 });
+    await page.waitForSelector('[data-bnw-transcript]', { timeout: 8000 });
+    // ?full=1 is URL-driven and switches the focus frame
+    await page.goto(`${BASE}/bnw/mesh/demo/agent/router?full=1`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-bnw-focus="full"]', { timeout: 8000 });
+    if (await page.locator('[data-bnw-focus="split"]').count() !== 0) throw new Error("full=1 must not render the split frame");
+  });
+
   await step("RouteLink does same-origin SPA nav (no full reload) runtime→board", async () => {
     await page.goto(`${BASE}/bnw/mesh/demo`, { waitUntil: "domcontentloaded" });
     await page.waitForSelector('[data-bnw-surface="runtime"]', { timeout: 8000 });
