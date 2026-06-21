@@ -20,6 +20,8 @@ import { BnwDoctor } from "./doctor";
 import { BnwHarnesses } from "./harnesses";
 import { BnwChannels } from "./channels";
 import { BnwFileViewer } from "./file-viewer";
+import { BnwSettings } from "./settings";
+import { loadDefaultView } from "./prefs";
 
 // Map the gateway MeshStatus → the C5 StatusChip vocabulary used by the component library.
 function meshDot(s: MeshStatus): Status {
@@ -96,10 +98,13 @@ export function BnwApp() {
   const connected = useConnected(store);
   const route = useRoute();
 
-  // Landing: `/bnw/` → default mesh runtime once meshes arrive (replace, so back works).
+  // Landing: `/bnw/` → the default-view pref (7.4-B) of the first mesh once meshes arrive
+  // (replace, so back works). Defaults to runtime; honors a saved board preference.
   useEffect(() => {
     if (route.k === "home" && state.meshes.length) {
-      navigate({ k: "runtime", mesh: state.meshes[0].name }, { replace: true });
+      const mesh = state.meshes[0].name;
+      const dest = loadDefaultView() === "board" ? { k: "board" as const, mesh, view: "list" as const, filters: {} } : { k: "runtime" as const, mesh };
+      navigate(dest, { replace: true });
     }
   }, [route.k, state.meshes]);
 
@@ -128,6 +133,8 @@ export function BnwApp() {
   else if (route.k === "channels") body = <BnwChannels store={store} />;
   // 7.4-A.2b-ii — File / artifact viewer (deep-linkable; markdown/code/image + lightbox).
   else if (route.k === "file") body = <BnwFileViewer route={route} />;
+  // 7.4-B — Settings (appearance/language/prefs/devices via ?tab).
+  else if (route.k === "settings") body = <BnwSettings route={route} />;
   else body = <SurfacePlaceholder route={route} />;
 
   return (

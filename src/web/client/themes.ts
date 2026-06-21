@@ -355,6 +355,16 @@ export function saveActive(name: string): void {
   }
 }
 
+/** Drop any legacy/custom active selection so initTheme falls through to the v2 mode×accent
+ *  composition. Used when the user picks a built-in mode/accent in the v2 settings. */
+export function clearActive(): void {
+  try {
+    localStorage.removeItem(ACTIVE_KEY);
+  } catch {
+    /* unavailable */
+  }
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // v2 token system (Step 5 C2) — two-layer, orthogonal mode × accent runtime.
 // Source of truth: docs/design/ui/tokens/{00,01,02}.md. COEXISTS with the v1
