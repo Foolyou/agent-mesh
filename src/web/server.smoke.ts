@@ -68,6 +68,30 @@ try {
   const html = await htmlRes.text();
   assert(/<script/i.test(html), "bundled html references a script");
 
+  // Step 7.0 — `/bnw/*` deep links SPA-fall-back to index.html (new console namespace).
+  for (const p of ["/bnw/", "/bnw/mesh/demo", "/bnw/mesh/demo/board", "/bnw/settings",
+                   "/bnw/mesh/demo/agent/router/file/config.json"]) {
+    const r = await fetch(`${handle.url}${p}`);
+    assert(r.status === 200, `${p} status 200 (got ${r.status})`);
+    assert((r.headers.get("content-type") ?? "").includes("text/html"), `${p} is html`);
+    assert((r.headers.get("cache-control") ?? "").includes("no-store"), `${p} is no-store`);
+  }
+  // old root UI routes are UNCHANGED (still served)
+  for (const p of ["/", "/mesh/demo"]) {
+    const r = await fetch(`${handle.url}${p}`);
+    assert(r.status === 200, `old route ${p} still 200 (got ${r.status})`);
+    assert((r.headers.get("content-type") ?? "").includes("text/html"), `old route ${p} still html`);
+  }
+  // a missing `/bnw/` bundle asset (known extension, not a file-viewer path) is a real 404
+  const missingAsset = await fetch(`${handle.url}/bnw/does-not-exist.js`);
+  assert(missingAsset.status === 404, `missing /bnw asset 404 (got ${missingAsset.status})`);
+  // design routes stay guarded (MESH_UI_PREVIEW unset here) → 404
+  const mockup = await fetch(`${handle.url}/__ui-mockup`);
+  assert(mockup.status === 404, `__ui-mockup guarded 404 (got ${mockup.status})`);
+  // /api/* still gates: no Bearer → 401 (auth unchanged)
+  const ungated = await fetch(`${handle.url}/api/state`);
+  assert(ungated.status === 401, `/api/state without token 401 (got ${ungated.status})`);
+
   // unknown route 404 (Bearer so it passes the gate and reaches the router, not a 401)
   const nope = await fetch(`${handle.url}/api/nope`, { headers: authd });
   assert(nope.status === 404, "unknown api route 404");

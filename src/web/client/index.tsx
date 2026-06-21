@@ -7,6 +7,7 @@ import "./theme.css";
 import { initTheme } from "./themes";
 import { installVisualViewportHeightVar } from "./viewport";
 import { Boot } from "./Boot";
+import { isBnwPath } from "./router";
 
 initTheme(); // apply the persisted theme before first paint (no flash)
 installVisualViewportHeightVar({ window, target: document.documentElement });
@@ -23,6 +24,11 @@ if (root) {
     import("./UiPreview").then(({ UiPreview }) => createRoot(root).render(<UiPreview />));
   } else if (window.location.pathname.startsWith("/__ui-mockup")) {
     import("./UiMockup").then(({ UiMockup }) => createRoot(root).render(<UiMockup />));
+  } else if (isBnwPath(window.location.pathname)) {
+    // Step 7.0 — the new `/bnw/` console (parallel namespace). Same device-auth Boot gate,
+    // a separate view tree; the old root UI below is untouched. Dynamically imported so the
+    // new shell only loads on `/bnw/` paths.
+    import("./bnw/BnwApp").then(({ BnwApp }) => createRoot(root).render(<Boot><BnwApp /></Boot>));
   } else {
     // Boot gates on device authorization before mounting the console (and opening the WS).
     createRoot(root).render(<Boot />);
