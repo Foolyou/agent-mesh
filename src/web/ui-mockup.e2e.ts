@@ -234,20 +234,19 @@ try {
     await shotFrame(`${SHOTS}/shell-mobile-dark-slate-signal-teal.png`);
   });
 
-  // ── runtime (A) screenshots (default Dark·Slate × Signal Teal) ──────────────────
-  const RUNTIME_SHOTS: [string, string][] = [
-    ["device=desktop&surface=runtime&runtime=overview", "runtime-desktop-overview-dark-slate-signal-teal.png"],
-    ["device=desktop&surface=runtime&runtime=focus", "runtime-desktop-focus-dark-slate-signal-teal.png"],
-    ["device=mobile&surface=runtime&runtime=overview", "runtime-mobile-list-dark-slate-signal-teal.png"],
-    ["device=mobile&surface=runtime&runtime=focus", "runtime-mobile-focus-dark-slate-signal-teal.png"],
-  ];
-  for (const [q, file] of RUNTIME_SHOTS) {
-    await step(`screenshot ${file}`, async () => {
-      await page.goto(`${BASE}/__ui-mockup?${q}&mode=dark-slate&accent=signal-teal`, { waitUntil: "domcontentloaded" });
-      await page.waitForSelector('[data-mockup="frame"] [data-runtime]', { timeout: 8000 });
-      await sleep(150);
-      await shotFrame(`${SHOTS}/${file}`);
-    });
+  // ── runtime (A) state × mode × device screenshots (Phase B; Dark·Slate × Signal Teal) ──
+  const RUNTIME_STATES = ["empty", "loading", "populated", "error", "permission", "busy", "offline", "boundary"];
+  for (const device of ["desktop", "mobile"]) {
+    for (const rmode of ["overview", "focus"]) {
+      for (const st of RUNTIME_STATES) {
+        await step(`screenshot runtime-${rmode}-${st}-${device}`, async () => {
+          await page.goto(`${BASE}/__ui-mockup?surface=runtime&runtime=${rmode}&state=${st}&device=${device}&mode=dark-slate&accent=signal-teal`, { waitUntil: "domcontentloaded" });
+          await page.waitForSelector(`[data-mockup="frame"][data-device="${device}"] [data-runtime]`, { timeout: 8000 });
+          await sleep(140);
+          await shotFrame(`${SHOTS}/runtime-${rmode}-${st}-${device}-dark-slate-signal-teal.png`);
+        });
+      }
+    }
   }
 
   // ── board (C) screenshots (default Dark·Slate × Signal Teal) ────────────────────

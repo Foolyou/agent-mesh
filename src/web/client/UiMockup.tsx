@@ -55,6 +55,15 @@ const AGENTS: { id: string; status: Status; pending: number }[] = [
 ];
 const FOCUS_AGENT = "codex-1"; // the agent whose transcript the focus state shows
 
+// Boundary/scale: many agents (several pending) for the overview/list at scale.
+const MANY_AGENTS: { id: string; status: Status; pending: number }[] = [
+  ...AGENTS,
+  { id: "claude-2", status: "working", pending: 1 }, { id: "codex-2", status: "ready", pending: 0 },
+  { id: "opencode-2", status: "attention", pending: 3 }, { id: "kimi-1", status: "working", pending: 0 },
+  { id: "router-2", status: "idle", pending: 0 }, { id: "claude-3", status: "blocked", pending: 1 },
+  { id: "codex-3", status: "working", pending: 0 }, { id: "reviewer-1", status: "attention", pending: 2 },
+];
+
 // Fixture transcript for the focused agent (local message rows only — no product component).
 const TRANSCRIPT: { who: "user" | "agent" | "tool"; text: string }[] = [
   { who: "user", text: "restart the alpha mesh and run the gate" },
@@ -62,6 +71,13 @@ const TRANSCRIPT: { who: "user" | "agent" | "tool"; text: string }[] = [
   { who: "tool", text: "$ bun test  →  1548 pass / 0 fail" },
   { who: "agent", text: "Gate green. I need to write config.json — requesting approval." },
 ];
+// Boundary: a long transcript (gives the virtualized/long-scroll feel in the mockup).
+const LONG_TRANSCRIPT: { who: "user" | "agent" | "tool"; text: string }[] = Array.from({ length: 7 }, (_, i) => TRANSCRIPT[i % TRANSCRIPT.length]).concat([
+  { who: "user", text: "also bump the harness versions and re-probe" },
+  { who: "agent", text: "Re-probing harnesses… codex-acp 1.2.3 · codex 0.141.0." },
+  { who: "tool", text: "$ bun run a11y  →  palette 8+9 · DOM e2e 19/0" },
+  { who: "agent", text: "All green. A very long line to exercise wrapping and truncation behavior across the transcript bubble width so we can see how it reflows on both desktop and the narrow mobile frame." },
+]);
 
 // ── board (C) fixtures ─────────────────────────────────────────────────────────
 type Lifecycle = "todo" | "in_progress" | "in_review" | "done" | "cancelled";
@@ -211,53 +227,77 @@ function MessageBubble({ who, text }: { who: "user" | "agent" | "tool"; text: st
   );
 }
 
-function ApprovalFixture() {
+// `busy` → ApprovalCard busy (spinner + options disabled); resolved → resolvedLabel.
+function ApprovalFixture({ busy = false, resolved }: { busy?: boolean; resolved?: string }) {
   return (
     <ApprovalCard
       title={`${FOCUS_AGENT} · write file`}
       question={<>Allow <b>{FOCUS_AGENT}</b> to write <code className="text-syntax-string">config.json</code>?</>}
       options={[{ id: "allow", label: "Approve", kind: "approve" }, { id: "once", label: "Just once" }, { id: "deny", label: "Deny", kind: "reject" }]}
       onResolve={() => {}}
+      busy={busy}
+      resolvedLabel={resolved}
     />
   );
 }
 
-function ComposerFixture() {
+function ComposerFixture({ disabled = false, busy = false }: { disabled?: boolean; busy?: boolean }) {
   return (
     <Composer
-      toolbar={<Button size="sm" variant="ghost" iconOnly aria-label="attach">📎</Button>}
-      actions={<Button size="sm" variant="primary">Send</Button>}
-      hint="Enter to send · Shift+Enter for newline"
+      disabled={disabled}
+      toolbar={<Button size="sm" variant="ghost" iconOnly aria-label="attach" disabled={disabled}>📎</Button>}
+      actions={<Button size="sm" variant="primary" disabled={disabled} busy={busy}>Send</Button>}
+      hint={disabled ? "composer disabled" : "Enter to send · Shift+Enter for newline"}
     >
       <div className="px-1 py-1 text-sm text-text-muted">Message {FOCUS_AGENT}…</div>
     </Composer>
   );
 }
 
-function Transcript() {
+function Transcript({ long = false, busy = false, disabled = false }: { long?: boolean; busy?: boolean; disabled?: boolean }) {
+  const rows = long ? LONG_TRANSCRIPT : TRANSCRIPT;
   return (
     <div className="flex flex-col gap-2">
-      {TRANSCRIPT.map((m, i) => <MessageBubble key={i} who={m.who} text={m.text} />)}
-      <ApprovalFixture />
+      {rows.map((m, i) => <MessageBubble key={i} who={m.who} text={m.text} />)}
+      <ApprovalFixture busy={busy || disabled} resolved={undefined} />
     </div>
   );
 }
 
+// Non-happy state stand-in inside a titled panel (empty/loading/error); null otherwise.
+function runtimeStatePanel(state: ShellState, title: string, emptyTitle: string, emptyDesc: string): ReactNode | null {
+  if (state === "empty") return <div data-runtime-state="empty" className="h-full"><PanelFrame title={title} className="h-full"><EmptyState icon={<span className="text-2xl">🫥</span>} title={emptyTitle} description={emptyDesc} /></PanelFrame></div>;
+  if (state === "loading") return <div data-runtime-state="loading" className="h-full"><PanelFrame title={title} className="h-full"><div className="flex flex-col gap-3"><Skeleton variant="line" /><Skeleton variant="row" /><Skeleton variant="card" /></div></PanelFrame></div>;
+  if (state === "error") return <div data-runtime-state="error" className="h-full"><PanelFrame title={title} className="h-full"><ErrorBanner title="Failed to load" onRetry={() => {}}>The request failed — the shell stays usable.</ErrorBanner></PanelFrame></div>;
+  return null;
+}
+const runtimeNote = (state: ShellState): ReactNode =>
+  state === "offline" ? <p className="mb-2 text-xs text-text-muted">显示最近已知内容；连接恢复后自动刷新。</p>
+  : state === "permission" ? <p className="mb-2 text-xs text-text-muted">只读浏览；审批 / 发送 / 打断 / 重启需已授权设备。</p>
+  : null;
+
 // Desktop runtime — overview: all-agent topology/status with approval red-dots.
-function RuntimeOverviewDesktop({ focusHref }: { focusHref: (id: string) => string }) {
+function RuntimeOverviewDesktop({ focusHref, state = "populated" }: { focusHref: (id: string) => string; state?: ShellState }) {
+  const panel = runtimeStatePanel(state, "Topology · 全体 agent", "No agents", "This mesh has no agents yet — start it or add agents.");
+  if (panel) return <div data-runtime="overview" className="h-full">{panel}</div>;
+  const agents = state === "boundary" ? MANY_AGENTS : AGENTS;
+  const pending = agents.reduce((n, a) => n + a.pending, 0);
+  const disabled = state === "permission" || state === "offline";
   return (
     <div data-runtime="overview" className="h-full">
       <PanelFrame
         title="Topology · 全体 agent"
-        description={`${AGENTS.length} agents · ${totalPending} 待审批`}
-        actions={<Cluster><Button size="sm" variant="ghost">⤢ 展开</Button><Button size="sm" variant="primary">Start</Button></Cluster>}
+        description={`${agents.length} agents · ${pending} 待审批`}
+        actions={<Cluster><Button size="sm" variant="ghost" disabled={disabled}>⤢ 展开</Button><Button size="sm" variant="primary" disabled={disabled} busy={state === "busy"}>Start</Button></Cluster>}
         className="h-full"
       >
+        {runtimeNote(state)}
+        {state === "busy" ? <div className="mb-2 inline-flex items-center gap-2 text-xs text-text-secondary"><Spinner size={12} label="restarting" /> restarting codex-1…</div> : null}
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-          {AGENTS.map((a) => (
+          {agents.map((a) => (
             <a key={a.id} href={focusHref(a.id)} className="relative flex flex-col items-center gap-1.5 rounded-xl border border-border bg-surface-raised px-4 py-4 no-underline hover:bg-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus-ring">
               <StatusChip status={a.status} variant="dot" />
-              <span className="text-sm font-medium text-text-primary">{a.id}</span>
+              <span className="max-w-full truncate text-sm font-medium text-text-primary">{a.id}</span>
               <span className="text-xs text-text-muted">{a.status}</span>
               {a.pending ? <span className="absolute -right-1.5 -top-1.5"><Badge count={a.pending} tone="urgent" /></span> : null}
             </a>
@@ -269,30 +309,39 @@ function RuntimeOverviewDesktop({ focusHref }: { focusHref: (id: string) => stri
 }
 
 // Desktop runtime — focus: header + transcript + inline approval + composer.
-function RuntimeFocusDesktop() {
+function RuntimeFocusDesktop({ state = "populated" }: { state?: ShellState }) {
+  const panel = runtimeStatePanel(state, `运行态 · ${FOCUS_AGENT}`, "No messages yet", "Send the first instruction to start the conversation.");
+  if (panel) return <div data-runtime="focus" className="h-full">{panel}</div>;
+  const disabled = state === "permission" || state === "offline";
   return (
     <div data-runtime="focus" className="flex h-full flex-col">
       <PanelFrame
         title={`运行态 · ${FOCUS_AGENT}`}
         description="focused transcript"
-        actions={<Cluster><StatusChip status="working" variant="soft" /><Button size="sm" variant="ghost">Interrupt</Button><Button size="sm" variant="ghost">Restart</Button></Cluster>}
+        actions={<Cluster><StatusChip status="working" variant="soft" /><Button size="sm" variant="ghost" disabled={disabled} busy={state === "busy"}>Interrupt</Button><Button size="sm" variant="ghost" disabled={disabled}>Restart</Button></Cluster>}
         className="flex-1"
         bodyClassName="flex flex-col gap-3"
-        footer={<ComposerFixture />}
+        footer={<ComposerFixture disabled={disabled} busy={state === "busy"} />}
       >
-        <Transcript />
+        {runtimeNote(state)}
+        <Transcript long={state === "boundary"} busy={state === "busy"} disabled={disabled} />
       </PanelFrame>
     </div>
   );
 }
 
 // Mobile runtime — agent card list (pending approvals pinned on top).
-function RuntimeListMobile({ focusHref }: { focusHref: (id: string) => string }) {
-  const pending = AGENTS.filter((a) => a.pending > 0);
+function RuntimeListMobile({ focusHref, state = "populated" }: { focusHref: (id: string) => string; state?: ShellState }) {
+  const panel = runtimeStatePanel(state, "Agents", "No agents", "This mesh has no agents yet.");
+  if (panel) return <div data-runtime="overview">{panel}</div>;
+  const agents = state === "boundary" ? MANY_AGENTS : AGENTS;
+  const pending = agents.filter((a) => a.pending > 0);
+  const totalP = agents.reduce((n, a) => n + a.pending, 0);
   return (
     <div data-runtime="overview" className="flex flex-col gap-3">
+      {runtimeNote(state)}
       {pending.length ? (
-        <PanelFrame title={`⚠ 待审批 (${totalPending})`}>
+        <PanelFrame title={`⚠ 待审批 (${totalP})`}>
           <div className="flex flex-col gap-1">
             {pending.map((a) => (
               <StatusListRow key={a.id} status="attention" title={`${a.id} · 请求写文件`} href={focusHref(a.id)} trailing={<Badge count={a.pending} tone="urgent" />} />
@@ -302,7 +351,7 @@ function RuntimeListMobile({ focusHref }: { focusHref: (id: string) => string })
       ) : null}
       <PanelFrame title="Agents">
         <div className="flex flex-col gap-1">
-          {AGENTS.map((a) => (
+          {agents.map((a) => (
             <StatusListRow
               key={a.id}
               status={a.status}
@@ -319,22 +368,36 @@ function RuntimeListMobile({ focusHref }: { focusHref: (id: string) => string })
 }
 
 // Mobile runtime — focus: approval pinned ABOVE the transcript, then composer.
-function RuntimeFocusMobile() {
+function RuntimeFocusMobile({ state = "populated" }: { state?: ShellState }) {
+  const panel = runtimeStatePanel(state, `${FOCUS_AGENT}`, "No messages yet", "Send the first instruction.");
+  if (panel) return <div data-runtime="focus">{panel}</div>;
+  const disabled = state === "permission" || state === "offline";
   return (
     <div data-runtime="focus" className="flex flex-col gap-3">
-      <ActionBar ariaLabel={`${FOCUS_AGENT} actions`} end={<Button size="sm" variant="ghost">Interrupt</Button>}>
+      <ActionBar ariaLabel={`${FOCUS_AGENT} actions`} end={<Button size="sm" variant="ghost" disabled={disabled} busy={state === "busy"}>Interrupt</Button>}>
         <StatusChip status="working" variant="soft" />
         <span className="text-sm text-text-secondary">{FOCUS_AGENT}</span>
       </ActionBar>
-      <ApprovalFixture />
+      {runtimeNote(state)}
+      <ApprovalFixture busy={state === "busy" || disabled} />
       <PanelFrame title="Transcript">
         <div className="flex flex-col gap-2">
-          {TRANSCRIPT.map((m, i) => <MessageBubble key={i} who={m.who} text={m.text} />)}
+          {(state === "boundary" ? LONG_TRANSCRIPT : TRANSCRIPT).map((m, i) => <MessageBubble key={i} who={m.who} text={m.text} />)}
         </div>
       </PanelFrame>
-      <ComposerFixture />
+      <ComposerFixture disabled={disabled} busy={state === "busy"} />
     </div>
   );
+}
+
+// Runtime chrome by state: mesh nav stays "rows" (the mesh exists; only agents vary).
+function runtimeChromeFor(state: ShellState): ShellChrome {
+  switch (state) {
+    case "loading": return { connection: "connecting" };
+    case "permission": return { mutationsDisabled: true, banner: PermBanner };
+    case "offline": return { connection: "offline", mutationsDisabled: true, banner: OfflineBanner };
+    default: return {};
+  }
 }
 
 // ── board (A) fixtures — local, token-clean parts (label colors are board data,
@@ -866,11 +929,11 @@ export function UiMockup() {
   // Stage + right-context content: the empty shell placeholder, the runtime (A)
   // mockup, or the board (C) mockup.
   const desktopStage = surface === "runtime"
-    ? (runtime === "focus" ? <RuntimeFocusDesktop /> : <RuntimeOverviewDesktop focusHref={focusHref} />)
+    ? (runtime === "focus" ? <RuntimeFocusDesktop state={state} /> : <RuntimeOverviewDesktop focusHref={focusHref} state={state} />)
     : surface === "board"
     ? (board === "detail" ? <BoardDetailDesktop /> : board === "kanban" ? <BoardKanbanDesktop /> : <BoardListDesktop />)
     : <ShellStage state={state} view={view} />;
-  const shellChrome: ShellChrome = surface === "shell" ? shellChromeFor(state) : {};
+  const shellChrome: ShellChrome = surface === "shell" ? shellChromeFor(state) : surface === "runtime" ? runtimeChromeFor(state) : {};
   const contextTitle = surface === "runtime"
     ? (runtime === "focus" ? `${FOCUS_AGENT} · activity` : "Topology detail")
     : surface === "board" ? "Epics · dispatch" : "Context";
@@ -913,7 +976,7 @@ export function UiMockup() {
 
   // Mobile functional stage (runtime / board / shell-state); shown in the runtime/board tab.
   const mobileStage = surface === "runtime"
-    ? (runtime === "focus" ? <RuntimeFocusMobile /> : <RuntimeListMobile focusHref={focusHref} />)
+    ? (runtime === "focus" ? <RuntimeFocusMobile state={state} /> : <RuntimeListMobile focusHref={focusHref} state={state} />)
     : surface === "board"
     ? (board === "detail" ? <BoardDetailMobile /> : <BoardListMobile />)
     : <ShellStage state={state} />;
@@ -962,10 +1025,10 @@ export function UiMockup() {
               />
             </div>
           ) : null}
-          {surface === "shell" ? (
+          {surface === "shell" || surface === "runtime" ? (
             <div>
-              <div className="mb-1.5 text-xs uppercase tracking-wider text-text-muted">Shell state</div>
-              <SegmentedControl ariaLabel="Shell state" value={state} onChange={(s) => nav({ state: s as ShellState })} options={SHELL_STATES.map((s) => ({ value: s, label: s }))} size="sm" />
+              <div className="mb-1.5 text-xs uppercase tracking-wider text-text-muted">State</div>
+              <SegmentedControl ariaLabel="State" value={state} onChange={(s) => nav({ state: s as ShellState })} options={SHELL_STATES.map((s) => ({ value: s, label: s }))} size="sm" />
             </div>
           ) : null}
         </div>

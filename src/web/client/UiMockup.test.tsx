@@ -193,6 +193,47 @@ test("shell state · mobile offline: slim topbar offline + banner", () => {
   expect(out).toContain("正在重连");
 });
 
+// ── runtime (02) states (Phase B) ────────────────────────────────────────────
+test("runtime overview state · empty/loading/error stand-ins", () => {
+  expect(renderAt("?surface=runtime&runtime=overview&state=empty")).toContain('data-runtime-state="empty"');
+  expect(renderAt("?surface=runtime&runtime=overview&state=loading")).toContain("animate-pulse");
+  const err = renderAt("?surface=runtime&runtime=overview&state=error");
+  expect(err).toContain('role="alert"');
+  expect(err).toContain('aria-label="meshes"'); // shell still works
+});
+
+test("runtime focus state · permission disables composer + approval; offline note", () => {
+  const perm = renderAt("?surface=runtime&runtime=focus&state=permission");
+  expect(perm).toContain("只读浏览"); // read-only note
+  expect(perm).toContain("composer disabled");
+  expect(perm).toContain("设备未授权"); // shell permission banner
+  const off = renderAt("?surface=runtime&runtime=focus&state=offline");
+  expect(off).toContain("显示最近已知内容");
+  expect(off).toContain("正在重连"); // offline banner
+});
+
+test("runtime focus state · busy shows resolving/in-flight affordances", () => {
+  const out = renderAt("?surface=runtime&runtime=focus&state=busy");
+  expect(out).toContain('aria-busy="true"'); // ApprovalCard busy / Send busy spinner
+});
+
+test("runtime boundary · many agents (overview) + long transcript (focus)", () => {
+  const ov = renderAt("?surface=runtime&runtime=overview&state=boundary&device=desktop");
+  expect(ov).toContain("reviewer-1"); // a MANY_AGENTS-only agent
+  expect(ov).toContain("12 agents · "); // count grows
+  const fo = renderAt("?surface=runtime&runtime=focus&state=boundary");
+  expect(fo).toContain("exercise wrapping and truncation"); // long transcript line
+});
+
+test("runtime mobile · list pins approvals; focus pins approval above transcript", () => {
+  const list = renderAt("?surface=runtime&runtime=overview&state=populated&device=mobile");
+  expect(list).toContain('data-device="mobile"');
+  expect(list).toContain("待审批");
+  const focus = renderAt("?surface=runtime&runtime=focus&state=populated&device=mobile");
+  expect(focus).toContain("Transcript");
+  expect(focus.indexOf("Allow")).toBeLessThan(focus.indexOf("Transcript"));
+});
+
 test("mockup uses v2 semantic utilities and emits no raw-* class", () => {
   expect(desktop).toContain("bg-surface");
   expect(desktop).toContain("text-text-primary");
