@@ -490,6 +490,41 @@ try {
     await shotFrame(`${SHOTS}/assistant-fullscreen-populated-desktop-dark-slate-signal-teal.png`);
   });
 
+  // ── Harnesses (06): assertions + state × device screenshots ──
+  await step("harnesses: rows + dual version + self-install + install progress + old-version restarts", async () => {
+    await page.goto(`${BASE}/__ui-mockup?surface=harnesses&state=populated&device=desktop`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-mockup="frame"][data-harnesses="panel"]', { timeout: 8000 });
+    if (await page.locator("[data-harness-row]").count() !== 4) throw new Error("expected 4 harness rows");
+    for (const lbl of ["update codex", "reprobe claude", "copy install command for opencode", "open kimi docs", "restart dev-mesh/codex-1 after idle", "force restart dev-mesh/codex-1", "cancel restart alpha/claude-1", "close install progress"]) {
+      if (await page.locator(`[aria-label="${lbl}"]`).count() === 0) throw new Error(`harness control missing: ${lbl}`);
+    }
+    if (await page.locator("[data-self-installer]").count() === 0) throw new Error("self-install guide missing");
+    if (await page.locator("[data-old-agents]").count() === 0) throw new Error("old-version agents missing");
+    // force restart is a two-click confirm
+    await page.locator('[aria-label="force restart dev-mesh/codex-1"]').click();
+    await sleep(80);
+    if (await page.locator('[aria-label="force restart dev-mesh/codex-1"][aria-pressed="true"]').count() === 0) throw new Error("force restart did not arm two-click confirm");
+  });
+  await step("harnesses: error→interrupted install retry stream; loading→no rows", async () => {
+    await page.goto(`${BASE}/__ui-mockup?surface=harnesses&state=error&device=desktop`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-harnesses="panel"]', { timeout: 8000 });
+    if (await page.locator('[aria-label="retry stream"]').count() === 0) throw new Error("retry stream missing in error");
+    await page.goto(`${BASE}/__ui-mockup?surface=harnesses&state=loading&device=desktop`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-harnesses="panel"]', { timeout: 8000 });
+    if (await page.locator("[data-harness-row]").count() !== 0) throw new Error("loading must not show harness rows");
+  });
+  const HARNESS_STATES = ["loading", "populated", "error", "permission", "busy", "offline", "boundary"];
+  for (const device of ["desktop", "mobile"]) {
+    for (const st of HARNESS_STATES) {
+      await step(`screenshot harnesses-${st}-${device}`, async () => {
+        await page.goto(`${BASE}/__ui-mockup?surface=harnesses&state=${st}&device=${device}&mode=dark-slate&accent=signal-teal`, { waitUntil: "domcontentloaded" });
+        await page.waitForSelector(`[data-mockup="frame"][data-device="${device}"][data-harnesses="panel"]`, { timeout: 8000 });
+        await sleep(130);
+        await shotFrame(`${SHOTS}/harnesses-${st}-${device}-dark-slate-signal-teal.png`);
+      });
+    }
+  }
+
   // ── shell (01) state × device screenshots (Phase B; default Dark·Slate × Signal Teal) ──
   const SHELL_STATES = ["empty", "loading", "populated", "error", "permission", "busy", "offline", "boundary"];
   for (const device of ["desktop", "mobile"]) {

@@ -39,3 +39,19 @@ harness cards (status + dual version) + reprobe/install + install progress in a 
 - 2026-06-21 — backward-consistency completion (audit `14`): +install progress
   retry/close (#26), +self-install guide (#27), +restart force/after-idle/cancel (#28).
   `HarnessPanel.tsx` (`InstallProgress`/`SelfInstallerGuide`/`OldVersionAgents`).
+- 2026-06-21 — Phase B Step 2 mockup (`UiMockup.tsx`): the Harnesses surface built in the
+  guarded `/__ui-mockup` (`?surface=harnesses`) — a standalone panel frame (route
+  `/harnesses`, 管理▾ / mobile 更多). Per-harness rows (claude/codex/opencode/kimi) with
+  status chip + statusLabel (installed/update-available/missing/unknown) + dual version
+  line (adapter · tool, via the HARNESS_COMMANDS shape) + auth-required badge + reprobe +
+  install/update (missing/outdated only); npm-locked harnesses (opencode/kimi) show the
+  SelfInstallerGuide (copy command + docs + reprobe-to-detect, #27); a live InstallProgress
+  card (running/done→close/interrupted→retry-stream/error, #26); and an OldVersionAgents
+  section with after-idle / force (two-click, loses ACP session) / cancel (#28). States:
+  loading→"loading status"+skeleton, populated, error→probe banner+interrupted retry,
+  permission→host-side note+disabled, busy→running log, offline→reconnect+disabled,
+  boundary→many old agents + long log; desktop + mobile (no empty — fixed harness set).
+  Grounded in `HarnessPanel.tsx` (statusLabel/harnessVersionLine/InstallProgress/
+  SelfInstallerGuide/OldVersionAgents) + `store.ts` install/reprobe/respawnAgent. No
+  additional [E] capability beyond the checklist found. Index (`?index=1`) gains the 06
+  row. Fixture-only, true C5–C8, v2 semantic tokens.

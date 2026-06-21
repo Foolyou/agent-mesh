@@ -340,7 +340,9 @@ test("index skeleton · lists every surface with state/device deep links", () =>
   expect(out).toContain("03 · 看板 C");
   expect(out).toContain("04 · 新建 mesh");
   expect(out).toContain("05 · Mesh Assistant B");
+  expect(out).toContain("06 · Harnesses");
   expect(out).toContain("surface=assistant"); // assistant deep links
+  expect(out).toContain("surface=harnesses"); // harnesses deep links
   expect(out).toContain("runtime=canvas"); // a runtime补漏 deep link (& is HTML-escaped in href)
   expect(out).toContain("boardManage=1"); // board补漏 deep link
   expect(out).toContain("boardFs=1");
@@ -459,6 +461,67 @@ test("assistant · fullscreen frame (#21) + mobile has no fullscreen toggle (△
   expect(mob).toContain('data-device="mobile"');
   expect(mob.includes('aria-label="全屏"')).toBe(false); // toggle desktop-only
   expect(renderAt("?surface=assistant&state=populated&asstFs=1&device=mobile").includes('data-assistant-fs="1"')).toBe(false);
+});
+
+// ── Harnesses (06) ───────────────────────────────────────────────────────────
+test("harnesses · populated: 4 rows + dual version + auth + self-install + old-version restarts + install done/close", () => {
+  const out = renderAt("?surface=harnesses&state=populated&device=desktop");
+  expect(out).toContain('data-harnesses="panel"');
+  expect((out.match(/data-harness-row/g) ?? []).length).toBe(4); // claude/codex/opencode/kimi
+  expect(out).toContain("claude-agent-acp 1.4.2 · claude 0.141.0"); // dual version line
+  expect(out).toContain("update available — v1.2.3 → v1.2.5"); // codex outdated
+  expect(out).toContain("auth required"); // codex auth badge
+  expect(out).toContain('aria-label="update codex"'); // update button on outdated
+  expect(out).toContain('aria-label="reprobe claude"'); // reprobe per row
+  expect(out).toContain("data-self-installer"); // opencode/kimi self-install guide (#27)
+  expect(out).toContain('aria-label="copy install command for opencode"');
+  expect(out).toContain('aria-label="open kimi docs"');
+  expect(out).toContain("data-old-agents"); // old-version restart section (#28)
+  expect(out).toContain('aria-label="restart dev-mesh/codex-1 after idle"'); // after-idle
+  expect(out).toContain('aria-label="force restart dev-mesh/codex-1"'); // force (two-click)
+  expect(out).toContain('aria-label="cancel restart alpha/claude-1"'); // cancel pending
+  expect(out).toContain("data-install-progress"); // install progress (#26)
+  expect(out).toContain('aria-label="close install progress"'); // done → close
+});
+
+test("harnesses · loading shows 'loading status' + skeletons, no rows/old-agents", () => {
+  const out = renderAt("?surface=harnesses&state=loading&device=desktop");
+  expect(out).toContain("loading status…");
+  expect(out).toContain("animate-pulse");
+  expect(out.includes("data-harness-row")).toBe(false);
+  expect(out.includes("data-old-agents")).toBe(false);
+});
+
+test("harnesses · error: probe ErrorBanner + interrupted install with retry stream", () => {
+  const out = renderAt("?surface=harnesses&state=error&device=desktop");
+  expect(out).toContain('role="alert"');
+  expect(out).toContain("Probe failed");
+  expect(out).toContain('aria-label="retry stream"'); // interrupted → retry (#26)
+});
+
+test("harnesses · busy: live install running spinner; boundary: many old agents + long log", () => {
+  const busy = renderAt("?surface=harnesses&state=busy&device=desktop");
+  expect(busy).toContain('aria-label="installing"'); // running spinner
+  expect(busy.includes('aria-label="retry stream"')).toBe(false);
+  const b = renderAt("?surface=harnesses&state=boundary&device=desktop");
+  expect(b).toContain('aria-label="restart research/claude-3 after idle"'); // a boundary-only old agent
+  expect(b).toContain("postinstall: probing tool…"); // long install log
+});
+
+test("harnesses · permission/offline disable actions + show host-side / reconnect notes", () => {
+  const perm = renderAt("?surface=harnesses&state=permission&device=desktop");
+  expect(perm).toContain("宿主端操作");
+  expect(perm).toContain('aria-label="refresh harness status" disabled=""');
+  const off = renderAt("?surface=harnesses&state=offline&device=desktop");
+  expect(off).toContain("正在重连");
+  expect(off).toContain('aria-label="reprobe claude" disabled=""');
+});
+
+test("harnesses · mobile: stacked panel renders", () => {
+  const out = renderAt("?surface=harnesses&state=populated&device=mobile");
+  expect(out).toContain('data-device="mobile"');
+  expect(out).toContain('data-harnesses="panel"');
+  expect(out).toContain("data-old-agents");
 });
 
 test("mockup uses v2 semantic utilities and emits no raw-* class", () => {

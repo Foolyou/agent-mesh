@@ -20,10 +20,13 @@
 //   - Mesh Assistant (05-assistant.md): NL controller chat + tool-call cards
 //     (create/delete/update-mesh) + inline delete-confirm + chat fullscreen
 //     (?asstFs=1) + folded p2p-DM entry; absent → "not configured" + enable.
+//   - Harnesses (06-harnesses.md): per-harness status + dual version + auth + reprobe +
+//     install/update, install progress (retry-stream/close), self-install guide, and
+//     old-version-agent restarts (after-idle / force / cancel).
 //   - navigation index (?index=1): a directory of every surface + state/device deep links.
 //
 // Query deep links for deterministic screenshots: ?device=desktop|mobile,
-// ?surface=shell|runtime|board|new-mesh|assistant, ?runtime=overview|focus|full|canvas,
+// ?surface=shell|runtime|board|new-mesh|assistant|harnesses, ?runtime=overview|focus|full|canvas,
 // ?board=list|detail|kanban, ?state=<shell-state>, ?index=1, ?view=runtime|board,
 // ?mesh=<id>, ?mode=<mode>, ?accent=<accent>. No raw-* utilities (passes
 // `bun run lint:tokens`); all classes literal so Tailwind emits them.
@@ -45,7 +48,7 @@ const ACCENT_SET = new Set<Accent>(ACCENTS);
 
 type Device = "desktop" | "mobile";
 type View = "runtime" | "board";
-type Surface = "shell" | "runtime" | "board" | "new-mesh" | "assistant";
+type Surface = "shell" | "runtime" | "board" | "new-mesh" | "assistant" | "harnesses";
 // overview/focus = the two in-shell runtime states; full/canvas = desktop-only standalone
 // frames (session fullscreen / zoomable topology canvas) reached from the focus / overview.
 type RuntimeState = "overview" | "focus" | "full" | "canvas";
@@ -229,7 +232,7 @@ function readSel(): Sel {
   const a = p.get("accent");
   const mesh = p.get("mesh");
   const sfc = p.get("surface");
-  const surface: Surface = sfc === "runtime" ? "runtime" : sfc === "board" ? "board" : sfc === "new-mesh" ? "new-mesh" : sfc === "assistant" ? "assistant" : "shell";
+  const surface: Surface = sfc === "runtime" ? "runtime" : sfc === "board" ? "board" : sfc === "new-mesh" ? "new-mesh" : sfc === "assistant" ? "assistant" : sfc === "harnesses" ? "harnesses" : "shell";
   const bs = p.get("board");
   const rt = p.get("runtime") as RuntimeState | null;
   const st = p.get("state") as ShellState | null;
@@ -1245,6 +1248,155 @@ function AssistantFrame({ state, device, fs = false, fsHref = "#" }: { state: Sh
   );
 }
 
+// ── Harnesses (06) — adapter install / health / version / old-version restarts ──────
+// Mirrors HarnessPanel.tsx: HARNESS_COMMANDS (adapter · tool), statusLabel kinds
+// (ok/warn/bad/off), InstallProgress, SelfInstallerGuide, OldVersionAgents respawn.
+type HarnessKind = "ok" | "warn" | "bad" | "off";
+const HARNESS_TONE: Record<HarnessKind, Status> = { ok: "ready", warn: "attention", bad: "blocked", off: "idle" };
+interface HarnessRowData { id: string; label: string; line: string; kind: HarnessKind; statusText: string; auth?: boolean; selfInstall?: boolean }
+const HARNESS_ROWS: HarnessRowData[] = [
+  { id: "claude", label: "Claude", line: "claude-agent-acp 1.4.2 · claude 0.141.0", kind: "ok", statusText: "installed v1.4.2" },
+  { id: "codex", label: "Codex", line: "codex-acp 1.2.3 · codex 0.140.0", kind: "warn", statusText: "update available — v1.2.3 → v1.2.5", auth: true },
+  { id: "opencode", label: "OpenCode", line: "opencode —", kind: "bad", statusText: "missing — install required", selfInstall: true },
+  { id: "kimi", label: "Kimi", line: "kimi —", kind: "off", statusText: "installed; version unknown", selfInstall: true },
+];
+const INSTALL_LINES = ["$ npm i -g codex-acp@1.2.5", "added 1 package in 3.2s", "codex-acp@1.2.5 → ready"];
+const INSTALL_LINES_LONG = Array.from({ length: 9 }, (_, i) => INSTALL_LINES[i % INSTALL_LINES.length]).concat(["postinstall: probing tool…", "codex 0.141.0 detected", "done"]);
+interface OldAgent { mesh: string; agent: string; from: string; pending: boolean }
+const OLD_AGENTS: OldAgent[] = [
+  { mesh: "dev-mesh", agent: "codex-1", from: "codex-acp 1.2.3", pending: false },
+  { mesh: "alpha", agent: "claude-1", from: "claude-agent-acp 1.4.0", pending: true },
+];
+const OLD_AGENTS_MANY: OldAgent[] = [
+  ...OLD_AGENTS,
+  { mesh: "beta", agent: "codex-2", from: "codex-acp 1.2.3", pending: false },
+  { mesh: "docs-mesh", agent: "claude-2", from: "claude-agent-acp 1.4.0", pending: false },
+  { mesh: "infra", agent: "codex-3", from: "codex-acp 1.2.1", pending: true },
+  { mesh: "research", agent: "claude-3", from: "claude-agent-acp 1.3.9", pending: false },
+];
+
+// Self-install guide for npm-locked harnesses: copy command + docs + reprobe-to-detect (audit #27).
+function SelfInstallerGuide({ id, command, disabled = false }: { id: string; command: string; disabled?: boolean }) {
+  return (
+    <div data-self-installer className="mt-1.5 flex flex-wrap items-center gap-2 rounded-lg border border-border bg-surface-sunken px-2.5 py-1.5 text-xs">
+      <span className="text-text-muted">自助安装：</span>
+      <code className="rounded bg-surface px-1.5 py-0.5 font-mono text-text-secondary">{command}</code>
+      <Button size="sm" variant="ghost" disabled={disabled} aria-label={`copy install command for ${id}`}>copy command</Button>
+      <Button size="sm" variant="ghost" disabled={disabled} aria-label={`open ${id} docs`}>docs ↗</Button>
+      <Button size="sm" variant="ghost" disabled={disabled} aria-label={`reprobe ${id}`}>reprobe to detect</Button>
+    </div>
+  );
+}
+
+// One harness row: status + dual version + auth + reprobe + install/update (or self-install).
+function HarnessRow({ row, disabled = false }: { row: HarnessRowData; disabled?: boolean }) {
+  return (
+    <div data-harness-row className="flex flex-col gap-1 border-b border-border px-3 py-2.5">
+      <div className="flex flex-wrap items-center gap-2">
+        <StatusChip status={HARNESS_TONE[row.kind]} variant="dot" />
+        <span className="text-sm font-medium text-text-primary">{row.label}</span>
+        <StatusChip status={HARNESS_TONE[row.kind]} variant="soft" label={row.statusText} />
+        {row.auth ? <StatusChip status="attention" variant="soft" label="auth required" /> : null}
+        <span className="flex-1" aria-hidden="true" />
+        <Button size="sm" variant="ghost" disabled={disabled} aria-label={`reprobe ${row.id}`}>reprobe</Button>
+        {/* npm install/update only for missing(bad)/outdated(warn); installed-ok shows none. */}
+        {!row.selfInstall && (row.kind === "bad" || row.kind === "warn") ? <Button size="sm" variant="secondary" disabled={disabled} aria-label={`${row.kind === "warn" ? "update" : "install"} ${row.id}`}>{row.kind === "warn" ? "update" : "install"}</Button> : null}
+      </div>
+      <div className="truncate font-mono text-xs text-text-muted">{row.line}</div>
+      {row.selfInstall ? <SelfInstallerGuide id={row.id} command={`npm i -g ${row.id}`} disabled={disabled} /> : null}
+    </div>
+  );
+}
+
+// Live install progress: streamed log + retry-a-dropped-stream + close-on-done (audit #26).
+function InstallProgressCard({ status, long = false }: { status: "running" | "done" | "error" | "interrupted"; long?: boolean }) {
+  const live = status === "running" ? "Installing codex-acp@1.2.5…" : status === "done" ? "Installed codex-acp v1.2.5" : status === "interrupted" ? "stream interrupted, click to retry" : "install failed — npm registry unreachable";
+  return (
+    <div data-install-progress className={`flex flex-col gap-2 rounded-lg border border-border bg-surface-sunken p-3`}>
+      <div className="flex items-center gap-2">
+        <StatusChip status={status === "running" ? "working" : status === "done" ? "done" : status === "interrupted" ? "attention" : "blocked"} variant="dot" />
+        <span className="text-sm text-text-primary">{live}</span>
+        <span className="flex-1" aria-hidden="true" />
+        {status === "running" ? <Spinner size={12} label="installing" /> : null}
+        {status === "interrupted" ? <Button size="sm" variant="primary" aria-label="retry stream">retry stream</Button> : null}
+        {status !== "running" ? <Button size="sm" variant="ghost" aria-label="close install progress">close</Button> : null}
+      </div>
+      <pre className="max-h-40 overflow-auto rounded bg-surface px-2 py-1.5 text-xs font-mono text-text-secondary">{(long ? INSTALL_LINES_LONG : INSTALL_LINES).join("\n")}</pre>
+    </div>
+  );
+}
+
+// Agents still on an older adapter — restart after-idle / force (two-click) / cancel (audit #28).
+function OldVersionAgentsCard({ rows, disabled = false }: { rows: OldAgent[]; disabled?: boolean }) {
+  return (
+    <div data-old-agents className="flex flex-col gap-2 rounded-lg border border-border bg-surface-raised p-3">
+      <span className="text-xs uppercase tracking-wider text-text-muted">旧版本 agent · 重启以采用新适配器 ({rows.length})</span>
+      <div className="flex flex-col gap-1.5">
+        {rows.map((a) => {
+          const entry = `${a.mesh}/${a.agent}`;
+          return (
+            <div key={entry} className="flex flex-wrap items-center gap-2 text-sm">
+              <StatusChip status={a.pending ? "working" : "attention"} variant="dot" />
+              <span className="font-medium text-text-primary">{entry}</span>
+              <span className="font-mono text-xs text-text-muted">{a.from}</span>
+              <span className="flex-1" aria-hidden="true" />
+              {a.pending ? (
+                <>
+                  <span className="text-xs text-text-muted">restart pending…</span>
+                  <Button size="sm" variant="ghost" disabled={disabled} aria-label={`cancel restart ${entry}`}>cancel</Button>
+                </>
+              ) : (
+                <>
+                  <Button size="sm" variant="secondary" disabled={disabled} aria-label={`restart ${entry} after idle`}>after current turn</Button>
+                  <ConfirmButton size="sm" variant="danger" disabled={disabled} aria-label={`force restart ${entry}`} confirmLabel="确认?（丢失 ACP 会话）" onConfirm={() => {}}>force</ConfirmButton>
+                </>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function HarnessesFrame({ state, device }: { state: ShellState; device: Device }) {
+  const mobile = device === "mobile";
+  const disabled = state === "permission" || state === "offline";
+  const loading = state === "loading";
+  const oldAgents = state === "boundary" ? OLD_AGENTS_MANY : OLD_AGENTS;
+  const installCard: ReactNode = state === "busy" ? <InstallProgressCard status="running" />
+    : state === "error" ? <InstallProgressCard status="interrupted" />
+    : state === "boundary" ? <InstallProgressCard status="done" long />
+    : state === "populated" ? <InstallProgressCard status="done" />
+    : null;
+  return (
+    <div data-mockup="frame" data-device={device} data-harnesses="panel"
+      className={`flex ${mobile ? "h-[760px] w-[390px] rounded-[28px]" : "h-[680px] w-[1280px] rounded-xl"} max-w-full flex-col overflow-hidden border border-border bg-surface text-text-primary shadow-sm`}>
+      <header className="flex items-center gap-2 border-b border-border bg-surface-raised px-4 py-2.5">
+        <Brand /><span className="text-text-muted">·</span>
+        <span className="text-sm font-semibold">Harnesses</span>
+        {disabled ? <StatusChip status="blocked" variant="soft" label={state === "offline" ? "offline" : "未授权"} /> : null}
+        <span className="flex-1" aria-hidden="true" />
+        <Button size="sm" variant="ghost" disabled={disabled} aria-label="refresh harness status">refresh</Button>
+      </header>
+      {state === "permission" ? <div role="status" className="border-b border-border bg-danger-subtle px-4 py-1.5 text-xs text-danger">安装 / 重启为宿主端操作 — 需已授权设备。</div> : null}
+      {state === "offline" ? <div role="status" className="flex items-center gap-2 border-b border-border bg-warning-subtle px-4 py-1.5 text-xs text-warning"><Spinner size={12} label="reconnecting" /> 连接已断开 — 正在重连…（显示最近已知状态，操作禁用）</div> : null}
+      <div className="min-h-0 flex-1 overflow-auto p-4">
+        <div className={`mx-auto flex flex-col gap-4 ${mobile ? "" : "max-w-[860px]"}`}>
+          {state === "error" ? <ErrorBanner title="Probe failed" onRetry={() => {}}>无法探测部分 harness — 注册表不可达；其余功能仍可用。</ErrorBanner> : null}
+          <div className="flex flex-col rounded-lg border border-border bg-surface-raised">
+            {loading
+              ? [0, 1, 2, 3].map((i) => <div key={i} className="border-b border-border px-3 py-2.5"><div className="flex items-center gap-2"><StatusChip status="idle" variant="dot" /><span className="text-sm text-text-muted">loading status…</span></div><div className="mt-1"><Skeleton variant="line" /></div></div>)
+              : HARNESS_ROWS.map((r) => <HarnessRow key={r.id} row={r} disabled={disabled} />)}
+          </div>
+          {installCard}
+          {!loading ? <OldVersionAgentsCard rows={oldAgents} disabled={disabled} /> : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── new-mesh builder (04) fixtures + frame ───────────────────────────────────────
 interface AgentRow { id: string; harness: string; project: string; role: "router" | "member"; model?: string; effort?: string; lazy?: boolean; opencodePermission?: "ask" | "allow"; instructions?: string }
 const HARNESSES = ["claude", "codex", "opencode", "kimi"];
@@ -1725,6 +1877,9 @@ const INDEX_SECTIONS: { title: string; note: string; rows: IndexRow[] }[] = [
     { label: "chat", base: "surface=assistant", states: SHELL_STATES, mobile: true },
     { label: "chat · 全屏 (桌面)", base: "surface=assistant&asstFs=1", states: ["populated", "boundary"], mobile: false },
   ] },
+  { title: "06 · Harnesses", note: "适配器安装/健康/双版本 · 安装进度(重试/关闭) · 自助安装 · 旧版本重启(after-idle/force/cancel)", rows: [
+    { label: "panel", base: "surface=harnesses", states: ["loading", "populated", "error", "permission", "busy", "offline", "boundary"], mobile: true },
+  ] },
 ];
 
 function MockupIndex({ backHref }: { backHref: string }) {
@@ -1870,7 +2025,7 @@ export function UiMockup() {
     <div data-mockup="root" className="min-h-screen bg-surface text-text-primary font-sans p-6">
       {/* mockup tool chrome (outside the mocked app frame) */}
       <header className="mb-5">
-        <h1 className="mb-1 text-xl font-semibold">Agent Mesh — 终稿 mockup（{index ? "导航索引" : surface === "runtime" ? `运行态 A · ${runtime}` : surface === "board" ? "看板 C" : surface === "new-mesh" ? "新建 mesh" : surface === "assistant" ? "Mesh Assistant B" : "应用外壳"}{index ? "" : ` · ${state} · ${device === "mobile" ? "移动" : "桌面"}`}）</h1>
+        <h1 className="mb-1 text-xl font-semibold">Agent Mesh — 终稿 mockup（{index ? "导航索引" : surface === "runtime" ? `运行态 A · ${runtime}` : surface === "board" ? "看板 C" : surface === "new-mesh" ? "新建 mesh" : surface === "assistant" ? "Mesh Assistant B" : surface === "harnesses" ? "Harnesses" : "应用外壳"}{index ? "" : ` · ${state} · ${device === "mobile" ? "移动" : "桌面"}`}）</h1>
         <p className="mb-3 text-xs text-text-muted">真实 C5–C7 组件 + v2 compose 运行时 · fixture 数据 · 不连后端。Live: <code className="text-syntax-string">MESH_UI_PREVIEW=1 … /__ui-mockup</code></p>
         <div className="mb-3">
           <SegmentedControl ariaLabel="View mode" value={index ? "index" : "mockup"} onChange={(v) => nav({ index: v === "index" })} options={[{ value: "mockup", label: "Mockup" }, { value: "index", label: "▤ 索引" }]} size="sm" />
@@ -1890,7 +2045,7 @@ export function UiMockup() {
           </div>
           <div>
             <div className="mb-1.5 text-xs uppercase tracking-wider text-text-muted">Surface</div>
-            <SegmentedControl ariaLabel="Surface" value={surface} onChange={(s) => { const next = s as Surface; nav({ surface: next }); if (next === "board") setMobileTab("board"); else if (next === "runtime") setMobileTab("runtime"); }} options={[{ value: "shell", label: "外壳" }, { value: "runtime", label: "运行态 A" }, { value: "board", label: "看板 C" }, { value: "assistant", label: "助手 B" }, { value: "new-mesh", label: "新建" }]} size="sm" />
+            <SegmentedControl ariaLabel="Surface" value={surface} onChange={(s) => { const next = s as Surface; nav({ surface: next }); if (next === "board") setMobileTab("board"); else if (next === "runtime") setMobileTab("runtime"); }} options={[{ value: "shell", label: "外壳" }, { value: "runtime", label: "运行态 A" }, { value: "board", label: "看板 C" }, { value: "assistant", label: "助手 B" }, { value: "harnesses", label: "Harness" }, { value: "new-mesh", label: "新建" }]} size="sm" />
           </div>
           {surface === "runtime" ? (
             <div>
@@ -1920,14 +2075,16 @@ export function UiMockup() {
               />
             </div>
           ) : null}
-          {surface === "shell" || surface === "runtime" || surface === "board" || surface === "new-mesh" || surface === "assistant" ? (
+          {surface === "shell" || surface === "runtime" || surface === "board" || surface === "new-mesh" || surface === "assistant" || surface === "harnesses" ? (
             <div>
               <div className="mb-1.5 text-xs uppercase tracking-wider text-text-muted">State</div>
               <SegmentedControl
                 ariaLabel="State"
                 value={state}
                 onChange={(s) => nav({ state: s as ShellState })}
-                options={(surface === "new-mesh" ? (["empty", "populated", "error", "permission", "busy", "offline", "boundary"] as ShellState[]) : SHELL_STATES).map((s) => ({ value: s, label: s }))}
+                options={(surface === "new-mesh" ? (["empty", "populated", "error", "permission", "busy", "offline", "boundary"] as ShellState[])
+                  : surface === "harnesses" ? (["loading", "populated", "error", "permission", "busy", "offline", "boundary"] as ShellState[])
+                  : SHELL_STATES).map((s) => ({ value: s, label: s }))}
                 size="sm"
               />
             </div>
@@ -1952,6 +2109,8 @@ export function UiMockup() {
           ? <MockupIndex backHref={indexBackHref} />
           : surface === "assistant"
           ? <AssistantFrame state={state} device={device} fs={device === "desktop" && asstFs} fsHref={asstFsHref} />
+          : surface === "harnesses"
+          ? <HarnessesFrame state={state} device={device} />
           : surface === "new-mesh"
           ? <NewMeshFrame state={state} device={device} nmEditor={nmEditor} />
           : surface === "runtime" && device === "desktop" && runtime === "full"
