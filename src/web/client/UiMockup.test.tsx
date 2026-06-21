@@ -417,8 +417,9 @@ test("index skeleton · lists every surface with state/device deep links", () =>
 
 // ── board补漏 — audited [E] capabilities (audit #22–#25) ───────────────────────
 test("board list补漏 · group-by-epic + 管理标签 toggle + create epic/task + 全屏 toggle + reopen terminal", () => {
-  const out = renderAt("?surface=board&board=list&state=populated&device=desktop");
-  expect(out).toContain('aria-label="group by epic"'); // group-by-epic (#23)
+  // C4: group-by-epic moved into the 筛选▾ dropdown — open it to assert.
+  const out = renderAt("?surface=board&board=list&state=populated&boardFilters=1&device=desktop");
+  expect(out).toContain('aria-label="group by epic"'); // group-by-epic (#23, now in 筛选▾ menu)
   expect(out).toContain('data-board-manage-labels'); // 管理标签 toggle (#24)
   expect(out).toContain('data-board-create'); // create epic/task row (#25)
   expect(out).toContain('aria-label="new epic"');
@@ -460,9 +461,9 @@ test("board detail补漏 · fs toggle present; reopen replaces close for termina
 });
 
 test("board补漏 · permission disables label manager + create + group-by-epic; offline too", () => {
-  const perm = renderAt("?surface=board&board=list&state=permission&boardManage=1&device=desktop");
+  const perm = renderAt("?surface=board&board=list&state=permission&boardManage=1&boardFilters=1&device=desktop");
   expect(perm).toContain('disabled="" aria-label="new label name"'); // create-label input disabled
-  expect(perm).toContain('disabled="" aria-label="group by epic"'); // checkbox disabled
+  expect(perm).toContain('disabled="" aria-label="group by epic"'); // checkbox disabled (in 筛选▾ menu)
   expect(renderAt("?surface=board&board=list&state=offline&device=desktop")).toContain('disabled="" aria-label="new epic"');
 });
 
@@ -471,6 +472,58 @@ test("board补漏 mobile · group-by-epic in the filter row (fullscreen/manager 
   expect(out).toContain('aria-label="group by epic"');
   // fullscreen flag is ignored on mobile (no standalone frame)
   expect(renderAt("?surface=board&board=list&state=populated&boardFs=1&device=mobile").includes('data-board-fs="1"')).toBe(false);
+});
+
+// ── C4: board filter area redesign (GH-Issues direction, desktop list) ─────────
+test("board C4 · persistent search + 筛选▾ toggle + right-side action group (view/sort/新建)", () => {
+  const out = renderAt("?surface=board&board=list&state=populated&device=desktop");
+  expect(out).toContain('data-board-filters'); // filter area container
+  expect(out).toContain('aria-label="search issues"'); // persistent search (token-style)
+  expect(out).toContain("status:open label:bug"); // query-token hint in placeholder
+  expect(out).toContain('data-board-filter-toggle'); // 筛选▾ dropdown affordance
+  expect(out).toContain('aria-label="Board view"'); // view switch in the right action group
+  expect(out).toContain('aria-label="sort"'); // sort in the right action group
+  expect(out).toContain("+ 新建"); // 新建 in the right action group
+  // status/label/assignee/epic pickers are NOT inline — they live in the closed 筛选▾ menu
+  expect(out.includes('data-board-filter-menu')).toBe(false);
+  expect(out.includes('aria-label="status filter"')).toBe(false);
+});
+
+test("board C4 · applied filters render as removable (×) chips with clear-all", () => {
+  const out = renderAt("?surface=board&board=list&state=populated&device=desktop");
+  expect(out).toContain('data-board-applied-filters');
+  expect(out).toContain('data-filter-chip');
+  expect(out).toContain("status:open"); // a chip token
+  expect(out).toContain('aria-label="remove filter status"'); // per-chip × remove
+  expect(out).toContain('aria-label="clear all filters"'); // clear-all
+});
+
+test("board C4 · 筛选▾ menu (?boardFilters=1) owns status/label/assignee/epic + group-by-epic", () => {
+  const out = renderAt("?surface=board&board=list&state=populated&boardFilters=1&device=desktop");
+  expect(out).toContain('data-board-filter-menu');
+  expect(out).toContain('role="menu"');
+  for (const lbl of ["status filter", "label filter", "assignee filter", "epic filter", "group by epic"]) {
+    expect(out).toContain(`aria-label="${lbl}"`);
+  }
+  // off by default
+  expect(renderAt("?surface=board&board=list&state=populated&device=desktop").includes('data-board-filter-menu')).toBe(false);
+});
+
+test("board C4 · boundary collapses secondary controls into 筛选▾ (no row overflow)", () => {
+  // Closed menu on boundary: manage-labels + Dispatch are NOT squeezed into the row.
+  const closed = renderAt("?surface=board&board=list&state=boundary&device=desktop");
+  expect(closed).toContain('data-board-filters');
+  expect(closed.includes('data-board-manage-labels')).toBe(false); // collapsed away from the row
+  expect(closed.includes("Dispatch ▾")).toBe(false);
+  expect(closed).toContain("+ 新建"); // primary action stays reachable
+  // more applied chips in boundary (wrap, never overflow)
+  expect(closed).toContain("assignee:claude-1");
+  expect(closed).toContain("epic:infra");
+  // Open the boundary menu: the collapsed secondary controls live inside it.
+  const open = renderAt("?surface=board&board=list&state=boundary&boardFilters=1&device=desktop");
+  expect(open).toContain('data-board-filter-menu');
+  expect(open).toContain('data-board-manage-labels'); // collapsed into the dropdown
+  expect(open).toContain("Dispatch ▾");
 });
 
 // ── Mesh Assistant (05) ──────────────────────────────────────────────────────

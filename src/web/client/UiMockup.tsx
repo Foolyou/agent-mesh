@@ -232,6 +232,7 @@ interface Sel {
   nmEditor: NmEditor;
   boardFs: boolean;
   boardManage: boolean;
+  boardFilters: boolean;
   asstFs: boolean;
   lb: boolean;
   index: boolean;
@@ -264,6 +265,7 @@ function readSel(): Sel {
     nmEditor: p.get("nmEditor") === "charter" ? "charter" : p.get("nmEditor") === "instructions" ? "instructions" : "off",
     boardFs: p.get("boardFs") === "1",
     boardManage: p.get("boardManage") === "1",
+    boardFilters: p.get("boardFilters") === "1",
     asstFs: p.get("asstFs") === "1",
     lb: p.get("lb") === "1",
     index: p.get("index") === "1",
@@ -852,26 +854,78 @@ function EpicGroupHeader({ epicId }: { epicId: string }) {
   );
 }
 
-function BoardFilterBar({ disabled = false, manageHref = "#", manage = false }: { disabled?: boolean; manageHref?: string; manage?: boolean }) {
+// GH-Issues filter area (C4). A persistent 🔍 search (accepts query tokens like
+// `status:open label:bug`) + a 筛选▾ dropdown that owns the status/label/assignee/epic
+// pickers and group-by-epic; applied filters render as removable chips beneath the row.
+// The right-side action group holds view-switch + sort + 新建 (+ secondary actions).
+// On boundary, secondary controls collapse INTO the 筛选▾ menu rather than overflowing
+// the row horizontally (the row keeps only search + 筛选▾ … view-switch + sort + 新建).
+function BoardFilterBar({ disabled = false, manageHref = "#", manage = false, filtersOpen = false, filtersHref = "#", boundary = false, viewSwitch }: { disabled?: boolean; manageHref?: string; manage?: boolean; filtersOpen?: boolean; filtersHref?: string; boundary?: boolean; viewSwitch?: ReactNode }) {
+  const selCls = "rounded-lg border border-border-strong bg-surface-sunken px-2 py-1 text-sm text-text-primary disabled:cursor-not-allowed disabled:text-text-disabled";
+  // Applied filters as removable chips (boundary shows more, exercising wrap/overflow).
+  const applied = [
+    { key: "status", token: "status:open" },
+    { key: "label", token: "label:ui" },
+    ...(boundary ? [
+      { key: "assignee", token: "assignee:claude-1" },
+      { key: "epic", token: "epic:infra" },
+      { key: "blocked", token: "is:blocked" },
+    ] : []),
+  ];
   return (
-    <ActionBar
-      ariaLabel="board filters"
-      end={<Cluster>
-        {/* 管理标签 toggle → label CRUD/palette panel (audit #24). */}
-        <LinkButton href={manageHref} label="管理标签" dataKey="board-manage-labels">{manage ? "✓ 标签" : "🏷 标签"}</LinkButton>
-        <Button size="sm" variant="secondary" disabled={disabled}>Dispatch ▾</Button>
-        <Button size="sm" variant="primary" disabled={disabled}>+ Issue</Button>
-      </Cluster>}
-    >
-      <input aria-label="search issues" placeholder="search…" className="rounded-lg border border-border-strong bg-surface-sunken px-2 py-1 text-sm text-text-primary placeholder:text-text-muted" />
-      <select aria-label="status filter" className="rounded-lg border border-border-strong bg-surface-sunken px-2 py-1 text-sm text-text-primary"><option>status</option></select>
-      <select aria-label="label filter" className="rounded-lg border border-border-strong bg-surface-sunken px-2 py-1 text-sm text-text-primary"><option>label</option></select>
-      <select aria-label="assignee filter" className="rounded-lg border border-border-strong bg-surface-sunken px-2 py-1 text-sm text-text-primary"><option>assignee</option></select>
-      <select aria-label="epic filter" className="rounded-lg border border-border-strong bg-surface-sunken px-2 py-1 text-sm text-text-primary"><option>epic</option></select>
-      <select aria-label="sort" className="rounded-lg border border-border-strong bg-surface-sunken px-2 py-1 text-sm text-text-primary"><option>updated</option></select>
-      {/* Group-by-epic toggle (audit #23). */}
-      <label className="inline-flex items-center gap-1.5 text-xs text-text-secondary"><input type="checkbox" defaultChecked disabled={disabled} aria-label="group by epic" className="accent-accent" /> 按 Epic 分组</label>
-    </ActionBar>
+    <div data-board-filters className="flex flex-col gap-2">
+      <ActionBar
+        ariaLabel="board filters"
+        end={<Cluster>
+          {viewSwitch}
+          <select aria-label="sort" disabled={disabled} className={`${selCls} shrink-0`}><option>updated</option><option>created</option><option>priority</option><option>number</option></select>
+          {/* Non-boundary keeps secondary actions in the row; boundary collapses them into 筛选▾. */}
+          {!boundary ? <LinkButton href={manageHref} label="管理标签" dataKey="board-manage-labels">{manage ? "✓ 标签" : "🏷 标签"}</LinkButton> : null}
+          {!boundary ? <Button size="sm" variant="secondary" disabled={disabled}>Dispatch ▾</Button> : null}
+          <Button size="sm" variant="primary" disabled={disabled}>+ 新建</Button>
+        </Cluster>}
+      >
+        {/* persistent search (query tokens) — flexes/truncates, never pushes the row wide */}
+        <span className="relative flex min-w-0 flex-1 items-center">
+          <span aria-hidden="true" className="pointer-events-none absolute left-2 text-text-muted">🔍</span>
+          <input aria-label="search issues" placeholder="搜索 issue… 例如 status:open label:bug" className="w-full min-w-0 rounded-lg border border-border-strong bg-surface-sunken py-1 pl-7 pr-2 text-sm text-text-primary placeholder:text-text-muted" />
+        </span>
+        <LinkButton href={filtersHref} label="筛选" dataKey="board-filter-toggle">{filtersOpen ? "▾ 筛选 ·" : "筛选 ▾"}{filtersOpen ? "" : null}</LinkButton>
+      </ActionBar>
+
+      {/* 筛选▾ dropdown menu: status/label/assignee/epic pickers + group-by-epic moved here
+          out of the inline row; on boundary the collapsed secondary actions live here too. */}
+      {filtersOpen ? (
+        <div role="menu" data-board-filter-menu className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-surface-raised p-2 shadow-sm">
+          <select aria-label="status filter" disabled={disabled} className={selCls}><option>status: any</option><option>open</option><option>in_progress</option><option>in_review</option><option>done</option><option>cancelled</option></select>
+          <select aria-label="label filter" disabled={disabled} className={selCls}><option>label: any</option><option>ui</option><option>auth</option><option>infra</option><option>a11y</option></select>
+          <select aria-label="assignee filter" disabled={disabled} className={selCls}><option>assignee: any</option><option>router</option><option>codex-1</option><option>claude-1</option></select>
+          <select aria-label="epic filter" disabled={disabled} className={selCls}><option>epic: any</option><option>onboarding</option><option>infra</option><option>security</option></select>
+          <label className="inline-flex items-center gap-1.5 text-xs text-text-secondary"><input type="checkbox" defaultChecked disabled={disabled} aria-label="group by epic" className="accent-accent" /> 按 Epic 分组</label>
+          {boundary ? (
+            <>
+              <span className="mx-1 h-5 w-px bg-border" aria-hidden="true" />
+              <LinkButton href={manageHref} label="管理标签" dataKey="board-manage-labels">{manage ? "✓ 标签" : "🏷 标签"}</LinkButton>
+              <Button size="sm" variant="secondary" disabled={disabled}>Dispatch ▾</Button>
+            </>
+          ) : null}
+        </div>
+      ) : null}
+
+      {/* Applied filters as removable (×) chips beneath the search/filter row. */}
+      {applied.length ? (
+        <div data-board-applied-filters className="flex flex-wrap items-center gap-1.5">
+          <span className="text-xs text-text-muted">已筛选</span>
+          {applied.map((a) => (
+            <span key={a.key} data-filter-chip className="inline-flex items-center gap-1 rounded-full border border-border bg-surface-sunken px-2 py-0.5 text-xs text-text-secondary">
+              <span className="tabular-nums">{a.token}</span>
+              <button type="button" aria-label={`remove filter ${a.key}`} disabled={disabled} className="rounded-full px-0.5 text-text-muted hover:text-text-primary disabled:cursor-not-allowed">×</button>
+            </span>
+          ))}
+          <button type="button" aria-label="clear all filters" disabled={disabled} className="ml-1 text-xs text-accent hover:underline disabled:cursor-not-allowed disabled:text-text-disabled">清除全部</button>
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -926,10 +980,10 @@ function BoardFsToggle({ href, fs }: { href: string; fs: boolean }) {
 }
 // Board fullscreen (audit #22) — the board panel expanded to a standalone desktop frame
 // (more rows/cards visible); 🗕 in the subview header restores the split shell.
-function BoardFullFrame({ board, state, backHref, manage = false, manageHref = "#" }: { board: BoardState; state: ShellState; backHref: string; manage?: boolean; manageHref?: string }) {
+function BoardFullFrame({ board, state, backHref, manage = false, manageHref = "#", filters = false, filtersHref = "#" }: { board: BoardState; state: ShellState; backHref: string; manage?: boolean; manageHref?: string; filters?: boolean; filtersHref?: string }) {
   const sub = board === "detail" ? <BoardDetailDesktop state={state} fs fsHref={backHref} />
     : board === "kanban" ? <BoardKanbanDesktop state={state} fs fsHref={backHref} />
-    : <BoardListDesktop state={state} fs fsHref={backHref} manage={manage} manageHref={manageHref} />;
+    : <BoardListDesktop state={state} fs fsHref={backHref} manage={manage} manageHref={manageHref} filters={filters} filtersHref={filtersHref} />;
   return (
     <div data-mockup="frame" data-device="desktop" data-board-fs="1" className="flex h-[720px] w-[1280px] max-w-full flex-col overflow-hidden rounded-xl border border-border bg-surface text-text-primary shadow-sm">
       <div className="min-h-0 flex-1 overflow-auto p-3">{sub}</div>
@@ -954,17 +1008,20 @@ function BoardBulkToolbar({ disabled = false }: { disabled?: boolean }) {
 }
 
 // Desktop board — List (GitHub-Issues maturity).
-function BoardListDesktop({ state = "populated", fs = false, fsHref = "#", manage = false, manageHref = "#" }: { state?: ShellState; fs?: boolean; fsHref?: string; manage?: boolean; manageHref?: string }) {
+function BoardListDesktop({ state = "populated", fs = false, fsHref = "#", manage = false, manageHref = "#", filters = false, filtersHref = "#" }: { state?: ShellState; fs?: boolean; fsHref?: string; manage?: boolean; manageHref?: string; filters?: boolean; filtersHref?: string }) {
   const panel = boardStatePanel(state, "Board · Issues", "No issues", "Create the first issue or dispatch from runtime.");
   if (panel) return <div data-board="list" className="h-full">{panel}</div>;
   const editable = boardEditable(state);
-  const epics = state === "boundary" ? MANY_EPICS : EPICS;
-  const issues = state === "boundary" ? MANY_ISSUES : ISSUES;
+  const boundary = state === "boundary";
+  const epics = boundary ? MANY_EPICS : EPICS;
+  const issues = boundary ? MANY_ISSUES : ISSUES;
+  // View-switch moves into the filter area's right-side action group (C4).
+  const viewSwitch = <SegmentedControl ariaLabel="Board view" value="list" onChange={() => {}} size="sm" options={[{ value: "list", label: "List" }, { value: "kanban", label: "Board" }]} />;
   return (
     <div data-board="list" className="h-full">
-      <PanelFrame title="Board · Issues" actions={<Cluster><BoardFsToggle href={fsHref} fs={fs} /><SegmentedControl ariaLabel="Board view" value="list" onChange={() => {}} size="sm" options={[{ value: "list", label: "List" }, { value: "kanban", label: "Board" }]} /></Cluster>} className="h-full" bodyClassName="flex flex-col gap-2">
+      <PanelFrame title="Board · Issues" actions={<BoardFsToggle href={fsHref} fs={fs} />} className="h-full" bodyClassName="flex flex-col gap-2">
         {boardNote(state)}
-        <BoardFilterBar disabled={!editable} manage={manage} manageHref={manageHref} />
+        <BoardFilterBar disabled={!editable} manage={manage} manageHref={manageHref} filtersOpen={filters} filtersHref={filtersHref} boundary={boundary} viewSwitch={viewSwitch} />
         {manage ? <BoardLabelManager disabled={!editable} /> : null}
         <BoardCreateRow disabled={!editable} />
         <BoardBulkToolbar disabled={!editable} />
@@ -2890,6 +2947,7 @@ function selQuery(s: Sel): string {
   p.set("nmEditor", s.nmEditor);
   if (s.boardFs) p.set("boardFs", "1");
   if (s.boardManage) p.set("boardManage", "1");
+  if (s.boardFilters) p.set("boardFilters", "1");
   if (s.asstFs) p.set("asstFs", "1");
   if (s.lb) p.set("lb", "1");
   if (s.index) p.set("index", "1");
@@ -3044,7 +3102,7 @@ function MockupIndex({ backHref }: { backHref: string }) {
 
 export function UiMockup() {
   const [sel, setSel] = useState<Sel>(readSel);
-  const { device, view, surface, runtime, board, state, nmEditor, boardFs, boardManage, asstFs, lb, index, mesh, mode, accent } = sel;
+  const { device, view, surface, runtime, board, state, nmEditor, boardFs, boardManage, boardFilters, asstFs, lb, index, mesh, mode, accent } = sel;
   const [mobileTab, setMobileTab] = useState<MobileTab>(surface === "board" || view === "board" ? "board" : "runtime");
 
   useEffect(() => {
@@ -3076,6 +3134,7 @@ export function UiMockup() {
   const boardFsHref = `/__ui-mockup?${selQuery({ ...sel, surface: "board", boardFs: true })}`;
   const boardExitFsHref = `/__ui-mockup?${selQuery({ ...sel, surface: "board", boardFs: false })}`;
   const boardManageHref = `/__ui-mockup?${selQuery({ ...sel, surface: "board", boardManage: !boardManage })}`;
+  const boardFiltersHref = `/__ui-mockup?${selQuery({ ...sel, surface: "board", boardFilters: !boardFilters })}`;
   // Assistant chat fullscreen enter/exit (audit #21).
   const asstFsHref = `/__ui-mockup?${selQuery({ ...sel, surface: "assistant", asstFs: !asstFs })}`;
   // Artifact viewer: lightbox enter/exit + back-to-conversation.
@@ -3096,7 +3155,7 @@ export function UiMockup() {
   const desktopStage = surface === "runtime"
     ? (runtime === "focus" ? <RuntimeFocusDesktop state={state} fullHref={fullHref} /> : <RuntimeOverviewDesktop focusHref={focusHref} canvasHref={canvasHref} state={state} />)
     : surface === "board"
-    ? (board === "detail" ? <BoardDetailDesktop state={state} fsHref={boardFsHref} /> : board === "kanban" ? <BoardKanbanDesktop state={state} fsHref={boardFsHref} /> : <BoardListDesktop state={state} fsHref={boardFsHref} manage={boardManage} manageHref={boardManageHref} />)
+    ? (board === "detail" ? <BoardDetailDesktop state={state} fsHref={boardFsHref} /> : board === "kanban" ? <BoardKanbanDesktop state={state} fsHref={boardFsHref} /> : <BoardListDesktop state={state} fsHref={boardFsHref} manage={boardManage} manageHref={boardManageHref} filters={boardFilters} filtersHref={boardFiltersHref} />)
     : <ShellStage state={state} view={view} />;
   // Runtime + board share the same chrome-by-state behavior (mesh nav stays populated).
   const shellChrome: ShellChrome = surface === "shell" ? shellChromeFor(state) : (surface === "runtime" || surface === "board") ? runtimeChromeFor(state) : {};
@@ -3271,7 +3330,7 @@ export function UiMockup() {
           : surface === "runtime" && device === "desktop" && runtime === "canvas"
           ? <MeshCanvasFrame state={state} backHref={overviewHref} />
           : surface === "board" && device === "desktop" && boardFs
-          ? <BoardFullFrame board={board} state={state} backHref={boardExitFsHref} manage={boardManage} manageHref={boardManageHref} />
+          ? <BoardFullFrame board={board} state={state} backHref={boardExitFsHref} manage={boardManage} manageHref={boardManageHref} filters={boardFilters} filtersHref={boardFiltersHref} />
           : device === "mobile"
           ? <MobileShell tab={mobileTab} setTab={(t) => { setMobileTab(t); if (t === "runtime" || t === "board") nav({ view: t }); }} mesh={mesh} setMesh={setMesh} stage={mobileStage} stageTab={mobileStageTab} {...shellChrome} />
           : <DesktopShell view={view} setView={setView} mesh={mesh} setMesh={setMesh} meshHref={meshHref} stage={desktopStage} contextTitle={contextTitle} context={desktopContext} {...shellChrome} />}

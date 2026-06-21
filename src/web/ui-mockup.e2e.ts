@@ -292,7 +292,8 @@ try {
 
   // ── board补漏 — audited [E] capabilities (audit #22–#25) ────────────────────────
   await step("board list补漏: group-by-epic + create epic/task + reopen terminal + 管理标签 toggle → manager", async () => {
-    await page.goto(`${BASE}/__ui-mockup?surface=board&board=list&state=populated&device=desktop`, { waitUntil: "domcontentloaded" });
+    // C4: group-by-epic now lives in the 筛选▾ dropdown — open it via boardFilters=1.
+    await page.goto(`${BASE}/__ui-mockup?surface=board&board=list&state=populated&boardFilters=1&device=desktop`, { waitUntil: "domcontentloaded" });
     await page.waitForSelector('[data-board="list"]', { timeout: 8000 });
     for (const lbl of ["group by epic", "new epic", "new task", "reopen #7", "reopen #5", "管理标签", "全屏"]) {
       if (await page.locator(`[aria-label="${lbl}"]`).count() === 0) throw new Error(`board control missing: ${lbl}`);
@@ -406,6 +407,40 @@ try {
       await shotFrame(`${SHOTS}/${file}`);
     });
   }
+
+  // ── C4: board filter area redesign (GH-Issues) — assertions + proof screenshots ──
+  await step("board C4: GH-Issues filter (search + 筛选▾ + applied chips); boundary no overflow", async () => {
+    await page.goto(`${BASE}/__ui-mockup?surface=board&board=list&state=populated&device=desktop&mode=dark-slate&accent=signal-teal`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-mockup="frame"][data-device="desktop"] [data-board="list"]', { timeout: 8000 });
+    for (const sel of ['[data-board-filters]', '[aria-label="search issues"]', '[data-board-filter-toggle]', '[data-board-applied-filters]', '[data-filter-chip]', '[aria-label="clear all filters"]', '[aria-label="Board view"]', '[aria-label="sort"]']) {
+      if (await page.locator(sel).count() === 0) throw new Error(`C4 filter element missing: ${sel}`);
+    }
+    if (await page.locator('[data-board-filter-menu]').count() !== 0) throw new Error("筛选▾ menu must be closed by default");
+    // Boundary: secondary controls collapse into 筛选▾; the filter row must not overflow horizontally.
+    await page.goto(`${BASE}/__ui-mockup?surface=board&board=list&state=boundary&device=desktop&mode=dark-slate&accent=signal-teal`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-board="list"]', { timeout: 8000 });
+    const row = page.locator('[data-board-filters] [role="toolbar"][aria-label="board filters"]');
+    const overflow = await row.evaluate((el) => el.scrollWidth - el.clientWidth);
+    if (overflow > 1) throw new Error(`board filter row overflows horizontally on boundary: ${overflow}px`);
+    if (await page.getByRole("button", { name: "Dispatch ▾" }).count() !== 0) throw new Error("boundary must collapse Dispatch ▾ out of the row");
+  });
+  await step("screenshot board-list-filtermenu-boundary-desktop (筛选▾ open, collapsed secondary)", async () => {
+    await page.goto(`${BASE}/__ui-mockup?surface=board&board=list&state=boundary&boardFilters=1&device=desktop&mode=dark-slate&accent=signal-teal`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-board-filter-menu]', { timeout: 8000 });
+    if (await page.locator('[data-board-filter-menu] [data-board-manage-labels]').count() === 0) throw new Error("collapsed manage-labels not in the boundary 筛选▾ menu");
+    await sleep(130);
+    await shotFrame(`${SHOTS}/board-list-filtermenu-boundary-desktop-dark-slate-signal-teal.png`);
+  });
+  await step("screenshot board-list-boundary-collapsed-desktop (left nav + right panel collapsed → wider list)", async () => {
+    await page.goto(`${BASE}/__ui-mockup?surface=board&board=list&state=boundary&device=desktop&mode=dark-slate&accent=signal-teal`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-board="list"]', { timeout: 8000 });
+    await page.getByRole("button", { name: "收起导航" }).click();
+    await page.getByRole("button", { name: "收起上下文" }).click();
+    await sleep(150);
+    if (await page.locator('[aria-label="meshes"]').count() !== 0) throw new Error("left nav should be collapsed");
+    if (await page.locator('[data-nav-expand]').count() !== 1) throw new Error("floating expand button missing after nav collapse");
+    await shotFrame(`${SHOTS}/board-list-boundary-collapsed-desktop-dark-slate-signal-teal.png`);
+  });
 
   // ── new-mesh (04) builder: assertions + state × device screenshots (loading N/A; offline covered) ──
   await step("new-mesh builder: form present; error validation; permission disables", async () => {
