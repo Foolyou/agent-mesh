@@ -4,7 +4,7 @@
 // turns the channel on later when channels/feishu.json becomes complete+enabled, restarts it on
 // config changes, and stops it when the file is disabled/invalid/removed.
 
-import { watch, existsSync, readdirSync, type FSWatcher } from "node:fs";
+import { watch, existsSync, type FSWatcher } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { hostname } from "node:os";
@@ -140,8 +140,8 @@ export class FeishuChannelController implements FeishuChannelControl {
     return run;
   }
 
-  async syncMeshChats(names?: string[]): Promise<FeishuMeshChatEnsureResult[]> {
-    const meshes = names ?? this.mesh.listMeshes().map((m) => m.name);
+  async syncMeshChats(): Promise<FeishuMeshChatEnsureResult[]> {
+    const meshes = this.mesh.listMeshes().map((m) => m.name);
     const out: FeishuMeshChatEnsureResult[] = [];
     for (const meshName of meshes) {
       try {
@@ -260,17 +260,16 @@ export class FeishuChannelController implements FeishuChannelControl {
     }, 150);
   }
 
-  /** Failure-isolated mesh sync for the watcher path. Syncs the UNION of the in-memory meshes
-   *  (`listMeshes()` — covers WebUI / Assistant `create_mesh` which update MeshManager) AND the meshes
-   *  defined on disk under `meshes/<name>.json` (covers CLI / hand-edited files that the in-memory
-   *  registry has not loaded). `ensureMeshChat` only needs the mesh NAME (it never reads MeshManager), so
-   *  a disk-only mesh still gets its group. Per-mesh errors are contained by `syncMeshChats`; log non-ok
-   *  results (mirroring `start()`) and swallow any top-level throw so the watcher never dies. */
+  /** Failure-isolated mesh sync for the watcher path. First make file-created meshes (CLI / hand-edited
+   *  `meshes/<name>.json`) visible to the manager via `mergeDefinitionsFromDisk` (adds only missing
+   *  meshes, never clobbers a live entry), so `listMeshes()` — and therefore `syncMeshChats()` — sees
+   *  them. WebUI / Assistant `create_mesh` are already in memory. Per-mesh errors are contained by
+   *  `syncMeshChats`; log non-ok results (mirroring `start()`) and swallow any top-level throw so the
+   *  watcher never dies. */
   private async runMeshSync(): Promise<void> {
     try {
-      const names = new Set<string>(this.mesh.listMeshes().map((m) => m.name));
-      for (const n of meshNamesOnDisk(this.root)) names.add(n);
-      const results = await this.syncMeshChats([...names]);
+      await this.mesh.mergeDefinitionsFromDisk?.();
+      const results = await this.syncMeshChats();
       for (const result of results) {
         if (!result.ok) this.log(`feishu channel: failed to ensure mesh chat for "${result.mesh}": ${result.error ?? "unknown error"}`);
       }
@@ -311,20 +310,6 @@ export function isMeshConfigFile(name: string): boolean {
   if (!name || name.startsWith(".") || name.endsWith("~") || name.includes(".tmp")) return false;
   if (!name.endsWith(".json") || name.endsWith(".sessions.json")) return false;
   return true;
-}
-
-/** Mesh names defined on disk (`<root>/meshes/<name>.json`). The source of truth for CLI / hand-edited
- *  mesh files that the in-memory `MeshManager.listMeshes()` may not yet reflect (it loads definitions
- *  only at boot or an explicit reload). Read-only — never writes `meshes/`, so it cannot retrigger the
- *  meshes watcher. Returns [] if the directory is missing/unreadable. */
-export function meshNamesOnDisk(root: string): string[] {
-  try {
-    return readdirSync(join(root, "meshes"))
-      .filter(isMeshConfigFile)
-      .map((f) => f.slice(0, -".json".length));
-  } catch {
-    return [];
-  }
 }
 
 function runningStatus(path: string, cfg: FeishuChannelConfig): FeishuChannelStatus {

@@ -1,8 +1,8 @@
 import { test, expect } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { FeishuChannelController, feishuMeshChatName, isMeshConfigFile, meshNamesOnDisk } from "./controller";
+import { FeishuChannelController, feishuMeshChatName, isMeshConfigFile } from "./controller";
 import { feishuConfigPath } from "./config";
 import type { Channel, MeshGateway } from "./types";
 import type { MeshEvent } from "../acp/types";
@@ -419,28 +419,28 @@ test("ensureMeshChat skips createChat for an already-bound mesh (idempotent; no 
   } finally { cleanup(); }
 });
 
-// ── Blocker 2: CLI / hand-edited meshes/*.json coverage via the on-disk reader ──
+// ── Blocker 2: CLI / hand-edited meshes/*.json coverage via mergeDefinitionsFromDisk ──
 
-test("meshNamesOnDisk lists <mesh>.json names, ignoring sessions/temp/non-json and a missing dir", () => {
-  const { dir, cleanup } = root();
-  try {
-    expect(meshNamesOnDisk(dir)).toEqual([]); // missing meshes/ → []
-    writeMesh(dir, "ops.json");
-    writeMesh(dir, "qa.json");
-    writeMesh(dir, "ops.sessions.json");      // session state → excluded
-    writeMesh(dir, "half.json.tmp");          // atomic-write temp → excluded
-    writeFileSync(join(dir, "meshes", "notes.txt"), "x"); // non-json → excluded
-    expect(meshNamesOnDisk(dir).sort()).toEqual(["ops", "qa"]);
-  } finally { cleanup(); }
-});
+/** A gateway whose mergeDefinitionsFromDisk() reads <root>/meshes/ and adds missing mesh names to its
+ *  in-memory set — simulating the real MeshManager.mergeDefinitionsFromDisk (add-missing, preserve live).
+ *  The test never mutates the set directly; only the merge (driven by runMeshSync) updates the view. */
+function diskBackedMesh(dir: string, initial: string[] = []): MeshGateway {
+  const set = new Set(initial);
+  return {
+    ...mesh,
+    listMeshes() { return [...set].map((name) => ({ name, status: "running" as const })); },
+    async mergeDefinitionsFromDisk() {
+      try { for (const f of readdirSync(join(dir, "meshes"))) if (isMeshConfigFile(f)) set.add(f.slice(0, -".json".length)); } catch { /* dir missing */ }
+    },
+  };
+}
 
-test("meshes watcher: a CLI/hand-edited meshes/<name>.json NOT in listMeshes is still synced (on-disk reader)", async () => {
+test("meshes watcher: a CLI/hand-edited meshes/<name>.json (file-only) is synced after mergeDefinitionsFromDisk", async () => {
   const { dir, cleanup } = root();
   try {
     writeConfig(dir, { enabled: true, appId: "cli_1", appSecret: "secret", allowSenders: ["ou_me"] });
     const created: string[] = [];
-    const names = ["m"]; // in-memory MeshManager only knows "m"
-    const { gw } = dynamicMesh(names);
+    const gw = diskBackedMesh(dir, ["m"]); // the manager initially knows only "m"
     const timer = controllableTimer();
     const ctl = new FeishuChannelController(gw, {
       root: dir, watch: true,
@@ -451,11 +451,12 @@ test("meshes watcher: a CLI/hand-edited meshes/<name>.json NOT in listMeshes is 
     await ctl.start();
     expect(created).toEqual(["m"]);
 
-    // CLI / hand-edit: the file exists on disk but listMeshes() does NOT include it (in-memory lag)
-    writeMesh(dir, "cli-mesh.json"); // names stays ["m"]
+    // CLI / hand-edit: the file appears on disk; the test does NOT touch the gateway's in-memory names —
+    // runMeshSync()'s mergeDefinitionsFromDisk() makes it visible to listMeshes() before the sync.
+    writeMesh(dir, "cli-mesh.json");
     expect(await waitFor(timer.hasPending)).toBe(true);
     timer.flush();
-    expect(await waitFor(() => created.includes("cli-mesh"))).toBe(true); // synced via meshNamesOnDisk, no restart/reload
+    expect(await waitFor(() => created.includes("cli-mesh"))).toBe(true); // synced without restart/reload
     await ctl.stop();
   } finally { cleanup(); }
 });
