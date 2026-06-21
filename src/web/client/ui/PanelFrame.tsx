@@ -26,12 +26,15 @@ export function PanelFrame({ title, description, actions, footer, children, clas
       className={`flex flex-col rounded-xl border border-border bg-surface-raised text-text-primary ${className}`}
     >
       {hasHeader ? (
-        <header className="flex items-start gap-3 px-4 py-3 border-b border-border">
-          <div className="min-w-0 flex-1">
+        // 7.5-B — C1 mobile rule: title block + actions stack on mobile (actions full-width
+        // below the heading) so wide action clusters never squeeze the title into a vertical
+        // char-wrap; they return to a single row at `lg`.
+        <header className="flex flex-col gap-2 px-4 py-3 border-b border-border lg:flex-row lg:items-start lg:gap-3">
+          <div className="min-w-0 lg:flex-1">
             {title != null ? <h2 id={titleId} className="text-sm font-semibold text-text-primary truncate">{title}</h2> : null}
             {description != null ? <p className="mt-0.5 text-xs text-text-secondary">{description}</p> : null}
           </div>
-          {actions != null ? <div className="shrink-0">{actions}</div> : null}
+          {actions != null ? <div className="lg:shrink-0">{actions}</div> : null}
         </header>
       ) : null}
       <div className={`min-h-0 flex-1 px-4 py-3 ${bodyClassName}`}>{children}</div>

@@ -816,9 +816,19 @@ try {
     await page.goto(`${BASE}/bnw/mesh/demo`, { waitUntil: "domcontentloaded" });
     await page.waitForSelector('[data-bnw-surface="runtime"]', { timeout: 8000 });
     await sleep(120); await page.screenshot({ path: `${SHOTS}/bnw-runtime-overview-mobile.png`, fullPage: true });
+    // 7.5-B — runtime focus mobile (transcript + C2 docked approval bar)
+    await page.goto(`${BASE}/bnw/mesh/demo/agent/router`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-bnw-focus="split"]', { timeout: 8000 });
+    await page.evaluate((s) => (window as any).__meshStore.apply({ t: "snapshot", state: s }), SEED_FOCUS);
+    await page.waitForSelector('[data-bnw-approval]', { timeout: 8000 });
+    await sleep(120); await page.screenshot({ path: `${SHOTS}/bnw-runtime-focus-mobile.png`, fullPage: true });
     await page.goto(`${BASE}/bnw/mesh/demo/board`, { waitUntil: "domcontentloaded" });
     await page.waitForSelector('[data-bnw-board-list]', { timeout: 8000 });
     await sleep(120); await page.screenshot({ path: `${SHOTS}/bnw-board-list-mobile.png`, fullPage: true });
+    // 7.5-B — board detail mobile (lifecycle path + activity timeline + comment)
+    await page.goto(`${BASE}/bnw/mesh/demo/board/issue/12`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-bnw-board-detail]', { timeout: 8000 });
+    await sleep(120); await page.screenshot({ path: `${SHOTS}/bnw-board-detail-mobile.png`, fullPage: true });
     // 7.5-A — mobile 更多 management overlay
     await page.goto(`${BASE}/bnw/mesh/demo`, { waitUntil: "domcontentloaded" });
     await page.waitForSelector('[data-bnw-bottomtabs]', { timeout: 8000 });

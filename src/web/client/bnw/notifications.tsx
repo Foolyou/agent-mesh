@@ -79,7 +79,8 @@ export function BnwNotifications({ store, state }: { store: Store; state: Gatewa
           </div>
         ) : null}
         <nav aria-label="notification filters" className="mb-3">
-          <Cluster>
+          {/* 7.5-B C1: chips wrap to a second row on mobile instead of overflowing/clipping */}
+          <Cluster className="flex-wrap">
             {FILTERS.map((f) => (
               <Button key={f.id} size="sm" variant={f.id === filter ? "secondary" : "ghost"} aria-pressed={f.id === filter} aria-label={`filter ${f.id}`} onClick={() => setFilter(f.id)}>{f.label}</Button>
             ))}

@@ -66,10 +66,10 @@ export function RuntimeOverview({ store, state, mesh }: { store: Store; state: G
     <PanelFrame
       title={`运行态 · ${summary.name}`}
       description={`${summary.agents.length} agents · ${pending} 待审批`}
-      actions={<Cluster>
+      actions={<Cluster className="flex-wrap">
         <StatusChip status={meshDot(summary.status)} variant="soft" label={summary.status} />
         <LifecycleControls store={store} mesh={mesh} status={summary.status} />
-        <RouteLink href={bnwHref({ k: "runtime", mesh, canvas: true })} className="text-sm">画布 ↗</RouteLink>
+        <RouteLink href={bnwHref({ k: "runtime", mesh, canvas: true })} className="text-sm whitespace-nowrap">画布 ↗</RouteLink>
       </Cluster>}
     >
       {summary.agents.length === 0 ? (
@@ -213,11 +213,11 @@ export function RuntimeFocus({ store, state, mesh, agent, full }: { store: Store
     <PanelFrame
       title={`${agent}`}
       description={`${a.harness} · ${a.role} · ${a.status}`}
-      actions={<Cluster>
+      actions={<Cluster className="flex-wrap">
         <StatusChip status={agentDot(a.status, a.activity)} variant="dot" />
         {cold ? <WakeButton store={store} mesh={mesh} agent={agent} /> : null}
-        <RouteLink href={bnwHref({ k: "runtime", mesh, agent, full: !full })} className="text-sm">{full ? "⊟ 退出全屏" : "⊞ 全屏"}</RouteLink>
-        <RouteLink href={bnwHref({ k: "runtime", mesh })} className="text-sm">‹ 概览</RouteLink>
+        <RouteLink href={bnwHref({ k: "runtime", mesh, agent, full: !full })} className="text-sm whitespace-nowrap">{full ? "⊟ 退出全屏" : "⊞ 全屏"}</RouteLink>
+        <RouteLink href={bnwHref({ k: "runtime", mesh })} className="text-sm whitespace-nowrap">‹ 概览</RouteLink>
       </Cluster>}
       className="h-full"
       bodyClassName="flex min-h-0 flex-1 flex-col gap-2"
