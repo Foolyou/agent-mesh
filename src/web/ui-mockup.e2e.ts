@@ -282,6 +282,15 @@ try {
     if (await page.getByText("正在重连", { exact: false }).count() === 0) throw new Error("offline banner missing");
     if (!(await page.getByRole("textbox", { name: "mesh name" }).isDisabled())) throw new Error("mesh name should be disabled offline");
   });
+  await step("new-mesh builder: per-agent controls + auto-compact + edge steer + expanded editor", async () => {
+    await page.goto(`${BASE}/__ui-mockup?surface=new-mesh&state=populated&device=desktop`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-newmesh="builder"]', { timeout: 8000 });
+    for (const lbl of ["agent 1 instructions", "agent 1 model", "agent 1 effort", "agent 1 lazy", "agent 3 opencode permission", "auto-compact threshold", "edge 1 steer"]) {
+      if (await page.locator(`[aria-label="${lbl}"]`).count() === 0) throw new Error(`control missing: ${lbl}`);
+    }
+    await page.goto(`${BASE}/__ui-mockup?surface=new-mesh&state=populated&nmEditor=charter&device=desktop`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-newmesh-editor="charter"][role="dialog"]', { timeout: 8000 });
+  });
   const NM_STATES = ["empty", "populated", "error", "permission", "busy", "offline", "boundary"];
   for (const device of ["desktop", "mobile"]) {
     for (const st of NM_STATES) {
@@ -292,6 +301,18 @@ try {
         await shotFrame(`${SHOTS}/new-mesh-${st}-${device}-dark-slate-signal-teal.png`);
       });
     }
+  }
+  // expanded text editor: charter (desktop modal) + instructions (mobile sheet)
+  for (const [q, file] of [
+    ["surface=new-mesh&state=populated&nmEditor=charter&device=desktop", "new-mesh-editor-charter-desktop-dark-slate-signal-teal.png"],
+    ["surface=new-mesh&state=populated&nmEditor=instructions&device=mobile", "new-mesh-editor-instructions-mobile-dark-slate-signal-teal.png"],
+  ] as [string, string][]) {
+    await step(`screenshot ${file}`, async () => {
+      await page.goto(`${BASE}/__ui-mockup?${q}&mode=dark-slate&accent=signal-teal`, { waitUntil: "domcontentloaded" });
+      await page.waitForSelector('[data-newmesh-editor]', { timeout: 8000 });
+      await sleep(130);
+      await shotFrame(`${SHOTS}/${file}`);
+    });
   }
 
   // ── shell (01) state × device screenshots (Phase B; default Dark·Slate × Signal Teal) ──

@@ -167,10 +167,12 @@ interface Sel {
   runtime: RuntimeState;
   board: BoardState;
   state: ShellState;
+  nmEditor: NmEditor;
   mesh: string;
   mode: Mode;
   accent: Accent;
 }
+type NmEditor = "off" | "charter" | "instructions";
 
 const MESH_IDS = new Set(MESHES.map((m) => m.id));
 
@@ -191,6 +193,7 @@ function readSel(): Sel {
     runtime: p.get("runtime") === "focus" ? "focus" : "overview",
     board: bs === "detail" ? "detail" : bs === "kanban" ? "kanban" : "list",
     state: st && SHELL_STATES.includes(st) ? st : "populated",
+    nmEditor: p.get("nmEditor") === "charter" ? "charter" : p.get("nmEditor") === "instructions" ? "instructions" : "off",
     mesh: mesh && MESH_IDS.has(mesh) ? mesh : MESHES[0].id,
     mode: MODE_SET.has(m as Mode) ? (m as Mode) : "dark-slate",
     accent: ACCENT_SET.has(a as Accent) ? (a as Accent) : "signal-teal",
@@ -753,12 +756,14 @@ function BoardDetailMobile({ state = "populated" }: { state?: ShellState }) {
 }
 
 // ── new-mesh builder (04) fixtures + frame ───────────────────────────────────────
-interface AgentRow { id: string; harness: string; project: string; role: "router" | "member" }
+interface AgentRow { id: string; harness: string; project: string; role: "router" | "member"; model?: string; effort?: string; lazy?: boolean; opencodePermission?: "ask" | "allow"; instructions?: string }
 const HARNESSES = ["claude", "codex", "opencode", "kimi"];
+const NM_MODELS = ["(default)", "opus-4.8", "sonnet-4.6", "gpt-5", "kimi-k2"];
+const NM_EFFORTS = ["low", "medium", "high", "max"];
 const NM_AGENTS: AgentRow[] = [
-  { id: "router", harness: "claude", project: "~/projects/mesh", role: "router" },
-  { id: "codex-1", harness: "codex", project: "~/projects/app", role: "member" },
-  { id: "reviewer", harness: "claude", project: "~/projects/app", role: "member" },
+  { id: "router", harness: "claude", project: "~/projects/mesh", role: "router", model: "opus-4.8", effort: "high", instructions: "Route work to members; keep the board updated." },
+  { id: "codex-1", harness: "codex", project: "~/projects/app", role: "member", model: "(default)", effort: "medium", lazy: false, instructions: "Implement + test; stop with [REQ] per commit." },
+  { id: "reviewer", harness: "opencode", project: "~/projects/app", role: "member", model: "(default)", lazy: true, opencodePermission: "ask" },
 ];
 const NM_EDGES = [{ from: "router", to: "codex-1" }, { from: "router", to: "reviewer" }, { from: "codex-1", to: "reviewer" }];
 const NM_MANY_AGENTS: AgentRow[] = [
@@ -791,12 +796,42 @@ function nmForm(state: ShellState) {
   return { agents, edges, name, nameError, disabled, busy, valid, boundary };
 }
 
-function NewMeshFrame({ state, device }: { state: ShellState; device: Device }) {
+// Expanded text editor — desktop centered modal / mobile full-screen sheet (mirrors
+// MeshBuilder.tsx TextEditorDialog: role=dialog, aria-modal, char-count, Cancel/Apply).
+function NmTextEditor({ kind, mobile }: { kind: "charter" | "instructions"; mobile: boolean }) {
+  const title = kind === "charter" ? "Charter" : "codex-1 · instructions";
+  const value = kind === "charter"
+    ? "Ship the device-auth page and keep the gate fail-closed."
+    : "Implement + test; stop with [REQ] per commit. Keep the worktree clean and never push without approval.";
+  return (
+    <div className="absolute inset-0 z-20 flex items-center justify-center bg-surface-overlay/0" style={{ background: "rgba(0,0,0,0.45)" }}>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={`${title} editor`}
+        data-newmesh-editor={kind}
+        className={`flex flex-col gap-3 border border-border-strong bg-surface-raised text-text-primary shadow-sm ${mobile ? "absolute inset-0 rounded-none p-4" : "w-[640px] max-w-[92%] rounded-xl p-4"}`}
+      >
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-semibold">{title}</h2>
+          <Button variant="ghost" size="sm" iconOnly aria-label="close editor">✕</Button>
+        </div>
+        <Textarea defaultValue={value} aria-label={`${title} full editor`} rows={mobile ? 16 : 10} className="flex-1" />
+        <div className="flex items-center justify-between">
+          <span className="text-xs text-text-muted tabular-nums">{value.length} / 4000</span>
+          <Cluster><Button variant="ghost" size="sm">Cancel</Button><Button variant="primary" size="sm">Apply</Button></Cluster>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function NewMeshFrame({ state, device, nmEditor = "off" }: { state: ShellState; device: Device; nmEditor?: NmEditor }) {
   const f = nmForm(state);
   const mobile = device === "mobile";
   const ctrlDisabled = f.disabled || f.busy;
   return (
-    <div data-mockup="frame" data-device={device} data-newmesh="builder" className={`${mobile ? "flex h-[760px] w-[390px] flex-col rounded-[28px]" : "w-[1280px] rounded-xl"} max-w-full overflow-hidden border border-border bg-surface text-text-primary shadow-sm`}>
+    <div data-mockup="frame" data-device={device} data-newmesh="builder" className={`relative ${mobile ? "flex h-[760px] w-[390px] flex-col rounded-[28px]" : "w-[1280px] rounded-xl"} max-w-full overflow-hidden border border-border bg-surface text-text-primary shadow-sm`}>
       <header className="flex items-center gap-2 border-b border-border bg-surface-raised px-4 py-2.5">
         <Brand />
         <span className="text-text-muted">·</span>
@@ -809,7 +844,7 @@ function NewMeshFrame({ state, device }: { state: ShellState; device: Device }) 
       {state === "permission" ? <div role="status" className="border-b border-border bg-danger-subtle px-4 py-1.5 text-xs text-danger">设备未授权 — 无法创建 mesh；请在「设置」批准本设备。</div> : null}
       {state === "offline" ? <div role="status" className="flex items-center gap-2 border-b border-border bg-warning-subtle px-4 py-1.5 text-xs text-warning"><Spinner size={12} label="reconnecting" /> 连接已断开 — 正在重连…（草稿保留，编辑与保存已禁用）</div> : null}
       <div className="min-h-0 flex-1 overflow-auto p-4">
-        <div className={`mx-auto flex flex-col gap-5 ${mobile ? "" : "max-w-[760px]"}`}>
+        <div className={`mx-auto flex flex-col gap-5 ${mobile ? "" : "max-w-[820px]"}`}>
           {state === "error" ? <ErrorBanner title="Fix 2 errors to save">Duplicate mesh name and one agent is missing an id.</ErrorBanner> : null}
 
           <section className="flex flex-col gap-1.5">
@@ -826,25 +861,58 @@ function NewMeshFrame({ state, device }: { state: ShellState; device: Device }) 
             <div className="flex flex-col gap-2">
               {f.agents.map((a, i) => {
                 const missingId = state === "error" && i === f.agents.length - 1; // last row missing id in error state
-                return mobile ? (
-                  <div key={i} className="flex flex-col gap-1.5 rounded-lg border border-border bg-surface-raised p-2">
-                    <Input defaultValue={missingId ? "" : a.id} error={missingId} disabled={ctrlDisabled} aria-label={`agent ${i + 1} id`} placeholder="agent id" />
-                    <div className="flex gap-1.5">
-                      <Select defaultValue={a.harness} disabled={ctrlDisabled} aria-label={`agent ${i + 1} harness`} className="flex-1">{HARNESSES.map((h) => <option key={h}>{h}</option>)}</Select>
-                      <Select defaultValue={a.role} disabled={ctrlDisabled} aria-label={`agent ${i + 1} role`} className="flex-1"><option>router</option><option>member</option></Select>
+                return (
+                  <div key={i} className="flex flex-col gap-1.5 rounded-lg border border-border bg-surface-raised p-2.5">
+                    {/* line 1: id · harness · role · delete */}
+                    <div className={`flex gap-1.5 ${mobile ? "flex-wrap" : "items-center"}`}>
+                      <Input defaultValue={missingId ? "" : a.id} error={missingId} disabled={ctrlDisabled} aria-label={`agent ${i + 1} id`} placeholder="agent id" className={mobile ? "w-full" : "w-40"} />
+                      <Select defaultValue={a.harness} disabled={ctrlDisabled} aria-label={`agent ${i + 1} harness`} className={mobile ? "flex-1" : "w-32"}>{HARNESSES.map((h) => <option key={h}>{h}</option>)}</Select>
+                      <Select defaultValue={a.role} disabled={ctrlDisabled} aria-label={`agent ${i + 1} role`} className={mobile ? "flex-1" : "w-28"}><option>router</option><option>member</option></Select>
+                      {!mobile ? <span className="flex-1" aria-hidden="true" /> : null}
+                      <Button variant="ghost" size="sm" iconOnly aria-label={`remove agent ${i + 1}`} disabled={ctrlDisabled || a.role === "router"}>×</Button>
                     </div>
-                    <Input defaultValue={a.project} disabled={ctrlDisabled} aria-label={`agent ${i + 1} project`} placeholder="project path" />
-                  </div>
-                ) : (
-                  <div key={i} className="flex items-center gap-2">
-                    <Input defaultValue={missingId ? "" : a.id} error={missingId} disabled={ctrlDisabled} aria-label={`agent ${i + 1} id`} placeholder="agent id" className="w-40" />
-                    <Select defaultValue={a.harness} disabled={ctrlDisabled} aria-label={`agent ${i + 1} harness`} className="w-32">{HARNESSES.map((h) => <option key={h}>{h}</option>)}</Select>
-                    <Input defaultValue={a.project} disabled={ctrlDisabled} aria-label={`agent ${i + 1} project`} placeholder="project path" className="min-w-0 flex-1" />
-                    <Select defaultValue={a.role} disabled={ctrlDisabled} aria-label={`agent ${i + 1} role`} className="w-28"><option>router</option><option>member</option></Select>
-                    <Button variant="ghost" size="sm" iconOnly aria-label={`remove agent ${i + 1}`} disabled={ctrlDisabled || a.role === "router"}>×</Button>
+                    {/* line 2: project */}
+                    <Input defaultValue={a.project} disabled={ctrlDisabled} aria-label={`agent ${i + 1} project`} placeholder="project path" className="w-full" />
+                    {/* line 3: model · effort · lazy · (opencode permission) */}
+                    <div className="flex flex-wrap items-center gap-2">
+                      <label className="inline-flex items-center gap-1 text-xs text-text-muted">model
+                        <Select defaultValue={a.model ?? "(default)"} disabled={ctrlDisabled} aria-label={`agent ${i + 1} model`} className="w-32">{NM_MODELS.map((mm) => <option key={mm}>{mm}</option>)}</Select>
+                      </label>
+                      <label className="inline-flex items-center gap-1 text-xs text-text-muted">effort
+                        <Select defaultValue={a.effort ?? "medium"} disabled={ctrlDisabled} aria-label={`agent ${i + 1} effort`} className="w-24">{NM_EFFORTS.map((ef) => <option key={ef}>{ef}</option>)}</Select>
+                      </label>
+                      <label className="inline-flex items-center gap-1.5 text-xs text-text-secondary">
+                        <input type="checkbox" defaultChecked={a.lazy} disabled={ctrlDisabled || a.role === "router"} aria-label={`agent ${i + 1} lazy`} className="accent-accent" /> lazy
+                      </label>
+                      {a.harness === "opencode" ? (
+                        <label className="inline-flex items-center gap-1 text-xs text-text-muted">permission
+                          <Select defaultValue={a.opencodePermission ?? "ask"} disabled={ctrlDisabled} aria-label={`agent ${i + 1} opencode permission`} className="w-20"><option>ask</option><option>allow</option></Select>
+                        </label>
+                      ) : null}
+                    </div>
+                    {/* line 4: instructions + expand */}
+                    <div className="flex flex-col gap-1">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-text-muted">instructions (max 4000)</span>
+                        <Button variant="ghost" size="sm" disabled={ctrlDisabled} aria-label={`expand agent ${i + 1} instructions`}>⤢ expand</Button>
+                      </div>
+                      <Textarea defaultValue={a.instructions ?? ""} disabled={ctrlDisabled} rows={2} aria-label={`agent ${i + 1} instructions`} placeholder="per-agent instructions injected into this agent's briefing…" />
+                    </div>
                   </div>
                 );
               })}
+            </div>
+          </section>
+
+          <section className="flex flex-col gap-2">
+            <span className="text-xs uppercase tracking-wider text-text-muted">auto-compact</span>
+            <div className="flex flex-wrap items-center gap-3">
+              <label className="inline-flex items-center gap-1.5 text-sm text-text-secondary">
+                <input type="checkbox" defaultChecked disabled={ctrlDisabled} aria-label="auto-compact enabled" className="accent-accent" /> enable auto-compact
+              </label>
+              <label className="inline-flex items-center gap-1.5 text-xs text-text-muted">threshold
+                <Input defaultValue="85%" disabled={ctrlDisabled} aria-label="auto-compact threshold" className="w-20" />
+              </label>
             </div>
           </section>
 
@@ -853,13 +921,16 @@ function NewMeshFrame({ state, device }: { state: ShellState; device: Device }) 
               <span className="text-xs uppercase tracking-wider text-text-muted">mail edges · {f.edges.length}</span>
               <Button variant="secondary" size="sm" disabled={ctrlDisabled}>+ Add edge</Button>
             </div>
-            <p className="text-xs text-text-muted">{mobile ? "from / to pickers (drawing is desktop-only)" : "declare or draw who can mail whom"}</p>
+            <p className="text-xs text-text-muted">{mobile ? "from / to pickers (drawing is desktop-only); steer = can interject" : "declare or draw who can mail whom; steer = can interject"}</p>
             <div className="flex flex-col gap-1.5">
               {f.edges.length === 0 ? <span className="text-xs text-text-muted">no edges yet</span> : f.edges.map((e, i) => (
                 <div key={i} className="flex items-center gap-2 text-sm">
                   <Select defaultValue={e.from} disabled={ctrlDisabled} aria-label={`edge ${i + 1} from`} className="flex-1">{f.agents.map((a) => <option key={a.id}>{a.id}</option>)}</Select>
                   <span aria-hidden="true" className="text-text-muted">→</span>
                   <Select defaultValue={e.to} disabled={ctrlDisabled} aria-label={`edge ${i + 1} to`} className="flex-1">{f.agents.map((a) => <option key={a.id}>{a.id}</option>)}</Select>
+                  <label className="inline-flex shrink-0 items-center gap-1 text-xs text-text-secondary">
+                    <input type="checkbox" defaultChecked={i === 0} disabled={ctrlDisabled} aria-label={`edge ${i + 1} steer`} className="accent-accent" /> steer
+                  </label>
                   <Button variant="ghost" size="sm" iconOnly aria-label={`remove edge ${i + 1}`} disabled={ctrlDisabled}>×</Button>
                 </div>
               ))}
@@ -867,11 +938,15 @@ function NewMeshFrame({ state, device }: { state: ShellState; device: Device }) 
           </section>
 
           <section className="flex flex-col gap-1.5">
-            <label className="text-xs uppercase tracking-wider text-text-muted">charter (optional)</label>
+            <div className="flex items-center justify-between">
+              <label className="text-xs uppercase tracking-wider text-text-muted">charter (optional)</label>
+              <Button variant="ghost" size="sm" disabled={ctrlDisabled} aria-label="expand charter">⤢ expand</Button>
+            </div>
             <Textarea defaultValue={state === "empty" ? "" : "Ship the device-auth page and keep the gate fail-closed."} disabled={ctrlDisabled} rows={mobile ? 3 : 2} aria-label="charter" />
           </section>
         </div>
       </div>
+      {nmEditor !== "off" ? <NmTextEditor kind={nmEditor} mobile={mobile} /> : null}
     </div>
   );
 }
@@ -1055,6 +1130,7 @@ function selQuery(s: Sel): string {
   p.set("runtime", s.runtime);
   p.set("board", s.board);
   p.set("state", s.state);
+  p.set("nmEditor", s.nmEditor);
   p.set("mesh", s.mesh);
   p.set("mode", s.mode);
   p.set("accent", s.accent);
@@ -1108,7 +1184,7 @@ function ShellStage({ state, view = "runtime" }: { state: ShellState; view?: Vie
 
 export function UiMockup() {
   const [sel, setSel] = useState<Sel>(readSel);
-  const { device, view, surface, runtime, board, state, mesh, mode, accent } = sel;
+  const { device, view, surface, runtime, board, state, nmEditor, mesh, mode, accent } = sel;
   const [mobileTab, setMobileTab] = useState<MobileTab>(surface === "board" || view === "board" ? "board" : "runtime");
 
   useEffect(() => {
@@ -1249,12 +1325,18 @@ export function UiMockup() {
               />
             </div>
           ) : null}
+          {surface === "new-mesh" ? (
+            <div>
+              <div className="mb-1.5 text-xs uppercase tracking-wider text-text-muted">Expanded editor</div>
+              <SegmentedControl ariaLabel="Expanded editor" value={nmEditor} onChange={(e) => nav({ nmEditor: e as NmEditor })} options={[{ value: "off", label: "off" }, { value: "charter", label: "charter" }, { value: "instructions", label: "instructions" }]} size="sm" />
+            </div>
+          ) : null}
         </div>
       </header>
 
       <div className="flex justify-center">
         {surface === "new-mesh"
-          ? <NewMeshFrame state={state} device={device} />
+          ? <NewMeshFrame state={state} device={device} nmEditor={nmEditor} />
           : device === "mobile"
           ? <MobileShell tab={mobileTab} setTab={(t) => { setMobileTab(t); if (t === "runtime" || t === "board") nav({ view: t }); }} mesh={mesh} setMesh={setMesh} stage={mobileStage} stageTab={mobileStageTab} {...shellChrome} />
           : <DesktopShell view={view} setView={setView} mesh={mesh} setMesh={setMesh} meshHref={meshHref} stage={desktopStage} contextTitle={contextTitle} context={desktopContext} {...shellChrome} />}

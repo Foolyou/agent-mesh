@@ -354,3 +354,33 @@ test("new-mesh · mobile: simplified builder (from/to edge pickers)", () => {
   expect(out).toContain('data-newmesh="builder"');
   expect(out).toContain("from / to pickers");
 });
+
+test("new-mesh · per-agent controls: instructions + model/effort/lazy + opencode permission + edge steer + auto-compact", () => {
+  const out = renderAt("?surface=new-mesh&state=populated&device=desktop");
+  expect(out).toContain('aria-label="agent 1 instructions"'); // per-agent instructions (audit #1)
+  expect(out).toContain('aria-label="agent 1 model"'); // model (audit #3)
+  expect(out).toContain('aria-label="agent 1 effort"'); // effort (audit #4)
+  expect(out).toContain('aria-label="agent 1 lazy"'); // lazy (audit #5)
+  expect(out).toContain('aria-label="agent 3 opencode permission"'); // opencode-only (audit #6) — reviewer is opencode
+  expect(out).toContain('aria-label="auto-compact enabled"'); // auto-compact (audit #7)
+  expect(out).toContain('aria-label="auto-compact threshold"');
+  expect(out).toContain('aria-label="edge 1 steer"'); // edge steer (audit #8)
+});
+
+test("new-mesh · expanded text editor: charter (desktop modal) + instructions (mobile sheet)", () => {
+  const charter = renderAt("?surface=new-mesh&state=populated&nmEditor=charter&device=desktop");
+  expect(charter).toContain('role="dialog"');
+  expect(charter).toContain('aria-modal="true"');
+  expect(charter).toContain('data-newmesh-editor="charter"');
+  expect(charter).toContain("/ 4000"); // char count
+  const instr = renderAt("?surface=new-mesh&state=populated&nmEditor=instructions&device=mobile");
+  expect(instr).toContain('data-newmesh-editor="instructions"');
+  expect(instr).toContain('aria-modal="true"');
+  expect(renderAt("?surface=new-mesh&state=populated").includes("data-newmesh-editor=")).toBe(false); // off by default
+});
+
+test("new-mesh · offline still disables the new per-agent controls", () => {
+  const out = renderAt("?surface=new-mesh&state=offline&device=desktop");
+  expect(out).toContain("正在重连");
+  expect(out).toContain("disabled");
+});
