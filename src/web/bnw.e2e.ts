@@ -9,7 +9,7 @@ import { rm } from "node:fs/promises";
 import { mkdirSync } from "node:fs";
 import type { MeshEvent, MeshConfig } from "../acp/types";
 
-const SHOTS = "/tmp/mesh-shots";
+const SHOTS = process.env.AGENT_MESH_ARTIFACTS || "/tmp/mesh-shots";
 mkdirSync(SHOTS, { recursive: true });
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -51,7 +51,9 @@ function fakeManager() {
     interruptAgent(name: string, agentId: string) { rec(`interruptAgent:${name}:${agentId}`); },
     async newAgentSession(name: string, agentId: string) { rec(`newAgentSession:${name}:${agentId}`); },
     async newAllSessions(name: string) { rec(`newAllSessions:${name}`); },
-    stopAgent() {}, async addEdge() {}, async addAgent() {},
+    stopAgent(name: string, agentId: string) { rec(`stopAgent:${name}:${agentId}`); },
+    async addEdge(name: string, edge: { from: string; to: string }) { rec(`addEdge:${name}:${edge.from}->${edge.to}`); },
+    async addAgent(name: string, agent: { id: string }) { rec(`addAgent:${name}:${agent.id}`); },
     async defineMesh() {}, async deleteMesh() {}, async loadDefinitions() {}, async stopAll() {},
   };
 }
@@ -79,6 +81,18 @@ const SEED_FOCUS = {
     queues: { router: { count: 1, items: [{ id: "q1", source: "operator", preview: "queued prompt", ts: "1" }] } },
     board: null,
   } },
+};
+
+// A running mesh with edges + recent mail, so the canvas renders directed/highlighted edges
+// and the per-node + add-agent/edge controls are enabled.
+const SEED_CANVAS = {
+  meshes: [{ name: "demo", defined: true, status: "running", router: "router",
+    agents: [
+      { id: "router", harness: "claude", role: "router", status: "ready", activity: "idle" },
+      { id: "codex-1", harness: "codex", role: "member", status: "ready", activity: "working" },
+    ], edges: [{ from: "router", to: "codex-1" }] }],
+  assistant: { status: "absent", transcript: [] },
+  perMesh: { demo: { ...SEED_FOCUS.perMesh.demo, mail: [{ id: "m1", ts: "1", from: "router", to: "codex-1", body: "go" }] } },
 };
 
 const auth = await provisionE2eAuth();
@@ -208,11 +222,57 @@ try {
     await page.waitForSelector('[data-bnw-surface="file"]', { timeout: 8000 });
   });
 
-  await step("screenshot bnw-shell", async () => {
+  await step("7.1-C canvas: real edges + recent highlight + toolbar; add-edge/add-agent reach gateway", async () => {
+    await page.goto(`${BASE}/bnw/mesh/demo/canvas`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-bnw-canvas]', { timeout: 8000 });
+    const seed = () => page.evaluate((s) => (window as any).__meshStore.apply({ t: "snapshot", state: s }), SEED_CANVAS);
+    await seed();
+    await page.waitForSelector('[data-edge-recent="true"]', { state: "attached", timeout: 8000 }); // directed + recent-mail edge
+    for (const sel of ['[data-bnw-edges]', '[data-bnw-autolayout]', '[data-bnw-relayout]', '[aria-label="zoom in"]', '[aria-label="close canvas"]', '[data-bnw-topology]']) {
+      if (await page.locator(sel).count() === 0) throw new Error(`canvas element missing: ${sel}`);
+    }
+    // #17 add edge → real addEdge
+    await seed();
+    await page.locator('[aria-label="add edge"]').click();
+    await page.waitForSelector('[data-bnw-add-edge]', { timeout: 8000 });
+    await page.locator('[aria-label="new edge from"]').selectOption("codex-1");
+    await page.locator('[aria-label="new edge to"]').selectOption("router");
+    await page.locator('[aria-label="confirm add edge"]').click();
+    await waitCall("addEdge:demo:codex-1->router");
+    // #17 add agent → real addAgent
+    await seed();
+    await page.locator('[aria-label="add agent"]').click();
+    await page.waitForSelector('[data-bnw-add-agent]', { timeout: 8000 });
+    await page.locator('[aria-label="new agent id"]').fill("reviewer-1");
+    await page.locator('[aria-label="new agent project"]').fill("~/projects/app");
+    await page.locator('[aria-label="confirm add agent"]').click();
+    await waitCall("addAgent:demo:reviewer-1");
+  });
+
+  // ── user-review screenshots (<=1500 wide, in artifacts) ──
+  await step("screenshots: overview / focus (C2 docked approval) / canvas / mobile overview", async () => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    // desktop overview
     await page.goto(`${BASE}/bnw/mesh/demo`, { waitUntil: "domcontentloaded" });
     await page.waitForSelector('[data-bnw-surface="runtime"]', { timeout: 8000 });
-    await sleep(150);
-    await page.screenshot({ path: `${SHOTS}/bnw-shell.png`, fullPage: true });
+    await sleep(120); await page.screenshot({ path: `${SHOTS}/bnw-runtime-overview-desktop.png`, fullPage: true });
+    // focus with the C2 docked approval bar (seed pending + ready agent)
+    await page.goto(`${BASE}/bnw/mesh/demo/agent/router`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-bnw-focus="split"]', { timeout: 8000 });
+    await page.evaluate((s) => (window as any).__meshStore.apply({ t: "snapshot", state: s }), SEED_FOCUS);
+    await page.waitForSelector('[data-bnw-approval]', { timeout: 8000 });
+    await sleep(120); await page.screenshot({ path: `${SHOTS}/bnw-runtime-focus-desktop.png`, fullPage: true });
+    // canvas with real edges + highlight
+    await page.goto(`${BASE}/bnw/mesh/demo/canvas`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-bnw-canvas]', { timeout: 8000 });
+    await page.evaluate((s) => (window as any).__meshStore.apply({ t: "snapshot", state: s }), SEED_CANVAS);
+    await page.waitForSelector('[data-edge-recent="true"]', { state: "attached", timeout: 8000 });
+    await sleep(150); await page.screenshot({ path: `${SHOTS}/bnw-runtime-canvas-desktop.png`, fullPage: true });
+    // mobile overview
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(`${BASE}/bnw/mesh/demo`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-bnw-surface="runtime"]', { timeout: 8000 });
+    await sleep(120); await page.screenshot({ path: `${SHOTS}/bnw-runtime-overview-mobile.png`, fullPage: true });
   });
 
   if (errors.length) throw new Error(`page errors:\n${errors.join("\n")}`);

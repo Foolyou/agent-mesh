@@ -3,11 +3,13 @@
 // store only; no old view component (MeshDetail/ChatPane/…) imported. Pure harness logic is
 // reused from ../../harness-utils (a shared util module, not a view).
 import { useState } from "react";
-import { Badge, Button, Composer, ConfirmButton, Select, Textarea } from "../ui/index";
+import { Badge, Button, Composer, ConfirmButton, Input, Select, Textarea } from "../ui/index";
 import type { Store } from "../store";
 import type { AgentModes, AgentModels, AgentEfforts, PermissionReq, QueueSummary, MeshSummary, StartSessionStrategy } from "../../types";
-import type { HarnessId } from "../../../acp/types";
+import type { HarnessId, AgentRole } from "../../../acp/types";
 import { supportsRuntimeEffort, supportsThinkingToggle, kimiThinkingEnabled, kimiModelForThinking } from "../../../harness-utils";
+
+const HARNESSES: HarnessId[] = ["claude", "codex", "opencode", "kimi"];
 
 // Small busy wrapper for any mutation promise (the store already toasts errors via guard()).
 function useBusy() {
@@ -168,6 +170,55 @@ export function LifecycleControls({ store, mesh, status }: { store: Store; mesh:
           <ConfirmButton size="sm" variant="secondary" confirmLabel="重置所有会话?" aria-label={`new all sessions ${mesh}`} onConfirm={() => void run(store.newAllSessions(mesh))}>新建全部会话</ConfirmButton>
         </>
       )}
+    </div>
+  );
+}
+
+// #17 — live add agent / add edge to a running mesh (real addAgent / addEdge mutations).
+export function TopologyEditor({ store, mesh, agentIds, disabled }: { store: Store; mesh: string; agentIds: string[]; disabled: boolean }) {
+  const { busy, run } = useBusy();
+  const [tab, setTab] = useState<"agent" | "edge" | null>(null);
+  // add-agent fields
+  const [id, setId] = useState(""); const [harness, setHarness] = useState<HarnessId>("claude");
+  const [project, setProject] = useState(""); const [role, setRole] = useState<AgentRole>("member");
+  // add-edge fields
+  const [from, setFrom] = useState(agentIds[0] ?? ""); const [to, setTo] = useState(agentIds[1] ?? agentIds[0] ?? "");
+  const [steer, setSteer] = useState(false);
+
+  const addAgent = async () => {
+    if (!id.trim() || !project.trim() || busy) return;
+    await run(store.addAgent(mesh, { id: id.trim(), harness, project: project.trim(), role }));
+    setId(""); setProject("");
+  };
+  const addEdge = async () => {
+    if (!from || !to || from === to || busy) return;
+    await run(store.addEdge(mesh, { from, to, steer }));
+  };
+
+  return (
+    <div data-bnw-topology className="flex flex-col gap-2">
+      <div className="flex items-center gap-2">
+        <Button size="sm" variant="secondary" disabled={disabled} aria-label="add agent" onClick={() => setTab((t) => (t === "agent" ? null : "agent"))}>+ agent</Button>
+        <Button size="sm" variant="secondary" disabled={disabled} aria-label="add edge" onClick={() => setTab((t) => (t === "edge" ? null : "edge"))}>+ edge</Button>
+      </div>
+      {tab === "agent" ? (
+        <div data-bnw-add-agent className="flex flex-wrap items-end gap-2 rounded-lg border border-border bg-surface-sunken p-2">
+          <Input aria-label="new agent id" placeholder="agent id" value={id} disabled={disabled} className="w-32" onChange={(e) => setId(e.target.value)} />
+          <Select aria-label="new agent harness" value={harness} disabled={disabled} className="w-28" onChange={(e) => setHarness(e.target.value as HarnessId)}>{HARNESSES.map((h) => <option key={h} value={h}>{h}</option>)}</Select>
+          <Input aria-label="new agent project" placeholder="project path" value={project} disabled={disabled} className="w-40" onChange={(e) => setProject(e.target.value)} />
+          <Select aria-label="new agent role" value={role} disabled={disabled} className="w-24" onChange={(e) => setRole(e.target.value as AgentRole)}><option value="member">member</option><option value="router">router</option></Select>
+          <Button size="sm" variant="primary" busy={busy} disabled={disabled || !id.trim() || !project.trim()} aria-label="confirm add agent" onClick={() => void addAgent()}>添加</Button>
+        </div>
+      ) : null}
+      {tab === "edge" ? (
+        <div data-bnw-add-edge className="flex flex-wrap items-end gap-2 rounded-lg border border-border bg-surface-sunken p-2">
+          <Select aria-label="new edge from" value={from} disabled={disabled} className="w-28" onChange={(e) => setFrom(e.target.value)}>{agentIds.map((a) => <option key={a} value={a}>{a}</option>)}</Select>
+          <span aria-hidden="true" className="text-text-muted">→</span>
+          <Select aria-label="new edge to" value={to} disabled={disabled} className="w-28" onChange={(e) => setTo(e.target.value)}>{agentIds.map((a) => <option key={a} value={a}>{a}</option>)}</Select>
+          <label className="inline-flex items-center gap-1 text-xs text-text-secondary"><input type="checkbox" className="accent-accent" aria-label="new edge steer" checked={steer} disabled={disabled} onChange={(e) => setSteer(e.target.checked)} /> steer</label>
+          <Button size="sm" variant="primary" busy={busy} disabled={disabled || from === to} aria-label="confirm add edge" onClick={() => void addEdge()}>添加</Button>
+        </div>
+      ) : null}
     </div>
   );
 }

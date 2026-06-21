@@ -12,6 +12,7 @@ import {
 import type { MeshStatus } from "../../types";
 import { useRoute, navigate, bnwHref, type BnwRoute } from "../router";
 import { RuntimeOverview, RuntimeFocus } from "./runtime";
+import { MeshCanvas } from "./canvas";
 
 // Map the gateway MeshStatus → the C5 StatusChip vocabulary used by the component library.
 function meshDot(s: MeshStatus): Status {
@@ -102,10 +103,11 @@ export function BnwApp() {
   let body: ReactNode;
   if (route.k === "notFound") body = <NotFound path={route.path} />;
   else if (route.k === "home") body = <PanelFrame title="Home"><div className="flex items-center gap-2 text-sm text-text-muted"><Spinner size={14} label="loading" /> 正在进入默认 mesh…</div></PanelFrame>;
-  // 7.1-A — Runtime A wired to the real store (overview + focus). Canvas (route.canvas)
-  // stays a placeholder until 7.1-C; all non-runtime surfaces remain placeholders.
+  // 7.1 — Runtime A wired to the real store: overview + focus (A/B) + canvas (C).
+  // Non-runtime surfaces remain 7.0 placeholders.
+  else if (route.k === "runtime" && route.canvas) body = <MeshCanvas store={store} state={state} mesh={route.mesh} />;
   else if (route.k === "runtime" && route.agent) body = <RuntimeFocus store={store} state={state} mesh={route.mesh} agent={route.agent} full={!!route.full} />;
-  else if (route.k === "runtime" && !route.canvas) body = <RuntimeOverview store={store} state={state} mesh={route.mesh} />;
+  else if (route.k === "runtime") body = <RuntimeOverview store={store} state={state} mesh={route.mesh} />;
   else body = <SurfacePlaceholder route={route} />;
 
   return (
