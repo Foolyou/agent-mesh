@@ -48,8 +48,28 @@ verify-before-citing rule); the few cross-checked claims are marked ✔.
 
 **Implication:** we are not adding routing from zero. We have (a) RouteLink for link
 interception, (b) two working hand-rolled route parsers (board search-params, file
-pathname), (c) a server that already SPA-falls-back for `/` and `/mesh/*`. Step 7.0 is
-mostly **generalizing** these three into one small router + widening the server fallback.
+pathname), (c) a server that already SPA-falls-back for `/` and `/mesh/*`. Step 7.0 builds
+a new router + new shell **under `/bnw/`**, reusing the *logic* of those parsers (forked,
+not mutated) and adding a single `/bnw/*` server fallback — the old root UI is left
+completely untouched.
+
+> **LOCKED ARCHITECTURE (prdmgr/user, this rewrite).** Cutover = **parallel `/bnw/`
+> namespace**, not the earlier route-gated/new-shell-on-root strategy.
+> 1. **Router** = hand-written minimal router (§1.2).
+> 2. **All new UI paths under `/bnw/`** (§1.1).
+> 3. **`index.tsx` split:** a `/bnw/` pathname prefix mounts the new router/new shell;
+>    everything else (incl. old `/`, old `/mesh/*`, `/__ui-*`) continues to the existing
+>    `<Boot>/<App>` **unchanged**. The device-auth Boot gate wraps **both** old and new UI.
+> 4. **Independent view layer:** the new `/bnw/` UI must **NOT mutate the shared old view
+>    components in place** (`MeshDetail`, `BoardPanel`, `ChatPane`, `Topology`,
+>    `MeshCanvas`, `Sidebar`, `MeshBuilder`, `HarnessPanel`, `SystemPanel`, `FeishuPanel`,
+>    `Theme`, …). The **data layer is shared** (store / API / WS / `device-auth.ts` /
+>    serializer logic), but the **view layer is new/forked/independent**, built from the
+>    C5–C8 component library + the approved mockup structure. Old UI stays as a safety net.
+> 5. **Notifications [N] = Option B** (real server-persisted system, part of Step 7 — §2
+>    7.4 mini-design), not an interim toast shim.
+> 6. **28-item parity is a hard gate for the new `/bnw/` UI.** The old UI being available
+>    is a safety net, NOT permission to omit any parity item.
 
 ---
 
@@ -61,42 +81,52 @@ Principle: **resource identity in the path** (deep-linkable, shareable, new-tab-
 **ephemeral view-state in the query** (filters, kanban/list, fullscreen, canvas). Path
 segments mirror the IA priority **A 运行态 > C 看板 > B 管理**.
 
-| # | Surface | Canonical route | View-state (query) | Today |
+**LOCKED (prdmgr/user):** every new UI path is under the **`/bnw/` namespace**. The old
+root UI (`/`, old `/mesh/*`, …) is untouched and keeps working; the new console is an
+independent parallel tree mounted only under `/bnw/`. The route *shapes* are exactly the
+originally-recommended scheme, just `/bnw`-prefixed; nothing is served at these paths yet.
+
+| # | Surface | Canonical route | View-state (query) | Notes |
 |---|---------|-----------------|--------------------|-------|
-| 01 | App shell / landing | `/` → redirect to default mesh runtime (`/mesh/<default>`) | — | `/`→index ✔ |
-| 02 | Runtime A — overview | `/mesh/<id>` | — | served, but mesh read from localStorage not URL |
-| 02 | Runtime A — focus (agent) | `/mesh/<id>/agent/<agentId>` | `?full=1` (session fullscreen, #9) | new |
-| 02 | Runtime A — canvas | `/mesh/<id>/canvas` | — | new (was `topoOpen` state, #16) |
-| 03 | Board C — list | `/mesh/<id>/board` | `?view=list\|kanban&status=&label=&assignee=&epic=&q=&sort=&group=epic` | board self-routes via search ✔ |
-| 03 | Board C — detail | `/mesh/<id>/board/issue/<n>` | (filters preserved in query) | board self-routes ✔ |
-| 04 | New-mesh builder | `/mesh/new` (create) · `/mesh/<id>/edit` (edit) | `?nmEditor=charter\|instructions` (expanded editor, #2) | modal today |
-| 05 | Mesh Assistant B | `/assistant` | `?full=1` (chat fullscreen, #21) | inside Sidebar today |
-| 06 | Harnesses | `/harnesses` | — | modal today |
-| 07 | Channels (Feishu) | `/channels` (reserve `/channels/feishu`) | — | modal today |
-| 08 | Doctor / system | `/doctor` | — | modal today |
-| 09 | Settings | `/settings` | `?tab=appearance\|language\|devices\|prefs` | dropdown+modal today |
-| 10 | Notifications | `/notifications` | — | **net-new [N]** |
-| 11 | File / artifact viewer | `/mesh/<id>/agent/<agentId>/file/<path>` · `…/artifact/<path>` | `?lb=1` (lightbox) | **already routed** ✔ |
-| 12 | Device-auth gate | route-agnostic pre-gate; unauthorized renders the gate over any path | `?next=<path>` (return-to after approval) | Boot, no URL today |
-| 13 | Global states (offline / error / 404) | cross-cutting; unknown SPA path → in-app `NotFound`; offline/error are overlays on the current route | — | none today |
+| 01 | App shell / landing | `/bnw/` → redirect to default mesh runtime (`/bnw/mesh/<default>`) | — | new shell |
+| 02 | Runtime A — overview | `/bnw/mesh/<id>` | — | new view (data via store) |
+| 02 | Runtime A — focus (agent) | `/bnw/mesh/<id>/agent/<agentId>` | `?full=1` (session fullscreen, #9) | new |
+| 02 | Runtime A — canvas | `/bnw/mesh/<id>/canvas` | — | new (#16; was `topoOpen` state) |
+| 03 | Board C — list | `/bnw/mesh/<id>/board` | `?view=list\|kanban&status=&label=&assignee=&epic=&q=&sort=&group=epic` | new view; reuse board serializers |
+| 03 | Board C — detail | `/bnw/mesh/<id>/board/issue/<n>` | (filters preserved in query) | new |
+| 04 | New-mesh builder | `/bnw/mesh/new` (create) · `/bnw/mesh/<id>/edit` (edit) | `?nmEditor=charter\|instructions` (#2) | was modal |
+| 05 | Mesh Assistant B | `/bnw/assistant` | `?full=1` (chat fullscreen, #21) | was inside Sidebar |
+| 06 | Harnesses | `/bnw/harnesses` | — | was modal |
+| 07 | Channels (Feishu) | `/bnw/channels` (reserve `/bnw/channels/feishu`) | — | was modal |
+| 08 | Doctor / system | `/bnw/doctor` | — | was modal |
+| 09 | Settings | `/bnw/settings` | `?tab=appearance\|language\|devices\|prefs` | was dropdown+modal |
+| 10 | Notifications | `/bnw/notifications` | — | **net-new [N], Option B (server-persisted, §2 7.4)** |
+| 11 | File / artifact viewer | `/bnw/mesh/<id>/agent/<agentId>/file/<path>` · `…/artifact/<path>` | `?lb=1` (lightbox) | reuse `parseFileRoute` logic, `/bnw`-prefixed |
+| 12 | Device-auth gate | route-agnostic pre-gate; unauthorized renders the gate over any path (old or `/bnw/`) | `?next=<path>` (a `/bnw/…` return-to) | Boot wraps both UIs |
+| 13 | Global states (offline / error / 404) | cross-cutting; unknown `/bnw/*` path → in-app `NotFound`; offline/error overlay the current route | — | new |
 
 Notes / decisions folded in:
+- **`/bnw/` prefix is mandatory** on every new route. The central router strips the
+  `/bnw` prefix first, then parses the remainder with the shapes above, so all routing
+  logic is identical to the original recommendation — only namespaced.
 - **Mesh-scoped vs global:** runtime/board/new-edit/file-viewer are **mesh-scoped**
-  (`/mesh/<id>/…`); assistant/harnesses/channels/doctor/settings/notifications are
-  **global** (top-level). This matches today's ownership (Sidebar owns mesh list +
+  (`/bnw/mesh/<id>/…`); assistant/harnesses/channels/doctor/settings/notifications are
+  **global** (`/bnw/<surface>`). This matches today's ownership (Sidebar owns mesh list +
   assistant; the modals are global).
-- **`/mesh/new` vs `/mesh/<id>`:** `new` is a reserved mesh id — the router must match
-  `/mesh/new` and `/mesh/<id>/edit` **before** treating the segment as a mesh id.
+- **`/bnw/mesh/new` vs `/bnw/mesh/<id>`:** `new` is a reserved mesh id — the router must
+  match `/bnw/mesh/new` and `/bnw/mesh/<id>/edit` **before** treating the segment as a
+  mesh id.
 - **Canvas & fullscreen:** canvas is given a path segment (`/canvas`) because it is a
   distinct full-surface view worth deep-linking; session/assistant fullscreen and board
   kanban stay **query view-state** because they are the same resource in a different
   presentation. (Open question 4.2 — confirm canvas-as-path vs `?canvas`.)
-- **Board** keeps its existing query contract; we only **re-home** its parsing under the
-  central router (one `popstate` owner instead of two) and add the `/board/issue/<n>`
-  path form alongside today's search form.
+- **Board** keeps its existing query contract; the new `/bnw/` board view **reuses the
+  `parseBoardRoute`/`serializeBoardRoute` serializers** (forked into the new view per the
+  §4 independent-view-layer constraint) under the one central `popstate` owner, and adds
+  the `/board/issue/<n>` path form alongside the search form.
 
 **Surface/route count:** 13 surfaces → **~19 distinct route patterns** (12 path patterns +
-board/settings/file view-state variants).
+board/settings/file view-state variants), **all under `/bnw/`**.
 
 ### 1.2 Router choice — recommendation: **hand-written minimal router** (no library)
 
@@ -139,64 +169,70 @@ type Route =
   | { k: "settings"; tab?: SettingsTab } | { k: "notifications" }
   | { k: "file"; mesh: string; agent: string; kind: "file"|"artifact"; path: string; lb?: boolean }
   | { k: "notFound" };
-useRoute(): Route            // parse on mount + on popstate (single global listener)
-navigate(to: Route|string, {replace?})   // build href via the same serializers, pushState + dispatch popstate
+useRoute(): Route            // strip the `/bnw` prefix, then parse pathname+search; re-parse on popstate (single global listener)
+navigate(to: Route|string, {replace?})   // build a `/bnw`-prefixed href via the serializers, pushState + dispatch popstate
 ```
-Reuse `parseFileRoute`/`parseBoardRoute`/`serializeBoardRoute` verbatim inside the parser
-so the two already-shipped contracts are preserved exactly.
+The router operates only inside `/bnw/`: it strips the `/bnw` prefix before parsing and
+re-adds it when serializing. Reuse the **logic** of `parseFileRoute`/`parseBoardRoute`/
+`serializeBoardRoute` (forked into the new view layer per §4, not imported from the old
+components) so the two already-shipped route contracts are preserved exactly under `/bnw/`.
 
 ### 1.3 Path vs hash — recommendation: **path-based** (no blocker found)
 
 The code audit shows no blocker: the server already SPA-falls-back for `/mesh/*` and the
 two existing routers use pathname/search (not hash). Path keeps URLs clean and
-right-clickable. The only requirement path imposes is **server fallback for the new
-top-level routes** (§1.4). Hash would avoid server changes but breaks the existing
-`/mesh/<id>/agent/<id>/file/<path>` deep links and `RouteLink` semantics — rejected.
+right-clickable. The only requirement path imposes is the **`/bnw/*` server fallback**
+(§1.4). Hash would avoid server changes but breaks deep links and `RouteLink` semantics —
+rejected.
 
-### 1.4 Server SPA fallback design (`server.ts`)
+### 1.4 Server SPA fallback design (`server.ts`) — `/bnw/*` ONLY
 
-Goal: serve `index.html` for every deep UI path **without** breaking `/api/*`, `/ws`,
-guarded `/__ui-preview`/`/__ui-mockup`, static assets, or device-auth.
+**LOCKED:** the server fallback widens **only the `/bnw/*` namespace** to `index.html`.
+Root and old routes (`/`, old `/mesh/*`, etc.), `/api/*`, `/ws`, and the `__ui-*` guards
+are **unchanged**. Goal: serve `index.html` for every deep `/bnw/` path without touching
+the old UI or breaking API/WS/guards/static assets/device-auth.
 
 Current fetch order is already correct (most-specific first): `/ws` → `/api/*` →
-`__ui-*` guard → asset fetch. We change only the **asset fallback**:
+`__ui-*` guard → asset fetch. We change only the asset fallback, scoped to `/bnw/`:
 
-1. **Widen the asset server route map** from `{ "/", "/mesh/*", "/__ui-preview",
-   "/__ui-mockup" }` to also map the new top-level surfaces to `index.html`:
-   `/assistant`, `/harnesses`, `/channels`, `/doctor`, `/settings`, `/notifications`,
-   `/mesh/new`, and (covered by `/mesh/*`) all mesh-scoped sub-paths. Prefer **explicit
-   prefixes** over a blanket `/*` so unknown asset requests still 404 (don't serve HTML
-   for a missing `.js`).
-2. **Fallback rule for unknown non-asset paths:** if the path has no file extension and is
-   not `/api`/`/ws`/`__ui-*`, serve `index.html` (the SPA renders its own in-app 404 for
-   genuinely unknown routes, surface 13). Paths *with* an extension (assets) keep returning
-   the asset/404 from the bundle so a real missing asset is a real 404.
-3. **Cache-control:** extend the `no-store` SPA header (currently `/` and `/mesh/*`) to all
-   HTML-serving routes so a deployed frontend upgrade is picked up (works with the existing
-   `UpgradePrompt`/`appVersion` flow).
+1. **Add one `/bnw/*` route** to the asset server map → `index.html`. The existing
+   `{ "/", "/mesh/*", "/__ui-preview", "/__ui-mockup" }` entries stay exactly as they are
+   (old root UI untouched). The single new namespaced route covers every `/bnw/` surface
+   and sub-path (`/bnw/`, `/bnw/mesh/<id>/…`, `/bnw/assistant`, `/bnw/harnesses`, …).
+2. **Fallback rule, `/bnw/`-scoped:** for a `/bnw/…` path with no file extension, serve
+   `index.html` (the new SPA renders its own in-app 404 for unknown `/bnw/` routes, surface
+   13). A `/bnw/…` path *with* an extension (a bundled asset) keeps returning the
+   asset/404 so a real missing asset is a real 404. Non-`/bnw/` unknown paths keep today's
+   behavior — **no change** to the old fallback.
+3. **Cache-control:** apply the same `no-store` SPA header already used for `/` and
+   `/mesh/*` to `/bnw/*` HTML responses (so a deployed frontend upgrade is picked up via
+   the existing `UpgradePrompt`/`appVersion` flow). Existing headers unchanged.
 4. **Order/guard invariants preserved:** `/api/*` and `/ws` are matched **before** the
-   asset fallback, so widening it cannot shadow them. `__ui-preview`/`__ui-mockup` stay
-   behind `MESH_UI_PREVIEW=1` (404 when off) — that check stays *before* the fallback.
-   Device-auth is unaffected: it is enforced on `/api/*` (server) + the Boot gate (client),
-   neither of which depends on which HTML path was served. A deep link to `/doctor` while
-   unauthorized still serves `index.html` → Boot shows the gate → after approval the client
-   routes to `/doctor` (via `?next=`). ✔
-5. **Smoke coverage:** `server.smoke.ts` must add: deep-link GET for each new top-level
-   route returns `200 text/html`; `/api/*` and `/ws` still gate; a missing asset still
-   `404`; `__ui-*` still `404` when `MESH_UI_PREVIEW` unset.
+   asset fallback, so the `/bnw/*` route cannot shadow them. `__ui-preview`/`__ui-mockup`
+   stay behind `MESH_UI_PREVIEW=1` (404 when off) — that check stays *before* the fallback.
+   Device-auth is unaffected: enforced on `/api/*` (server) + the Boot gate (client),
+   neither of which depends on which HTML path was served. A deep link to `/bnw/doctor`
+   while unauthorized still serves `index.html` → Boot shows the gate → after approval the
+   client routes to `/bnw/doctor` (via `?next=`). ✔
+5. **Smoke coverage:** `server.smoke.ts` adds: deep-link GET for representative `/bnw/`
+   routes returns `200 text/html`; the **old** root/`/mesh/*` routes still serve as before;
+   `/api/*` and `/ws` still gate; a missing `/bnw/` asset still `404`; `__ui-*` still `404`
+   when `MESH_UI_PREVIEW` unset.
 
 ### 1.5 Real `<a href>` migration
 
-Replace state-callback navigation with `RouteLink` (or `StatusListRow`'s `href`) so rows
-are real links (right-click → "open in new tab", middle-click, ⌘/Ctrl-click all native):
-- **Sidebar mesh rows** → `RouteLink href="/mesh/<id>"` (today `onSelect(name)` + localStorage). ✔
-- **Topology/overview agent nodes** → `RouteLink href="/mesh/<id>/agent/<agentId>"`. ✔
-- **Board rows** → `/mesh/<id>/board/issue/<n>` (board already pushes state; swap to RouteLink). ✔
-- **Management entries** (topbar `管理▾`/`设置▾`) → links to `/harnesses`, `/channels`,
-  `/doctor`, `/settings`, `/notifications`, `/assistant`, `/mesh/new`.
+In the **new `/bnw/` views**, navigation uses `RouteLink` (or `StatusListRow`'s `href`) so
+rows are real links (right-click → "open in new tab", middle-click, ⌘/Ctrl-click native).
+These are built in the new view layer (§4) — the **old** components keep their existing
+state-callback navigation untouched. New `/bnw/` link targets:
+- **Sidebar/new-shell mesh rows** → `RouteLink href="/bnw/mesh/<id>"`.
+- **Topology/overview agent nodes** → `RouteLink href="/bnw/mesh/<id>/agent/<agentId>"`.
+- **Board rows** → `RouteLink href="/bnw/mesh/<id>/board/issue/<n>"`.
+- **Management entries** (topbar `管理▾`/`设置▾`) → `/bnw/harnesses`, `/bnw/channels`,
+  `/bnw/doctor`, `/bnw/settings`, `/bnw/notifications`, `/bnw/assistant`, `/bnw/mesh/new`.
 - **Same-origin interception** is handled by `spaTarget`; **external** links (official
-  harness docs in `SelfInstallerGuide`, Feishu links) must keep `target=_blank`
-  rel=noopener so they stay native. The mockups already encode this split.
+  harness docs in `SelfInstallerGuide`, Feishu links) keep `target=_blank` rel=noopener so
+  they stay native. The mockups already encode this split.
 
 ---
 
@@ -205,26 +241,37 @@ are real links (right-click → "open in new tab", middle-click, ⌘/Ctrl-click 
 Each phase lands as its own gated checkpoint (per-commit STOP+await, as in C1–C5). "Wired
 to real data" = consumes the **store** (WS snapshot+deltas) and the REST endpoints listed.
 
-### 7.0 — Routing + new app-shell foundation (parity + fallback FIRST)
-- **Goal:** introduce `router.tsx` + the redesigned adaptive shell (topbar `管理▾`/`设置▾`,
-  collapsible left nav, right context) and **mount the existing real views inside it**
-  unchanged, so nothing regresses while routes/fallback come online. No business logic
-  rewritten yet.
-- **Data source:** existing `store` (meshes list, connection, upgrade); `localStorage`
-  selection migrated to read **from the route** (`/mesh/<id>`), falling back to the stored
-  value only for `/`.
-- **Components reused:** `App` decomposed into shell + `<Outlet>`-style route switch;
-  `Sidebar` (mesh list), `MeshDetail`, modals temporarily reachable as routed wrappers.
-  `RouteLink` for mesh rows.
-- **Server:** the §1.4 fallback widening + smoke coverage land here.
-- **Capabilities preserved:** mesh list pagination (#19), reload-defs (#20), connection/
-  upgrade banners, device-auth gate, file-viewer route (must keep working byte-for-byte).
-- **Tests/e2e/a11y:** router unit tests (parse/serialize round-trip incl. board+file
-  contracts); `server.smoke` deep-link matrix; an e2e that deep-links each top-level route
-  and asserts the right surface mounts + reload (popstate) keeps it; a11y unchanged.
+> **Reading "Components" under the LOCKED independent-view-layer constraint (§0.4):** every
+> phase builds **new `/bnw/` view components** from the C5–C8 component library + the
+> approved mockup structure. Where a phase lists an old component (e.g. `MeshDetail`,
+> `BoardPanel`), it is the **behavioral/structural reference** for the new forked view and
+> the **shared data layer** it reads (store/API/WS) — the old file itself is **not mutated**
+> and keeps serving the old root UI. Only non-view logic (route serializers, `device-auth.ts`,
+> `themes.ts`, `i18n.ts`, store hooks) is imported directly.
+
+### 7.0 — `/bnw/` routing foundation + new shell skeleton (FIRST; old UI untouched)
+- **Goal:** stand up the parallel `/bnw/` tree: (a) `index.tsx` split — `/bnw/` prefix
+  mounts the new router + new shell; all else → existing `<Boot>/<App>` unchanged; (b)
+  `router.tsx` hand-written minimal router (strip `/bnw`, parse, `navigate`); (c) the new
+  redesigned adaptive **shell skeleton** (topbar `管理▾`/`设置▾`, collapsible left nav,
+  right context) with route-switched **placeholders** for the 13 surfaces; (d) the
+  `/bnw/*` server fallback + smoke. No real surface wiring yet beyond the mesh list needed
+  to navigate. Old root UI is byte-for-byte untouched.
+- **Data source:** shared `store` (meshes list, connection, upgrade) for the shell;
+  selection comes **from the `/bnw/` route** (not `localStorage`).
+- **Components (new `/bnw/`):** new `BnwShell` + `router.tsx` + a route switch; `RouteLink`
+  for mesh rows; surface placeholders. No old component is modified or mounted.
+- **Server:** the §1.4 `/bnw/*` fallback + smoke coverage land here (old routes unchanged).
+- **Capabilities preserved:** device-auth Boot gate wraps `/bnw/`; old UI fully intact as
+  the safety net; (mesh pagination #19 / reload-defs #20 are re-implemented in the new shell
+  as their surfaces land, 7.0–7.1).
+- **Tests/e2e/a11y:** router unit tests (strip-prefix + parse/serialize round-trip incl. the
+  forked board+file contracts); `server.smoke` `/bnw/*` matrix + old-routes-unchanged
+  assertions; an e2e that deep-links representative `/bnw/` routes and asserts the right
+  placeholder mounts + reload (popstate) survives; a11y on the new shell skeleton.
 
 ### 7.1 — Runtime A (the daily driver)
-- **Routes:** `/mesh/<id>`, `/mesh/<id>/agent/<agentId>` (`?full=1`), `/mesh/<id>/canvas`.
+- **Routes:** `/bnw/mesh/<id>`, `/bnw/mesh/<id>/agent/<agentId>` (`?full=1`), `/bnw/mesh/<id>/canvas`.
 - **Data source:** `store` per-mesh state — `transcripts` (paginated via
   `/api/meshes/{}/agents/{}/transcript`, `loadInitialTranscript`/`loadOlderTranscript`),
   `activity`, `mail`, `pending`/`history` (permissions), `queues`, `modes/models/efforts/
@@ -246,8 +293,8 @@ to real data" = consumes the **store** (WS snapshot+deltas) and the REST endpoin
   nav/remove; load-older; canvas drag→pin; a11y over the live runtime in all themes.
 
 ### 7.2 — Board C
-- **Routes:** `/mesh/<id>/board` (`?view&status&label&assignee&epic&q&sort&group`),
-  `/mesh/<id>/board/issue/<n>`.
+- **Routes:** `/bnw/mesh/<id>/board` (`?view&status&label&assignee&epic&q&sort&group`),
+  `/bnw/mesh/<id>/board/issue/<n>`.
 - **Data source:** `store.board` per mesh — `ensureBoardLoaded`/`getBoard`
   (`GET /api/meshes/{}/board`, one-shot+coalesced), live `board` WS snapshots, mutations
   via `boardCommand` (`POST …/board` with CAS `expectedBoardRevision`; 409 → silent
@@ -262,13 +309,14 @@ to real data" = consumes the **store** (WS snapshot+deltas) and the REST endpoin
   drag = set_status (perm-gated); a11y on label chips (already audited) in the live board.
 
 ### 7.3 — New-mesh + Assistant B
-- **Routes:** `/mesh/new`, `/mesh/<id>/edit` (`?nmEditor=…`); `/assistant` (`?full=1`).
+- **Routes:** `/bnw/mesh/new`, `/bnw/mesh/<id>/edit` (`?nmEditor=…`); `/bnw/assistant` (`?full=1`).
 - **Data source:** `defineMesh` (`POST /api/meshes`, raw validation surfaced), `openEditor`
   (`GET /api/meshes/{}/config`), `listHarnesses`/harness models for selects; assistant
   `promptAssistant`/`interruptAssistant` + `state.assistant` transcript/capabilities.
-- **Components reused:** `MeshBuilder` (becomes a routed page, not a modal), incl.
-  `TextEditorDialog` expanded editor; `Sidebar`'s `AssistantChat` extracted to a routed
-  `/assistant` page.
+- **Components (new `/bnw/`):** a new routed new-mesh page (referencing `MeshBuilder`'s
+  structure incl. the `TextEditorDialog` expanded editor) and a new routed `/bnw/assistant`
+  page (referencing `Sidebar`'s `AssistantChat`) — built from the component library, reading
+  the shared store; the old `MeshBuilder`/`Sidebar` files are not mutated.
 - **Capabilities preserved (audit):** #1 per-agent instructions, #2 expanded text-editor
   modal, #3 model+probe/retry, #4 effort, #5 lazy, #6 opencode permission, #7 auto-compact,
   #8 edge steer; #21 assistant fullscreen.
@@ -279,19 +327,36 @@ to real data" = consumes the **store** (WS snapshot+deltas) and the REST endpoin
   long-form sticky/fixed-save with many agents; assistant chat + fullscreen; a11y.
 
 ### 7.4 — Harnesses / Channels / Doctor / Settings / Notifications / File-viewer / Device-auth
-- **Routes:** `/harnesses`, `/channels`, `/doctor`, `/settings` (`?tab`), `/notifications`,
-  the existing file-viewer routes, device-auth gate (`?next`).
+- **Routes:** `/bnw/harnesses`, `/bnw/channels`, `/bnw/doctor`, `/bnw/settings` (`?tab`),
+  `/bnw/notifications`, the `/bnw/`-prefixed file-viewer routes, device-auth gate (`?next`).
 - **Data source:** harnesses — `listHarnesses`/`installHarness`/`streamHarnessInstall`/
   `reprobeHarness`; channels — `getFeishuStatus`/`startFeishuProvision`/`getFeishuProvision`/
   `cancelFeishuProvision`/`syncFeishuMeshChats`/`ensureFeishuMeshChat`; doctor — `fetchDoctor`
   (`/api/diagnostics/doctor`) + `fetchPsDetail` (`/api/diagnostics/ps`); settings —
   `Theme`/`themes.ts` + `i18n` + device-management endpoints; file-viewer — `AuthedImage`/
-  `FileViewer` (already routed); device-auth — `Boot`/`device-auth.ts`.
-- **Net-new pages:** **Notifications (#10 [N])** has *no* server or client system today
-  (only transient client toasts). Step 7.4 either (a) builds the server-persistent
-  notification store the redesign §1.4 specifies, or (b) ships the page against toasts +
-  derived signals as an interim. **Decision needed (open question 4.x).** Settings
-  default-view/default-device prefs are also [N].
+  `FileViewer` logic (forked, `/bnw`-prefixed); device-auth — `Boot`/`device-auth.ts`.
+- **Notifications (#10 [N]) = Option B (LOCKED): real server-persisted system, part of Step
+  7** — built as a **7.4 prerequisite** before the client page. Mini-design:
+  - **Data model:** `Notification { id, ts, kind (info|warning|error|approval|lifecycle),
+    title, body?, mesh?, agent?, link? (a `/bnw/…` deep link), read: bool, dedupeKey? }`.
+  - **Storage:** server-side durable, per the existing root-scoped JSON-doc + CAS pattern
+    (same family as `boards/<mesh>.json` / auth-store) — e.g. `notifications.json` (or
+    per-scope) with atomic write + revision; bounded ring (see retention).
+  - **API:** `GET /api/notifications` (list, `?unread=1`, paginate), `POST
+    /api/notifications/{id}/read`, `POST /api/notifications/read-all`, optional `DELETE`
+    for dismiss. Pre-auth? No — gated like all `/api/*` (Bearer).
+  - **WS event:** a new `notification` server message (snapshot on connect + deltas:
+    add/read), folded into the store exactly like `board`/`activity` so the page and a
+    topbar 🔔 unread badge update live.
+  - **Producers:** server emits on key events (approval requested, lifecycle transitions,
+    mesh/agent errors, harness install done/failed, device-auth approve/revoke) — the same
+    signals that drive today's transient toasts, now persisted.
+  - **Retention/cleanup:** cap N per scope (e.g. 500, mirroring permission history) +
+    age-based prune on write; read items prunable first. No unbounded growth.
+  - **Client page:** `/bnw/notifications` lists from the store, mark-read/read-all, filter
+    unread, deep-link to source; topbar 🔔 shows unread count. Toasts remain for ephemeral
+    in-session feedback; the center is the durable record.
+  - Settings default-view/default-device prefs ([N]) ride the same settings surface.
 - **Capabilities preserved (audit):** #26 install progress live log + retry-stream + close,
   #27 self-install guide (copy cmd + docs link + reprobe), #28 restart old-version agents
   (force/after-idle/cancel). Device-auth invariants: approved-token-only allow path,
@@ -302,7 +367,7 @@ to real data" = consumes the **store** (WS snapshot+deltas) and the REST endpoin
   approve/revoke; device-auth gate happy/again; a11y across all themes.
 
 ### 7.5 — Mobile + global states + regression hardening
-- **Routes:** all of the above on mobile; global 404/offline/error.
+- **Routes:** all of the above `/bnw/` routes on mobile; global `/bnw/` 404/offline/error.
 - **Data source:** same stores; offline = WS reconnect state (`useConnected`, store
   reconnect toasts); errors = per-surface ErrorBanner + retry.
 - **Components reused:** mobile shell (bottom tabs 运行态/看板/更多), all surfaces' mobile
@@ -364,45 +429,55 @@ Source of truth: `coverage/14-existing-capability-audit.md` (28 [E] items). Each
   force-directed default-on + pinned dragged node; keep stop/wake/⋯/zoom/Esc.
 
 Gate rule: a phase is not "done" until its mapped audit rows + C-constraints are
-demonstrated in the real, store-wired page (tests/e2e/a11y), not the mockup.
+demonstrated in the real, store-wired `/bnw/` page (tests/e2e/a11y), not the mockup.
+**The old root UI staying available is a safety net, NOT permission to omit any parity
+item** — every one of the 28 must exist and be verified in the new `/bnw/` UI.
 
 ---
 
 ## 4. Risks / open questions
 
-**4.1 Router: library vs hand-written (DECISION NEEDED).** Recommendation = hand-written
-minimal router (§1.2). Needs prdmgr/user sign-off before 7.0, since it's load-bearing for
-every later phase. If they prefer a library, React Router v7 is the fallback; cost is
-bundle/compile risk + reconciling its history with `RouteLink`/`spaTarget`.
+**4.1 Router: library vs hand-written — RESOLVED.** Hand-written minimal router (§1.2),
+locked by prdmgr/user. (Kept here for traceability; no longer open.)
 
-**4.2 URL naming details (MAY NEED APPROVAL).** Confirm: canvas as path `/mesh/<id>/canvas`
-vs query `?canvas`; fullscreen as `?full=1`; board `/board/issue/<n>` vs keeping
-search-only; `/channels` vs `/channels/feishu` top-level; settings `?tab=` names;
-device-auth `?next=` for return-to.
+**4.2 URL naming details (MAY NEED APPROVAL).** The `/bnw/` prefix + the full path list are
+**locked**. Still confirm the *view-state* details: canvas as path `/bnw/mesh/<id>/canvas`
+vs query `?canvas`; fullscreen as `?full=1`; board `/board/issue/<n>` vs search-only;
+`/bnw/channels` vs `/bnw/channels/feishu`; settings `?tab=` names; device-auth `?next=`.
 
-**4.3 Cutover strategy.** Recommendation = **route-gated coexistence**, not a big-bang
-switch. Build the new shell behind the router from 7.0 with existing views mounted inside;
-migrate one surface per phase; keep the old modal entry points working until each surface's
-routed page lands; flip the default landing last. (Alternative: a `MESH_UI_NEXT=1`-gated new
-shell that runs beside the current one until parity — heavier, only if the user wants a
-hard A/B.) **Decision needed: coexistence vs gated-flag vs one-time switch.**
+**4.3 Cutover strategy — RESOLVED: parallel `/bnw/` namespace.** Locked by prdmgr/user.
+The old root UI (`/`, old `/mesh/*`, …) is **untouched**; the new console lives only under
+`/bnw/` (separate `index.tsx` branch, new shell, new forked views, `/bnw/*`-only server
+fallback). Per-surface migration happens **inside** `/bnw/` (7.0→7.5); the old UI remains a
+full-feature safety net for the whole of Step 7 and is retired only after the new `/bnw/`
+UI reaches 28-item parity and the user signs off on a final flip. Supersedes the earlier
+route-gated/new-shell-on-root recommendation. **Independent view layer** (§0.4): the new UI
+must not modify the old view components in place — shared data layer, forked views.
 
 **4.4 Highest implementation risks.**
-- **Server fallback + auth:** widening the SPA fallback must not accidentally serve HTML for
-  `/api`/`/ws`/missing assets, and must keep device-auth + `__ui-*` gating intact (§1.4).
-  Mitigation: explicit prefixes + extension check + smoke matrix.
-- **URL ↔ store sync:** the route is the *selection*; the store is the *data*. Risk of two
-  sources of truth (route vs `localStorage["mesh.selected"]` vs `selectedAgent` state).
-  Mitigation: route is authoritative for selection; localStorage becomes only the `/`
-  default hint; `selectedAgent`/`fullView`/modal booleans are derived from the route.
+- **`/bnw/*` server fallback + auth:** the new fallback is **scoped to `/bnw/`** and must
+  not serve HTML for `/api`/`/ws`/missing `/bnw/` assets, must leave the old root/`/mesh/*`
+  routes byte-for-byte, and must keep device-auth + `__ui-*` gating intact (§1.4).
+  Mitigation: single `/bnw/*` route + extension check + smoke matrix (incl. old-routes-
+  unchanged assertions).
+- **Two UIs, one data layer:** old and new UI share the store/API/WS. Risk = a shared
+  *non-view* change (store/serializer) regresses the old UI. Mitigation: the §0.4
+  constraint forbids mutating old **view** components; any shared-logic change is covered by
+  the existing old-UI tests + the new `/bnw/` tests.
+- **URL ↔ store sync:** the `/bnw/` route is the *selection*; the store is the *data*. The
+  new UI derives selection (`mesh`/`agent`/`issue`/fullscreen/modal) **from the route**, not
+  from `localStorage["mesh.selected"]` (that stays the old UI's concern). No second source
+  of truth in the new tree.
 - **Preserving capability-rich surfaces:** device-auth (fail-closed invariants),
   Feishu/channels, doctor (reap/restart-only scope), board (CAS), p2p/approval, mobile
-  parity — each is a regression magnet; the §3 checklist + per-phase e2e are the guard.
-- **Notifications [N]:** net-new server-persistent system is the largest unknown (no code
-  today); may warrant its own design sub-task before 7.4 (open question 4.x).
-- **Board double-routing:** BoardPanel currently owns its own `popstate`; folding it under
-  one router without breaking back-button semantics needs care (reuse its serializers,
-  single listener).
+  parity — each is a regression magnet in the new UI; the §3 checklist + per-phase e2e guard.
+- **Notifications [N] = Option B:** real server-persisted system (no code today) — the
+  largest net-new build; sequenced as a **7.4 prerequisite** (data model/storage/API/WS/
+  retention before the client page; §2 7.4 mini-design).
+- **Board route logic fork:** the new `/bnw/` board view reuses the **logic** of
+  `parseBoardRoute`/`serializeBoardRoute` under the one central `popstate` owner; the old
+  `BoardPanel` keeps its own routing for the old UI (two listeners across two trees is fine
+  — they live on different paths). Care: don't import-and-mutate the old parser in place.
 
 ---
 
@@ -432,3 +507,18 @@ change-logs in `coverage/02`–`04` (C2/C3/C4/C5 constraints).
   surfaces, router recommendation (hand-written), path-vs-hash (path), server SPA fallback
   design, RouteLink migration, phased 7.0–7.5 plan, 28-item parity mapping + C1–C5
   constraints, risks/open questions. Grounded in the real client/server code (see §5).
+- 2026-06-21 — **planning rewrite (prdmgr/user locked cutover, docs-only)**: adopted the
+  **parallel `/bnw/` namespace** cutover (supersedes route-gated/new-shell-on-root).
+  Changed sections: **§0** (added LOCKED ARCHITECTURE box: hand-written router, `/bnw/`
+  paths, `index.tsx` split, independent view layer not mutating old components, notifications
+  Option B, parity-is-hard-gate); **§1.1** (every route `/bnw/`-prefixed); **§1.2** (router
+  strips `/bnw`; serializer logic forked not imported); **§1.3** (`/bnw/*` fallback);
+  **§1.4** (rewritten: `/bnw/*`-only server fallback, old/root/`/api`/`/ws`/`__ui-*`
+  unchanged); **§1.5** (`/bnw/`-prefixed links, new view layer only); **§2** (added
+  independent-view-layer note; 7.0 → `/bnw/` routing+shell skeleton+index split+`/bnw/*`
+  fallback with old UI untouched; 7.1–7.5 routes `/bnw/`-prefixed; **7.4 Notifications
+  rewritten to Option B with a server-persisted mini-design** — data model/storage/API/WS/
+  retention as a 7.4 prerequisite); **§3** (old UI = safety net, not parity-omission);
+  **§4.1/4.3 RESOLVED** (router + cutover locked), **§4.4** (risks re-scoped to `/bnw/`
+  fallback, shared-data-layer, notifications Option B, board logic fork). Router decision
+  (4.1) and cutover (4.3) now closed; remaining open item = view-state URL naming (4.2).
