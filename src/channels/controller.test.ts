@@ -430,7 +430,13 @@ function diskBackedMesh(dir: string, initial: string[] = []): MeshGateway {
     ...mesh,
     listMeshes() { return [...set].map((name) => ({ name, status: "running" as const })); },
     async mergeDefinitionsFromDisk() {
-      try { for (const f of readdirSync(join(dir, "meshes"))) if (isMeshConfigFile(f)) set.add(f.slice(0, -".json".length)); } catch { /* dir missing */ }
+      // File-aware, mirroring the real MeshStore.load() (readdir withFileTypes + entry.isFile()): a
+      // directory named `<name>.json` is NOT a config, so the fake must skip it too.
+      try {
+        for (const e of readdirSync(join(dir, "meshes"), { withFileTypes: true })) {
+          if (e.isFile() && isMeshConfigFile(e.name)) set.add(e.name.slice(0, -".json".length));
+        }
+      } catch { /* dir missing */ }
     },
   };
 }
@@ -480,6 +486,9 @@ test("meshes watcher: a DIRECTORY named meshes/<name>.json is ignored (no schedu
     await waitFor(() => false, 250); // give fs.watch time to deliver the event
     expect(timer.hasPending()).toBe(false); // statSync isFile() rejects the directory → no sync scheduled
     expect(created).toEqual(["m"]); // no chat created for the directory
+    // Belt-and-suspenders: even if a sync were forced, the file-aware merge ignores the directory too.
+    await gw.mergeDefinitionsFromDisk?.();
+    expect(gw.listMeshes().map((m) => m.name)).toEqual(["m"]); // "dir-mesh" never enters the view
     await ctl.stop();
   } finally { cleanup(); }
 });
