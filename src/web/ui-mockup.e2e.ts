@@ -116,6 +116,39 @@ try {
     if ((await cssVar("--accent")) !== expected.accent) throw new Error(`--accent=${await cssVar("--accent")}`);
   });
 
+  // ── runtime view (A) ──────────────────────────────────────────────────────────
+  await step("runtime A desktop overview: topology of agents; node → focus interaction", async () => {
+    await page.goto(`${BASE}/__ui-mockup?device=desktop&surface=runtime&runtime=overview`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-runtime="overview"]', { timeout: 8000 });
+    if (await page.getByText("Topology · 全体 agent").count() === 0) throw new Error("topology overview missing");
+    if (await page.locator('[data-runtime="overview"]').getByRole("link", { name: "codex-1" }).count() === 0) throw new Error("agent node link missing");
+    await page.locator('[data-runtime="overview"]').getByRole("link", { name: "codex-1" }).first().click();
+    await page.waitForSelector('[data-runtime="focus"]', { timeout: 8000 });
+  });
+
+  await step("runtime A desktop focus: transcript + inline approval + composer + activity/mail", async () => {
+    await page.goto(`${BASE}/__ui-mockup?device=desktop&surface=runtime&runtime=focus`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-runtime="focus"]', { timeout: 8000 });
+    if (await page.getByText("restart the alpha mesh").count() === 0) throw new Error("transcript fixture missing");
+    if (await page.getByRole("button", { name: "Approve" }).count() === 0) throw new Error("inline ApprovalCard missing");
+    if (await page.locator('[aria-label="Message composer"]').count() === 0) throw new Error("composer shell missing");
+    if (await page.locator('[aria-label="context"]').getByText("mail").count() === 0) throw new Error("activity/mail context missing");
+  });
+
+  await step("runtime A mobile overview: agent card list with pending approvals pinned", async () => {
+    await page.goto(`${BASE}/__ui-mockup?device=mobile&surface=runtime&runtime=overview`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-device="mobile"] [data-runtime="overview"]', { timeout: 8000 });
+    if (await page.getByText("待审批").count() === 0) throw new Error("pinned approvals section missing");
+  });
+
+  await step("runtime A mobile focus: approval pinned above transcript + composer", async () => {
+    await page.goto(`${BASE}/__ui-mockup?device=mobile&surface=runtime&runtime=focus`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-device="mobile"] [data-runtime="focus"]', { timeout: 8000 });
+    if (await page.getByRole("button", { name: "Approve" }).count() === 0) throw new Error("pinned approval missing");
+    if (await page.getByText("Transcript").count() === 0) throw new Error("transcript panel missing");
+    if (await page.locator('[aria-label="Message composer"]').count() === 0) throw new Error("composer missing");
+  });
+
   await step("screenshot desktop · expanded nav (dark-slate × signal-teal)", async () => {
     await page.goto(`${BASE}/__ui-mockup?device=desktop&view=runtime&mode=dark-slate&accent=signal-teal`, { waitUntil: "domcontentloaded" });
     await page.waitForSelector('[data-topbar-mesh="label"]', { timeout: 8000 });
@@ -138,6 +171,22 @@ try {
     await sleep(150);
     await shotFrame(`${SHOTS}/shell-mobile-dark-slate-signal-teal.png`);
   });
+
+  // ── runtime (A) screenshots (default Dark·Slate × Signal Teal) ──────────────────
+  const RUNTIME_SHOTS: [string, string][] = [
+    ["device=desktop&surface=runtime&runtime=overview", "runtime-desktop-overview-dark-slate-signal-teal.png"],
+    ["device=desktop&surface=runtime&runtime=focus", "runtime-desktop-focus-dark-slate-signal-teal.png"],
+    ["device=mobile&surface=runtime&runtime=overview", "runtime-mobile-list-dark-slate-signal-teal.png"],
+    ["device=mobile&surface=runtime&runtime=focus", "runtime-mobile-focus-dark-slate-signal-teal.png"],
+  ];
+  for (const [q, file] of RUNTIME_SHOTS) {
+    await step(`screenshot ${file}`, async () => {
+      await page.goto(`${BASE}/__ui-mockup?${q}&mode=dark-slate&accent=signal-teal`, { waitUntil: "domcontentloaded" });
+      await page.waitForSelector('[data-mockup="frame"] [data-runtime]', { timeout: 8000 });
+      await sleep(150);
+      await shotFrame(`${SHOTS}/${file}`);
+    });
+  }
 
   await step("no page errors across the mockup", async () => {
     if (errors.length) throw new Error(errors.slice(0, 3).join(" | "));
