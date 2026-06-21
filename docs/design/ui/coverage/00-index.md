@@ -159,6 +159,20 @@ bar** so they cannot scroll away:
 - Any surface the user wants **explicitly out of mobile scope** beyond the deferred list.
 
 ## Change log / sources read
+- 2026-06-22 — **Step 7.5-B per-surface mobile C1 sweep** (audit-and-close over every
+  `/bnw` surface at 390px). Global C1 rule applied at the shared `PanelFrame` level: the
+  header (title/description + actions) **stacks on mobile** (actions full-width below the
+  heading) and returns to one row at `lg` — this alone fixed the title char-wrap squeeze on
+  runtime overview/focus, board detail, and every other surface header. Per-surface fixes:
+  runtime overview/focus action clusters `flex-wrap` + `whitespace-nowrap` links (02);
+  doctor findings detail drops to its own full-width row on mobile (08); notifications filter
+  chips `flex-wrap` instead of overflow/clip (10). Surfaces audited clean (already encoded
+  `lg:` rules in 7.4 / no cram): harnesses (06), channels (07), settings (09), new-mesh (04),
+  assistant (05), file-viewer (11, path truncates), board list (03), device-auth gate (12).
+  Old root UI untouched (`PanelFrame` is used only by `/bnw` + the guarded `__ui-*` galleries).
+  Gates: tsc · full `bun test` · lint:tokens · server.smoke · bnw.e2e 23 · `/bnw × 9`
+  desktop+mobile a11y 18/18. Screenshots refreshed for all affected mobile surfaces (+ new
+  `bnw-runtime-focus-mobile.png`, `bnw-board-detail-mobile.png`).
 - 2026-06-21 — created (Phase A, commit 1): coverage index + state vocabulary + route/IA
   inventory + surface inventory. Sources read: `../interaction/00-index.md` (route map,
   state vocab, mobile coverage); route lines of `../interaction/01..12`; repo capability

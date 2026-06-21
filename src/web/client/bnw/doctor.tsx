@@ -137,7 +137,8 @@ export function DoctorFindings({ report }: { report: DoctorReport | null }) {
             <StatusChip status={SEV_TONE[c.severity]} variant="dot" />
             <code className="font-mono text-xs text-text-secondary">{c.id}</code>
             <StatusChip status={SEV_TONE[c.severity]} variant="soft" label={c.severity} />
-            <span className="min-w-0 flex-1 text-sm text-text-primary">{c.detail}</span>
+            {/* 7.5-B C1: detail drops to its own full-width row on mobile (no narrow side-column wrap) */}
+            <span className="min-w-0 w-full text-sm text-text-primary lg:w-auto lg:flex-1">{c.detail}</span>
           </div>
           {c.fixHint ? <span className="pl-6 text-xs text-text-muted">↳ {c.fixHint}</span> : null}
         </div>

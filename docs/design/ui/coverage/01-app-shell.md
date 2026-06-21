@@ -54,6 +54,24 @@ preference.
 | Reload definitions [E] (audit #20) | ✓ | ✓ | ✓(↻ confirm) | ✓(fail+retry) | △(perm) | ✓(reloading) | △(disabled offline) | N/A | ✓ | ✓(in sheet) |
 
 ## Change log / sources read
+- 2026-06-22 — **Step 7.5-A mobile shell/navigation built** (`bnw/BnwApp.tsx` +
+  new `bnw/mobile-nav.tsx`). Breakpoint seam = `lg` (`<lg` = mobile, 390px target).
+  At `<lg`: the `w-[232px]` left mesh nav and the desktop mesh sub-nav (运行态/看板/画布)
+  are fully hidden; a fixed **bottom tab bar** (运行态 / 看板 / 更多, `[data-bnw-bottomtabs]`)
+  appears; the topbar gains a mesh `<select>` (`选择 mesh`) switcher that preserves the
+  current runtime⇄board surface; the active surface uses full width (`main` gains `pb-20`
+  so the fixed bar never covers content). Desktop (`lg+`) is unchanged.
+  **Accepted deviation (lead-released, prdmgr-confirmed):** mockup 01 sketches 更多 as a
+  bottom *sheet* (`更多 sheet = 管理/设置/通知`); we ship 更多 as a **full-screen
+  management-route list** (`[data-bnw-more]`, a local overlay toggled from the bottom bar —
+  no router change), listing Mesh 助手 / Harnesses / 渠道 / Doctor / 设置 / 通知 / 新建 mesh.
+  Any navigation (or ✕) closes it. 画布 stays desktop-only sub-nav (not a bottom tab) — its
+  touch interactions are deferred (7.5 risk #6). Gates: tsc · bnw.e2e mobile-shell step
+  (bottom tabs switch runtime⇄board, 更多 opens/closes, mesh select switches mesh, desktop
+  rails return at 1440) · `/bnw × 9` a11y extended to a **390×844 mobile pass** (18 combos:
+  `desktop` + `mobile`, the latter also crawls the open 更多 overlay). Screenshots:
+  `bnw-runtime-overview-mobile.png`, `bnw-board-list-mobile.png`, `bnw-shell-more-mobile.png`.
+
 - 2026-06-21 — created (Phase A commit 2). Sources: `../interaction/01-app-shell.md`;
   code paths above (`server.ts`, `index.tsx`, `Sidebar.tsx`/`MeshDetail.tsx`,
   `store.ts`, `cli-dispatch.ts`, `cli-host-bearer.ts`, `themes.ts`).
