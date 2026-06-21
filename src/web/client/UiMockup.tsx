@@ -349,16 +349,38 @@ function MessageBubble({ who, text }: { who: "user" | "agent" | "tool"; text: st
 }
 
 // `busy` → ApprovalCard busy (spinner + options disabled); resolved → resolvedLabel.
-function ApprovalFixture({ busy = false, resolved }: { busy?: boolean; resolved?: string }) {
+// Total pending approvals for the focused agent (FIFO) — the bar shows the oldest, the
+// rest are counted in the queue badge ("还有 N 个待授权").
+const PENDING_APPROVALS = 3;
+const LONG_APPROVAL_DIFF = Array.from({ length: 10 }, (_, i) => `+ line ${i + 1}: a long config.json change the agent wants to write, exercising the bar's max-height + internal scroll so the composer is never pushed offscreen`).join("\n");
+
+function ApprovalFixture({ busy = false, resolved, long = false }: { busy?: boolean; resolved?: string; long?: boolean }) {
   return (
     <ApprovalCard
       title={`${FOCUS_AGENT} · write file`}
-      question={<>Allow <b>{FOCUS_AGENT}</b> to write <code className="text-syntax-string">config.json</code>?</>}
+      question={<>Allow <b>{FOCUS_AGENT}</b> to write <code className="text-syntax-string">config.json</code>?{long ? <pre className="mt-1.5 whitespace-pre-wrap rounded bg-surface-sunken px-2 py-1 text-xs font-mono text-text-secondary">{LONG_APPROVAL_DIFF}</pre> : null}</>}
       options={[{ id: "allow", label: "Approve", kind: "approve" }, { id: "once", label: "Just once" }, { id: "deny", label: "Deny", kind: "reject" }]}
       onResolve={() => {}}
       busy={busy}
       resolvedLabel={resolved}
     />
+  );
+}
+
+// C2 — approvals are a FIXED, composer-adjacent docked bar (NOT inline in the transcript).
+// FIFO: render only the oldest approval + a "还有 N 个待授权" count for the rest. Long content
+// is capped with internal scroll so it can never push the composer offscreen. Shared by the
+// runtime focus (write-file approval) and the assistant (delete-mesh confirm).
+function ApprovalBar({ children, queue = 0, long = false, label = "⚠ 待授权（最早一条）" }: { children: ReactNode; queue?: number; long?: boolean; label?: string }) {
+  return (
+    <div data-approval-bar className="flex flex-col gap-1.5 border-t border-border bg-surface-raised px-3 py-2">
+      <div className="flex items-center justify-between">
+        <span className="text-xs text-text-muted">{label}</span>
+        {queue > 0 ? <span data-approval-queue className="rounded-full bg-warning-subtle px-2 py-0.5 text-xs font-medium text-warning">还有 {queue} 个待授权</span> : null}
+      </div>
+      {/* max-height + internal scroll: long approval content never shoves the composer offscreen. */}
+      <div className={long ? "max-h-44 overflow-auto" : ""}>{children}</div>
+    </div>
   );
 }
 
@@ -375,12 +397,12 @@ function ComposerFixture({ disabled = false, busy = false }: { disabled?: boolea
   );
 }
 
-function Transcript({ long = false, busy = false, disabled = false }: { long?: boolean; busy?: boolean; disabled?: boolean }) {
+// C2 — transcript is pure conversation now; the approval moved to the docked ApprovalBar.
+function Transcript({ long = false }: { long?: boolean; busy?: boolean; disabled?: boolean }) {
   const rows = long ? LONG_TRANSCRIPT : TRANSCRIPT;
   return (
     <div className="flex flex-col gap-2">
       {rows.map((m, i) => <MessageBubble key={i} who={m.who} text={m.text} />)}
-      <ApprovalFixture busy={busy || disabled} resolved={undefined} />
     </div>
   );
 }
@@ -460,12 +482,24 @@ function RuntimeOverviewDesktop({ focusHref, canvasHref = "#", state = "populate
   );
 }
 
-// Desktop runtime — focus: header + runtime selectors + context/health + queue +
-// transcript (with expanders / load-older / jump) + inline approval + composer.
+// Desktop runtime — focus: scrolling transcript ABOVE; a docked region (jump-to-latest +
+// FIFO ApprovalBar + Composer) pinned at the bottom so the approval never scrolls away and
+// never pushes the composer offscreen (C2).
 function RuntimeFocusDesktop({ state = "populated", fullHref = "#" }: { state?: ShellState; fullHref?: string }) {
   const panel = runtimeStatePanel(state, `运行态 · ${FOCUS_AGENT}`, "No messages yet", "Send the first instruction to start the conversation.");
   if (panel) return <div data-runtime="focus" className="h-full">{panel}</div>;
   const disabled = state === "permission" || state === "offline";
+  // total pending approvals (FIFO) — show the oldest in the bar, count the rest.
+  const dockedFooter = (
+    <>
+      {/* jump-to-latest sits in the docked region so the fixed approval+composer never hides it. */}
+      <div className="flex justify-end pb-1"><JumpToBottom disabled={disabled} /></div>
+      <ApprovalBar queue={PENDING_APPROVALS - 1} long={state === "boundary"}>
+        <ApprovalFixture busy={state === "busy" || disabled} long={state === "boundary"} />
+      </ApprovalBar>
+      <div className="pt-2"><ComposerFixture disabled={disabled} busy={state === "busy"} /></div>
+    </>
+  );
   return (
     <div data-runtime="focus" className="flex h-full flex-col">
       <PanelFrame
@@ -474,16 +508,15 @@ function RuntimeFocusDesktop({ state = "populated", fullHref = "#" }: { state?: 
         actions={<Cluster><StatusChip status="working" variant="soft" /><LinkButton href={fullHref} label="enter fullscreen" dataKey="full-enter">⊞ full</LinkButton><Button size="sm" variant="ghost" disabled={disabled} busy={state === "busy"}>Interrupt</Button><Button size="sm" variant="ghost" disabled={disabled}>Restart</Button></Cluster>}
         className="flex-1"
         bodyClassName="flex flex-col gap-3"
-        footer={<ComposerFixture disabled={disabled} busy={state === "busy"} />}
+        footer={dockedFooter}
       >
         {runtimeNote(state)}
         <RuntimeControls disabled={disabled} busy={state === "busy"} />
         <ContextHealth near={state === "boundary"} />
         <PendingTurnQueue disabled={disabled} />
         <LoadOlderBar />
-        <Transcript long={state === "boundary"} busy={state === "busy"} disabled={disabled} />
+        <Transcript long={state === "boundary"} />
         <TranscriptExpanders />
-        <JumpToBottom disabled={disabled} />
       </PanelFrame>
     </div>
   );
@@ -538,31 +571,41 @@ function RuntimeListMobile({ focusHref, state = "populated" }: { focusHref: (id:
   );
 }
 
-// Mobile runtime — focus: approval pinned ABOVE the transcript, then composer.
+// Mobile runtime — focus (C2): transcript scrolls; the FIFO ApprovalBar + Composer dock at
+// the bottom (above the keyboard zone, higher priority than the text input). Ordinary input
+// stays available while an approval is pending. Approval is no longer pinned above transcript.
 function RuntimeFocusMobile({ state = "populated" }: { state?: ShellState }) {
   const panel = runtimeStatePanel(state, `${FOCUS_AGENT}`, "No messages yet", "Send the first instruction.");
   if (panel) return <div data-runtime="focus">{panel}</div>;
   const disabled = state === "permission" || state === "offline";
   return (
-    <div data-runtime="focus" className="flex flex-col gap-3">
-      <ActionBar ariaLabel={`${FOCUS_AGENT} actions`} end={<Button size="sm" variant="ghost" disabled={disabled} busy={state === "busy"}>Interrupt</Button>}>
-        <StatusChip status="working" variant="soft" />
-        <span className="text-sm text-text-secondary">{FOCUS_AGENT}</span>
-      </ActionBar>
-      {runtimeNote(state)}
-      <ApprovalFixture busy={state === "busy" || disabled} />
-      <RuntimeControls disabled={disabled} busy={state === "busy"} />
-      <ContextHealth near={state === "boundary"} />
-      <PendingTurnQueue disabled={disabled} />
-      <PanelFrame title="Transcript">
-        <div className="flex flex-col gap-2">
-          <LoadOlderBar />
-          {(state === "boundary" ? LONG_TRANSCRIPT : TRANSCRIPT).map((m, i) => <MessageBubble key={i} who={m.who} text={m.text} />)}
-          <TranscriptExpanders />
-          <JumpToBottom disabled={disabled} />
-        </div>
-      </PanelFrame>
-      <ComposerFixture disabled={disabled} busy={state === "busy"} />
+    <div data-runtime="focus" className="flex h-full flex-col">
+      {/* scrolling conversation region */}
+      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-auto">
+        <ActionBar ariaLabel={`${FOCUS_AGENT} actions`} end={<Button size="sm" variant="ghost" disabled={disabled} busy={state === "busy"}>Interrupt</Button>}>
+          <StatusChip status="working" variant="soft" />
+          <span className="text-sm text-text-secondary">{FOCUS_AGENT}</span>
+        </ActionBar>
+        {runtimeNote(state)}
+        <RuntimeControls disabled={disabled} busy={state === "busy"} />
+        <ContextHealth near={state === "boundary"} />
+        <PendingTurnQueue disabled={disabled} />
+        <PanelFrame title="Transcript">
+          <div className="flex flex-col gap-2">
+            <LoadOlderBar />
+            {(state === "boundary" ? LONG_TRANSCRIPT : TRANSCRIPT).map((m, i) => <MessageBubble key={i} who={m.who} text={m.text} />)}
+            <TranscriptExpanders />
+          </div>
+        </PanelFrame>
+      </div>
+      {/* docked: jump-to-latest + FIFO approval bar + composer (stay above the keyboard zone) */}
+      <div className="shrink-0">
+        <div className="flex justify-end pb-1"><JumpToBottom disabled={disabled} /></div>
+        <ApprovalBar queue={PENDING_APPROVALS - 1} long={state === "boundary"}>
+          <ApprovalFixture busy={state === "busy" || disabled} long={state === "boundary"} />
+        </ApprovalBar>
+        <div className="pt-2"><ComposerFixture disabled={disabled} busy={state === "busy"} /></div>
+      </div>
     </div>
   );
 }
@@ -1258,12 +1301,19 @@ function AssistantFrame({ state, device, fs = false, fsHref = "#" }: { state: Sh
               {long ? ASSISTANT_TOOLS_MANY.map((tc, i) => <AssistantToolCard key={i} {...tc} />) : null}
               <AssistantBubble who="agent" text="Done — mesh “app” created. Start it from the runtime view." />
               <AssistantBubble who="user" text="now delete the scratch-del mesh" />
-              <AssistantDeleteConfirm busy={working || disabled} />
+              {/* C2: the destructive delete-confirm is NOT inline here — it docks above the composer. */}
             </>
           )}
         </div>
       </div>
-      {showChat ? <div className="border-t border-border bg-surface-raised p-3"><AssistantComposer disabled={disabled} busy={working} imageEnabled={imageEnabled} /></div> : null}
+      {/* C2: docked approval region — delete-confirm uses the same composer-adjacent ApprovalBar
+          treatment as runtime, above the composer (never inline in the conversation). */}
+      {showChat ? (
+        <div className="bg-surface-raised">
+          {state !== "empty" ? <ApprovalBar long={long} label="⚠ Mesh Assistant · 待确认"><AssistantDeleteConfirm busy={working || disabled} /></ApprovalBar> : null}
+          <div className={`p-3 ${state === "empty" ? "border-t border-border" : ""}`}><AssistantComposer disabled={disabled} busy={working} imageEnabled={imageEnabled} /></div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -3027,6 +3077,11 @@ export function UiMockup() {
   const desktopContext = surface === "runtime"
     ? (runtime === "focus" ? (
         <div className="flex flex-col gap-3 text-sm">
+          {/* C2: right-context approval-queue badge mirrors the docked bar's FIFO count. */}
+          <div data-context-approvals className="flex items-center justify-between rounded-lg border border-border bg-surface-sunken px-2.5 py-1.5">
+            <span className="text-xs text-text-muted">待授权队列</span>
+            <Badge count={PENDING_APPROVALS} tone="urgent" />
+          </div>
           <div>
             <div className="mb-1 text-xs uppercase tracking-wider text-text-muted">activity</div>
             <div className="flex flex-col gap-1">

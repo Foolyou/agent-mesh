@@ -184,13 +184,17 @@ try {
     await page.waitForSelector('[data-runtime="focus"]', { timeout: 8000 });
   });
 
-  await step("runtime A desktop focus: transcript + inline approval + composer + activity/mail", async () => {
+  await step("runtime A desktop focus: transcript + docked approval bar + composer + activity/mail", async () => {
     await page.goto(`${BASE}/__ui-mockup?device=desktop&surface=runtime&runtime=focus`, { waitUntil: "domcontentloaded" });
     await page.waitForSelector('[data-runtime="focus"]', { timeout: 8000 });
     if (await page.getByText("restart the alpha mesh").count() === 0) throw new Error("transcript fixture missing");
-    if (await page.getByRole("button", { name: "Approve" }).count() === 0) throw new Error("inline ApprovalCard missing");
+    // C2: approval is a docked bar (not inline), with a FIFO queue count, above the composer.
+    if (await page.locator("[data-approval-bar]").count() === 0) throw new Error("docked approval bar missing");
+    if (await page.getByRole("button", { name: "Approve" }).count() === 0) throw new Error("oldest ApprovalCard missing");
+    if (await page.locator("[data-approval-queue]").count() === 0) throw new Error("FIFO queue count missing");
     if (await page.locator('[aria-label="Message composer"]').count() === 0) throw new Error("composer shell missing");
     if (await page.locator('[aria-label="context"]').getByText("mail").count() === 0) throw new Error("activity/mail context missing");
+    if (await page.locator("[data-context-approvals]").count() === 0) throw new Error("right-context approval-queue badge missing");
   });
 
   await step("runtime A mobile overview: agent card list with pending approvals pinned", async () => {
@@ -457,6 +461,8 @@ try {
     await page.goto(`${BASE}/__ui-mockup?surface=assistant&state=populated&device=desktop`, { waitUntil: "domcontentloaded" });
     await page.waitForSelector('[data-mockup="frame"][data-assistant="chat"]', { timeout: 8000 });
     if (await page.locator("[data-assistant-tool]").count() === 0) throw new Error("tool-call card missing");
+    // C2: delete-confirm is in a docked approval bar (composer-adjacent), not inline.
+    if (await page.locator("[data-approval-bar]").count() === 0) throw new Error("docked approval bar missing");
     if (await page.getByRole("button", { name: "Delete" }).count() === 0) throw new Error("delete-confirm missing");
     if (await page.locator('[aria-label="Message composer"]').count() === 0) throw new Error("composer missing");
     if (await page.locator('[data-assistant-p2p]').count() === 0) throw new Error("p2p DM entry missing");

@@ -81,14 +81,16 @@ test("runtime A · mobile overview: agent card list with pending approvals pinne
   expect(out).toContain("codex-1");
 });
 
-test("runtime A · mobile focus: approval pinned above transcript + composer", () => {
+test("runtime A · mobile focus (C2): approval is a docked bar below transcript, above composer", () => {
   const out = renderAt("?device=mobile&surface=runtime&runtime=focus");
   expect(out).toContain('data-runtime="focus"');
-  expect(out).toContain("Allow"); // ApprovalCard above transcript
+  expect(out).toContain("data-approval-bar"); // docked approval bar (not inline)
+  expect(out).toContain("Allow");
   expect(out).toContain("Transcript");
   expect(out).toContain('aria-label="Message composer"');
-  // approval markup appears before the transcript panel
-  expect(out.indexOf("Allow")).toBeLessThan(out.indexOf("Transcript"));
+  // C2: approval docks BELOW the transcript and ABOVE the composer
+  expect(out.indexOf("Transcript")).toBeLessThan(out.indexOf("data-approval-bar"));
+  expect(out.indexOf("data-approval-bar")).toBeLessThan(out.indexOf('aria-label="Message composer"'));
 });
 
 test("board C · desktop list: filter/sort bar, bulk toolbar, epic groups, rich issue rows", () => {
@@ -250,13 +252,15 @@ test("runtime boundary · many agents (overview) + long transcript (focus)", () 
   expect(fo).toContain("exercise wrapping and truncation"); // long transcript line
 });
 
-test("runtime mobile · list pins approvals; focus pins approval above transcript", () => {
+test("runtime mobile · list pins approvals; focus docks approval below transcript (C2)", () => {
   const list = renderAt("?surface=runtime&runtime=overview&state=populated&device=mobile");
   expect(list).toContain('data-device="mobile"');
-  expect(list).toContain("待审批");
+  expect(list).toContain("待审批"); // overview still pins the pending-approval section on top
   const focus = renderAt("?surface=runtime&runtime=focus&state=populated&device=mobile");
   expect(focus).toContain("Transcript");
-  expect(focus.indexOf("Allow")).toBeLessThan(focus.indexOf("Transcript"));
+  expect(focus).toContain("data-approval-bar");
+  // C2: focus approval is docked AFTER the transcript (no longer pinned above it)
+  expect(focus.indexOf("Transcript")).toBeLessThan(focus.indexOf("data-approval-bar"));
 });
 
 // ── runtime补漏 — audited [E] capabilities (audit #9–#18) ─────────────────────
@@ -329,6 +333,49 @@ test("runtime补漏 mobile · full degrades to focus, canvas to list; controls p
   const ov = renderAt("?surface=runtime&runtime=overview&state=populated&device=mobile");
   expect(ov).toContain('aria-label="wake kimi-cold"'); // cold agent wake in mobile list
   expect(ov).toContain('aria-label="start strategy"');
+});
+
+// ── C2: approvals are a fixed composer-adjacent docked bar (FIFO + sticky + max-height) ──
+test("C2 runtime focus desktop · docked approval bar below transcript, above composer; FIFO queue", () => {
+  const out = renderAt("?surface=runtime&runtime=focus&state=populated&device=desktop");
+  expect(out).toContain("data-approval-bar");
+  expect(out).toContain("Approve"); // the oldest approval renders in the bar
+  expect(out).toContain("data-approval-queue"); // FIFO: count of the rest
+  expect(out).toContain("还有 2 个待授权"); // PENDING_APPROVALS(3) - 1
+  // transcript content sits BEFORE the docked bar; composer AFTER it
+  expect(out.indexOf("restart the alpha mesh")).toBeLessThan(out.indexOf("data-approval-bar"));
+  expect(out.indexOf("data-approval-bar")).toBeLessThan(out.indexOf('aria-label="Message composer"'));
+  // jump-to-latest is in the docked region (so the fixed bar+composer never hides it)
+  expect(out.indexOf("data-jump-bottom")).toBeLessThan(out.indexOf("data-approval-bar"));
+  // right-context approval-queue badge mirrors the FIFO count
+  expect(out).toContain("data-context-approvals");
+});
+
+test("C2 runtime focus · long approval (boundary) is capped with internal scroll (no offscreen composer)", () => {
+  const out = renderAt("?surface=runtime&runtime=focus&state=boundary&device=desktop");
+  expect(out).toContain("data-approval-bar");
+  expect(out).toContain("max-h-44"); // bar caps long content + overflow-auto
+  expect(out).toContain("overflow-auto");
+  expect(out).toContain("a long config.json change"); // LONG_APPROVAL_DIFF content
+  // composer still present after the (capped) approval bar
+  expect(out.indexOf("data-approval-bar")).toBeLessThan(out.indexOf('aria-label="Message composer"'));
+});
+
+test("C2 assistant · delete-confirm docks above composer (not inline); empty has none", () => {
+  const out = renderAt("?surface=assistant&state=populated&device=desktop");
+  expect(out).toContain("data-approval-bar");
+  expect(out).toContain("Delete"); // delete-confirm inside the docked bar
+  // docked bar sits after the conversation and before the composer
+  expect(out.indexOf("now delete the scratch-del mesh")).toBeLessThan(out.indexOf("data-approval-bar"));
+  expect(out.indexOf("data-approval-bar")).toBeLessThan(out.indexOf('aria-label="Message composer"'));
+  // empty (suggestions) state has no approval bar
+  expect(renderAt("?surface=assistant&state=empty&device=desktop").includes("data-approval-bar")).toBe(false);
+});
+
+test("C2 assistant mobile · docked confirm above composer", () => {
+  const out = renderAt("?surface=assistant&state=populated&device=mobile");
+  expect(out).toContain("data-approval-bar");
+  expect(out.indexOf("data-approval-bar")).toBeLessThan(out.indexOf('aria-label="Message composer"'));
 });
 
 // ── navigation / index skeleton ──────────────────────────────────────────────

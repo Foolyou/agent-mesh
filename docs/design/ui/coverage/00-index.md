@@ -124,6 +124,28 @@ mobile-aware), 11 file-viewer (header truncates), 12 device-auth (single centere
 
 ---
 
+## Shared docked ApprovalBar pattern (Phase B user-review · C2)
+
+A cross-surface pattern (central note here because it's shared by runtime + assistant; the
+mockup component is `ApprovalBar` in `UiMockup.tsx`). Approvals/confirmations are **never
+inline in the transcript/conversation** — they render in a **fixed, composer-adjacent docked
+bar** so they cannot scroll away:
+
+- **Placement.** Transcript/conversation scrolls in its own region; a docked region at the
+  bottom holds `jump-to-latest → ApprovalBar → Composer`. The approval bar sits immediately
+  above the composer on both desktop and mobile.
+- **FIFO.** Only the **oldest** approval renders in the bar; the rest are summarized as
+  `还有 N 个待授权` (queue badge), mirrored by a right-side context approval-queue badge.
+- **Long content.** The bar caps its content (`max-h-44` + `overflow-auto`) so a long
+  approval can never push the composer offscreen (shown in the boundary state).
+- **Mobile.** The bar stays above the composer/keyboard zone (higher priority than the text
+  input); ordinary input remains available while an approval is pending.
+- **Jump-to-latest** lives inside the docked region so the fixed approval+composer never
+  hides it. Applied to: **02 runtime** (focus, write-file approval) and **05 assistant**
+  (delete-mesh confirm).
+
+---
+
 ## Open coverage questions (for prdmgr/user)
 
 - **Notifications (10)** is designed but **not yet implemented [N]** — confirm it stays
