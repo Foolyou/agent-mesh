@@ -124,6 +124,9 @@ try {
     { id: "opencode", label: "OpenCode", installed: false, auth: "unknown", installable: "self", installHint: { command: "npm i -g opencode", docsUrl: "https://opencode.example/docs" }, lastProbeAt: 0, runningAgentsUsingOldVersion: [] },
     { id: "kimi", label: "Kimi", installed: true, auth: "unknown", installable: "self", installHint: { command: "npm i -g @moonshot/kimi", docsUrl: "https://kimi.example/docs" }, lastProbeAt: 0, runningAgentsUsingOldVersion: [] },
   ]) }));
+  // Feishu channel is absent in the fake gateway → stub status so /bnw/channels paints a running
+  // channel with a binding (auth-admin sections are static placeholders) for the contrast crawl.
+  await page.route("**/api/channels/feishu/status", (r) => r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ state: "running", configPath: "channels/feishu.json", configured: true, enabled: true, appId: "cli_demo", domain: "feishu", bindings: [{ mesh: "demo", chatId: "oc_demo123", name: "demo 群", source: "auto", requireMention: true }], updatedAt: "" }) }));
   await page.goto(`${BASE}/bnw/`, { waitUntil: "domcontentloaded" }); // establish origin for localStorage
 
   for (const mode of MODES) {
@@ -172,6 +175,10 @@ try {
         await page.goto(`${BASE}/bnw/harnesses`, { waitUntil: "domcontentloaded" });
         await page.waitForSelector('[data-old-agents] [data-old-agent]', { timeout: 8000 });
         await sleep(60); await crawl(page, `${combo} · harnesses`);
+        // 7.4-A.2b-i — channels (status + bindings + auth-admin placeholders)
+        await page.goto(`${BASE}/bnw/channels`, { waitUntil: "domcontentloaded" });
+        await page.waitForSelector('[data-bindings] [data-binding]', { timeout: 8000 });
+        await sleep(60); await crawl(page, `${combo} · channels`);
         pass++; console.log(`  ✓ ${combo}`);
       } catch (e: any) {
         fails.push(combo); console.log(`  ✗ ${combo} — ${String(e?.message ?? e).split("\n")[0]}`);

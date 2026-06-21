@@ -439,6 +439,44 @@ try {
     if (await page.locator('[data-bnw-approval]').count() === 0) throw new Error("C2 docked approval bar must remain above the composer");
   });
 
+  await step("7.4-A.2b-i channels: real status/bindings/sync/ensure/provision wired; auth-admin placeholders", async () => {
+    // gw.feishuChannel() is absent in the fake gateway → intercept the feishu API at the browser
+    // so the surface paints a configured/running channel with bindings (Option B scope).
+    const STATUS = { state: "running", configPath: "channels/feishu.json", configured: true, enabled: true, appId: "cli_demo", domain: "feishu", bindings: [{ mesh: "demo", chatId: "oc_demo123", name: "demo 群", source: "auto", requireMention: true }], updatedAt: "" };
+    await page.route("**/api/channels/feishu/status", (r) => r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(STATUS) }));
+    await page.route("**/api/channels/feishu/sync", (r) => { rec("feishu:sync"); return r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([{ mesh: "demo", chatId: "oc_demo123", ok: true, created: false }]) }); });
+    await page.route("**/api/channels/feishu/meshes/demo/group", (r) => { rec("feishu:ensure:demo"); return r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ mesh: "demo", chatId: "oc_demo123", ok: true, created: true }) }); });
+    await page.route("**/api/channels/feishu/provision", (r) => { rec("feishu:provision"); return r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ id: "job-f1", state: "waiting", createdAt: "", updatedAt: "", verificationUrl: "https://open.feishu.cn/verify?t=demo", expireIn: 272 }) }); });
+    await page.route("**/api/channels/feishu/provision/job-f1", (r) => r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ id: "job-f1", state: "waiting", createdAt: "", updatedAt: "", verificationUrl: "https://open.feishu.cn/verify?t=demo", expireIn: 260 }) }));
+    await page.route("**/api/channels/feishu/provision/job-f1/cancel", (r) => { rec("feishu:cancel"); return r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ id: "job-f1", state: "cancelled", createdAt: "", updatedAt: "" }) }); });
+
+    await page.goto(`${BASE}/bnw/channels`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-channels="panel"]', { timeout: 8000 });
+    await page.waitForSelector('[data-channel-status]', { timeout: 8000 });
+    await page.waitForSelector('[data-bindings] [data-binding]', { timeout: 8000 });
+    // Option B: auth-admin sections are explicit placeholders — present, but NO approve/revoke actions
+    await page.waitForSelector('[data-pending-senders]', { timeout: 8000 });
+    await page.waitForSelector('[data-authorized-senders]', { timeout: 8000 });
+    assert(await page.locator('[data-pending-senders] button, [data-authorized-senders] button').count() === 0, "auth-admin placeholders have no action buttons");
+    await sleep(120); await page.screenshot({ path: `${SHOTS}/bnw-channels-desktop.png`, fullPage: true });
+
+    // sync + ensure-group reach the backend
+    const syncResp = page.waitForResponse((r) => r.url().includes("/api/channels/feishu/sync") && r.request().method() === "POST", { timeout: 8000 });
+    await page.locator('[aria-label="sync feishu groups"]').click();
+    await syncResp; await waitCall("feishu:sync");
+    const ensureResp = page.waitForResponse((r) => r.url().includes("/api/channels/feishu/meshes/demo/group") && r.request().method() === "POST", { timeout: 8000 });
+    await page.locator('[aria-label="ensure group demo"]').click();
+    await ensureResp; await waitCall("feishu:ensure:demo");
+
+    // provision (bind) → QR/verify card appears (poll) → cancel reaches backend
+    await page.locator('[aria-label="bind chat to mesh"]').click();
+    await waitCall("feishu:provision");
+    await page.waitForSelector('[data-provision]', { timeout: 8000 });
+    const cancelResp = page.waitForResponse((r) => r.url().includes("/api/channels/feishu/provision/job-f1/cancel") && r.request().method() === "POST", { timeout: 8000 });
+    await page.locator('[aria-label="cancel provision"]').click();
+    await cancelResp; await waitCall("feishu:cancel");
+  });
+
   await step("7.4-A.2a harnesses: probe/reprobe/install-stream/respawn wired (stubbed probe)", async () => {
     // The harness probe hits the REAL probeHarnesses (host-dependent); intercept at the browser
     // so the surface paints deterministic rows + recovery state (same approach as harness-ui.e2e).
@@ -587,6 +625,9 @@ try {
     await page.goto(`${BASE}/bnw/harnesses`, { waitUntil: "domcontentloaded" });
     await page.waitForSelector('[data-harness-row]', { timeout: 8000 });
     await sleep(120); await page.screenshot({ path: `${SHOTS}/bnw-harnesses-mobile.png`, fullPage: true });
+    await page.goto(`${BASE}/bnw/channels`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-channel-status]', { timeout: 8000 });
+    await sleep(120); await page.screenshot({ path: `${SHOTS}/bnw-channels-mobile.png`, fullPage: true });
   });
 
   if (errors.length) throw new Error(`page errors:\n${errors.join("\n")}`);
