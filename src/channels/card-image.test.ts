@@ -327,7 +327,7 @@ const HUGE = 64 * 1024 * 1024;
 
 test("jimpScaler: wide PNG scales proportionally to fit and preserves alpha", async () => {
   const src = await makeImage(400, 250, 128, "image/png");
-  const out = await jimpScaler()({ ...src, maxWidth: 100, maxHeight: 3000, maxBytes: HUGE });
+  const out = await jimpScaler()({ ...src, maxWidth: 100, maxHeight: 3000, maxBytes: HUGE, maxAspect: 0 });
   expect(out).not.toBeNull();
   expect(out!.width).toBe(100); // 400 → 100
   expect(out!.height).toBe(62); // 250 * (100/400) = 62.5 → 62, aspect preserved
@@ -339,7 +339,7 @@ test("jimpScaler: wide PNG scales proportionally to fit and preserves alpha", as
 
 test("jimpScaler: oversize JPEG stays JPEG and fits within bounds", async () => {
   const src = await makeImage(400, 200, 255, "image/jpeg", true);
-  const out = await jimpScaler()({ ...src, maxWidth: 150, maxHeight: 3000, maxBytes: HUGE });
+  const out = await jimpScaler()({ ...src, maxWidth: 150, maxHeight: 3000, maxBytes: HUGE, maxAspect: 0 });
   expect(out).not.toBeNull();
   expect(out!.contentType).toBe("image/jpeg"); // JPEG stays JPEG
   expect(out!.width).toBe(150);
@@ -354,25 +354,79 @@ test("jimpScaler: JPEG over maxBytes triggers ONE quality retry that fits", asyn
   const q60 = (await img.getBuffer("image/jpeg", { quality: 60 })).length;
   expect(q60).toBeLessThan(q90);
   // maxWidth/Height 0 → no resize; force the retry purely on bytes with a cap between q90 and q60
-  const out = await jimpScaler()({ ...src, maxWidth: 0, maxHeight: 0, maxBytes: q90 - 1 });
+  const out = await jimpScaler()({ ...src, maxWidth: 0, maxHeight: 0, maxBytes: q90 - 1, maxAspect: 0 });
   expect(out).not.toBeNull();
   expect(out!.bytes.length).toBeLessThanOrEqual(q90 - 1); // retry produced smaller bytes that fit
 });
 
 test("jimpScaler: PNG still over maxBytes after scaling degrades (null, no JPEG conversion)", async () => {
   const src = await makeImage(400, 300, 255, "image/png", true);
-  const out = await jimpScaler()({ ...src, maxWidth: 100, maxHeight: 100, maxBytes: 1 }); // 1-byte cap
+  const out = await jimpScaler()({ ...src, maxWidth: 100, maxHeight: 100, maxBytes: 1, maxAspect: 0 }); // 1-byte cap
   expect(out).toBeNull(); // PNG is never converted to JPEG to fit
 });
 
 test("jimpScaler: undecodable bytes return null (degrade), never throw", async () => {
-  const out = await jimpScaler()({ bytes: new Uint8Array([1, 2, 3, 4]), contentType: "image/png", maxWidth: 100, maxHeight: 100, maxBytes: HUGE });
+  const out = await jimpScaler()({ bytes: new Uint8Array([1, 2, 3, 4]), contentType: "image/png", maxWidth: 100, maxHeight: 100, maxBytes: HUGE, maxAspect: 0 });
   expect(out).toBeNull();
 });
 
 test("jimpScaler: unsupported container (webp) returns null without decoding", async () => {
-  const out = await jimpScaler()({ bytes: new Uint8Array([1, 2, 3]), contentType: "image/webp", maxWidth: 100, maxHeight: 100, maxBytes: HUGE });
+  const out = await jimpScaler()({ bytes: new Uint8Array([1, 2, 3]), contentType: "image/webp", maxWidth: 100, maxHeight: 100, maxBytes: HUGE, maxAspect: 0 });
   expect(out).toBeNull();
+});
+
+// ── aspect letterbox-pad (feishu-image-aspect-pad C1) ──
+const ASPECT = 16 / 9;
+
+test("jimpScaler: aspect-too-tall PNG is letterbox-padded to ≤ maxAspect with TRANSPARENT padding", async () => {
+  const src = await makeImage(390, 760, 255, "image/png"); // h/w = 1.95 > 16/9
+  const out = await jimpScaler()({ ...src, maxWidth: 1500, maxHeight: 3000, maxBytes: HUGE, maxAspect: ASPECT });
+  expect(out).not.toBeNull();
+  expect(out!.height / out!.width).toBeLessThanOrEqual(ASPECT + 1e-9); // aspect now compliant
+  expect(out!.width).toBeGreaterThan(390); // widened by horizontal padding
+  expect(out!.height).toBe(760); // height unchanged (no fit-scale needed; only padded)
+  expect(out!.contentType).toBe("image/png");
+  const re = await Jimp.read(Buffer.from(out!.bytes));
+  expect(re.bitmap.data[3]).toBe(0); // top-left corner = transparent padding
+  const cx = Math.floor(re.bitmap.width / 2), cy = Math.floor(re.bitmap.height / 2);
+  expect(re.bitmap.data[(cy * re.bitmap.width + cx) * 4 + 3]).toBe(255); // centered image is opaque
+});
+
+test("jimpScaler: aspect-too-tall JPEG is padded with neutral #ebedf0 and stays JPEG", async () => {
+  const src = await makeImage(390, 760, 255, "image/jpeg", true);
+  const out = await jimpScaler()({ ...src, maxWidth: 1500, maxHeight: 3000, maxBytes: HUGE, maxAspect: ASPECT });
+  expect(out).not.toBeNull();
+  expect(out!.contentType).toBe("image/jpeg"); // stays JPEG (no alpha → neutral fill)
+  expect(out!.height / out!.width).toBeLessThanOrEqual(ASPECT + 1e-9);
+  const re = await Jimp.read(Buffer.from(out!.bytes)); // top-left corner ≈ #ebedf0 (JPEG lossy → tolerance)
+  expect(Math.abs(re.bitmap.data[0] - 0xeb)).toBeLessThanOrEqual(8);
+  expect(Math.abs(re.bitmap.data[1] - 0xed)).toBeLessThanOrEqual(8);
+  expect(Math.abs(re.bitmap.data[2] - 0xf0)).toBeLessThanOrEqual(8);
+});
+
+test("jimpScaler: a VERY tall image pads then re-fits so width ≤ maxWidth and aspect ≤ maxAspect", async () => {
+  const src = await makeImage(390, 4000, 255, "image/png");
+  const out = await jimpScaler()({ ...src, maxWidth: 1500, maxHeight: 3000, maxBytes: HUGE, maxAspect: ASPECT });
+  expect(out).not.toBeNull();
+  expect(out!.width).toBeLessThanOrEqual(1500);
+  expect(out!.height).toBeLessThanOrEqual(3000);
+  expect(out!.height / out!.width).toBeLessThanOrEqual(ASPECT + 1e-9);
+});
+
+test("jimpScaler: maxAspect 0 disables the pad (a tall image stays tall)", async () => {
+  const src = await makeImage(390, 760, 255, "image/png");
+  const out = await jimpScaler()({ ...src, maxWidth: 1500, maxHeight: 3000, maxBytes: HUGE, maxAspect: 0 });
+  expect(out).not.toBeNull();
+  expect(out!.width).toBe(390); // no padding
+  expect(out!.height).toBe(760);
+});
+
+test("jimpScaler: an aspect-OK image is not padded (dims only fit-scaled)", async () => {
+  const src = await makeImage(400, 250, 255, "image/png"); // h/w 0.625, well under maxAspect
+  const out = await jimpScaler()({ ...src, maxWidth: 1500, maxHeight: 3000, maxBytes: HUGE, maxAspect: ASPECT });
+  expect(out).not.toBeNull();
+  expect(out!.width).toBe(400); // within limits + aspect OK → unchanged, no pad
+  expect(out!.height).toBe(250);
 });
 
 test("imageDims reads PNG / GIF / JPEG sizes", () => {

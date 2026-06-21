@@ -56,15 +56,17 @@ export interface ImageLimits {
 
 export const DEFAULT_IMAGE_LIMITS: ImageLimits = { maxBytes: 10 * 1024 * 1024, maxAspect: 16 / 9, maxWidth: 1500, maxHeight: 3000 };
 
-/** A proportional downscale request handed to an injectable scaler when an image is dimension-oversize but
- *  salvageable (aspect already within range). `bytes` are the original artifact bytes; the scaler fits the
- *  image inside (maxWidth, maxHeight) and must keep the result ≤ maxBytes. */
+/** A scale (+ aspect pad) request handed to an injectable scaler for a salvageable oversize or
+ *  aspect-too-tall image. `bytes` are the original artifact bytes; the scaler fits the image inside
+ *  (maxWidth, maxHeight), letterbox-pads it horizontally when `h/w > maxAspect`, and keeps the result
+ *  ≤ maxBytes. `maxAspect` ≤ 0 disables the pad step (fit-scale only). */
 export interface ScaleRequest {
   bytes: Uint8Array;
   contentType: string;
   maxWidth: number;
   maxHeight: number;
   maxBytes: number;
+  maxAspect: number;
 }
 
 /** A scaled image: re-encoded bytes in the SAME container, with its new dimensions. */
@@ -219,7 +221,7 @@ async function runScaler(scaler: ImageScaler | undefined, raw: RawImage, limits:
   }
   let scaled: ScaleResult | null;
   try {
-    scaled = await scaler({ bytes: raw.bytes, contentType: raw.contentType, maxWidth: limits.maxWidth, maxHeight: limits.maxHeight, maxBytes: limits.maxBytes });
+    scaled = await scaler({ bytes: raw.bytes, contentType: raw.contentType, maxWidth: limits.maxWidth, maxHeight: limits.maxHeight, maxBytes: limits.maxBytes, maxAspect: limits.maxAspect });
   } catch {
     log("feishu image: scale error; degrading");
     return null;
@@ -292,18 +294,25 @@ export function sdkUploadImage(client: lark.Client): (img: RawImage) => Promise<
   };
 }
 
-/** jimp-backed proportional downscaler (pure JS; bundles into `bun build --compile`, no native build, no
- *  external binary). Decodes the image, fits it inside (maxWidth, maxHeight) preserving aspect, and
- *  re-encodes in the SAME container: PNG keeps its alpha channel, JPEG stays JPEG (with ONE lower-quality
- *  retry if it's still over maxBytes — PNG is never re-quantized or converted to JPEG). Returns null on
- *  undecodable bytes, an unsupported container, or if it still can't get under maxBytes (→ the resolver
- *  degrades). Never throws; never logs the bytes. */
+/** Neutral padding background for a no-alpha output (JPEG/GIF): Feishu's light-surface gray `#ebedf0`,
+ *  fully opaque. PNG uses transparent (`0x00000000`) padding so the card background shows through. */
+const PAD_NEUTRAL_RGBA = 0xebedf0ff;
+const PAD_TRANSPARENT_RGBA = 0x00000000;
+
+/** jimp-backed downscaler + aspect letterbox-pad (pure JS; bundles into `bun build --compile`, no native
+ *  build, no external binary). Decodes the image, fits it inside (maxWidth, maxHeight) preserving aspect;
+ *  then, if it is still too tall (`h/w > maxAspect`), letterbox-pads it horizontally onto a wider neutral
+ *  canvas (PNG → transparent, JPEG/GIF → `#ebedf0`) so the aspect becomes ≤ maxAspect, re-fitting if the
+ *  padded canvas exceeds maxWidth/maxHeight. Re-encodes in the SAME container (PNG keeps alpha; JPEG stays
+ *  JPEG with ONE lower-quality retry if still over maxBytes — PNG never re-quantized / converted). Returns
+ *  null on undecodable bytes, an unsupported container, or if it still can't get under maxBytes (→ the
+ *  resolver degrades). Never throws; never logs the bytes. */
 export function jimpScaler(): ImageScaler {
   return async (req) => {
     try {
       const mime = encodeContainer(req.contentType);
       if (!mime) return null; // only PNG/JPEG/GIF have a container we re-encode to
-      const img = await Jimp.read(Buffer.from(req.bytes));
+      let img = await Jimp.read(Buffer.from(req.bytes));
       const w = img.bitmap.width, h = img.bitmap.height;
       const f = Math.min(
         req.maxWidth > 0 ? req.maxWidth / w : 1,
@@ -312,6 +321,25 @@ export function jimpScaler(): ImageScaler {
       );
       const tw = Math.max(1, Math.floor(w * f)), th = Math.max(1, Math.floor(h * f));
       if (tw < w || th < h) img.resize({ w: tw, h: th });
+
+      // Aspect letterbox-pad: still too tall after fit-scaling → widen onto a neutral canvas so
+      // height/width ≤ maxAspect, then re-fit if the wider canvas now exceeds maxWidth/maxHeight.
+      const cw = img.bitmap.width, ch = img.bitmap.height;
+      if (req.maxAspect > 0 && ch / cw > req.maxAspect) {
+        const paddedW = Math.ceil(ch / req.maxAspect); // ch/paddedW ≤ maxAspect; always > cw (we widen)
+        // jimp types `new Jimp(...)` and `Jimp.read()` as nominally-distinct instances; both are real Jimp
+        // objects at runtime, so cast the canvas to the read-result type to keep one `img` variable.
+        const canvas = new Jimp({ width: paddedW, height: ch, color: mime === "image/png" ? PAD_TRANSPARENT_RGBA : PAD_NEUTRAL_RGBA }) as unknown as typeof img;
+        canvas.composite(img, Math.floor((paddedW - cw) / 2), 0); // center horizontally
+        const pf = Math.min(
+          req.maxWidth > 0 ? req.maxWidth / paddedW : 1,
+          req.maxHeight > 0 ? req.maxHeight / ch : 1,
+          1,
+        );
+        if (pf < 1) canvas.resize({ w: Math.max(1, Math.floor(paddedW * pf)), h: Math.max(1, Math.floor(ch * pf)) }); // aspect preserved → still ≤ maxAspect
+        img = canvas;
+      }
+
       let bytes = await encodeImage(img, mime, 90);
       if (mime === "image/jpeg" && bytes.length > req.maxBytes) {
         bytes = await encodeImage(img, mime, 60); // one quality retry (JPEG only)
