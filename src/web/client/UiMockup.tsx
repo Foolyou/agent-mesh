@@ -25,10 +25,13 @@
 //     old-version-agent restarts (after-idle / force / cancel).
 //   - Channels (07-channels.md): Feishu status + chat→mesh bindings (provision/QR) +
 //     pending-sender auth-code inbox (approve/revoke) + allowSenders registry (revoke).
+//   - Doctor / system (08-doctor-system.md): doctor findings (host-key/port/deps/config/
+//     service) + ps daemon table + leak recovery (reap orphan / restart daemon) + copy
+//     diagnostics + app/build version.
 //   - navigation index (?index=1): a directory of every surface + state/device deep links.
 //
 // Query deep links for deterministic screenshots: ?device=desktop|mobile,
-// ?surface=shell|runtime|board|new-mesh|assistant|harnesses|channels, ?runtime=overview|focus|full|canvas,
+// ?surface=shell|runtime|board|new-mesh|assistant|harnesses|channels|doctor, ?runtime=overview|focus|full|canvas,
 // ?board=list|detail|kanban, ?state=<shell-state>, ?index=1, ?view=runtime|board,
 // ?mesh=<id>, ?mode=<mode>, ?accent=<accent>. No raw-* utilities (passes
 // `bun run lint:tokens`); all classes literal so Tailwind emits them.
@@ -50,7 +53,7 @@ const ACCENT_SET = new Set<Accent>(ACCENTS);
 
 type Device = "desktop" | "mobile";
 type View = "runtime" | "board";
-type Surface = "shell" | "runtime" | "board" | "new-mesh" | "assistant" | "harnesses" | "channels";
+type Surface = "shell" | "runtime" | "board" | "new-mesh" | "assistant" | "harnesses" | "channels" | "doctor";
 // overview/focus = the two in-shell runtime states; full/canvas = desktop-only standalone
 // frames (session fullscreen / zoomable topology canvas) reached from the focus / overview.
 type RuntimeState = "overview" | "focus" | "full" | "canvas";
@@ -234,7 +237,7 @@ function readSel(): Sel {
   const a = p.get("accent");
   const mesh = p.get("mesh");
   const sfc = p.get("surface");
-  const surface: Surface = sfc === "runtime" ? "runtime" : sfc === "board" ? "board" : sfc === "new-mesh" ? "new-mesh" : sfc === "assistant" ? "assistant" : sfc === "harnesses" ? "harnesses" : sfc === "channels" ? "channels" : "shell";
+  const surface: Surface = sfc === "runtime" ? "runtime" : sfc === "board" ? "board" : sfc === "new-mesh" ? "new-mesh" : sfc === "assistant" ? "assistant" : sfc === "harnesses" ? "harnesses" : sfc === "channels" ? "channels" : sfc === "doctor" ? "doctor" : "shell";
   const bs = p.get("board");
   const rt = p.get("runtime") as RuntimeState | null;
   const st = p.get("state") as ShellState | null;
@@ -1609,6 +1612,179 @@ function ChannelsFrame({ state, device }: { state: ShellState; device: Device })
   );
 }
 
+// ── Doctor / system (08) — health checks + ps daemons + leak recovery ───────────────
+// Mirrors src/diagnostics: DoctorReport (checks: id/severity/detail/fixHint + summary),
+// PsDetail (running MeshProcDetail + leaks ProcLeak stale_record/orphan_socket). Recovery
+// scope (user-approved WebUI): reap orphan + restart daemon. fetchDoctor is device-auth gated.
+type Sev = "ok" | "info" | "warning" | "error";
+const SEV_TONE: Record<Sev, Status> = { ok: "ready", info: "idle", warning: "attention", error: "blocked" };
+const DOCTOR_VERSION = "agent-mesh v0.42.0 · build 2026-06-21";
+interface DoctorCheckRow { id: string; severity: Sev; detail: string; fixHint?: string }
+const DOCTOR_CHECKS: DoctorCheckRow[] = [
+  { id: "host.key", severity: "ok", detail: "host key present (HKDF derive ok)" },
+  { id: "port.10010", severity: "ok", detail: "control plane listening on 127.0.0.1:10010" },
+  { id: "service.backend", severity: "ok", detail: "backend alive (pid 4821)" },
+  { id: "config.meshes", severity: "warning", detail: "meshes/scratch.json references a missing project path", fixHint: "fix the project path or remove the mesh" },
+  { id: "harness.codex", severity: "warning", detail: "codex-acp 1.2.3 outdated (latest 1.2.5)", fixHint: "update from the Harnesses panel" },
+  { id: "harness.opencode", severity: "error", detail: "opencode not installed", fixHint: "self-install: npm i -g opencode, then reprobe" },
+  { id: "auth.store", severity: "ok", detail: "auth-store sealed; 2 authorized devices" },
+];
+const DOCTOR_SUMMARY = { total: 7, ok: 4, warnings: 2, errors: 1, worst: "error" as Sev };
+const DOCTOR_CHECKS_MANY: DoctorCheckRow[] = [
+  ...DOCTOR_CHECKS,
+  { id: "deps.bun", severity: "ok", detail: "bun 1.3.14" }, { id: "deps.git", severity: "ok", detail: "git 2.45" },
+  { id: "port.15080", severity: "info", detail: "preview port 15080 in use by a demo" },
+  { id: "harness.kimi", severity: "warning", detail: "kimi version unknown", fixHint: "reprobe" },
+  { id: "orphan.scan", severity: "error", detail: "2 orphan processes detected", fixHint: "reap from the recovery panel below" },
+  { id: "disk.run", severity: "ok", detail: "~/.agent-mesh/run writable" },
+];
+interface Daemon { name: string; pid: number; uptime: string; socket: string; agents: number }
+const DAEMONS: Daemon[] = [
+  { name: "dev-mesh", pid: 4830, uptime: "2h14m", socket: "~/.agent-mesh/run/dev-mesh.sock", agents: 4 },
+  { name: "ops", pid: 4915, uptime: "38m", socket: "~/.agent-mesh/run/ops.sock", agents: 2 },
+];
+const DAEMONS_MANY: Daemon[] = [
+  ...DAEMONS,
+  { name: "infra", pid: 5001, uptime: "5h02m", socket: "~/.agent-mesh/run/infra.sock", agents: 3 },
+  { name: "research", pid: 5044, uptime: "12m", socket: "~/.agent-mesh/run/research.sock", agents: 1 },
+  { name: "security-audit", pid: 5120, uptime: "1h30m", socket: "~/.agent-mesh/run/security-audit.sock", agents: 2 },
+];
+interface Leak { name: string; kind: "stale_record" | "orphan_socket"; pid?: number; detail: string }
+const LEAKS: Leak[] = [
+  { name: "scratch", kind: "stale_record", pid: 3001, detail: "record points at dead pid 3001" },
+  { name: "old-mesh", kind: "orphan_socket", detail: "orphan socket with no live owner" },
+];
+const LEAKS_MANY: Leak[] = [
+  ...LEAKS,
+  { name: "demo-1", kind: "stale_record", pid: 3102, detail: "record points at dead pid 3102" },
+  { name: "demo-2", kind: "orphan_socket", detail: "orphan socket with no live owner" },
+  { name: "demo-3", kind: "stale_record", pid: 3204, detail: "record points at dead pid 3204" },
+];
+
+function DoctorSummaryBar({ state, mobile }: { state: ShellState; mobile: boolean }) {
+  const disabled = state === "offline";
+  const s = state === "boundary" ? { total: 13, ok: 8, warnings: 3, errors: 2, worst: "error" as Sev } : DOCTOR_SUMMARY;
+  return (
+    <div data-doctor-summary className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-surface-raised p-3">
+      <StatusChip status={SEV_TONE[s.worst]} variant="soft" label={`worst: ${s.worst}`} />
+      <span className="text-xs text-text-muted">{s.ok} ok · {s.warnings} warn · {s.errors} error · {s.total} 总计</span>
+      <span className="text-xs text-text-muted">· {DOCTOR_VERSION}{state === "offline" ? "（cached）" : ""}</span>
+      <span className="flex-1" aria-hidden="true" />
+      <Button size="sm" variant="ghost" disabled={disabled} aria-label="copy diagnostics">copy 诊断</Button>
+      {!mobile ? <Button size="sm" variant="secondary" disabled={disabled} busy={state === "busy"} aria-label="run doctor">{state === "busy" ? "running…" : "run doctor"}</Button> : null}
+    </div>
+  );
+}
+
+function DoctorFindings({ state }: { state: ShellState }) {
+  const checks = state === "boundary" ? DOCTOR_CHECKS_MANY : DOCTOR_CHECKS;
+  return (
+    <div data-doctor-findings className="flex flex-col gap-1.5 rounded-lg border border-border bg-surface-raised p-3">
+      <span className="text-xs uppercase tracking-wider text-text-muted">doctor findings ({checks.length})</span>
+      {checks.map((c) => (
+        <div key={c.id} className="flex flex-col gap-0.5 border-b border-border py-1.5 last:border-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <StatusChip status={SEV_TONE[c.severity]} variant="dot" />
+            <code className="font-mono text-xs text-text-secondary">{c.id}</code>
+            <StatusChip status={SEV_TONE[c.severity]} variant="soft" label={c.severity} />
+            <span className="min-w-0 flex-1 text-sm text-text-primary">{c.detail}</span>
+          </div>
+          {c.fixHint ? <span className="pl-6 text-xs text-text-muted">↳ {c.fixHint}</span> : null}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function DaemonTable({ state, mobile }: { state: ShellState; mobile: boolean }) {
+  const none = state === "empty";
+  const daemons = state === "boundary" ? DAEMONS_MANY : DAEMONS;
+  const disabled = state === "permission" || state === "offline";
+  return (
+    <div data-daemons className="flex flex-col gap-1.5 rounded-lg border border-border bg-surface-raised p-3">
+      <span className="text-xs uppercase tracking-wider text-text-muted">mesh-host daemons · ps ({none ? 0 : daemons.length})</span>
+      {none ? <span className="text-xs text-text-muted">none running.</span> : daemons.map((d) => (
+        <div key={d.name} className="flex flex-wrap items-center gap-2 border-b border-border py-1.5 text-sm last:border-0">
+          <StatusChip status="working" variant="dot" />
+          <span className="font-medium text-text-primary">{d.name}</span>
+          <span className="font-mono text-xs text-text-muted">pid {d.pid} · up {d.uptime} · {d.agents} agents</span>
+          {!mobile ? <span className="min-w-0 flex-1 truncate font-mono text-xs text-text-muted">{d.socket}</span> : <span className="flex-1" aria-hidden="true" />}
+          {/* Recovery: restart daemon (operator; desktop). */}
+          {!mobile ? <Button size="sm" variant="ghost" disabled={disabled} aria-label={`restart daemon ${d.name}`}>restart</Button> : null}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// Recovery panel: reap orphan/stale leaks (user-approved WebUI scope) — operator/desktop.
+function DoctorRecovery({ state }: { state: ShellState }) {
+  const disabled = state === "permission" || state === "offline";
+  const busy = state === "busy";
+  const leaks = state === "boundary" ? LEAKS_MANY : LEAKS;
+  return (
+    <div data-recovery className="flex flex-col gap-2 rounded-lg border border-border bg-surface-raised p-3">
+      <div className="flex items-center justify-between">
+        <span className="text-xs uppercase tracking-wider text-text-muted">恢复 · 孤儿/僵尸进程 ({leaks.length})</span>
+        <Button size="sm" variant="secondary" disabled={disabled} busy={busy} aria-label="reap all orphans">reap all</Button>
+      </div>
+      {state === "error" ? <ErrorBanner title="Reap failed" onRetry={() => {}}>清理失败 — 重试。</ErrorBanner> : null}
+      <div className="flex flex-col gap-1.5">
+        {leaks.map((l) => (
+          <div key={l.name} data-leak className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-surface-sunken px-2.5 py-1.5 text-sm">
+            <StatusChip status={l.kind === "orphan_socket" ? "attention" : "blocked"} variant="dot" />
+            <span className="font-medium text-text-primary">{l.name}</span>
+            <StatusChip status="idle" variant="soft" label={l.kind} />
+            <span className="min-w-0 flex-1 text-xs text-text-muted">{l.detail}</span>
+            {busy ? <Spinner size={12} label="reaping" /> : null}
+            <Button size="sm" variant="ghost" disabled={disabled} aria-label={`reap ${l.name}`}>reap</Button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function DoctorFrame({ state, device }: { state: ShellState; device: Device }) {
+  const mobile = device === "mobile";
+  const perm = state === "permission";
+  const offline = state === "offline";
+  const disabled = perm || offline;
+  return (
+    <div data-mockup="frame" data-device={device} data-doctor="panel"
+      className={`flex ${mobile ? "h-[760px] w-[390px] rounded-[28px]" : "h-[700px] w-[1280px] rounded-xl"} max-w-full flex-col overflow-hidden border border-border bg-surface text-text-primary shadow-sm`}>
+      <header className="flex items-center gap-2 border-b border-border bg-surface-raised px-4 py-2.5">
+        <Brand /><span className="text-text-muted">·</span>
+        <span className="text-sm font-semibold">Doctor / 系统</span>
+        {mobile ? <StatusChip status="idle" variant="soft" label="只读" /> : null}
+        <span className="flex-1" aria-hidden="true" />
+        <Button size="sm" variant="ghost" disabled={disabled} aria-label="refresh diagnostics">refresh</Button>
+      </header>
+      {perm ? <div role="status" className="border-b border-border bg-danger-subtle px-4 py-1.5 text-xs text-danger">设备未授权 — 系统诊断需已授权设备（服务端 device-auth 门禁）。</div> : null}
+      {offline ? <div role="status" className="flex items-center gap-2 border-b border-border bg-danger-subtle px-4 py-1.5 text-xs text-danger"><Spinner size={12} label="reconnecting" /> 服务不可达 — backend down；显示最近已知诊断，恢复操作禁用。</div> : null}
+      <div className="min-h-0 flex-1 overflow-auto p-4">
+        <div className={`mx-auto flex flex-col gap-4 ${mobile ? "" : "max-w-[900px]"}`}>
+          {state === "loading" ? (
+            <div className="flex flex-col gap-3"><Skeleton variant="line" /><Skeleton variant="row" /><Skeleton variant="card" /></div>
+          ) : perm ? (
+            <EmptyState icon={<span className="text-2xl">🔒</span>} title="诊断已锁定" description="批准本设备后即可查看 doctor 检查、daemon 列表与恢复操作。" action={<Button variant="primary">去设置批准设备</Button>} />
+          ) : (
+            <>
+              <DoctorSummaryBar state={state} mobile={mobile} />
+              {state === "error" ? <ErrorBanner title="Doctor probe failed" onRetry={() => {}}>诊断请求失败 — backend 仍在线则可重试。</ErrorBanner> : null}
+              <DoctorFindings state={state} />
+              <DaemonTable state={state} mobile={mobile} />
+              {/* Recovery actions deferred to desktop on mobile (matrix △). */}
+              {!mobile && state !== "empty" ? <DoctorRecovery state={state} /> : null}
+              {mobile ? <p className="text-xs text-text-muted">恢复操作（reap / restart daemon）在桌面端或 CLI 执行。</p> : null}
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── new-mesh builder (04) fixtures + frame ───────────────────────────────────────
 interface AgentRow { id: string; harness: string; project: string; role: "router" | "member"; model?: string; effort?: string; lazy?: boolean; opencodePermission?: "ask" | "allow"; instructions?: string }
 const HARNESSES = ["claude", "codex", "opencode", "kimi"];
@@ -2095,6 +2271,9 @@ const INDEX_SECTIONS: { title: string; note: string; rows: IndexRow[] }[] = [
   { title: "07 · Channels", note: "飞书状态/绑定 chat→mesh(provision) · 待审批发送者 authcode 入册 · allowSenders 注册表/撤销", rows: [
     { label: "panel", base: "surface=channels", states: SHELL_STATES, mobile: true },
   ] },
+  { title: "08 · Doctor / 系统", note: "doctor 检查(host-key/port/deps/config/orphan/service) · ps daemon 表 · 恢复(reap 孤儿/restart daemon) · copy 诊断", rows: [
+    { label: "panel", base: "surface=doctor", states: SHELL_STATES, mobile: true },
+  ] },
 ];
 
 function MockupIndex({ backHref }: { backHref: string }) {
@@ -2240,7 +2419,7 @@ export function UiMockup() {
     <div data-mockup="root" className="min-h-screen bg-surface text-text-primary font-sans p-6">
       {/* mockup tool chrome (outside the mocked app frame) */}
       <header className="mb-5">
-        <h1 className="mb-1 text-xl font-semibold">Agent Mesh — 终稿 mockup（{index ? "导航索引" : surface === "runtime" ? `运行态 A · ${runtime}` : surface === "board" ? "看板 C" : surface === "new-mesh" ? "新建 mesh" : surface === "assistant" ? "Mesh Assistant B" : surface === "harnesses" ? "Harnesses" : surface === "channels" ? "Channels" : "应用外壳"}{index ? "" : ` · ${state} · ${device === "mobile" ? "移动" : "桌面"}`}）</h1>
+        <h1 className="mb-1 text-xl font-semibold">Agent Mesh — 终稿 mockup（{index ? "导航索引" : surface === "runtime" ? `运行态 A · ${runtime}` : surface === "board" ? "看板 C" : surface === "new-mesh" ? "新建 mesh" : surface === "assistant" ? "Mesh Assistant B" : surface === "harnesses" ? "Harnesses" : surface === "channels" ? "Channels" : surface === "doctor" ? "Doctor / 系统" : "应用外壳"}{index ? "" : ` · ${state} · ${device === "mobile" ? "移动" : "桌面"}`}）</h1>
         <p className="mb-3 text-xs text-text-muted">真实 C5–C7 组件 + v2 compose 运行时 · fixture 数据 · 不连后端。Live: <code className="text-syntax-string">MESH_UI_PREVIEW=1 … /__ui-mockup</code></p>
         <div className="mb-3">
           <SegmentedControl ariaLabel="View mode" value={index ? "index" : "mockup"} onChange={(v) => nav({ index: v === "index" })} options={[{ value: "mockup", label: "Mockup" }, { value: "index", label: "▤ 索引" }]} size="sm" />
@@ -2260,7 +2439,7 @@ export function UiMockup() {
           </div>
           <div>
             <div className="mb-1.5 text-xs uppercase tracking-wider text-text-muted">Surface</div>
-            <SegmentedControl ariaLabel="Surface" value={surface} onChange={(s) => { const next = s as Surface; nav({ surface: next }); if (next === "board") setMobileTab("board"); else if (next === "runtime") setMobileTab("runtime"); }} options={[{ value: "shell", label: "外壳" }, { value: "runtime", label: "运行态 A" }, { value: "board", label: "看板 C" }, { value: "assistant", label: "助手 B" }, { value: "harnesses", label: "Harness" }, { value: "channels", label: "渠道" }, { value: "new-mesh", label: "新建" }]} size="sm" />
+            <SegmentedControl ariaLabel="Surface" value={surface} onChange={(s) => { const next = s as Surface; nav({ surface: next }); if (next === "board") setMobileTab("board"); else if (next === "runtime") setMobileTab("runtime"); }} options={[{ value: "shell", label: "外壳" }, { value: "runtime", label: "运行态 A" }, { value: "board", label: "看板 C" }, { value: "assistant", label: "助手 B" }, { value: "harnesses", label: "Harness" }, { value: "channels", label: "渠道" }, { value: "doctor", label: "Doctor" }, { value: "new-mesh", label: "新建" }]} size="sm" />
           </div>
           {surface === "runtime" ? (
             <div>
@@ -2290,7 +2469,7 @@ export function UiMockup() {
               />
             </div>
           ) : null}
-          {surface === "shell" || surface === "runtime" || surface === "board" || surface === "new-mesh" || surface === "assistant" || surface === "harnesses" || surface === "channels" ? (
+          {surface === "shell" || surface === "runtime" || surface === "board" || surface === "new-mesh" || surface === "assistant" || surface === "harnesses" || surface === "channels" || surface === "doctor" ? (
             <div>
               <div className="mb-1.5 text-xs uppercase tracking-wider text-text-muted">State</div>
               <SegmentedControl
@@ -2328,6 +2507,8 @@ export function UiMockup() {
           ? <HarnessesFrame state={state} device={device} />
           : surface === "channels"
           ? <ChannelsFrame state={state} device={device} />
+          : surface === "doctor"
+          ? <DoctorFrame state={state} device={device} />
           : surface === "new-mesh"
           ? <NewMeshFrame state={state} device={device} nmEditor={nmEditor} />
           : surface === "runtime" && device === "desktop" && runtime === "full"

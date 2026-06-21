@@ -557,6 +557,41 @@ try {
     }
   }
 
+  // ── Doctor / system (08): assertions + state × device screenshots ──
+  await step("doctor: summary + findings(+fixHint) + daemon table + recovery reap/restart", async () => {
+    await page.goto(`${BASE}/__ui-mockup?surface=doctor&state=populated&device=desktop`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-mockup="frame"][data-doctor="panel"]', { timeout: 8000 });
+    for (const sel of ["[data-doctor-summary]", "[data-doctor-findings]", "[data-daemons]", "[data-recovery]", "[data-leak]"]) {
+      if (await page.locator(sel).count() === 0) throw new Error(`doctor section missing: ${sel}`);
+    }
+    for (const lbl of ["copy diagnostics", "run doctor", "restart daemon dev-mesh", "reap scratch", "reap all orphans"]) {
+      if (await page.locator(`[aria-label="${lbl}"]`).count() === 0) throw new Error(`doctor control missing: ${lbl}`);
+    }
+    if (await page.getByText("self-install: npm i -g opencode", { exact: false }).count() === 0) throw new Error("fixHint missing");
+  });
+  await step("doctor: permission locks surface; empty→none running; mobile→no recovery", async () => {
+    await page.goto(`${BASE}/__ui-mockup?surface=doctor&state=permission&device=desktop`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-doctor="panel"]', { timeout: 8000 });
+    if (await page.getByText("诊断已锁定", { exact: false }).count() === 0) throw new Error("permission lock missing");
+    await page.goto(`${BASE}/__ui-mockup?surface=doctor&state=empty&device=desktop`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-doctor="panel"]', { timeout: 8000 });
+    if (await page.getByText("none running", { exact: false }).count() === 0) throw new Error("none-running missing");
+    await page.goto(`${BASE}/__ui-mockup?surface=doctor&state=populated&device=mobile`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-device="mobile"][data-doctor="panel"]', { timeout: 8000 });
+    if (await page.locator("[data-recovery]").count() !== 0) throw new Error("mobile must defer recovery to desktop");
+  });
+  const DOCTOR_STATES = ["empty", "loading", "populated", "error", "permission", "busy", "offline", "boundary"];
+  for (const device of ["desktop", "mobile"]) {
+    for (const st of DOCTOR_STATES) {
+      await step(`screenshot doctor-${st}-${device}`, async () => {
+        await page.goto(`${BASE}/__ui-mockup?surface=doctor&state=${st}&device=${device}&mode=dark-slate&accent=signal-teal`, { waitUntil: "domcontentloaded" });
+        await page.waitForSelector(`[data-mockup="frame"][data-device="${device}"][data-doctor="panel"]`, { timeout: 8000 });
+        await sleep(130);
+        await shotFrame(`${SHOTS}/doctor-${st}-${device}-dark-slate-signal-teal.png`);
+      });
+    }
+  }
+
   // ── shell (01) state × device screenshots (Phase B; default Dark·Slate × Signal Teal) ──
   const SHELL_STATES = ["empty", "loading", "populated", "error", "permission", "busy", "offline", "boundary"];
   for (const device of ["desktop", "mobile"]) {

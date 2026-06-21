@@ -35,3 +35,19 @@ surface + any in-UI recovery actions ([N] where not already wired).
 - 2026-06-21 — created (Phase A commit 3). Sources: `../interaction/08-doctor-system.md`;
   `store.ts` `fetchDoctor` `/api/diagnostics/doctor`, `cli-dispatch.ts` `ps`,
   daemon/orphan detection.
+- 2026-06-21 — Phase B Step 2 mockup (`UiMockup.tsx`): the Doctor/system surface built in
+  the guarded `/__ui-mockup` (`?surface=doctor`) — a standalone panel frame (route
+  `/doctor`, 管理▾ / mobile 更多). Summary bar (worst severity + ok/warn/error counts +
+  app/build version + copy diagnostics + run doctor); doctor findings list (per DoctorCheck:
+  severity chip + id + detail + fixHint, incl. host.key / port / service.backend / config /
+  harness / auth.store / orphan.scan); ps daemon table (MeshProcDetail name/pid/uptime/
+  socket/agents); and the user-approved recovery panel — reap orphan/stale leaks (ProcLeak
+  stale_record/orphan_socket) + restart daemon. States: empty→daemons "none running"
+  (findings still shown), loading→skeleton, populated, error→probe+reap failed, permission→
+  device-auth lock ("诊断已锁定", gated server-side), busy→run/reap in flight, offline→
+  "service down" prominent + cached version + recovery disabled, boundary→many daemons/
+  findings/leaks. Desktop = full; mobile = read-only summary+findings (recovery/restart/
+  run deferred to desktop/CLI, matrix △). Grounded in `src/diagnostics` (DoctorReport/
+  DoctorCheck/PsDetail/MeshProcDetail/ProcLeak) + `store.ts` fetchDoctor/fetchPsDetail. No
+  additional [E] capability beyond the checklist found. Index (`?index=1`) gains the 08 row.
+  Fixture-only, true C5–C8, v2 tokens.

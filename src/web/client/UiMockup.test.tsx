@@ -342,9 +342,11 @@ test("index skeleton · lists every surface with state/device deep links", () =>
   expect(out).toContain("05 · Mesh Assistant B");
   expect(out).toContain("06 · Harnesses");
   expect(out).toContain("07 · Channels");
+  expect(out).toContain("08 · Doctor");
   expect(out).toContain("surface=assistant"); // assistant deep links
   expect(out).toContain("surface=harnesses"); // harnesses deep links
   expect(out).toContain("surface=channels"); // channels deep links
+  expect(out).toContain("surface=doctor"); // doctor deep links
   expect(out).toContain("runtime=canvas"); // a runtime补漏 deep link (& is HTML-escaped in href)
   expect(out).toContain("boardManage=1"); // board补漏 deep link
   expect(out).toContain("boardFs=1");
@@ -592,6 +594,71 @@ test("channels · mobile: read-only status + pending inbox; bindings/registry de
   expect(out).toContain("data-pending-senders"); // actionable inbox kept on mobile
   expect(out.includes("data-bindings")).toBe(false); // binding deferred to desktop
   expect(out.includes("data-authorized-senders")).toBe(false);
+});
+
+// ── Doctor / system (08) ─────────────────────────────────────────────────────
+test("doctor · populated: summary + findings(+fixHint) + daemon table + recovery(reap/restart) + copy", () => {
+  const out = renderAt("?surface=doctor&state=populated&device=desktop");
+  expect(out).toContain('data-doctor="panel"');
+  expect(out).toContain("data-doctor-summary");
+  expect(out).toContain("worst: error");
+  expect(out).toContain("agent-mesh v0.42.0"); // app/build version
+  expect(out).toContain('aria-label="copy diagnostics"');
+  expect(out).toContain('aria-label="run doctor"');
+  expect(out).toContain("data-doctor-findings");
+  expect(out).toContain("host.key"); // a check id
+  expect(out).toContain("opencode not installed"); // error finding
+  expect(out).toContain("self-install: npm i -g opencode"); // fixHint
+  expect(out).toContain("data-daemons");
+  expect(out).toContain('aria-label="restart daemon dev-mesh"'); // recovery: restart daemon
+  expect(out).toContain("data-recovery");
+  expect(out).toContain("data-leak");
+  expect(out).toContain('aria-label="reap scratch"'); // reap a stale record
+  expect(out).toContain('aria-label="reap all orphans"');
+});
+
+test("doctor · empty: daemons 'none running', no recovery panel; findings still shown", () => {
+  const out = renderAt("?surface=doctor&state=empty&device=desktop");
+  expect(out).toContain("none running");
+  expect(out).toContain("data-doctor-findings"); // health result still present
+  expect(out.includes("data-recovery")).toBe(false); // no leaks/recovery on empty
+});
+
+test("doctor · loading skeleton (no summary); busy shows reaping/run in flight", () => {
+  const loading = renderAt("?surface=doctor&state=loading&device=desktop");
+  expect(loading).toContain("animate-pulse");
+  expect(loading.includes("data-doctor-summary")).toBe(false);
+  expect(renderAt("?surface=doctor&state=busy&device=desktop")).toContain('aria-busy="true"'); // run/reap busy
+});
+
+test("doctor · permission locks the surface (device-auth gated)", () => {
+  const out = renderAt("?surface=doctor&state=permission&device=desktop");
+  expect(out).toContain("设备未授权");
+  expect(out).toContain("诊断已锁定");
+  expect(out.includes("data-doctor-findings")).toBe(false); // gated → no read
+});
+
+test("doctor · offline: service-down banner + cached version + disabled recovery", () => {
+  const out = renderAt("?surface=doctor&state=offline&device=desktop");
+  expect(out).toContain("服务不可达");
+  expect(out).toContain("cached"); // version cached
+  expect(out).toContain('aria-label="reap scratch" disabled=""');
+});
+
+test("doctor · boundary: many daemons + findings + leaks", () => {
+  const out = renderAt("?surface=doctor&state=boundary&device=desktop");
+  expect(out).toContain("security-audit"); // a boundary-only daemon
+  expect(out).toContain("orphan.scan"); // a boundary-only finding
+  expect(out).toContain("demo-3"); // a boundary-only leak
+});
+
+test("doctor · mobile: read-only summary + findings; recovery/restart deferred to desktop", () => {
+  const out = renderAt("?surface=doctor&state=populated&device=mobile");
+  expect(out).toContain('data-device="mobile"');
+  expect(out).toContain("data-doctor-findings");
+  expect(out.includes("data-recovery")).toBe(false); // recovery deferred (△)
+  expect(out.includes('aria-label="restart daemon dev-mesh"')).toBe(false);
+  expect(out.includes('aria-label="run doctor"')).toBe(false); // run is desktop-only here
 });
 
 test("mockup uses v2 semantic utilities and emits no raw-* class", () => {
