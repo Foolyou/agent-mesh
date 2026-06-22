@@ -667,7 +667,7 @@ try {
     await page.evaluate((s) => (window as any).__meshStore.apply({ t: "snapshot", state: s }), SEED_FOCUS);
     await page.waitForSelector('[data-bnw-context]', { timeout: 8000 });
     if (await page.locator('[data-bnw-context]').count() !== 1) throw new Error("focus must have exactly one context panel");
-    if (await page.getByText("router · activity").count() === 0) throw new Error("context panel title `<agent> · activity` missing");
+    if (await page.getByText("router · 活动").count() === 0) throw new Error("context panel title `<agent> · activity` missing"); // t(activity) @ zh
     if (await page.getByText("上下文面板将随各表面接线填充").count() !== 0) throw new Error("focus still shows the generic context stub");
     await page.waitForSelector('[data-bnw-queue-chip]', { timeout: 8000 }); // queue is a top chip
     if (await page.locator('[data-bnw-approval]').count() === 0) throw new Error("C2 docked approval bar must remain above the composer");
@@ -895,7 +895,7 @@ try {
     await has('[aria-label="new all sessions demo"]', "#18 new-all-sessions (running)");
     await has('text=near_limit', "#12 near-limit health warning");
     await has('text=静默完成', "#12 silent-complete badge");
-    await has('text=% context', "#12 context usage chip");
+    await has('text=上下文', "#12 context usage chip"); // t(bnw.rt.context) @ zh (suite preseeds zh)
 
     // ── runtime focus (02): #9 #10 #13 #14 #15 + C2 ──────────────────────────
     await page.goto(`${BASE}/bnw/mesh/demo/agent/router`, { waitUntil: "domcontentloaded" });
@@ -1242,6 +1242,19 @@ try {
     assert(!hasCJK(mobileShell), `i18n guard: CJK leaked in en mobile shell chrome: ${mobileShell.replace(/\s+/g, " ").slice(0, 120)}`);
     await page.setViewportSize({ width: 1440, height: 900 });
 
+    // runtime body (this slice): overview lifecycle/usage app-copy + focus composer app-copy must
+    // be English under en. Scan ONLY app-copy regions (NOT transcript/activity/mail/ids/user text).
+    await page.goto(`${BASE}/bnw/mesh/demo`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-bnw-lifecycle]', { timeout: 8000 });
+    const overviewBody = await collect(['[data-bnw-lifecycle]']);
+    assert(!hasCJK(overviewBody), `i18n guard: CJK in en runtime overview app-copy: ${overviewBody.replace(/\s+/g, " ").slice(0, 120)}`);
+    await page.goto(`${BASE}/bnw/mesh/demo/agent/router`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[aria-label="Message composer"]', { timeout: 8000 });
+    const composerEn = await collect(['[aria-label="Message composer"]']);
+    assert(!hasCJK(composerEn), `i18n guard: CJK in en runtime composer app-copy: ${composerEn.replace(/\s+/g, " ").slice(0, 120)}`);
+    assert(composerEn.includes("Send"), "i18n en: composer Send is English");
+    await sleep(80); await page.screenshot({ path: `${SHOTS}/bnw-i18n-focus-en.png`, fullPage: true });
+
     // live switch en→zh via the settings language tab (no reload)
     await page.goto(`${BASE}/bnw/settings?tab=language`, { waitUntil: "domcontentloaded" });
     await page.getByRole("radio", { name: "中文" }).click();
@@ -1255,6 +1268,11 @@ try {
     assert((await htmlLang()) === "zh", "i18n zh persists across navigation");
     assert(await page.getByText("运行态", { exact: true }).count() > 0, "i18n zh: sub-nav 运行态");
     await sleep(80); await page.screenshot({ path: `${SHOTS}/bnw-i18n-shell-zh.png`, fullPage: true });
+    // runtime body switched too — focus composer app-copy is now Chinese (发送)
+    await page.goto(`${BASE}/bnw/mesh/demo/agent/router`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[aria-label="Message composer"]', { timeout: 8000 });
+    assert((await collect(['[aria-label="Message composer"]'])).includes("发送"), "i18n zh: runtime composer 发送");
+    await sleep(80); await page.screenshot({ path: `${SHOTS}/bnw-i18n-focus-zh.png`, fullPage: true });
 
     // refresh preserves language + <html lang>
     await page.reload({ waitUntil: "domcontentloaded" });

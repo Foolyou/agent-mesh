@@ -2,10 +2,16 @@
 // hand-built GatewayState fixture (no real store/WS) to assert real store fields surface:
 // agent status, context usage waterline, pending badge, transcript items, fullscreen frame.
 import { test, expect } from "bun:test";
+import { createElement, type ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { RuntimeOverview, RuntimeFocus } from "./runtime";
 import type { GatewayState, PerMeshState, MeshSummary, TranscriptItem } from "../../types";
 import type { Store } from "../store";
+import { I18nContext, translate } from "../i18n";
+
+// runtime body now goes through t() — render under an en I18nContext provider.
+const EN = { lang: "en" as const, t: (k: string, v?: Record<string, string | number>) => translate(k, "en", v) };
+const render = (el: ReactElement) => renderToStaticMarkup(createElement(I18nContext.Provider, { value: EN }, el));
 
 function pm(partial: Partial<PerMeshState> = {}): PerMeshState {
   return {
@@ -38,8 +44,8 @@ test("RuntimeOverview: agents + status + usage waterline + pending + canvas link
     usage: { router: { used: 80000, size: 100000, ts: "" } },
     pending: [{ requestId: "r1", agent: "router", question: "approve?", options: [], ts: "" }],
   }) });
-  const out = renderToStaticMarkup(<RuntimeOverview store={STUB} state={s} mesh="demo" />);
-  expect(out).toContain("运行态 · demo");
+  const out = render(<RuntimeOverview store={STUB} state={s} mesh="demo" />);
+  expect(out).toContain("runtime · demo");
   expect(out).toContain("data-bnw-agents");
   expect(out).toContain("router");
   expect(out).toContain("codex-1");
@@ -50,8 +56,8 @@ test("RuntimeOverview: agents + status + usage waterline + pending + canvas link
 });
 
 test("RuntimeOverview: unknown mesh → not-found state", () => {
-  const out = renderToStaticMarkup(<RuntimeOverview store={STUB} state={state()} mesh="ghost" />);
-  expect(out).toContain("mesh 不存在");
+  const out = render(<RuntimeOverview store={STUB} state={state()} mesh="ghost" />);
+  expect(out).toContain("mesh not found");
 });
 
 test("RuntimeFocus split: transcript + real selectors + composer + side summaries + fullscreen toggle", () => {
@@ -67,7 +73,7 @@ test("RuntimeFocus split: transcript + real selectors + composer + side summarie
     mail: [{ id: "ml1", ts: "", from: "router", to: "codex-1", body: "go" }],
     queues: { router: { count: 2, items: [{ id: "q1", source: "operator", preview: "next prompt", ts: "" }] } },
   }) });
-  const out = renderToStaticMarkup(<RuntimeFocus store={STUB} state={s} mesh="demo" agent="router" full={false} />);
+  const out = render(<RuntimeFocus store={STUB} state={s} mesh="demo" agent="router" full={false} />);
   expect(out).toContain('data-bnw-focus="split"');
   expect(out).toContain("data-bnw-transcript");
   expect(out).toContain("restart alpha");
@@ -94,7 +100,7 @@ test("RuntimeFocus: #14 transcript items expose expand toggles", () => {
     { id: "t1", kind: "tool_call", toolCallId: "c1", title: "grep", status: "completed", input: "pattern", output: "match", ts: "", updatedTs: "" },
   ];
   const s = state({ demo: pm({ transcripts: { router: { items, hasMore: false } } }) });
-  const out = renderToStaticMarkup(<RuntimeFocus store={STUB} state={s} mesh="demo" agent="router" full={false} />);
+  const out = render(<RuntimeFocus store={STUB} state={s} mesh="demo" agent="router" full={false} />);
   expect(out).toContain("data-bnw-expand");
   expect(out).toContain('aria-expanded="false"'); // collapsed by default
 });
@@ -107,34 +113,34 @@ test("RuntimeFocus: C2 docked approval bar shows FIFO oldest + 还有 N + resolv
       { requestId: "r2", agent: "router", question: "second one", options: [{ id: "allow", name: "Allow" }], ts: "2" },
     ],
   }) });
-  const out = renderToStaticMarkup(<RuntimeFocus store={STUB} state={s} mesh="demo" agent="router" full={false} />);
+  const out = render(<RuntimeFocus store={STUB} state={s} mesh="demo" agent="router" full={false} />);
   expect(out).toContain("data-bnw-approval");
   expect(out).toContain("write config.json?"); // oldest only
   expect(out).not.toContain("second one"); // FIFO — the rest are summarized
-  expect(out).toContain("还有 1 个待授权");
+  expect(out).toContain("1 more pending");
   expect(out).toContain('aria-label="resolve allow"');
 });
 
 test("RuntimeOverview: #18 lifecycle controls present; cold agent gets a real Wake", () => {
-  const running = renderToStaticMarkup(<RuntimeOverview store={STUB} state={state({ demo: pm() })} mesh="demo" />);
+  const running = render(<RuntimeOverview store={STUB} state={state({ demo: pm() })} mesh="demo" />);
   expect(running).toContain("data-bnw-lifecycle");
   expect(running).toContain('aria-label="stop demo"'); // SUMMARY is running → Stop
   const coldSummary: MeshSummary = { ...SUMMARY, status: "stopped", agents: [{ id: "kimi-1", harness: "kimi", role: "member", status: "cold", activity: "idle" }] };
   const coldState: GatewayState = { meshes: [coldSummary], assistant: { status: "absent", transcript: [] }, perMesh: { demo: pm() } };
-  const cold = renderToStaticMarkup(<RuntimeOverview store={STUB} state={coldState} mesh="demo" />);
+  const cold = render(<RuntimeOverview store={STUB} state={coldState} mesh="demo" />);
   expect(cold).toContain('aria-label="start strategy"'); // stopped → Start strategy
   expect(cold).toContain('aria-label="wake kimi-1"'); // cold agent → real Wake
 });
 
 test("RuntimeFocus full=1: switches to the full frame (no side summaries)", () => {
   const s = state({ demo: pm({ transcripts: { router: { items: [], hasMore: false } } }) });
-  const out = renderToStaticMarkup(<RuntimeFocus store={STUB} state={s} mesh="demo" agent="router" full={true} />);
+  const out = render(<RuntimeFocus store={STUB} state={s} mesh="demo" agent="router" full={true} />);
   expect(out).toContain('data-bnw-focus="full"');
   expect(out).not.toContain('data-bnw-focus="split"');
   expect(out).toContain('href="/bnw/mesh/demo/agent/router"'); // exit-fullscreen toggle (no ?full=1)
 });
 
 test("RuntimeFocus: unknown agent → not-found state", () => {
-  const out = renderToStaticMarkup(<RuntimeFocus store={STUB} state={state()} mesh="demo" agent="ghost" full={false} />);
-  expect(out).toContain("agent 不存在");
+  const out = render(<RuntimeFocus store={STUB} state={state()} mesh="demo" agent="ghost" full={false} />);
+  expect(out).toContain("agent not found");
 });
