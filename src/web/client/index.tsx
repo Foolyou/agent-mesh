@@ -28,8 +28,10 @@ if (root) {
     // Step 7.0 — the new `/bnw/` console (parallel namespace). Its OWN device-auth gate (7.4-A.2b-ii
     // BnwBoot, mockup 12 styling + ?next) wraps the new view tree; the old root UI + old Boot below
     // are untouched. Dynamically imported so the new shell only loads on `/bnw/` paths.
+    // I18nProvider wraps BnwBoot (not the reverse) so the pre-auth device-auth gate localizes too —
+    // the gate renders inside BnwBoot before BnwApp mounts, so it must be under the provider.
     Promise.all([import("./bnw/BnwApp"), import("./bnw/device-auth-gate"), import("./i18n-provider")]).then(([{ BnwApp }, { BnwBoot }, { I18nProvider }]) =>
-      createRoot(root).render(<BnwBoot><I18nProvider><BnwApp /></I18nProvider></BnwBoot>));
+      createRoot(root).render(<I18nProvider><BnwBoot><BnwApp /></BnwBoot></I18nProvider>));
   } else {
     // Boot gates on device authorization before mounting the console (and opening the WS).
     createRoot(root).render(<Boot />);

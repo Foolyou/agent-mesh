@@ -15,6 +15,7 @@ import { authHeaders } from "../device-auth";
 import { Markdown } from "../Markdown";
 import { AuthorContext } from "../AuthorContext";
 import { bnwHref, navigate, type BnwRoute } from "../router";
+import { useI18n, type TFn } from "../i18n";
 
 type FileRoute = Extract<BnwRoute, { k: "file" }>;
 type LoadState =
@@ -36,18 +37,19 @@ function languageOf(ext: string): string {
     ".sh": "sh", ".sql": "sql", ".json": "json", ".yaml": "yaml", ".yml": "yaml", ".toml": "toml",
   } as Record<string, string>)[ext] ?? "text";
 }
-function statusText(status: number): string {
-  if (status === 400) return "Blocked by path safety policy";
-  if (status === 401 || status === 403) return "Not permitted for this device";
-  if (status === 404) return "File not found";
-  if (status === 413) return "File is larger than 5 MB";
-  return "Request failed";
+function statusText(status: number, t: TFn): string {
+  if (status === 400) return t("bnw.fv.st.blocked");
+  if (status === 401 || status === 403) return t("bnw.fv.st.notPermittedDevice");
+  if (status === 404) return t("bnw.fv.st.notFound");
+  if (status === 413) return t("bnw.fv.st.tooLarge");
+  return t("bnw.fv.st.failed");
 }
 function safeDecode(path: string): string {
   try { return decodeURIComponent(path); } catch { return path; }
 }
 
 export function BnwFileViewer({ route }: { route: FileRoute }) {
+  const { t } = useI18n();
   const [state, setState] = useState<LoadState>({ kind: "loading" });
   const [reloadKey, setReloadKey] = useState(0);
   const ext = useMemo(() => extensionOf(route.path), [route.path]);
@@ -66,7 +68,7 @@ export function BnwFileViewer({ route }: { route: FileRoute }) {
     void (async () => {
       try {
         const resp = await fetch(url, { headers: authHeaders() });
-        if (!resp.ok) { if (alive) setState({ kind: "error", status: resp.status, message: statusText(resp.status) }); return; }
+        if (!resp.ok) { if (alive) setState({ kind: "error", status: resp.status, message: statusText(resp.status, t) }); return; }
         const ct = resp.headers.get("content-type") ?? "";
         if (ct.startsWith("image/")) { const blob = await resp.blob(); objectUrl = URL.createObjectURL(blob); if (alive) setState({ kind: "image", url: objectUrl }); return; }
         const text = await resp.text(); if (!alive) return;
@@ -90,7 +92,7 @@ export function BnwFileViewer({ route }: { route: FileRoute }) {
   return (
     <div data-artifact="viewer" className="relative flex h-full min-h-0 flex-col">
       <header className="flex items-center gap-2 border-b border-border bg-surface-raised px-1 pb-3">
-        <RouteLink href={backHref} unstyled data-artifact-back aria-label="back to conversation" className="inline-flex items-center gap-1 rounded-lg border border-border-strong bg-surface-sunken px-2 py-1 text-xs text-text-primary no-underline hover:bg-hover">← 返回对话</RouteLink>
+        <RouteLink href={backHref} unstyled data-artifact-back aria-label="back to conversation" className="inline-flex items-center gap-1 rounded-lg border border-border-strong bg-surface-sunken px-2 py-1 text-xs text-text-primary no-underline hover:bg-hover">← {t("bnw.fv.back")}</RouteLink>
         <span className="text-text-muted">·</span>
         <span data-artifact-path className="min-w-0 flex-1 truncate font-mono text-xs text-text-muted">{route.mesh} / {route.agent} / {decodedPath}</span>
         <StatusChip status="idle" variant="soft" label={route.kind} />
@@ -98,11 +100,11 @@ export function BnwFileViewer({ route }: { route: FileRoute }) {
       <div className="min-h-0 flex-1 overflow-auto p-4">
         <div className="mx-auto flex max-w-[820px] flex-col gap-3">
           {state.kind === "loading" ? (
-            <div className="flex items-center gap-2 text-sm text-text-secondary"><Spinner size={14} label="loading" /> Bearer 拉取中…</div>
+            <div className="flex items-center gap-2 text-sm text-text-secondary"><Spinner size={14} label="loading" /> {t("bnw.fv.loading")}</div>
           ) : state.kind === "error" ? (
-            <ErrorBanner title={state.status === 404 ? "File not found" : state.status === 401 || state.status === 403 ? "Not permitted" : "Unable to open file"}
+            <ErrorBanner title={state.status === 404 ? t("bnw.fv.notFound") : state.status === 401 || state.status === 403 ? t("bnw.fv.notPermitted") : t("bnw.fv.unableOpen")}
               onRetry={state.status === 401 || state.status === 403 ? undefined : () => setReloadKey((k) => k + 1)}>
-              {(state.status ? `${state.status} · ${state.message}` : state.message)}。用上方「返回对话」回到会话。
+              {(state.status ? `${state.status} · ${state.message}` : state.message)}{t("bnw.fv.errorHint")}
             </ErrorBanner>
           ) : state.kind === "markdown" ? (
             <div data-artifact-kind="markdown">

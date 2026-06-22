@@ -353,7 +353,8 @@ try {
     // 404 → not found + back affordance
     await page.goto(`${BASE}/bnw/mesh/demo/agent/router/file/missing.md`, { waitUntil: "domcontentloaded" });
     await page.waitForSelector('[data-artifact="viewer"]', { timeout: 8000 });
-    if (await page.getByText("File not found").count() === 0) throw new Error("404 state not rendered");
+    // suite runs under preseeded zh → the error title is localized (t(bnw.fv.notFound))
+    if (await page.getByText("文件不存在").count() === 0) throw new Error("404 state not rendered");
   });
 
   await step("7.4-A.2b-ii device-auth gate: unauth /bnw shows mockup-12 gate (code/bootstrap/remembered/?next)", async () => {
@@ -1485,6 +1486,149 @@ try {
     assert((await collect(['[aria-label="Assistant composer"]'])).includes("发送"), "i18n zh: assistant Send 发送");
     await sleep(80); await page.screenshot({ path: `${SHOTS}/bnw-i18n-assistant-zh.png`, fullPage: true });
     // leave the suite's zh baseline set for later legacy steps
+    await page.evaluate(() => { localStorage.setItem("mesh.lang", "zh"); });
+  });
+
+  // i18n new-mesh body — create form + expanded editor dialog app-copy switches en↔zh; en app-copy
+  //  carries no hardcoded CJK (user-entered mesh/agent/project/instructions content stays data).
+  await step("i18n new-mesh body: en↔zh (create form + expanded editor) + no hardcoded CJK in en", async () => {
+    const hasCJK = (s: string) => /[㐀-䶿一-鿿豈-﫿]/.test(s);
+    const collect = (sels: string[]) => page.evaluate((ss) => ss
+      .map((s) => { const el = document.querySelector(s) as HTMLElement | null; return el ? el.innerText : ""; })
+      .join("\n"), sels);
+    await page.setViewportSize({ width: 1440, height: 900 });
+
+    // ── en: clear the suite's preseeded zh, then assert form + editor app-copy is English ──
+    await page.goto(`${BASE}/bnw/mesh/new`, { waitUntil: "domcontentloaded" });
+    await page.evaluate(() => { localStorage.removeItem("mesh.lang"); });
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-bnw-newmesh]', { timeout: 8000 });
+    const formEn = await collect(['[data-bnw-newmesh]']);
+    assert(!hasCJK(formEn), `i18n guard: CJK in en new-mesh form app-copy: ${formEn.replace(/\s+/g, " ").slice(0, 140)}`);
+    assert(formEn.toLowerCase().includes("mesh name"), "i18n en: new-mesh form English");
+    // expanded editor (#2 focus-trap dialog) is app-copy too
+    await page.locator('[aria-label="expand agent 1 instructions"]').click();
+    await page.waitForSelector('[data-bnw-editor]', { timeout: 8000 });
+    const editorEn = await collect(['[data-bnw-editor]']);
+    assert(!hasCJK(editorEn), `i18n guard: CJK in en new-mesh editor app-copy: ${editorEn.replace(/\s+/g, " ").slice(0, 140)}`);
+    assert(editorEn.toLowerCase().includes("instructions"), "i18n en: new-mesh editor English");
+    await page.locator('[aria-label="close editor"]').click();
+    await sleep(80); await page.screenshot({ path: `${SHOTS}/bnw-i18n-newmesh-en.png`, fullPage: true });
+    // mobile fixed footer (lg:hidden) with a blank name → "unnamed mesh" app-copy (en)
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(`${BASE}/bnw/mesh/new`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-bnw-newmesh-footer]', { timeout: 8000 });
+    const footerEn = await collect(['[data-bnw-newmesh-footer]']);
+    assert(!hasCJK(footerEn), `i18n guard: CJK in en new-mesh mobile footer: ${footerEn.replace(/\s+/g, " ").slice(0, 80)}`);
+    assert(footerEn.toLowerCase().includes("unnamed mesh"), "i18n en: new-mesh mobile footer blank-name English");
+    await page.setViewportSize({ width: 1440, height: 900 });
+
+    // ── live switch en→zh, then assert form + editor localized ──
+    await page.goto(`${BASE}/bnw/settings?tab=language`, { waitUntil: "domcontentloaded" });
+    await page.getByRole("radio", { name: "中文" }).click();
+    await page.waitForFunction(() => document.documentElement.lang === "zh", { timeout: 8000 });
+    await page.goto(`${BASE}/bnw/mesh/new`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-bnw-newmesh]', { timeout: 8000 });
+    assert((await collect(['[data-bnw-newmesh]'])).includes("添加 agent"), "i18n zh: new-mesh form 添加 agent");
+    await page.locator('[aria-label="expand agent 1 instructions"]').click();
+    await page.waitForSelector('[data-bnw-editor]', { timeout: 8000 });
+    assert((await collect(['[data-bnw-editor]'])).includes("取消"), "i18n zh: new-mesh editor 取消");
+    await page.locator('[aria-label="close editor"]').click();
+    await sleep(80); await page.screenshot({ path: `${SHOTS}/bnw-i18n-newmesh-zh.png`, fullPage: true });
+    // mobile fixed footer blank-name localized
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(`${BASE}/bnw/mesh/new`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-bnw-newmesh-footer]', { timeout: 8000 });
+    assert((await collect(['[data-bnw-newmesh-footer]'])).includes("未命名 mesh"), "i18n zh: new-mesh mobile footer blank-name 未命名 mesh");
+    await page.setViewportSize({ width: 1440, height: 900 });
+    // leave the suite's zh baseline set for later legacy steps
+    await page.evaluate(() => { localStorage.setItem("mesh.lang", "zh"); });
+  });
+
+  // i18n FINAL guard (last cleanup slice) — traverse every /bnw surface in en and assert ZERO
+  //  un-keyed visible Chinese in app-copy regions. `scan` selectors are curated to app-copy only;
+  //  user/issue/file/notification DATA, transcripts, technical/brand/CLI/literal regions are
+  //  excluded (e.g. board rows, notification items, daemon/binding names, the artifact path/code).
+  await step("i18n FINAL guard: all /bnw surfaces have zero un-keyed CJK app-copy in en", async () => {
+    const hasCJK = (s: string) => /[㐀-䶿一-鿿豈-﫿]/.test(s);
+    const collect = (sels: string[]) => page.evaluate((ss) => ss
+      .map((s) => { const el = document.querySelector(s) as HTMLElement | null; return el ? el.innerText : ""; })
+      .join("\n"), sels);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    // en baseline (clear the suite's preseeded zh)
+    await page.goto(`${BASE}/bnw/mesh/demo`, { waitUntil: "domcontentloaded" });
+    await page.evaluate(() => { localStorage.removeItem("mesh.lang"); });
+    await page.reload({ waitUntil: "domcontentloaded" });
+
+    const SURFACES = [
+      { name: "shell", path: "/bnw/mesh/demo", ready: '[data-bnw-surface="runtime"]', scan: ['header', 'nav[aria-label="meshes"]', 'nav[aria-label="management"]', 'main > div.mb-3'] },
+      { name: "runtime-overview", path: "/bnw/mesh/demo", ready: "[data-bnw-lifecycle]", scan: ['[data-bnw-lifecycle]'] },
+      { name: "runtime-focus", path: "/bnw/mesh/demo/agent/router", ready: '[aria-label="Message composer"]', scan: ['[aria-label="Message composer"]'] },
+      { name: "board", path: "/bnw/mesh/demo/board", ready: "[data-bnw-board-filters]", scan: ['[data-bnw-board-filters]'] },
+      { name: "new-mesh", path: "/bnw/mesh/new", ready: "[data-bnw-newmesh]", scan: ['[data-bnw-newmesh]'] },
+      { name: "assistant", path: "/bnw/assistant", ready: '[aria-label="Assistant composer"]', scan: ['[aria-label="Assistant composer"]'] },
+      { name: "harnesses", path: "/bnw/harnesses", ready: "[data-harness-row]", scan: ['[data-harnesses="panel"]'] },
+      { name: "channels", path: "/bnw/channels", ready: "[data-channel-status]", scan: ['[data-channel-status]', '[data-pending-senders]', '[data-authorized-senders]'] },
+      { name: "doctor", path: "/bnw/doctor", ready: "[data-doctor-findings]", scan: ['[data-doctor-summary]', '[data-doctor-findings]', '[data-recovery]'] },
+      { name: "settings", path: "/bnw/settings?tab=appearance", ready: "[data-theme-matrix]", scan: ['[data-settings="panel"]'] },
+      // notifications: scan the filter chips + the mark-all action (notification item rows are DATA,
+      //  excluded); the header/empty/divider/item-action app-copy is en-asserted by the SSR test.
+      { name: "notifications", path: "/bnw/notifications", ready: 'nav[aria-label="notification filters"]', scan: ['nav[aria-label="notification filters"]', '[aria-label="mark all read"]'] },
+      // file-viewer: the 404/error route surfaces the richest app-copy (title + return hint + back);
+      //  the path echo ("missing.md") is Latin data, so the whole viewer is a safe en scan here.
+      { name: "file-viewer", path: "/bnw/mesh/demo/agent/router/file/missing.md", ready: '[data-artifact="viewer"] [role="alert"]', scan: ['[data-artifact="viewer"]'] },
+      { name: "global-states-404", path: "/bnw/zzz-no-such-route", ready: "[data-bnw-not-found]", scan: ['[data-bnw-not-found]'] },
+    ];
+    for (const s of SURFACES) {
+      await page.goto(`${BASE}${s.path}`, { waitUntil: "domcontentloaded" });
+      await page.waitForSelector(s.ready, { timeout: 8000 });
+      const appCopy = await collect(s.scan);
+      assert(!hasCJK(appCopy), `i18n FINAL guard: CJK in en ${s.name} (${s.path}) app-copy: ${appCopy.replace(/\s+/g, " ").slice(0, 140)}`);
+    }
+
+    // device-auth gate (13th surface) — only renders pre-auth, so use a fresh anonymous context
+    // (no device token) forced to en; scan the whole gate (code/remembered are alphanumeric data).
+    const anon = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    try {
+      await anon.addInitScript(() => { try { localStorage.setItem("mesh.lang", "en"); } catch { /* unavailable */ } });
+      const ap = await anon.newPage();
+      await ap.goto(`${BASE}/bnw/channels`, { waitUntil: "domcontentloaded" });
+      await ap.waitForSelector('[data-device-auth="gate"]', { timeout: 8000 });
+      await ap.waitForSelector('[data-device-code]', { timeout: 8000 });
+      const gate = await ap.evaluate(() => (document.querySelector('[data-device-auth="gate"]') as HTMLElement | null)?.innerText ?? "");
+      assert(!hasCJK(gate), `i18n FINAL guard: CJK in en device-auth gate app-copy: ${gate.replace(/\s+/g, " ").slice(0, 140)}`);
+    } finally { await anon.close(); }
+
+    // ── zh spot-checks: switch to zh and assert representative localized app-copy on the final
+    //    three surfaces (file-viewer / notifications in the authed context; device-auth via a fresh
+    //    zh anonymous context). Proves the surfaces localize, not just that en has no CJK. ──
+    await page.goto(`${BASE}/bnw/settings?tab=language`, { waitUntil: "domcontentloaded" });
+    await page.getByRole("radio", { name: "中文" }).click();
+    await page.waitForFunction(() => document.documentElement.lang === "zh", { timeout: 8000 });
+    // file-viewer (404 error route) → localized back link + not-found title
+    await page.goto(`${BASE}/bnw/mesh/demo/agent/router/file/missing.md`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-artifact="viewer"] [role="alert"]', { timeout: 8000 });
+    const fvZh = await collect(['[data-artifact="viewer"]']);
+    assert(fvZh.includes("返回对话") && fvZh.includes("文件不存在"), "i18n zh: file-viewer 返回对话 + 文件不存在");
+    // notifications → localized filter chips + mark-all action
+    await page.goto(`${BASE}/bnw/notifications`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('nav[aria-label="notification filters"]', { timeout: 8000 });
+    const ntZh = await collect(['nav[aria-label="notification filters"]', '[aria-label="mark all read"]']);
+    assert(ntZh.includes("更新") && ntZh.includes("全部已读"), "i18n zh: notifications 更新 chip + 全部已读");
+    // device-auth gate via a fresh zh anonymous context → localized title + status prose
+    const anonZh = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    try {
+      await anonZh.addInitScript(() => { try { localStorage.setItem("mesh.lang", "zh"); } catch { /* unavailable */ } });
+      const ap = await anonZh.newPage();
+      await ap.goto(`${BASE}/bnw/channels`, { waitUntil: "domcontentloaded" });
+      await ap.waitForSelector('[data-device-code]', { timeout: 8000 });
+      const gateZh = await ap.evaluate(() => (document.querySelector('[data-device-auth="gate"]') as HTMLElement | null)?.innerText ?? "");
+      assert(gateZh.includes("设备授权") && gateZh.includes("等待宿主批准"), "i18n zh: device-auth gate 设备授权 + 等待宿主批准");
+      // security literals stay verbatim in zh too
+      assert(gateZh.includes("mesh device approve") && gateZh.includes("/api/*"), "device-auth security literals stay verbatim in zh");
+    } finally { await anonZh.close(); }
+
+    // restore the suite's zh baseline for later legacy steps (already zh)
     await page.evaluate(() => { localStorage.setItem("mesh.lang", "zh"); });
   });
 

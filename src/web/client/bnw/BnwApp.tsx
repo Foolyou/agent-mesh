@@ -37,44 +37,6 @@ function meshDot(s: MeshStatus): Status {
   }
 }
 
-const SURFACE_TITLE: Record<BnwRoute["k"], string> = {
-  home: "Home",
-  runtime: "运行态 A",
-  board: "看板 C",
-  newMesh: "新建 mesh",
-  assistant: "Mesh Assistant B",
-  harnesses: "Harnesses",
-  channels: "Channels",
-  doctor: "Doctor / 系统",
-  settings: "Settings",
-  notifications: "Notifications",
-  file: "File / Artifact",
-  notFound: "Not found",
-};
-
-// 7.0 placeholder body for a surface — names the resolved route so route-switching is
-// visibly distinct per path. Real wired content lands in 7.1–7.5.
-function SurfacePlaceholder({ route }: { route: BnwRoute }) {
-  const detail = (() => {
-    switch (route.k) {
-      case "runtime": return route.canvas ? `canvas · ${route.mesh}` : route.agent ? `${route.mesh} · agent ${route.agent}${route.full ? " · full" : ""}` : `${route.mesh} · overview`;
-      case "board": return route.issue ? `${route.mesh} · issue #${route.issue}` : `${route.mesh} · ${route.view}`;
-      case "newMesh": return route.editOf ? `edit ${route.editOf}` : "create";
-      case "file": return `${route.mesh} · ${route.agent} · ${route.kind} · ${route.path}`;
-      case "settings": return route.tab ?? "appearance";
-      default: return "";
-    }
-  })();
-  return (
-    <PanelFrame title={SURFACE_TITLE[route.k]} description={detail || undefined}>
-      <EmptyState
-        title={`${SURFACE_TITLE[route.k]} — 7.0 占位`}
-        description="路由地基已就绪；本表面的真实接线将在后续阶段（7.1–7.5）落地。"
-      />
-    </PanelFrame>
-  );
-}
-
 // 7.5-C — in-app SPA 404 matching surface-13's not-found-in-shell treatment (🧭 card +
 // 返回控制台). The shell chrome stays mounted; only the stage shows the not-found view.
 function NotFound({ path }: { path: string }) {
@@ -178,7 +140,7 @@ export function BnwApp() {
 
   let body: ReactNode;
   if (route.k === "notFound") body = <NotFound path={route.path} />;
-  else if (route.k === "home") body = <PanelFrame title="Home"><div className="flex items-center gap-2 text-sm text-text-muted"><Spinner size={14} label="loading" /> 正在进入默认 mesh…</div></PanelFrame>;
+  else if (route.k === "home") body = <PanelFrame title={t("bnw.app.home")}><div className="flex items-center gap-2 text-sm text-text-muted"><Spinner size={14} label="loading" /> {t("bnw.app.entering")}</div></PanelFrame>;
   // 7.1 — Runtime A wired to the real store: overview + focus (A/B) + canvas (C).
   // Non-runtime surfaces remain 7.0 placeholders.
   else if (route.k === "runtime" && route.canvas) body = <MeshCanvas store={store} state={state} mesh={route.mesh} />;
@@ -201,7 +163,7 @@ export function BnwApp() {
   else if (route.k === "settings") body = <BnwSettings route={route} />;
   // 7.4-C.2 — Notifications center (real folded state + synthetic frontend-update row).
   else if (route.k === "notifications") body = <BnwNotifications store={store} state={state} />;
-  else body = <SurfacePlaceholder route={route} />;
+  else body = <NotFound path={typeof window !== "undefined" ? window.location.pathname : "/bnw"} />;
 
   return (
     <div data-bnw="shell" data-bnw-surface={route.k} className="flex h-[100dvh] flex-col bg-surface text-text-primary font-sans">

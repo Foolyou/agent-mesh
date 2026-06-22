@@ -15,6 +15,7 @@ import type { AgentConfig, HarnessId, AgentRole, MeshConfig, MeshEdge, ThinkingE
 import { authHeaders } from "../device-auth";
 import { effortOptionsForHarness, supportsRuntimeEffort, supportsThinkingToggle } from "../../../harness-utils";
 import { bnwHref, navigate } from "../router";
+import { useI18n } from "../i18n";
 
 const HARNESSES: HarnessId[] = ["claude", "codex", "opencode", "kimi"];
 const MAX_INSTR = 4000;
@@ -27,6 +28,7 @@ const blankAgent = (role: AgentRole = "member"): AgentRow => ({ id: "", harness:
 
 // #2 — expanded text editor with a REAL focus trap (Tab cycles within, Esc closes) + char count.
 function TextEditorDialog({ title, value, onApply, onClose }: { title: string; value: string; onApply: (v: string) => void; onClose: () => void }) {
+  const { t } = useI18n();
   const [text, setText] = useState(value);
   const ref = useRef<HTMLDivElement | null>(null);
   useEffect(() => { ref.current?.querySelector("textarea")?.focus(); }, []);
@@ -48,7 +50,7 @@ function TextEditorDialog({ title, value, onApply, onClose }: { title: string; v
         <Textarea value={text} aria-label={`${title} full editor`} rows={12} error={over} className="flex-1" onChange={(e) => setText(e.target.value)} />
         <div className="flex items-center justify-between">
           <span className={`text-xs tabular-nums ${over ? "text-danger" : "text-text-muted"}`}>{text.length} / {MAX_INSTR}</span>
-          <Cluster><Button variant="ghost" size="sm" onClick={onClose}>Cancel</Button><Button variant="primary" size="sm" disabled={over} aria-label="apply editor" onClick={() => { onApply(text); onClose(); }}>Apply</Button></Cluster>
+          <Cluster><Button variant="ghost" size="sm" onClick={onClose}>{t("cancel")}</Button><Button variant="primary" size="sm" disabled={over} aria-label="apply editor" onClick={() => { onApply(text); onClose(); }}>{t("apply")}</Button></Cluster>
         </div>
       </div>
     </div>
@@ -56,6 +58,7 @@ function TextEditorDialog({ title, value, onApply, onClose }: { title: string; v
 }
 
 export function BnwNewMesh({ store, state, route }: { store: Store; state: GatewayState; route: { editOf?: string; nmEditor?: "charter" | "instructions" } }) {
+  const { t } = useI18n();
   const editing = !!route.editOf;
   const [name, setName] = useState(route.editOf ?? "");
   const [agents, setAgents] = useState<AgentRow[]>([blankAgent("router")]);
@@ -139,15 +142,15 @@ export function BnwNewMesh({ store, state, route }: { store: Store; state: Gatew
 
   // Save/Create stays primary to match the approved mockup; Button's disabled-primary state
   // neutralizes its fill in the component layer for a11y.
-  const actions = <Cluster><Button variant="ghost" size="sm" aria-label="cancel" onClick={() => navigate(name.trim() && editing ? { k: "runtime", mesh: name.trim() } : { k: "home" })}>Cancel</Button><Button variant="primary" size="sm" busy={busy} disabled={!name.trim() || agents.some((a) => !a.id.trim() || !a.project.trim())} aria-label="save mesh" onClick={() => void save()}>{editing ? "Save" : "Create"}</Button></Cluster>;
+  const actions = <Cluster><Button variant="ghost" size="sm" aria-label="cancel" onClick={() => navigate(name.trim() && editing ? { k: "runtime", mesh: name.trim() } : { k: "home" })}>{t("cancel")}</Button><Button variant="primary" size="sm" busy={busy} disabled={!name.trim() || agents.some((a) => !a.id.trim() || !a.project.trim())} aria-label="save mesh" onClick={() => void save()}>{editing ? t("bnw.nm.save") : t("bnw.nm.create")}</Button></Cluster>;
 
-  if (loadingCfg) return <PanelFrame title={editing ? `编辑 mesh · ${route.editOf}` : "新建 mesh"}><div className="flex items-center gap-2 text-sm text-text-muted"><Spinner size={14} label="loading" /> 载入配置…</div></PanelFrame>;
+  if (loadingCfg) return <PanelFrame title={editing ? `${t("bnw.nm.editTitle")} · ${route.editOf}` : t("bnw.nm.newTitle")}><div className="flex items-center gap-2 text-sm text-text-muted"><Spinner size={14} label="loading" /> {t("bnw.nm.loadingConfig")}</div></PanelFrame>;
 
   return (
     <div data-bnw-newmesh className="flex h-full min-h-0 flex-col">
       {/* C3: sticky desktop action bar (name echo + Cancel/Save) — reachable while scrolling */}
       <div data-bnw-newmesh-actionbar className="sticky top-0 z-10 flex items-center gap-2 border-b border-border bg-surface-raised px-3 py-2">
-        <span className="text-sm font-semibold">{editing ? "编辑 mesh" : "新建 mesh"}</span>
+        <span className="text-sm font-semibold">{editing ? t("bnw.nm.editTitle") : t("bnw.nm.newTitle")}</span>
         {name ? <span className="max-w-[260px] truncate text-sm text-text-muted">· {name}</span> : null}
         <span className="flex-1" aria-hidden="true" />
         {actions}
@@ -155,17 +158,17 @@ export function BnwNewMesh({ store, state, route }: { store: Store; state: Gatew
       {/* body scrolls normally — NO nested fixed-height overflow trap on the agent list */}
       <div className="min-h-0 flex-1 overflow-auto p-3">
         <div className="mx-auto flex max-w-[820px] flex-col gap-5">
-          {error ? <ErrorBanner title="无法保存">{error}</ErrorBanner> : null}
+          {error ? <ErrorBanner title={t("bnw.nm.saveError")}>{error}</ErrorBanner> : null}
           <section className="flex flex-col gap-1.5">
-            <label className="text-xs uppercase tracking-wider text-text-muted">mesh name</label>
+            <label className="text-xs uppercase tracking-wider text-text-muted">{t("bnw.nm.meshName")}</label>
             <Input value={name} placeholder="my-mesh" aria-label="mesh name" className="max-w-sm" disabled={editing} onChange={(e) => setName(e.target.value)} />
-            <span className="text-xs text-text-muted">{editing ? "name is fixed when editing" : "unique; lowercase recommended"}</span>
+            <span className="text-xs text-text-muted">{editing ? t("bnw.nm.nameFixed") : t("bnw.nm.nameHint")}</span>
           </section>
 
           <section className="flex flex-col gap-2">
             <div className="flex items-center justify-between">
               <span className="text-xs uppercase tracking-wider text-text-muted">agents · {agents.length}</span>
-              <Button variant="secondary" size="sm" aria-label="add agent" className="whitespace-nowrap" onClick={addAgent}>+ Add agent</Button>
+              <Button variant="secondary" size="sm" aria-label="add agent" className="whitespace-nowrap" onClick={addAgent}>{t("bnw.nm.addAgent")}</Button>
             </div>
             <div className="flex flex-col gap-2">
               {agents.map((a, i) => {
@@ -180,36 +183,36 @@ export function BnwNewMesh({ store, state, route }: { store: Store; state: Gatew
                       <span className="flex-1" aria-hidden="true" />
                       <Button variant="ghost" size="sm" iconOnly aria-label={`remove agent ${i + 1}`} disabled={a.role === "router"} onClick={() => removeAgent(i)}>×</Button>
                     </div>
-                    <Input value={a.project} aria-label={`agent ${i + 1} project`} placeholder="project path" className="w-full" onChange={(e) => setAgent(i, { project: e.target.value })} />
+                    <Input value={a.project} aria-label={`agent ${i + 1} project`} placeholder={t("bnw.nm.projectPath")} className="w-full" onChange={(e) => setAgent(i, { project: e.target.value })} />
                     <div className="flex flex-wrap items-center gap-2">
                       {/* #3 model + probe/retry */}
                       <label className="inline-flex items-center gap-1 text-xs text-text-muted">model
                         <Select value={a.model ?? ""} aria-label={`agent ${i + 1} model`} className="w-36" disabled={pr?.status === "loading"} onChange={(e) => setAgent(i, { model: e.target.value || undefined })}>
-                          <option value="">(default)</option>
+                          <option value="">{t("bnw.nm.default")}</option>
                           {(pr?.models ?? []).map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
-                          {a.model && !(pr?.models ?? []).some((m) => m.id === a.model) ? <option value={a.model}>{a.model} (not advertised)</option> : null}
+                          {a.model && !(pr?.models ?? []).some((m) => m.id === a.model) ? <option value={a.model}>{a.model} {t("bnw.nm.notAdvertised")}</option> : null}
                         </Select>
                       </label>
                       {pr?.status === "loading" ? <Spinner size={12} label="probing models" /> : null}
-                      {pr?.status === "error" ? <Button variant="ghost" size="sm" aria-label={`retry models ${a.harness}`} onClick={() => void probe(a.harness, true)}>↻ retry</Button> : null}
+                      {pr?.status === "error" ? <Button variant="ghost" size="sm" aria-label={`retry models ${a.harness}`} onClick={() => void probe(a.harness, true)}>↻ {t("bnw.nm.retry")}</Button> : null}
                       {/* #4 effort */}
                       {showEffort ? <label className="inline-flex items-center gap-1 text-xs text-text-muted">effort
-                        <Select value={a.effort ?? ""} aria-label={`agent ${i + 1} effort`} className="w-24" onChange={(e) => setAgent(i, { effort: e.target.value || undefined })}><option value="">(default)</option>{effortOptionsForHarness(a.harness).map((ef) => <option key={ef} value={ef}>{ef}</option>)}</Select>
+                        <Select value={a.effort ?? ""} aria-label={`agent ${i + 1} effort`} className="w-24" onChange={(e) => setAgent(i, { effort: e.target.value || undefined })}><option value="">{t("bnw.nm.default")}</option>{effortOptionsForHarness(a.harness).map((ef) => <option key={ef} value={ef}>{ef}</option>)}</Select>
                       </label> : null}
                       {/* #5 lazy (router disallowed) */}
-                      <label className="inline-flex items-center gap-1.5 text-xs text-text-secondary"><input type="checkbox" className="accent-accent" aria-label={`agent ${i + 1} lazy`} checked={!!a.lazy} disabled={a.role === "router"} onChange={(e) => setAgent(i, { lazy: e.target.checked })} /> lazy</label>
+                      <label className="inline-flex items-center gap-1.5 text-xs text-text-secondary"><input type="checkbox" className="accent-accent" aria-label={`agent ${i + 1} lazy`} checked={!!a.lazy} disabled={a.role === "router"} onChange={(e) => setAgent(i, { lazy: e.target.checked })} /> {t("bnw.nm.lazy")}</label>
                       {/* #6 opencode permission */}
-                      {a.harness === "opencode" ? <label className="inline-flex items-center gap-1 text-xs text-text-muted">permission
+                      {a.harness === "opencode" ? <label className="inline-flex items-center gap-1 text-xs text-text-muted">{t("bnw.nm.permission")}
                         <Select value={a.opencodePermission ?? "ask"} aria-label={`agent ${i + 1} opencode permission`} className="w-20" onChange={(e) => setAgent(i, { opencodePermission: e.target.value as "ask" | "allow" })}><option>ask</option><option>allow</option></Select>
                       </label> : null}
-                      {supportsThinkingToggle(a.harness) ? <span className="text-xs text-text-muted">（kimi thinking 在运行态切换）</span> : null}
+                      {supportsThinkingToggle(a.harness) ? <span className="text-xs text-text-muted">{t("bnw.nm.kimiNote")}</span> : null}
                     </div>
                     {/* #1 instructions (≤4000) + #2 expand */}
                     <div className="flex items-center justify-between">
-                      <span className="text-xs text-text-muted">instructions (max {MAX_INSTR})</span>
-                      <Button variant="ghost" size="sm" aria-label={`expand agent ${i + 1} instructions`} onClick={() => setEditor({ kind: "instructions", idx: i })}>⤢ expand</Button>
+                      <span className="text-xs text-text-muted">{t("bnw.nm.instructions", { n: MAX_INSTR })}</span>
+                      <Button variant="ghost" size="sm" aria-label={`expand agent ${i + 1} instructions`} onClick={() => setEditor({ kind: "instructions", idx: i })}>⤢ {t("bnw.nm.expand")}</Button>
                     </div>
-                    <Textarea value={a.instructions ?? ""} rows={2} aria-label={`agent ${i + 1} instructions`} placeholder="per-agent instructions…" error={(a.instructions?.length ?? 0) > MAX_INSTR} onChange={(e) => setAgent(i, { instructions: e.target.value })} />
+                    <Textarea value={a.instructions ?? ""} rows={2} aria-label={`agent ${i + 1} instructions`} placeholder={t("bnw.nm.instrPlaceholder")} error={(a.instructions?.length ?? 0) > MAX_INSTR} onChange={(e) => setAgent(i, { instructions: e.target.value })} />
                   </div>
                 );
               })}
@@ -220,8 +223,8 @@ export function BnwNewMesh({ store, state, route }: { store: Store; state: Gatew
           <section className="flex flex-col gap-2">
             <span className="text-xs uppercase tracking-wider text-text-muted">auto-compact</span>
             <div className="flex flex-wrap items-center gap-3">
-              <label className="inline-flex items-center gap-1.5 text-sm text-text-secondary"><input type="checkbox" className="accent-accent" aria-label="auto-compact enabled" checked={autoCompact.enabled} onChange={(e) => setAutoCompact((s) => ({ ...s, enabled: e.target.checked }))} /> enable auto-compact</label>
-              <label className="inline-flex items-center gap-1 text-xs text-text-muted">threshold<Input value={autoCompact.threshold} aria-label="auto-compact threshold" className="w-20" onChange={(e) => setAutoCompact((s) => ({ ...s, threshold: e.target.value }))} /></label>
+              <label className="inline-flex items-center gap-1.5 text-sm text-text-secondary"><input type="checkbox" className="accent-accent" aria-label="auto-compact enabled" checked={autoCompact.enabled} onChange={(e) => setAutoCompact((s) => ({ ...s, enabled: e.target.checked }))} /> {t("bnw.nm.enableAutoCompact")}</label>
+              <label className="inline-flex items-center gap-1 text-xs text-text-muted">{t("bnw.nm.threshold")}<Input value={autoCompact.threshold} aria-label="auto-compact threshold" className="w-20" onChange={(e) => setAutoCompact((s) => ({ ...s, threshold: e.target.value }))} /></label>
             </div>
           </section>
 
@@ -229,17 +232,17 @@ export function BnwNewMesh({ store, state, route }: { store: Store; state: Gatew
           <section className="flex flex-col gap-2">
             <div className="flex items-center justify-between">
               <span className="text-xs uppercase tracking-wider text-text-muted">mail edges · {edges.length}</span>
-              <Button variant="secondary" size="sm" aria-label="add edge" className="whitespace-nowrap" disabled={agents.length < 2} onClick={() => setEdges((e) => [...e, { from: agents[0]?.id ?? "", to: agents[1]?.id ?? "" }])}>+ Add edge</Button>
+              <Button variant="secondary" size="sm" aria-label="add edge" className="whitespace-nowrap" disabled={agents.length < 2} onClick={() => setEdges((e) => [...e, { from: agents[0]?.id ?? "", to: agents[1]?.id ?? "" }])}>{t("bnw.nm.addEdge")}</Button>
             </div>
             <div className="flex flex-col gap-1.5">
-              {edges.length === 0 ? <span className="text-xs text-text-muted">no edges yet</span> : edges.map((e, i) => {
+              {edges.length === 0 ? <span className="text-xs text-text-muted">{t("bnw.nm.noEdges")}</span> : edges.map((e, i) => {
                 const toRouter = agents.find((a) => a.id === e.to)?.role === "router";
                 return (
                   <div key={i} className="flex items-center gap-2 text-sm">
                     <Select value={e.from} aria-label={`edge ${i + 1} from`} className="flex-1" onChange={(ev) => setEdges((x) => x.map((y, j) => (j === i ? { ...y, from: ev.target.value } : y)))}>{agents.map((a) => <option key={a.id} value={a.id}>{a.id}</option>)}</Select>
                     <span aria-hidden="true" className="text-text-muted">→</span>
                     <Select value={e.to} aria-label={`edge ${i + 1} to`} className="flex-1" onChange={(ev) => setEdges((x) => x.map((y, j) => (j === i ? { ...y, to: ev.target.value, steer: toRouterId(agents, ev.target.value) ? false : y.steer } : y)))}>{agents.map((a) => <option key={a.id} value={a.id}>{a.id}</option>)}</Select>
-                    <label className="inline-flex shrink-0 items-center gap-1 text-xs text-text-secondary"><input type="checkbox" className="accent-accent" aria-label={`edge ${i + 1} steer`} checked={!!e.steer} disabled={toRouter} onChange={(ev) => setEdges((x) => x.map((y, j) => (j === i ? { ...y, steer: ev.target.checked } : y)))} /> steer</label>
+                    <label className="inline-flex shrink-0 items-center gap-1 text-xs text-text-secondary"><input type="checkbox" className="accent-accent" aria-label={`edge ${i + 1} steer`} checked={!!e.steer} disabled={toRouter} onChange={(ev) => setEdges((x) => x.map((y, j) => (j === i ? { ...y, steer: ev.target.checked } : y)))} /> {t("bnw.nm.steer")}</label>
                     <Button variant="ghost" size="sm" iconOnly aria-label={`remove edge ${i + 1}`} onClick={() => setEdges((x) => x.filter((_, j) => j !== i))}>×</Button>
                   </div>
                 );
@@ -250,22 +253,22 @@ export function BnwNewMesh({ store, state, route }: { store: Store; state: Gatew
           {/* charter (optional) + #2 expand */}
           <section className="flex flex-col gap-1.5">
             <div className="flex items-center justify-between">
-              <label className="text-xs uppercase tracking-wider text-text-muted">charter (optional)</label>
-              <Button variant="ghost" size="sm" aria-label="expand charter" onClick={() => setEditor({ kind: "charter" })}>⤢ expand</Button>
+              <label className="text-xs uppercase tracking-wider text-text-muted">{t("bnw.nm.charterLabel")}</label>
+              <Button variant="ghost" size="sm" aria-label="expand charter" onClick={() => setEditor({ kind: "charter" })}>⤢ {t("bnw.nm.expand")}</Button>
             </div>
-            <Textarea value={charter} rows={2} aria-label="charter" placeholder="shared goal + working norms…" onChange={(e) => setCharter(e.target.value)} />
+            <Textarea value={charter} rows={2} aria-label="charter" placeholder={t("bnw.nm.charterPlaceholder")} onChange={(e) => setCharter(e.target.value)} />
           </section>
         </div>
       </div>
       {/* C3 mobile: fixed Save footer (the whole screen scrolls above) */}
       <div data-bnw-newmesh-footer className="sticky bottom-0 z-10 flex shrink-0 items-center justify-between gap-2 border-t border-border bg-surface-raised px-3 py-2 lg:hidden">
-        <span className="min-w-0 flex-1 truncate text-xs text-text-muted">{name || "未命名 mesh"}</span>
+        <span className="min-w-0 flex-1 truncate text-xs text-text-muted">{name || t("bnw.nm.unnamedMesh")}</span>
         {actions}
       </div>
 
       {editor ? (
         <TextEditorDialog
-          title={editor.kind === "charter" ? "Charter" : `${agents[editor.idx]?.id || `agent ${editor.idx + 1}`} · instructions`}
+          title={editor.kind === "charter" ? t("bnw.nm.charterTitle") : `${agents[editor.idx]?.id || `agent ${editor.idx + 1}`} · ${t("bnw.nm.instructionsWord")}`}
           value={editor.kind === "charter" ? charter : (agents[editor.idx]?.instructions ?? "")}
           onApply={(v) => editor.kind === "charter" ? setCharter(v) : setAgent(editor.idx, { instructions: v })}
           onClose={() => setEditor(null)}
