@@ -17,6 +17,7 @@ import type { GatewayState } from "../../types";
 import type { BoardDocument, BoardStatus, BoardPriority, BoardCommand, Task, Epic } from "../../../board";
 import { LABEL_PALETTE } from "../../../board";
 import { bnwHref, navigate, type BoardFilters, type BoardView } from "../router";
+import { useI18n, tBoardStatus, tBoardPrio } from "../i18n";
 
 const STATUS_ORDER: BoardStatus[] = ["todo", "in_progress", "in_review", "done", "cancelled"];
 const PRIOS: BoardPriority[] = ["low", "normal", "high", "urgent"];
@@ -82,7 +83,8 @@ function LabelChip({ name }: { name: string }) {
   return <span className="inline-flex items-center gap-1 rounded border border-border bg-surface-sunken px-1.5 py-0.5 text-xs text-text-secondary"><Icon name="tag" size={11} />{name}</span>;
 }
 function PrioTag({ prio }: { prio: string }) {
-  return <span className={`text-xs font-medium ${prio === "urgent" || prio === "high" ? "text-danger" : "text-text-muted"}`}>{prio}</span>;
+  const { t } = useI18n();
+  return <span className={`text-xs font-medium ${prio === "urgent" || prio === "high" ? "text-danger" : "text-text-muted"}`}>{tBoardPrio(t, prio)}</span>;
 }
 function SubProgress({ task }: { task: Task }) {
   const { done, total } = subtaskProgress(task);
@@ -95,6 +97,7 @@ function BoardFilterShell({ mesh, route, board, onToggleCreate, onToggleManage, 
   mesh: string; route: { view: BoardView; filters: BoardFilters }; board: BoardDocument;
   onToggleCreate: () => void; onToggleManage: () => void; onToggleFs: () => void; fs: boolean;
 }) {
+  const { t } = useI18n();
   const [menu, setMenu] = useState(false);
   const f = route.filters;
   const go = (next: BoardFilters, view: BoardView = route.view) => navigate({ k: "board", mesh, view, filters: next });
@@ -107,39 +110,39 @@ function BoardFilterShell({ mesh, route, board, onToggleCreate, onToggleManage, 
       <div role="toolbar" aria-label="board filters" className="flex items-center gap-2">
         <span className="relative flex min-w-0 flex-1 items-center">
           <Icon name="search" size={14} className="pointer-events-none absolute left-2 text-text-muted" />
-          <input aria-label="search issues" value={f.q ?? ""} placeholder="搜索 issue… 例如 status:open label:bug"
+          <input aria-label="search issues" value={f.q ?? ""} placeholder={t("bnw.bd.searchPlaceholder")}
             onChange={(e) => setF({ q: e.target.value || undefined })}
             className="w-full min-w-0 rounded-lg border border-border-strong bg-surface-sunken py-1 pl-7 pr-2 text-sm text-text-primary placeholder:text-text-muted" />
         </span>
         <button type="button" data-bnw-filter-toggle aria-haspopup="menu" aria-expanded={menu} onClick={() => setMenu((m) => !m)}
-          className="shrink-0 rounded-lg border border-border-strong bg-surface-sunken px-2 py-1 text-xs text-text-primary hover:bg-hover">{menu ? "▾ 筛选" : "筛选 ▾"}</button>
+          className="shrink-0 rounded-lg border border-border-strong bg-surface-sunken px-2 py-1 text-xs text-text-primary hover:bg-hover">{menu ? `▾ ${t("bnw.bd.filter")}` : `${t("bnw.bd.filter")} ▾`}</button>
         <span className="shrink-0"><Cluster>
-          <SegmentedControl ariaLabel="Board view" value={route.view} size="sm" onChange={(v) => go(f, v as BoardView)} options={[{ value: "list", label: "List" }, { value: "kanban", label: "Board" }]} />
-          <Select aria-label="sort" value={f.sort ?? "number"} onChange={(e) => setF({ sort: e.target.value })} className="w-24"><option value="number">number</option><option value="updated">updated</option><option value="created">created</option><option value="priority">priority</option></Select>
-          <Button size="sm" variant="secondary" aria-label="manage labels" onClick={onToggleManage}><Icon name="tag" size={13} /> 标签</Button>
+          <SegmentedControl ariaLabel="Board view" value={route.view} size="sm" onChange={(v) => go(f, v as BoardView)} options={[{ value: "list", label: t("bnw.bd.viewList") }, { value: "kanban", label: t("bnw.bd.viewKanban") }]} />
+          <Select aria-label="sort" value={f.sort ?? "number"} onChange={(e) => setF({ sort: e.target.value })} className="w-24"><option value="number">{t("bnw.bd.sort.number")}</option><option value="updated">{t("bnw.bd.sort.updated")}</option><option value="created">{t("bnw.bd.sort.created")}</option><option value="priority">{t("bnw.bd.sort.priority")}</option></Select>
+          <Button size="sm" variant="secondary" aria-label="manage labels" onClick={onToggleManage}><Icon name="tag" size={13} /> {t("bnw.bd.manageLabels")}</Button>
           <Button size="sm" variant="ghost" iconOnly aria-label={fs ? "exit fullscreen" : "fullscreen"} onClick={onToggleFs}>{fs ? <Icon name="minimize" size={14} /> : <Icon name="maximize" size={14} />}</Button>
-          <Button size="sm" variant="primary" aria-label="new issue" onClick={onToggleCreate}>+ 新建</Button>
+          <Button size="sm" variant="primary" aria-label="new issue" onClick={onToggleCreate}>{t("bnw.bd.new")}</Button>
         </Cluster></span>
       </div>
       {menu ? (
         <div role="menu" data-bnw-filter-menu className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-surface-raised p-2">
-          <Select aria-label="status filter" value={f.status ?? ""} onChange={(e) => setF({ status: e.target.value || undefined })} className="w-32"><option value="">status: any</option><option value="open">open</option>{STATUS_ORDER.map((s) => <option key={s} value={s}>{s}</option>)}</Select>
-          <Select aria-label="label filter" value={f.label ?? ""} onChange={(e) => setF({ label: e.target.value || undefined })} className="w-32"><option value="">label: any</option>{labels.map((l) => <option key={l.id} value={l.name}>{l.name}</option>)}</Select>
-          <Select aria-label="assignee filter" value={f.assignee ?? ""} onChange={(e) => setF({ assignee: e.target.value || undefined })} className="w-32"><option value="">assignee: any</option>{assignees.map((a) => <option key={a} value={a}>{a}</option>)}</Select>
-          <Select aria-label="epic filter" value={f.epic ?? ""} onChange={(e) => setF({ epic: e.target.value || undefined })} className="w-36"><option value="">epic: any</option>{board.epics.map((e) => <option key={e.id} value={e.id}>{e.title}</option>)}</Select>
-          <label className="inline-flex items-center gap-1.5 text-xs text-text-secondary"><input type="checkbox" aria-label="group by epic" checked={f.group === "epic"} onChange={(e) => setF({ group: e.target.checked ? "epic" : undefined })} className="accent-accent" /> 按 Epic 分组</label>
+          <Select aria-label="status filter" value={f.status ?? ""} onChange={(e) => setF({ status: e.target.value || undefined })} className="w-32"><option value="">{t("bnw.bd.anyStatus")}</option><option value="open">{tBoardStatus(t, "open")}</option>{STATUS_ORDER.map((s) => <option key={s} value={s}>{tBoardStatus(t, s)}</option>)}</Select>
+          <Select aria-label="label filter" value={f.label ?? ""} onChange={(e) => setF({ label: e.target.value || undefined })} className="w-32"><option value="">{t("bnw.bd.anyLabel")}</option>{labels.map((l) => <option key={l.id} value={l.name}>{l.name}</option>)}</Select>
+          <Select aria-label="assignee filter" value={f.assignee ?? ""} onChange={(e) => setF({ assignee: e.target.value || undefined })} className="w-32"><option value="">{t("bnw.bd.anyAssignee")}</option>{assignees.map((a) => <option key={a} value={a}>{a}</option>)}</Select>
+          <Select aria-label="epic filter" value={f.epic ?? ""} onChange={(e) => setF({ epic: e.target.value || undefined })} className="w-36"><option value="">{t("bnw.bd.anyEpic")}</option>{board.epics.map((e) => <option key={e.id} value={e.id}>{e.title}</option>)}</Select>
+          <label className="inline-flex items-center gap-1.5 text-xs text-text-secondary"><input type="checkbox" aria-label="group by epic" checked={f.group === "epic"} onChange={(e) => setF({ group: e.target.checked ? "epic" : undefined })} className="accent-accent" /> {t("bnw.bd.groupByEpic")}</label>
         </div>
       ) : null}
       {applied.length ? (
         <div data-bnw-board-chips className="flex flex-wrap items-center gap-1.5">
-          <span className="text-xs text-text-muted">已筛选</span>
+          <span className="text-xs text-text-muted">{t("bnw.bd.filtered")}</span>
           {applied.map((a) => (
             <span key={a.k} data-bnw-chip className="inline-flex items-center gap-1 rounded-full border border-border bg-surface-sunken px-2 py-0.5 text-xs text-text-secondary">
               {a.k}:{a.v}
               <button type="button" aria-label={`remove filter ${a.k}`} onClick={() => setF({ [a.k]: undefined } as Partial<BoardFilters>)} className="rounded-full px-0.5 text-text-muted hover:text-text-primary">×</button>
             </span>
           ))}
-          <button type="button" aria-label="clear all filters" onClick={() => go({ sort: f.sort })} className="ml-1 text-xs text-accent hover:underline">清除全部</button>
+          <button type="button" aria-label="clear all filters" onClick={() => go({ sort: f.sort })} className="ml-1 text-xs text-accent hover:underline">{t("bnw.bd.clearAll")}</button>
         </div>
       ) : null}
     </div>
@@ -148,14 +151,15 @@ function BoardFilterShell({ mesh, route, board, onToggleCreate, onToggleManage, 
 
 // #25 — create task + create epic (real create_task / create_epic).
 function CreateRow({ apply }: { apply: Apply }) {
+  const { t } = useI18n();
   const { busy, run } = useBusy();
   const [task, setTask] = useState(""); const [epic, setEpic] = useState("");
   return (
     <div data-bnw-board-create className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-surface-sunken p-2">
-      <Input aria-label="new task" placeholder="new task…" value={task} className="w-48" onChange={(e) => setTask(e.target.value)} />
+      <Input aria-label="new task" placeholder={t("bnw.bd.newTaskPlaceholder")} value={task} className="w-48" onChange={(e) => setTask(e.target.value)} />
       <Button size="sm" variant="primary" busy={busy} disabled={!task.trim()} aria-label="create task" onClick={async () => { await run(apply({ type: "create_task", title: task.trim() })); setTask(""); }}>+ task</Button>
       <span className="mx-1 h-5 w-px bg-border" aria-hidden="true" />
-      <Input aria-label="new epic" placeholder="new epic…" value={epic} className="w-40" onChange={(e) => setEpic(e.target.value)} />
+      <Input aria-label="new epic" placeholder={t("bnw.bd.newEpicPlaceholder")} value={epic} className="w-40" onChange={(e) => setEpic(e.target.value)} />
       <Button size="sm" variant="secondary" busy={busy} disabled={!epic.trim()} aria-label="create epic" onClick={async () => { await run(apply({ type: "create_epic", title: epic.trim() })); setEpic(""); }}>+ epic</Button>
     </div>
   );
@@ -173,16 +177,17 @@ function PaletteRow({ selected, onPick, ariaLabel }: { selected: string; onPick:
   );
 }
 function LabelManager({ apply, board }: { apply: Apply; board: BoardDocument }) {
+  const { t } = useI18n();
   const { busy, run } = useBusy();
   const [name, setName] = useState(""); const [color, setColor] = useState(LABEL_PALETTE[4]);
   const labels = board.labels ?? [];
   return (
     <div data-bnw-board-labels className="flex flex-col gap-2 rounded-lg border border-border bg-surface-sunken p-3">
-      <span className="text-xs uppercase tracking-wider text-text-muted">管理标签 · 创建 / 重命名 / 改色 / 删除</span>
+      <span className="text-xs uppercase tracking-wider text-text-muted">{t("bnw.bd.manageLabelsHint")}</span>
       <div className="flex flex-wrap items-center gap-2">
-        <Input aria-label="new label name" placeholder="标签名" value={name} className="w-40" onChange={(e) => setName(e.target.value)} />
+        <Input aria-label="new label name" placeholder={t("bnw.bd.labelNamePlaceholder")} value={name} className="w-40" onChange={(e) => setName(e.target.value)} />
         <PaletteRow selected={color} onPick={setColor} ariaLabel="new label color" />
-        <Button size="sm" variant="secondary" busy={busy} disabled={!name.trim()} aria-label="add label" onClick={async () => { await run(apply({ type: "create_label", name: name.trim(), color })); setName(""); }}>+ 添加标签</Button>
+        <Button size="sm" variant="secondary" busy={busy} disabled={!name.trim()} aria-label="add label" onClick={async () => { await run(apply({ type: "create_label", name: name.trim(), color })); setName(""); }}>{t("bnw.bd.addLabel")}</Button>
       </div>
       <div className="flex flex-col gap-1.5">
         {labels.map((l) => (
@@ -190,10 +195,10 @@ function LabelManager({ apply, board }: { apply: Apply; board: BoardDocument }) 
             <span className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-xs" style={{ background: l.color, color: labelInk(l.color) }}><Icon name="tag" size={11} />{l.name}</span>
             <Input defaultValue={l.name} aria-label={`rename ${l.name}`} className="w-32" onBlur={(e) => { const v = e.target.value.trim(); if (v && v !== l.name) void apply({ type: "update_label", id: l.id, name: v }); }} />
             <PaletteRow selected={l.color} onPick={(c) => void apply({ type: "update_label", id: l.id, color: c })} ariaLabel={`recolor ${l.name}`} />
-            <ConfirmButton size="sm" variant="ghost" confirmLabel="删除?" aria-label={`delete ${l.name}`} onConfirm={() => void apply({ type: "delete_label", id: l.id })}>×</ConfirmButton>
+            <ConfirmButton size="sm" variant="ghost" confirmLabel={t("bnw.bd.deleteConfirm")} aria-label={`delete ${l.name}`} onConfirm={() => void apply({ type: "delete_label", id: l.id })}>×</ConfirmButton>
           </div>
         ))}
-        {labels.length === 0 ? <span className="text-xs text-text-muted">还没有标签。</span> : null}
+        {labels.length === 0 ? <span className="text-xs text-text-muted">{t("bnw.bd.noLabels")}</span> : null}
       </div>
     </div>
   );
@@ -217,9 +222,10 @@ function IssueRow({ mesh, task, board, filters }: { mesh: string; task: Task; bo
   );
 }
 function ListView({ mesh, board, route }: { mesh: string; board: BoardDocument; route: { view: BoardView; filters: BoardFilters } }) {
+  const { t } = useI18n();
   const tasks = applyFilters(board.tasks, board, route.filters);
   const open = tasks.filter((t) => isOpen(t.status)).length;
-  if (tasks.length === 0) return <EmptyState title="无匹配 issue" description="调整筛选或清除条件。" />;
+  if (tasks.length === 0) return <EmptyState title={t("bnw.bd.noMatch")} description={t("bnw.bd.noMatchDesc")} />;
   if (route.filters.group === "epic") {
     const groups: { epic: Epic | null; items: Task[] }[] = [
       ...board.epics.map((e) => ({ epic: e, items: tasks.filter((t) => t.epicId === e.id) })),
@@ -227,10 +233,10 @@ function ListView({ mesh, board, route }: { mesh: string; board: BoardDocument; 
     ].filter((g) => g.items.length);
     return (
       <div data-bnw-board-list className="flex flex-col gap-2">
-        <div className="px-1 text-xs text-text-muted tabular-nums">{open} open · {tasks.length - open} closed</div>
+        <div className="px-1 text-xs text-text-muted tabular-nums">{t("bnw.bd.counts", { open, closed: tasks.length - open })}</div>
         {groups.map((g) => (
           <div key={g.epic?.id ?? "no-epic"} className="flex flex-col">
-            <div className="flex items-center gap-2 rounded-lg bg-surface-sunken px-3 py-1.5"><span aria-hidden="true" className="text-text-muted">▾</span><span className="text-sm font-medium text-text-primary">Epic: {g.epic?.title ?? "（无 epic）"}</span><span className="text-xs text-text-muted">({g.items.length})</span></div>
+            <div className="flex items-center gap-2 rounded-lg bg-surface-sunken px-3 py-1.5"><span aria-hidden="true" className="text-text-muted">▾</span><span className="text-sm font-medium text-text-primary">Epic: {g.epic?.title ?? t("bnw.bd.noEpicGroup")}</span><span className="text-xs text-text-muted">({g.items.length})</span></div>
             {g.items.map((t) => <IssueRow key={t.id} mesh={mesh} task={t} board={board} filters={route.filters} />)}
           </div>
         ))}
@@ -239,7 +245,7 @@ function ListView({ mesh, board, route }: { mesh: string; board: BoardDocument; 
   }
   return (
     <div data-bnw-board-list className="flex flex-col">
-      <div className="px-1 pb-1 text-xs text-text-muted tabular-nums">{open} open · {tasks.length - open} closed</div>
+      <div className="px-1 pb-1 text-xs text-text-muted tabular-nums">{t("bnw.bd.counts", { open, closed: tasks.length - open })}</div>
       {tasks.map((t) => <IssueRow key={t.id} mesh={mesh} task={t} board={board} filters={route.filters} />)}
     </div>
   );
@@ -247,6 +253,7 @@ function ListView({ mesh, board, route }: { mesh: string; board: BoardDocument; 
 
 // ── kanban (drag a card to a column → set_task_status) ────────────────────────
 function KanbanView({ mesh, board, route, apply }: { mesh: string; board: BoardDocument; route: { view: BoardView; filters: BoardFilters }; apply: Apply }) {
+  const { t } = useI18n();
   const [over, setOver] = useState<BoardStatus | null>(null);
   const tasks = applyFilters(board.tasks, board, route.filters);
   const drop = (col: BoardStatus, id: number) => { const task = board.tasks.find((t) => t.id === id); if (task && task.status !== col) void apply({ type: "set_task_status", id, expectedRevision: task.revision, status: col }); };
@@ -258,7 +265,7 @@ function KanbanView({ mesh, board, route, apply }: { mesh: string; board: BoardD
           <div key={col} data-bnw-kanban-col={col} onDragOver={(e) => { e.preventDefault(); setOver(col); }} onDragLeave={() => setOver((c) => (c === col ? null : c))}
             onDrop={(e) => { e.preventDefault(); setOver(null); const id = Number(e.dataTransfer.getData("text/bnw-task")); if (Number.isInteger(id)) drop(col, id); }}
             className={`flex w-60 shrink-0 flex-col gap-2 rounded-lg p-1 ${over === col ? "bg-hover ring-1 ring-accent" : ""}`}>
-            <div className="flex items-center gap-1.5 px-1 text-xs font-medium text-text-secondary"><StatusChip status={boardDot(col)} variant="dot" />{col} <span className="text-text-muted">({items.length})</span></div>
+            <div className="flex items-center gap-1.5 px-1 text-xs font-medium text-text-secondary"><StatusChip status={boardDot(col)} variant="dot" />{tBoardStatus(t, col)} <span className="text-text-muted">({items.length})</span></div>
             {items.map((t) => (
               <div key={t.id} draggable data-bnw-card onDragStart={(e) => e.dataTransfer.setData("text/bnw-task", String(t.id))}>
                 <RouteLink href={bnwHref({ k: "board", mesh, view: "kanban", issue: t.id, filters: route.filters })} unstyled
@@ -278,11 +285,12 @@ function KanbanView({ mesh, board, route, apply }: { mesh: string; board: BoardD
 
 // ── detail (real mutations: status / priority / assignee / close / reopen / comment / dispatch) ──
 function DetailView({ mesh, board, issue, view, filters, apply, agents }: { mesh: string; board: BoardDocument; issue: number; view: BoardView; filters: BoardFilters; apply: Apply; agents: string[] }) {
+  const { t } = useI18n();
   const { busy, run } = useBusy();
   const [comment, setComment] = useState("");
   const [dispatchee, setDispatchee] = useState(agents[0] ?? "");
   const task = board.tasks.find((t) => t.id === issue);
-  if (!task) return <EmptyState title="issue 不存在" description={`#${issue} 不在该 mesh 的看板。`} action={<RouteLink href={bnwHref({ k: "board", mesh, view, filters })}>返回列表</RouteLink>} />;
+  if (!task) return <EmptyState title={t("bnw.bd.notFound")} description={t("bnw.bd.notFoundDesc", { id: issue })} action={<RouteLink href={bnwHref({ k: "board", mesh, view, filters })}>{t("bnw.bd.backList")}</RouteLink>} />;
   const epic = task.epicId ? board.epics.find((e) => e.id === task.epicId) : undefined;
   const names = labelNames(task, board);
   const terminal = isTerminal(task.status);
@@ -290,57 +298,57 @@ function DetailView({ mesh, board, issue, view, filters, apply, agents }: { mesh
   return (
     <div data-bnw-board-detail className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center gap-2 text-xs text-text-secondary">
-        <span>by {task.createdBy}</span><span aria-hidden="true">·</span>
-        <label className="inline-flex items-center gap-1">status
-          <Select aria-label="task status" value={task.status} disabled={busy} className="w-28" onChange={(e) => void run(apply({ type: "set_task_status", id: task.id, expectedRevision: rev, status: e.target.value as BoardStatus }))}>{STATUS_ORDER.map((s) => <option key={s} value={s}>{s}</option>)}</Select>
+        <span>{t("bnw.bd.by", { by: task.createdBy })}</span><span aria-hidden="true">·</span>
+        <label className="inline-flex items-center gap-1">{t("bnw.bd.statusLabel")}
+          <Select aria-label="task status" value={task.status} disabled={busy} className="w-28" onChange={(e) => void run(apply({ type: "set_task_status", id: task.id, expectedRevision: rev, status: e.target.value as BoardStatus }))}>{STATUS_ORDER.map((s) => <option key={s} value={s}>{tBoardStatus(t, s)}</option>)}</Select>
         </label>
-        <label className="inline-flex items-center gap-1">priority
-          <Select aria-label="task priority" value={task.priority} disabled={busy} className="w-24" onChange={(e) => void run(apply({ type: "set_task_priority", id: task.id, expectedRevision: rev, priority: e.target.value as BoardPriority }))}>{PRIOS.map((p) => <option key={p} value={p}>{p}</option>)}</Select>
+        <label className="inline-flex items-center gap-1">{t("bnw.bd.priorityLabel")}
+          <Select aria-label="task priority" value={task.priority} disabled={busy} className="w-24" onChange={(e) => void run(apply({ type: "set_task_priority", id: task.id, expectedRevision: rev, priority: e.target.value as BoardPriority }))}>{PRIOS.map((p) => <option key={p} value={p}>{tBoardPrio(t, p)}</option>)}</Select>
         </label>
-        <label className="inline-flex items-center gap-1">assignee
+        <label className="inline-flex items-center gap-1">{t("bnw.bd.assigneeLabel")}
           <Select aria-label="task assignee" value={task.assignee ?? ""} disabled={busy} className="w-28" onChange={(e) => void run(apply({ type: "assign_task", id: task.id, expectedRevision: rev, assignee: e.target.value || undefined }))}><option value="">—</option>{agents.map((a) => <option key={a} value={a}>{a}</option>)}</Select>
         </label>
         {epic ? <span className="text-text-muted">epic: {epic.title}</span> : null}
         {names.map((n) => <LabelChip key={n} name={n} />)}
       </div>
-      {task.description ? <p className="whitespace-pre-wrap text-sm text-text-primary">{task.description}</p> : <p className="text-sm text-text-muted">（无描述）</p>}
+      {task.description ? <p className="whitespace-pre-wrap text-sm text-text-primary">{task.description}</p> : <p className="text-sm text-text-muted">{t("bnw.bd.noDescription")}</p>}
       {/* dispatch (router hand-off): assign + linkage + dispatched + status→in_progress in one command */}
       <div data-bnw-dispatch className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-surface-sunken px-2 py-1.5 text-xs">
         <span className="text-text-muted">dispatch →</span>
-        <Select aria-label="dispatch assignee" value={dispatchee} disabled={busy} className="w-28" onChange={(e) => setDispatchee(e.target.value)}>{agents.length === 0 ? <option value="">（无 agent）</option> : agents.map((a) => <option key={a} value={a}>{a}</option>)}</Select>
+        <Select aria-label="dispatch assignee" value={dispatchee} disabled={busy} className="w-28" onChange={(e) => setDispatchee(e.target.value)}>{agents.length === 0 ? <option value="">{t("bnw.bd.noAgent")}</option> : agents.map((a) => <option key={a} value={a}>{a}</option>)}</Select>
         <Button size="sm" variant="secondary" busy={busy} disabled={!dispatchee} aria-label="dispatch task" onClick={() => void run(apply({ type: "dispatch_task", id: task.id, expectedRevision: rev, assignee: dispatchee, taskSlug: slugify(task.title) }))}>Dispatch</Button>
       </div>
       {task.subtasks.length ? (
-        <div><div className="mb-1 text-xs uppercase tracking-wider text-text-muted">subtasks</div>
+        <div><div className="mb-1 text-xs uppercase tracking-wider text-text-muted">{t("bnw.bd.subtasks")}</div>
           <div className="flex flex-col gap-1">{task.subtasks.map((s) => (
             <div key={s.id} className="flex items-center gap-2 text-sm"><StatusChip status={boardDot(s.status)} variant="dot" /><span className="min-w-0 flex-1 truncate text-text-primary">{s.title}</span>
-              <Select aria-label={`subtask ${s.id} status`} value={s.status} disabled={busy} className="w-24" onChange={(e) => void run(apply({ type: "set_subtask_status", taskId: task.id, subtaskId: s.id, expectedRevision: s.revision, status: e.target.value as BoardStatus }))}>{STATUS_ORDER.map((x) => <option key={x} value={x}>{x}</option>)}</Select>
+              <Select aria-label={`subtask ${s.id} status`} value={s.status} disabled={busy} className="w-24" onChange={(e) => void run(apply({ type: "set_subtask_status", taskId: task.id, subtaskId: s.id, expectedRevision: s.revision, status: e.target.value as BoardStatus }))}>{STATUS_ORDER.map((x) => <option key={x} value={x}>{tBoardStatus(t, x)}</option>)}</Select>
             </div>
           ))}</div>
         </div>
       ) : null}
-      {task.deps?.length ? <div className="text-xs text-text-secondary">blocked-by: {task.deps.map((d) => `#${d}`).join(", ")}</div> : null}
+      {task.deps?.length ? <div className="text-xs text-text-secondary">{t("bnw.bd.blockedBy")} {task.deps.map((d) => `#${d}`).join(", ")}</div> : null}
       {task.lifecycleEvents?.length ? (
-        <div><div className="mb-1 text-xs uppercase tracking-wider text-text-muted">lifecycle</div>
+        <div><div className="mb-1 text-xs uppercase tracking-wider text-text-muted">{t("bnw.bd.lifecycle")}</div>
           <div className="flex flex-wrap items-center gap-1 text-xs">{task.lifecycleEvents.map((e, i) => <span key={i} className="rounded bg-surface-sunken px-1.5 py-0.5 text-text-muted">{e.kind}</span>)}</div>
         </div>
       ) : null}
-      <div><div className="mb-1 text-xs uppercase tracking-wider text-text-muted">activity</div>
+      <div><div className="mb-1 text-xs uppercase tracking-wider text-text-muted">{t("bnw.bd.activity")}</div>
         <div className="flex flex-col gap-1.5">
           {task.comments.map((c, i) => <div key={i} className="rounded border border-border px-2 py-1 text-xs"><span className="text-text-secondary">{c.author}</span> <span className="text-text-muted">{c.text}</span></div>)}
-          {task.comments.length === 0 ? <p className="text-xs text-text-muted">暂无评论。</p> : null}
+          {task.comments.length === 0 ? <p className="text-xs text-text-muted">{t("bnw.bd.noComments")}</p> : null}
         </div>
       </div>
       {/* comment composer (real add_comment) */}
-      <Composer ariaLabel="comment composer" actions={<Button size="sm" variant="primary" busy={busy} disabled={!comment.trim()} aria-label="add comment" onClick={async () => { await run(apply({ type: "add_comment", target: { kind: "task", id: task.id }, expectedRevision: rev, text: comment.trim() })); setComment(""); }}>评论</Button>}>
-        <Textarea aria-label="comment input" rows={2} value={comment} placeholder="写条评论…" onChange={(e) => setComment(e.target.value)} />
+      <Composer ariaLabel="comment composer" actions={<Button size="sm" variant="primary" busy={busy} disabled={!comment.trim()} aria-label="add comment" onClick={async () => { await run(apply({ type: "add_comment", target: { kind: "task", id: task.id }, expectedRevision: rev, text: comment.trim() })); setComment(""); }}>{t("bnw.bd.comment")}</Button>}>
+        <Textarea aria-label="comment input" rows={2} value={comment} placeholder={t("bnw.bd.commentPlaceholder")} onChange={(e) => setComment(e.target.value)} />
       </Composer>
       {/* close / reopen — the sanctioned terminal transitions */}
       <div className="flex items-center gap-2 border-t border-border pt-2">
         {terminal
-          ? <Button size="sm" variant="secondary" busy={busy} aria-label="reopen issue" onClick={() => void run(apply({ type: "record_lifecycle_event", taskId: task.id, expectedRevision: rev, kind: "reopened" }))}>↺ reopen</Button>
-          : <><ConfirmButton size="sm" variant="secondary" confirmLabel="关闭为 done?" aria-label="close done" onConfirm={() => void run(apply({ type: "set_task_status", id: task.id, expectedRevision: rev, status: "done" }))}>close ✓</ConfirmButton>
-             <ConfirmButton size="sm" variant="ghost" confirmLabel="取消?" aria-label="close cancelled" onConfirm={() => void run(apply({ type: "set_task_status", id: task.id, expectedRevision: rev, status: "cancelled" }))}>cancel</ConfirmButton></>}
+          ? <Button size="sm" variant="secondary" busy={busy} aria-label="reopen issue" onClick={() => void run(apply({ type: "record_lifecycle_event", taskId: task.id, expectedRevision: rev, kind: "reopened" }))}>↺ {t("bnw.bd.reopen")}</Button>
+          : <><ConfirmButton size="sm" variant="secondary" confirmLabel={t("bnw.bd.closeDoneConfirm")} aria-label="close done" onConfirm={() => void run(apply({ type: "set_task_status", id: task.id, expectedRevision: rev, status: "done" }))}>{t("bnw.bd.closeDone")} ✓</ConfirmButton>
+             <ConfirmButton size="sm" variant="ghost" confirmLabel={t("bnw.bd.closeCancelledConfirm")} aria-label="close cancelled" onConfirm={() => void run(apply({ type: "set_task_status", id: task.id, expectedRevision: rev, status: "cancelled" }))}>{t("bnw.bd.closeCancelled")}</ConfirmButton></>}
       </div>
     </div>
   );
@@ -348,6 +356,7 @@ function DetailView({ mesh, board, issue, view, filters, apply, agents }: { mesh
 
 // ── top ──────────────────────────────────────────────────────────────────────
 export function BnwBoard({ store, state, mesh, route }: { store: Store; state: GatewayState; mesh: string; route: { view: BoardView; issue?: number; filters: BoardFilters } }) {
+  const { t } = useI18n();
   const summary = state.meshes.find((m) => m.name === mesh);
   const board = state.perMesh[mesh]?.board ?? null;
   const [fs, setFs] = useState(false);
@@ -355,21 +364,21 @@ export function BnwBoard({ store, state, mesh, route }: { store: Store; state: G
   const [create, setCreate] = useState(false);
   useEffect(() => { if (summary) void store.ensureBoardLoaded(mesh); }, [store, mesh, summary]);
 
-  if (!summary) return <PanelFrame title="看板"><EmptyState title="mesh 不存在" description={`没有名为 “${mesh}” 的 mesh。`} action={<RouteLink href={bnwHref({ k: "home" })}>返回</RouteLink>} /></PanelFrame>;
-  if (!board) return <PanelFrame title="看板"><EmptyState title="看板载入中…" description="尚无看板快照（mesh 未运行时可能为空）。" /></PanelFrame>;
+  if (!summary) return <PanelFrame title={t("bnw.board")}><EmptyState title={t("bnw.rt.meshMissing")} description={t("bnw.rt.meshMissingDesc", { name: mesh })} action={<RouteLink href={bnwHref({ k: "home" })}>{t("back")}</RouteLink>} /></PanelFrame>;
+  if (!board) return <PanelFrame title={t("bnw.board")}><EmptyState title={t("bnw.bd.loading")} description={t("bnw.bd.loadingDesc")} /></PanelFrame>;
 
   const apply: Apply = (cmd) => store.boardCommand(mesh, cmd, board.revision);
   const agents = summary.agents.map((a) => a.id);
   const detailTask = route.issue ? board.tasks.find((t) => t.id === route.issue) : undefined;
   const title = route.issue
     ? <span><RouteLink href={bnwHref({ k: "board", mesh, view: route.view, filters: route.filters })} className="text-sm">◀</RouteLink> #{route.issue} · {detailTask?.title ?? "issue"}</span>
-    : `看板 · ${board.tasks.length} issues`;
+    : t("bnw.bd.title", { n: board.tasks.length });
 
   const panel = (
     <PanelFrame
       title={title}
       actions={route.issue
-        ? <Cluster><Button size="sm" variant="ghost" iconOnly aria-label={fs ? "exit fullscreen" : "fullscreen"} onClick={() => setFs((v) => !v)}>{fs ? <Icon name="minimize" size={14} /> : <Icon name="maximize" size={14} />}</Button><StatusChip status={boardDot(detailTask?.status ?? "todo")} variant="soft" label={detailTask?.status} /></Cluster>
+        ? <Cluster><Button size="sm" variant="ghost" iconOnly aria-label={fs ? "exit fullscreen" : "fullscreen"} onClick={() => setFs((v) => !v)}>{fs ? <Icon name="minimize" size={14} /> : <Icon name="maximize" size={14} />}</Button><StatusChip status={boardDot(detailTask?.status ?? "todo")} variant="soft" label={detailTask ? tBoardStatus(t, detailTask.status) : undefined} /></Cluster>
         : <Badge count={board.tasks.filter((t) => isOpen(t.status)).length} tone="neutral" />}
       className="h-full" bodyClassName="flex min-h-0 flex-1 flex-col gap-3"
     >

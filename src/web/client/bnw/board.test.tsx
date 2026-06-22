@@ -4,6 +4,8 @@
 import { test, expect } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { BnwBoard } from "./board";
+import type { ReactElement } from "react";
+import { I18nContext, translate, type TFn } from "../i18n";
 import type { GatewayState, PerMeshState, MeshSummary } from "../../types";
 import type { BoardDocument } from "../../../board";
 import type { BoardView, BoardFilters } from "../router";
@@ -32,9 +34,13 @@ function state(board: BoardDocument | null = BOARD): GatewayState {
 }
 const STUB = { ensureBoardLoaded: async () => {} } as unknown as Store;
 const r = (view: BoardView, filters: BoardFilters = {}, issue?: number) => ({ view, filters, issue });
+// Board copy now flows through t(); render under an en I18nContext so assertions read the
+// English strings (the default context returns raw keys). The browser e2e covers zh + live switch.
+const EN = { lang: "en" as const, t: ((k, vars) => translate(k, "en", vars)) as TFn };
+const render = (el: ReactElement) => renderToStaticMarkup(<I18nContext.Provider value={EN}>{el}</I18nContext.Provider>);
 
 test("board list: rows + C4 filter shell (search / 筛选▾ / view switch / 新建)", () => {
-  const out = renderToStaticMarkup(<BnwBoard store={STUB} state={state()} mesh="demo" route={r("list")} />);
+  const out = render(<BnwBoard store={STUB} state={state()} mesh="demo" route={r("list")} />);
   expect(out).toContain("data-bnw-board-list");
   expect(out).toContain("#12");
   expect(out).toContain("Add device-auth page");
@@ -43,12 +49,12 @@ test("board list: rows + C4 filter shell (search / 筛选▾ / view switch / 新
   expect(out).toContain("data-bnw-filter-toggle");
   expect(out).toContain('aria-label="Board view"');
   expect(out).toContain('aria-label="sort"');
-  expect(out).toContain("+ 新建");
+  expect(out).toContain("+ new"); // t(bnw.bd.new) @ en
   expect(out).toContain('aria-label="blocked"'); // #9 dep #12 still open
 });
 
 test("board list: status=open filter excludes terminal issues", () => {
-  const out = renderToStaticMarkup(<BnwBoard store={STUB} state={state()} mesh="demo" route={r("list", { status: "open" })} />);
+  const out = render(<BnwBoard store={STUB} state={state()} mesh="demo" route={r("list", { status: "open" })} />);
   expect(out).toContain("Add device-auth page"); // in_review = open
   expect(out).not.toContain("Drop legacy theme"); // done = excluded
   expect(out).toContain("data-bnw-chip"); // applied-filter chip
@@ -56,19 +62,19 @@ test("board list: status=open filter excludes terminal issues", () => {
 });
 
 test("board list: group-by-epic", () => {
-  const out = renderToStaticMarkup(<BnwBoard store={STUB} state={state()} mesh="demo" route={r("list", { group: "epic" })} />);
+  const out = render(<BnwBoard store={STUB} state={state()} mesh="demo" route={r("list", { group: "epic" })} />);
   expect(out).toContain("Epic: Onboarding");
 });
 
 test("board kanban: status columns + cards", () => {
-  const out = renderToStaticMarkup(<BnwBoard store={STUB} state={state()} mesh="demo" route={r("kanban")} />);
+  const out = render(<BnwBoard store={STUB} state={state()} mesh="demo" route={r("kanban")} />);
   expect(out).toContain("data-bnw-board-kanban");
   for (const col of ["todo", "in_progress", "in_review", "done", "cancelled"]) expect(out).toContain(col);
   expect(out).toContain("#12");
 });
 
 test("board detail: meta + subtasks + lifecycle + comments + 7.2-B real mutation controls", () => {
-  const out = renderToStaticMarkup(<BnwBoard store={STUB} state={state()} mesh="demo" route={r("list", {}, 12)} />);
+  const out = render(<BnwBoard store={STUB} state={state()} mesh="demo" route={r("list", {}, 12)} />);
   expect(out).toContain("data-bnw-board-detail");
   expect(out).toContain("Add device-auth page");
   expect(out).toContain("gate"); // subtask
@@ -83,36 +89,36 @@ test("board detail: meta + subtasks + lifecycle + comments + 7.2-B real mutation
 });
 
 test("board detail: terminal issue shows reopen (record_lifecycle_event)", () => {
-  const out = renderToStaticMarkup(<BnwBoard store={STUB} state={state()} mesh="demo" route={r("list", {}, 5)} />); // #5 done
+  const out = render(<BnwBoard store={STUB} state={state()} mesh="demo" route={r("list", {}, 5)} />); // #5 done
   expect(out).toContain('aria-label="reopen issue"');
   expect(out.includes('aria-label="close done"')).toBe(false);
 });
 
 test("board 7.2-B: create row + manage-labels + fullscreen affordances in the toolbar", () => {
-  const out = renderToStaticMarkup(<BnwBoard store={STUB} state={state()} mesh="demo" route={r("list")} />);
+  const out = render(<BnwBoard store={STUB} state={state()} mesh="demo" route={r("list")} />);
   expect(out).toContain('aria-label="manage labels"');
   expect(out).toContain('aria-label="new issue"');
   expect(out).toContain('aria-label="fullscreen"');
 });
 
 test("board 7.2-B: kanban cards draggable + columns are drop targets (→ set_task_status)", () => {
-  const out = renderToStaticMarkup(<BnwBoard store={STUB} state={state()} mesh="demo" route={r("kanban")} />);
+  const out = render(<BnwBoard store={STUB} state={state()} mesh="demo" route={r("kanban")} />);
   expect(out).toContain("data-bnw-card");
   expect(out).toContain('draggable="true"');
   expect(out).toContain('data-bnw-kanban-col="in_review"');
 });
 
 test("board 7.2-B: row links preserve the active filter query (GH-style context)", () => {
-  const out = renderToStaticMarkup(<BnwBoard store={STUB} state={state()} mesh="demo" route={r("list", { status: "open", label: "ui" })} />);
+  const out = render(<BnwBoard store={STUB} state={state()} mesh="demo" route={r("list", { status: "open", label: "ui" })} />);
   expect(out).toMatch(/href="\/bnw\/mesh\/demo\/board\/issue\/\d+\?[^"]*status=open[^"]*label=ui/);
 });
 
 test("board detail: unknown issue → not-found", () => {
-  const out = renderToStaticMarkup(<BnwBoard store={STUB} state={state()} mesh="demo" route={r("list", {}, 999)} />);
-  expect(out).toContain("issue 不存在");
+  const out = render(<BnwBoard store={STUB} state={state()} mesh="demo" route={r("list", {}, 999)} />);
+  expect(out).toContain("issue not found"); // t(bnw.bd.notFound) @ en
 });
 
 test("board: no snapshot yet → loading state", () => {
-  const out = renderToStaticMarkup(<BnwBoard store={STUB} state={state(null)} mesh="demo" route={r("list")} />);
-  expect(out).toContain("看板载入中");
+  const out = render(<BnwBoard store={STUB} state={state(null)} mesh="demo" route={r("list")} />);
+  expect(out).toContain("board loading"); // t(bnw.bd.loading) @ en
 });

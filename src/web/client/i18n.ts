@@ -384,6 +384,79 @@ const DICT: Record<string, Entry> = {
   "bnw.cv.flowDir": ["flow direction (mail)", "信息流方向（mail）"],
   "bnw.cv.recentMail": ["highlight = recent mail flow", "高亮 = 近期有 mail 流动"],
   "bnw.cv.dragPin": ["drag = pin", "拖拽=固定"],
+
+  // ── /bnw board body (i18n board slice). Entity nouns stay English loanwords (like
+  //    mesh/router/agent): epic / issue / label / task / dispatch + lifecycle event-kind
+  //    enums + sort-field tokens. The surface NAME "board" reuses the shipped 看板 (matches
+  //    the nav tab + old UI). Status & priority names localize; user data is never translated. ──
+  "bnw.bd.title": ["board · {n} issues", "看板 · {n} issues"],
+  "bnw.bd.loading": ["board loading…", "看板载入中…"],
+  "bnw.bd.loadingDesc": ["no board snapshot yet (may be empty when the mesh isn't running).", "尚无看板快照（mesh 未运行时可能为空）。"],
+  "bnw.bd.searchPlaceholder": ["search issues… e.g. status:open label:bug", "搜索 issue… 例如 status:open label:bug"],
+  "bnw.bd.filter": ["filter", "筛选"],
+  "bnw.bd.viewList": ["List", "列表"],
+  "bnw.bd.viewKanban": ["Board", "看板"],
+  "bnw.bd.manageLabels": ["labels", "标签"],
+  "bnw.bd.new": ["+ new", "+ 新建"],
+  "bnw.bd.anyStatus": ["status: any", "状态: 任意"],
+  "bnw.bd.anyLabel": ["label: any", "label: 任意"],
+  "bnw.bd.anyAssignee": ["assignee: any", "指派人: 任意"],
+  "bnw.bd.anyEpic": ["epic: any", "epic: 任意"],
+  "bnw.bd.groupByEpic": ["group by epic", "按 epic 分组"],
+  "bnw.bd.filtered": ["filtered", "已筛选"],
+  "bnw.bd.clearAll": ["clear all", "清除全部"],
+  "bnw.bd.sort.number": ["number", "编号"],
+  "bnw.bd.sort.updated": ["updated", "最近更新"],
+  "bnw.bd.sort.created": ["created", "最近创建"],
+  "bnw.bd.sort.priority": ["priority", "优先级"],
+  // create row (task/epic stay English loanwords)
+  "bnw.bd.newTaskPlaceholder": ["new task…", "新建 task…"],
+  "bnw.bd.newEpicPlaceholder": ["new epic…", "新建 epic…"],
+  // label manager (label stays English loanword)
+  "bnw.bd.manageLabelsHint": ["manage labels · create / rename / recolor / delete", "管理 label · 创建 / 重命名 / 改色 / 删除"],
+  "bnw.bd.labelNamePlaceholder": ["label name", "label 名称"],
+  "bnw.bd.addLabel": ["+ add label", "+ 添加 label"],
+  "bnw.bd.noLabels": ["no labels yet.", "还没有 label。"],
+  "bnw.bd.deleteConfirm": ["delete?", "删除?"],
+  // list
+  "bnw.bd.noMatch": ["no issues match", "没有匹配的 issue"],
+  "bnw.bd.noMatchDesc": ["adjust or clear the filters.", "调整或清除筛选条件。"],
+  "bnw.bd.counts": ["{open} open · {closed} closed", "{open} 未关闭 · {closed} 已关闭"],
+  "bnw.bd.noEpicGroup": ["(no epic)", "（无 epic）"],
+  // detail
+  "bnw.bd.notFound": ["issue not found", "issue 不存在"],
+  "bnw.bd.notFoundDesc": ["#{id} is not on this mesh's board.", "#{id} 不在该 mesh 的看板。"],
+  "bnw.bd.backList": ["back to list", "返回列表"],
+  "bnw.bd.by": ["by {by}", "创建者 {by}"],
+  "bnw.bd.statusLabel": ["status", "状态"],
+  "bnw.bd.priorityLabel": ["priority", "优先级"],
+  "bnw.bd.assigneeLabel": ["assignee", "指派人"],
+  "bnw.bd.noDescription": ["(no description)", "（无描述）"],
+  "bnw.bd.noAgent": ["(no agent)", "（无 agent）"],
+  "bnw.bd.subtasks": ["subtasks", "子任务"],
+  "bnw.bd.blockedBy": ["blocked-by:", "阻塞于:"],
+  "bnw.bd.lifecycle": ["lifecycle", "生命周期"],
+  "bnw.bd.activity": ["activity", "活动"],
+  "bnw.bd.noComments": ["no comments yet.", "暂无评论。"],
+  "bnw.bd.commentPlaceholder": ["write a comment…", "写条评论…"],
+  "bnw.bd.comment": ["comment", "评论"],
+  "bnw.bd.reopen": ["reopen", "重新打开"],
+  "bnw.bd.closeDone": ["close", "关闭"],
+  "bnw.bd.closeDoneConfirm": ["close as done?", "关闭为 done?"],
+  "bnw.bd.closeCancelled": ["cancel", "取消"],
+  "bnw.bd.closeCancelledConfirm": ["mark cancelled?", "标记取消?"],
+  // board status names (kanban columns / filter / status & subtask selects / chips)
+  "bnw.bd.st.todo": ["todo", "待办"],
+  "bnw.bd.st.in_progress": ["in progress", "进行中"],
+  "bnw.bd.st.in_review": ["in review", "评审中"],
+  "bnw.bd.st.done": ["done", "已完成"],
+  "bnw.bd.st.cancelled": ["cancelled", "已取消"],
+  "bnw.bd.st.open": ["open", "未关闭"],
+  // priority names
+  "bnw.bd.prio.low": ["low", "低"],
+  "bnw.bd.prio.normal": ["normal", "普通"],
+  "bnw.bd.prio.high": ["high", "高"],
+  "bnw.bd.prio.urgent": ["urgent", "紧急"],
 };
 
 export function translate(key: string, lang: Lang, vars?: Record<string, string | number>): string {
@@ -439,3 +512,7 @@ export const I18nContext = createContext<{ lang: Lang; t: TFn }>({ lang: "en", t
 export const useI18n = () => useContext(I18nContext);
 /** Translate a status enum value via the st.* keys. */
 export const tStatus = (t: TFn, status: string) => t(`st.${status}`);
+/** Translate a board status enum (todo/in_progress/in_review/done/cancelled/open). */
+export const tBoardStatus = (t: TFn, status: string) => t(`bnw.bd.st.${status}`);
+/** Translate a board priority enum (low/normal/high/urgent). */
+export const tBoardPrio = (t: TFn, prio: string) => t(`bnw.bd.prio.${prio}`);

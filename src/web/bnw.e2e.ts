@@ -1288,6 +1288,73 @@ try {
     await page.evaluate(() => { localStorage.setItem("mesh.lang", "zh"); });
   });
 
+  // i18n board-body slice — list/detail/kanban/label-manager app-copy switches en↔zh; en board
+  // app-copy regions carry no hardcoded CJK. Scans only app-copy regions (the fixture's user data
+  // — issue titles, label names, assignees, comments — is all Latin, so a region scan is safe).
+  await step("i18n board body: en↔zh (list/detail/kanban/labels) + no hardcoded CJK in en", async () => {
+    const hasCJK = (s: string) => /[㐀-䶿一-鿿豈-﫿]/.test(s);
+    const collect = (sels: string[]) => page.evaluate((ss) => ss
+      .map((s) => { const el = document.querySelector(s) as HTMLElement | null; return el ? el.innerText : ""; })
+      .join("\n"), sels);
+    await page.setViewportSize({ width: 1440, height: 900 });
+
+    // ── en: clear the suite's preseeded zh, then assert board app-copy is English ──
+    await page.goto(`${BASE}/bnw/mesh/demo/board`, { waitUntil: "domcontentloaded" });
+    await page.evaluate(() => { localStorage.removeItem("mesh.lang"); });
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-bnw-board-list]', { timeout: 8000 });
+    const filtersEn = await collect(['[data-bnw-board-filters]']);
+    assert(!hasCJK(filtersEn), `i18n guard: CJK in en board filter app-copy: ${filtersEn.replace(/\s+/g, " ").slice(0, 120)}`);
+    assert(((await page.locator('[aria-label="search issues"]').getAttribute("placeholder")) ?? "").includes("search issues"), "i18n en: board search placeholder is English");
+    // filter menu + create row + label manager app-copy English
+    await page.locator('[data-bnw-filter-toggle]').click();
+    await page.waitForSelector('[data-bnw-filter-menu]', { timeout: 8000 });
+    await page.locator('[aria-label="new issue"]').click();
+    await page.waitForSelector('[data-bnw-board-create]', { timeout: 8000 });
+    await page.locator('[aria-label="manage labels"]').click();
+    await page.waitForSelector('[data-bnw-board-labels]', { timeout: 8000 });
+    const toolsEn = await collect(['[data-bnw-filter-menu]', '[data-bnw-board-create]', '[data-bnw-board-labels]']);
+    assert(!hasCJK(toolsEn), `i18n guard: CJK in en board tools app-copy: ${toolsEn.replace(/\s+/g, " ").slice(0, 120)}`);
+    // section headers are CSS-uppercased → compare case-insensitively (innerText reflects text-transform)
+    assert(toolsEn.toLowerCase().includes("manage labels"), "i18n en: label manager copy is English");
+    await sleep(80); await page.screenshot({ path: `${SHOTS}/bnw-i18n-board-en.png`, fullPage: true });
+    // kanban columns + detail sections English
+    await page.goto(`${BASE}/bnw/mesh/demo/board?view=kanban`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-bnw-board-kanban]', { timeout: 8000 });
+    const kanbanEn = (await collect(['[data-bnw-board-kanban]'])).toLowerCase();
+    assert(!hasCJK(kanbanEn), `i18n guard: CJK in en kanban app-copy: ${kanbanEn.replace(/\s+/g, " ").slice(0, 120)}`);
+    assert(kanbanEn.includes("in progress"), "i18n en: kanban column localized status");
+    await page.goto(`${BASE}/bnw/mesh/demo/board/issue/12`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-bnw-board-detail]', { timeout: 8000 });
+    const detailEn = await collect(['[data-bnw-board-detail]']);
+    assert(!hasCJK(detailEn), `i18n guard: CJK in en board detail app-copy: ${detailEn.replace(/\s+/g, " ").slice(0, 120)}`);
+    // CSS-uppercased section headers → case-insensitive compare
+    assert(detailEn.toLowerCase().includes("subtasks") && detailEn.toLowerCase().includes("activity"), "i18n en: detail section headers English");
+
+    // ── live switch en→zh via the settings language tab (no reload) ──
+    await page.goto(`${BASE}/bnw/settings?tab=language`, { waitUntil: "domcontentloaded" });
+    await page.getByRole("radio", { name: "中文" }).click();
+    await page.waitForFunction(() => document.documentElement.lang === "zh", { timeout: 8000 });
+    // list filter app-copy now Chinese
+    await page.goto(`${BASE}/bnw/mesh/demo/board`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-bnw-board-list]', { timeout: 8000 });
+    assert((await collect(['[data-bnw-board-filters]'])).includes("筛选"), "i18n zh: board filter 筛选");
+    await page.locator('[aria-label="manage labels"]').click();
+    await page.waitForSelector('[data-bnw-board-labels]', { timeout: 8000 });
+    assert((await collect(['[data-bnw-board-labels]'])).toLowerCase().includes("管理 label"), "i18n zh: label manager 管理 label");
+    await sleep(80); await page.screenshot({ path: `${SHOTS}/bnw-i18n-board-zh.png`, fullPage: true });
+    // kanban + detail switched too
+    await page.goto(`${BASE}/bnw/mesh/demo/board?view=kanban`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-bnw-board-kanban]', { timeout: 8000 });
+    assert((await collect(['[data-bnw-board-kanban]'])).includes("进行中"), "i18n zh: kanban column 进行中");
+    await page.goto(`${BASE}/bnw/mesh/demo/board/issue/12`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-bnw-board-detail]', { timeout: 8000 });
+    const detailZh = await collect(['[data-bnw-board-detail]']);
+    assert(detailZh.includes("子任务") && detailZh.includes("活动") && detailZh.includes("评论"), "i18n zh: detail section headers 子任务/活动/评论");
+    // leave the suite's zh baseline set for later legacy steps
+    await page.evaluate(() => { localStorage.setItem("mesh.lang", "zh"); });
+  });
+
   // #7 — reload control: explicit confirmation dialog (replaces two-click), desktop + mobile,
   // cancel once + confirm once; the real reload path still reaches manager.loadDefinitions.
   await step("#7 reload confirmation dialog: desktop + mobile, cancel + confirm → manager reload", async () => {
