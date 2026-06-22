@@ -1103,6 +1103,49 @@ try {
     await page.setViewportSize({ width: 1440, height: 900 });
   });
 
+  // #5 fix (separate scope from #4) — root color-scheme follows the active mode's dark/light so
+  // native controls (select arrow, scrollbars) are visible in dark mode.
+  await step("#5 root color-scheme follows dark/light (native select arrows)", async () => {
+    const scheme = () => page.evaluate(() => document.documentElement.style.colorScheme);
+    // persisted dark mode → color-scheme dark on load
+    await page.goto(`${BASE}/bnw/mesh/demo`, { waitUntil: "domcontentloaded" });
+    await page.evaluate(() => { localStorage.setItem("mesh.theme.mode", "dark-slate"); localStorage.setItem("mesh.theme.accent", "signal-teal"); localStorage.removeItem("mesh.theme"); });
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-bnw-surface="runtime"]', { timeout: 8000 });
+    assert((await scheme()) === "dark", "#5 dark-slate → color-scheme dark");
+    // light mode → light
+    await page.evaluate(() => { localStorage.setItem("mesh.theme.mode", "light-cool"); localStorage.removeItem("mesh.theme"); });
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-bnw-surface="runtime"]', { timeout: 8000 });
+    assert((await scheme()) === "light", "#5 light-cool → color-scheme light");
+    // live 3×3 switch via settings updates color-scheme without reload
+    await page.goto(`${BASE}/bnw/settings`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-theme-matrix] [data-theme-cell]', { timeout: 8000 });
+    await page.locator('[aria-label="apply dark-slate signal-teal"]').click();
+    assert((await scheme()) === "dark", "#5 live switch → dark");
+    await page.locator('[aria-label="apply eye-care-warm ember"]').click();
+    assert((await scheme()) === "light", "#5 live switch → light (eye-care)");
+    // dark-mode screenshots showing native select controls
+    await page.evaluate(() => { localStorage.setItem("mesh.theme.mode", "dark-slate"); localStorage.setItem("mesh.theme.accent", "signal-teal"); localStorage.removeItem("mesh.theme"); });
+    await page.goto(`${BASE}/bnw/mesh/demo/agent/router`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-bnw-focus="split"]', { timeout: 8000 });
+    await page.evaluate((s) => (window as any).__meshStore.apply({ t: "snapshot", state: s }), SEED_PARITY_FOCUS);
+    await page.waitForSelector('[aria-label="router mode"]', { timeout: 8000 });
+    await sleep(120); await page.screenshot({ path: `${SHOTS}/bnw-select-dark-focus-desktop.png`, fullPage: true });
+    await page.goto(`${BASE}/bnw/mesh/demo/board`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-bnw-board-list]', { timeout: 8000 });
+    await page.locator('[data-bnw-filter-toggle]').click();
+    await page.waitForSelector('[aria-label="status filter"]', { timeout: 8000 });
+    await sleep(120); await page.screenshot({ path: `${SHOTS}/bnw-select-dark-board-filters.png`, fullPage: true });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(`${BASE}/bnw/mesh/demo`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[aria-label="选择 mesh"]', { timeout: 8000 });
+    await sleep(120); await page.screenshot({ path: `${SHOTS}/bnw-select-dark-mobile-topbar.png`, fullPage: true });
+    // restore default theme for the remaining steps
+    await page.evaluate(() => { localStorage.removeItem("mesh.theme.mode"); localStorage.removeItem("mesh.theme.accent"); });
+    await page.setViewportSize({ width: 1440, height: 900 });
+  });
+
   await step("screenshots: overview / focus (C2 docked approval) / canvas / mobile overview", async () => {
     await page.setViewportSize({ width: 1440, height: 900 });
     // desktop overview

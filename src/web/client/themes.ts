@@ -306,6 +306,7 @@ export function applyPalette(p: Palette): void {
   // (v1PaletteToSemantic / SEMANTIC_KEYS are defined below; referenced at call time.)
   const s = v1PaletteToSemantic(migratePalette(p) ?? BUILTIN_THEMES[0].palette);
   for (const k of SEMANTIC_KEYS) root.style.setProperty(`--${k}`, s[k]);
+  applyColorScheme(root, s.surface); // #5 — native controls follow the (custom) palette's dark/light
 }
 
 export function themeByName(name: string): Theme {
@@ -476,10 +477,21 @@ const V1_FROM_SEMANTIC: Record<ThemeVar, SemanticVar> = {
 
 /** Write a semantic palette to :root — both the v2 vars and the derived legacy
  *  19 vars (so theme.css works during the incremental migration). */
+/** #5 — set the root `color-scheme` so native controls (the `<select>` dropdown arrow,
+ *  scrollbars, form widgets) render in the right dark/light variant. Derived from the SURFACE
+ *  luminance (via onPick: white-on-surface ⇒ dark surface) rather than a mode param, so it
+ *  also covers the custom-palette path (which has no mode); for the 9 built-ins this equals
+ *  MODE_SPEC[mode].dark. Without it, dark themes keep the UA's default light color-scheme and
+ *  the native select arrow is near-invisible. */
+function applyColorScheme(root: HTMLElement, surface: string): void {
+  root.style.colorScheme = onPick(surface) === "#ffffff" ? "dark" : "light";
+}
+
 export function applyComposition(c: SemanticPalette): void {
   const root = document.documentElement;
   for (const k of SEMANTIC_KEYS) root.style.setProperty(`--${k}`, c[k]);
   for (const k of THEME_KEYS) root.style.setProperty(`--${k}`, c[V1_FROM_SEMANTIC[k]]);
+  applyColorScheme(root, c.surface);
 }
 
 /** Write the raw 11-stop scale CSS vars (`--raw-<ramp>-<stop>`) to :root. These are
