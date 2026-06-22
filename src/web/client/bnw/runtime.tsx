@@ -17,6 +17,7 @@ import type { Store } from "../store";
 import type { GatewayState, MeshSummary, PerMeshState, TranscriptItem } from "../../types";
 import type { AgentStatus, AgentActivity } from "../../../acp/types";
 import { bnwHref } from "../router";
+import { useI18n, tStatus } from "../i18n";
 import { ApprovalBar, FocusComposer, LifecycleControls, QueueList, RuntimeSelectors, WakeButton } from "./runtime-controls";
 
 // ── status mapping (gateway vocab → C5 StatusChip vocab) ──────────────────────
@@ -43,37 +44,42 @@ function pendingFor(pm: PerMeshState | undefined, agent: string): number {
 
 // Context/cost waterline (#12) — read-only from usage_update fold.
 function UsageLine({ pm, agent }: { pm: PerMeshState | undefined; agent: string }) {
+  const { t } = useI18n();
   const u = pm?.usage[agent];
   if (!u?.used || !u.size) return null;
   const pct = Math.round((u.used / u.size) * 100);
   return (
     <div className="flex flex-col gap-0.5">
-      <ProgressBar value={u.used} max={u.size} label={`context ${pct}%`} />
-      <span className="text-xs tabular-nums text-text-muted">{pct}% context{u.cost != null ? ` · $${u.cost.toFixed(2)}` : ""}</span>
+      <ProgressBar value={u.used} max={u.size} label={`${t("bnw.rt.context")} ${pct}%`} />
+      <span className="text-xs tabular-nums text-text-muted">{pct}% {t("bnw.rt.context")}{u.cost != null ? ` · $${u.cost.toFixed(2)}` : ""}</span>
     </div>
   );
 }
 
+// health-signal → i18n key (known signals translate; unknown render raw).
+const SIG_KEY: Record<string, string> = { rate_limited: "bnw.rt.sig.rate_limited", retrying: "bnw.rt.sig.retrying", compacting: "bnw.rt.sig.compacting" };
+
 // ── overview: /bnw/mesh/<id> ──────────────────────────────────────────────────
 export function RuntimeOverview({ store, state, mesh }: { store: Store; state: GatewayState; mesh: string }) {
+  const { t } = useI18n();
   const summary = state.meshes.find((m) => m.name === mesh);
   const pm = state.perMesh[mesh];
   if (!summary) {
-    return <PanelFrame title="运行态 A"><EmptyState title="mesh 不存在" description={`没有名为 “${mesh}” 的 mesh。`} action={<RouteLink href={bnwHref({ k: "home" })}>返回</RouteLink>} /></PanelFrame>;
+    return <PanelFrame title={t("bnw.runtime")}><EmptyState title={t("bnw.rt.meshMissing")} description={t("bnw.rt.meshMissingDesc", { name: mesh })} action={<RouteLink href={bnwHref({ k: "home" })}>{t("back")}</RouteLink>} /></PanelFrame>;
   }
   const pending = pm?.pending.length ?? 0;
   return (
     <PanelFrame
-      title={`运行态 · ${summary.name}`}
-      description={`${summary.agents.length} agents · ${pending} 待审批`}
+      title={`${t("bnw.runtime")} · ${summary.name}`}
+      description={`${t("agents", { n: summary.agents.length })} · ${pending} ${t("bnw.rt.pending")}`}
       actions={<Cluster className="flex-wrap">
-        <StatusChip status={meshDot(summary.status)} variant="soft" label={summary.status} />
+        <StatusChip status={meshDot(summary.status)} variant="soft" label={tStatus(t, summary.status)} />
         <LifecycleControls store={store} mesh={mesh} status={summary.status} />
-        <RouteLink href={bnwHref({ k: "runtime", mesh, canvas: true })} className="text-sm whitespace-nowrap">画布 ↗</RouteLink>
+        <RouteLink href={bnwHref({ k: "runtime", mesh, canvas: true })} className="text-sm whitespace-nowrap">{t("bnw.canvas")} ↗</RouteLink>
       </Cluster>}
     >
       {summary.agents.length === 0 ? (
-        <EmptyState title="无 agent" description="这个 mesh 还没有 agent。" />
+        <EmptyState title={t("bnw.rt.noAgents")} description={t("bnw.rt.noAgentsDesc")} />
       ) : (
         <div data-bnw-agents className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
           {summary.agents.map((a) => {
@@ -88,10 +94,10 @@ export function RuntimeOverview({ store, state, mesh }: { store: Store; state: G
                   <span className="min-w-0 flex-1 truncate text-sm font-medium text-text-primary">{a.id}</span>
                   {np > 0 ? <Badge count={np} tone="urgent" /> : null}
                 </div>
-                <div className="text-xs text-text-muted">{a.harness} · {a.role} · {a.status}{a.activity === "working" ? " · working" : ""}</div>
+                <div className="text-xs text-text-muted">{a.harness} · {a.role} · {tStatus(t, a.status)}{a.activity === "working" ? ` · ${t("bnw.rt.working")}` : ""}</div>
                 <UsageLine pm={pm} agent={a.id} />
-                {health?.signal && health.signal !== "compact_done" ? <span className="text-xs text-warning">⚠ {health.signal}</span> : null}
-                {sa?.silentTaskCompletes?.count ? <span className="text-xs text-warning">静默完成 ×{sa.silentTaskCompletes.count}</span> : null}
+                {health?.signal && health.signal !== "compact_done" ? <span className="text-xs text-warning">⚠ {SIG_KEY[health.signal] ? t(SIG_KEY[health.signal]) : health.signal}</span> : null}
+                {sa?.silentTaskCompletes?.count ? <span className="text-xs text-warning">{t("bnw.rt.silentComplete")} ×{sa.silentTaskCompletes.count}</span> : null}
                 {cold ? <div><WakeButton store={store} mesh={mesh} agent={a.id} /></div> : null}
               </div>
             );
@@ -111,6 +117,7 @@ export function RuntimeOverview({ store, state, mesh }: { store: Store; state: G
 const clip = (s: string, n = 140) => (s.length > n ? s.slice(0, n) + "…" : s);
 
 export function TranscriptItemView({ it }: { it: TranscriptItem }) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const Toggle = ({ label, icon }: { label: string; icon?: IconName }) => (
     <button type="button" data-bnw-expand aria-expanded={open} onClick={() => setOpen((v) => !v)}
@@ -128,7 +135,7 @@ export function TranscriptItemView({ it }: { it: TranscriptItem }) {
     case "thought":
       return (
         <div className="px-1 text-xs italic text-text-muted">
-          <Toggle icon="message-circle" label={open ? "思考" : clip(it.text, 80)} />
+          <Toggle icon="message-circle" label={open ? t("thinking") : clip(it.text, 80)} />
           {open ? <div className="mt-0.5 whitespace-pre-wrap">{it.text}</div> : null}
         </div>
       );
@@ -153,7 +160,7 @@ export function TranscriptItemView({ it }: { it: TranscriptItem }) {
         </div>
       );
     case "plan":
-      return <div className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-xs text-text-secondary"><Icon name="clipboard" size={12} /> plan · {it.entries.length} 步</div>;
+      return <div className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-xs text-text-secondary"><Icon name="clipboard" size={12} /> {t("plan")} · {it.entries.length} {t("bnw.rt.steps")}</div>;
     case "attachment":
       return (
         <div className="rounded border border-border px-2 py-1 text-xs text-text-secondary">
@@ -172,6 +179,7 @@ export function TranscriptItemView({ it }: { it: TranscriptItem }) {
 
 // ── focus: /bnw/mesh/<id>/agent/<agentId> (?full=1) ───────────────────────────
 export function RuntimeFocus({ store, state, mesh, agent, full }: { store: Store; state: GatewayState; mesh: string; agent: string; full: boolean }) {
+  const { t } = useI18n();
   const summary = state.meshes.find((m) => m.name === mesh);
   const pm = state.perMesh[mesh];
   const a = summary?.agents.find((x) => x.id === agent);
@@ -199,7 +207,7 @@ export function RuntimeFocus({ store, state, mesh, agent, full }: { store: Store
   useEffect(() => { if (atBottom) scrollToBottom(); }, [itemCount, atBottom]);
 
   if (!summary || !a) {
-    return <PanelFrame title="运行态 · focus"><EmptyState title="agent 不存在" description={`mesh “${mesh}” 没有 agent “${agent}”。`} action={<RouteLink href={bnwHref({ k: "runtime", mesh })}>返回概览</RouteLink>} /></PanelFrame>;
+    return <PanelFrame title={`${t("bnw.runtime")} · ${t("bnw.rt.focus")}`}><EmptyState title={t("bnw.rt.agentMissing")} description={t("bnw.rt.agentMissingDesc", { mesh, agent })} action={<RouteLink href={bnwHref({ k: "runtime", mesh })}>{t("bnw.rt.backOverview")}</RouteLink>} /></PanelFrame>;
   }
 
   const loaded = store.isTranscriptInitialLoaded(mesh, agent);
@@ -218,24 +226,24 @@ export function RuntimeFocus({ store, state, mesh, agent, full }: { store: Store
         <div className="hidden lg:flex lg:items-start lg:gap-3">
           <div className="min-w-0 flex-1">
             <h2 className="truncate text-sm font-semibold text-text-primary">{agent}</h2>
-            <p className="mt-0.5 text-xs text-text-secondary">{a.harness} · {a.role} · {a.status}</p>
+            <p className="mt-0.5 text-xs text-text-secondary">{a.harness} · {a.role} · {tStatus(t, a.status)}</p>
           </div>
           <div className="shrink-0">
             <Cluster className="flex-wrap">
               <StatusChip status={agentDot(a.status, a.activity)} variant="dot" />
               {cold ? <WakeButton store={store} mesh={mesh} agent={agent} /> : null}
-              <RouteLink href={bnwHref({ k: "runtime", mesh, agent, full: !full })} className="text-sm whitespace-nowrap">{full ? "⊟ 退出全屏" : "⊞ 全屏"}</RouteLink>
-              <RouteLink href={bnwHref({ k: "runtime", mesh })} className="text-sm whitespace-nowrap">‹ 概览</RouteLink>
+              <RouteLink href={bnwHref({ k: "runtime", mesh, agent, full: !full })} className="text-sm whitespace-nowrap">{full ? `⊟ ${t("bnw.rt.exitFull")}` : `⊞ ${t("bnw.rt.full")}`}</RouteLink>
+              <RouteLink href={bnwHref({ k: "runtime", mesh })} className="text-sm whitespace-nowrap">‹ {t("bnw.rt.overview")}</RouteLink>
             </Cluster>
           </div>
         </div>
         {/* mobile (<lg): one compact thin row — ● name · status + 全屏/概览 + ⋯ overflow */}
         <div className="flex items-center gap-2 lg:hidden">
           <StatusChip status={agentDot(a.status, a.activity)} variant="dot" />
-          <span className="min-w-0 flex-1 truncate text-sm"><span className="font-semibold text-text-primary">{agent}</span> <span className="text-text-muted">· {a.status}</span></span>
+          <span className="min-w-0 flex-1 truncate text-sm"><span className="font-semibold text-text-primary">{agent}</span> <span className="text-text-muted">· {tStatus(t, a.status)}</span></span>
           {cold ? <WakeButton store={store} mesh={mesh} agent={agent} /> : null}
-          <RouteLink href={bnwHref({ k: "runtime", mesh, agent, full: !full })} aria-label={full ? "退出全屏" : "全屏"} className="text-sm whitespace-nowrap">{full ? "⊟" : "⊞"}</RouteLink>
-          <RouteLink href={bnwHref({ k: "runtime", mesh })} className="text-sm whitespace-nowrap">概览</RouteLink>
+          <RouteLink href={bnwHref({ k: "runtime", mesh, agent, full: !full })} aria-label={full ? t("bnw.rt.exitFull") : t("bnw.rt.full")} className="text-sm whitespace-nowrap">{full ? "⊟" : "⊞"}</RouteLink>
+          <RouteLink href={bnwHref({ k: "runtime", mesh })} className="text-sm whitespace-nowrap">{t("bnw.rt.overview")}</RouteLink>
           <button type="button" data-bnw-focus-more aria-label="agent controls" aria-expanded={selOpen} onClick={() => setSelOpen((v) => !v)}
             className="shrink-0 rounded-lg border border-border-strong px-2 py-0.5 text-sm text-text-primary hover:bg-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus-ring">⋯</button>
         </div>
@@ -259,19 +267,19 @@ export function RuntimeFocus({ store, state, mesh, agent, full }: { store: Store
       <div className="relative flex min-h-0 flex-1 flex-col">
         <div ref={scrollRef} onScroll={onScroll} data-bnw-transcript className="flex flex-1 flex-col gap-2 overflow-auto">
           {!loaded ? (
-            <div className="flex items-center gap-2 text-sm text-text-muted"><Spinner size={14} label="loading transcript" /> 载入转写…</div>
+            <div className="flex items-center gap-2 text-sm text-text-muted"><Spinner size={14} label="loading transcript" /> {t("transcript.loading")}</div>
           ) : !snap || snap.items.length === 0 ? (
-            <EmptyState title="暂无消息" description="该 agent 还没有转写记录。" />
+            <EmptyState title={t("empty.messages")} description={t("bnw.rt.noTranscript")} />
           ) : (
             <>
-              {snap.hasMore ? <button type="button" onClick={() => void store.loadOlderTranscript(mesh, agent)} className="self-center rounded-lg border border-border-strong bg-surface-sunken px-2 py-1 text-xs text-text-primary hover:bg-hover">载入更早</button> : null}
+              {snap.hasMore ? <button type="button" onClick={() => void store.loadOlderTranscript(mesh, agent)} className="self-center rounded-lg border border-border-strong bg-surface-sunken px-2 py-1 text-xs text-text-primary hover:bg-hover">{t("bnw.rt.loadOlder")}</button> : null}
               {snap.items.map((it) => <TranscriptItemView key={it.id} it={it} />)}
             </>
           )}
         </div>
         {loaded && !atBottom ? (
           <button type="button" data-bnw-jump onClick={scrollToBottom}
-            className="absolute bottom-2 right-2 rounded-full border border-border-strong bg-surface-raised px-3 py-1 text-xs text-text-primary shadow-sm hover:bg-hover">跳到底部 ↓</button>
+            className="absolute bottom-2 right-2 rounded-full border border-border-strong bg-surface-raised px-3 py-1 text-xs text-text-primary shadow-sm hover:bg-hover">{t("transcript.jumpBottom")} ↓</button>
         ) : null}
       </div>
       {/* C2 — docked approval bar + composer, adjacent at the bottom (never scrolls away) */}
@@ -291,23 +299,23 @@ export function RuntimeFocus({ store, state, mesh, agent, full }: { store: Store
     <div data-bnw-focus="split" className="flex h-full min-h-0 gap-3">
       <div className="min-w-0 flex-1">{focusColumn}</div>
       <aside data-bnw-context className="hidden w-[288px] shrink-0 overflow-auto lg:block">
-        <PanelFrame title={`${agent} · activity`} className="h-full" bodyClassName="flex flex-col gap-3">
+        <PanelFrame title={`${agent} · ${t("activity")}`} className="h-full" bodyClassName="flex flex-col gap-3">
           <div>
-            <div className="mb-1 text-xs uppercase tracking-wider text-text-muted">activity</div>
+            <div className="mb-1 text-xs uppercase tracking-wider text-text-muted">{t("activity")}</div>
             <div className="flex flex-col gap-1">
               {(pm?.activity ?? []).slice(-8).reverse().map((e) => (
                 <div key={e.id} className="truncate text-xs text-text-muted"><span className="text-text-secondary">{e.kind}</span> · {e.text}</div>
               ))}
-              {!pm?.activity?.length ? <p className="text-xs text-text-muted">暂无活动。</p> : null}
+              {!pm?.activity?.length ? <p className="text-xs text-text-muted">{t("empty.activity")}</p> : null}
             </div>
           </div>
           <div>
-            <div className="mb-1 text-xs uppercase tracking-wider text-text-muted">mail</div>
+            <div className="mb-1 text-xs uppercase tracking-wider text-text-muted">{t("tab.mail")}</div>
             <div className="flex flex-col gap-1">
               {(pm?.mail ?? []).slice(-8).reverse().map((m) => (
                 <div key={m.id} className="truncate text-xs text-text-muted">{m.from} → {m.to}: {m.body}</div>
               ))}
-              {!pm?.mail?.length ? <p className="text-xs text-text-muted">暂无邮件。</p> : null}
+              {!pm?.mail?.length ? <p className="text-xs text-text-muted">{t("empty.mail")}</p> : null}
             </div>
           </div>
         </PanelFrame>

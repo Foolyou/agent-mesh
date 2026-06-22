@@ -8,6 +8,7 @@ import type { Store } from "../store";
 import type { AgentModes, AgentModels, AgentEfforts, PermissionReq, QueueSummary, MeshSummary, StartSessionStrategy } from "../../types";
 import type { HarnessId, AgentRole } from "../../../acp/types";
 import { supportsRuntimeEffort, supportsThinkingToggle, kimiThinkingEnabled, kimiModelForThinking } from "../../../harness-utils";
+import { useI18n } from "../i18n";
 
 const HARNESSES: HarnessId[] = ["claude", "codex", "opencode", "kimi"];
 
@@ -78,14 +79,16 @@ export function RuntimeSelectors({ store, mesh, agent, harness, modes, models, e
 
 // #11 — wake a cold/lazy agent (real mutation).
 export function WakeButton({ store, mesh, agent, disabled }: { store: Store; mesh: string; agent: string; disabled?: boolean }) {
+  const { t } = useI18n();
   const { busy, run } = useBusy();
   return <Button size="sm" variant="secondary" busy={busy} disabled={disabled} aria-label={`wake ${agent}`}
-    onClick={() => void run(store.wakeAgent(mesh, agent))}>Wake</Button>;
+    onClick={() => void run(store.wakeAgent(mesh, agent))}>{t("bnw.rt.wakeBtn")}</Button>;
 }
 
 // Composer — real text send (steer when the agent is working, else prompt) + interrupt +
 // new-session (two-click). No mock mutations.
 export function FocusComposer({ store, mesh, agent, working, disabled }: { store: Store; mesh: string; agent: string; working: boolean; disabled: boolean }) {
+  const { t } = useI18n();
   const [text, setText] = useState("");
   const { busy, run } = useBusy();
   const send = async () => {
@@ -98,14 +101,14 @@ export function FocusComposer({ store, mesh, agent, working, disabled }: { store
     <Composer
       ariaLabel="Message composer"
       actions={<div className="flex items-center gap-2">
-        <ConfirmButton size="sm" variant="ghost" confirmLabel="新会话?（重置该 agent 会话）" disabled={disabled} aria-label={`new session ${agent}`} onConfirm={() => void run(store.newAgentSession(mesh, agent))}>新会话</ConfirmButton>
-        {working ? <Button size="sm" variant="ghost" disabled={disabled} aria-label={`interrupt ${agent}`} onClick={() => void run(store.interruptAgent(mesh, agent))}>打断</Button> : null}
-        <Button size="sm" variant="primary" busy={busy} disabled={disabled || !text.trim()} aria-label="send" onClick={() => void send()}>{working ? "Steer" : "Send"}</Button>
+        <ConfirmButton size="sm" variant="ghost" confirmLabel={t("bnw.rt.newSessionConfirm")} disabled={disabled} aria-label={`new session ${agent}`} onConfirm={() => void run(store.newAgentSession(mesh, agent))}>{t("bnw.rt.newSession")}</ConfirmButton>
+        {working ? <Button size="sm" variant="ghost" disabled={disabled} aria-label={`interrupt ${agent}`} onClick={() => void run(store.interruptAgent(mesh, agent))}>{t("bnw.rt.interrupt")}</Button> : null}
+        <Button size="sm" variant="primary" busy={busy} disabled={disabled || !text.trim()} aria-label="send" onClick={() => void send()}>{working ? t("bnw.rt.steer") : t("bnw.rt.send")}</Button>
       </div>}
-      hint={working ? "agent 正在工作 — 发送将作为 steer 插入" : undefined}
+      hint={working ? t("bnw.rt.steerHint") : undefined}
     >
       <Textarea aria-label="message input" rows={2} value={text} disabled={disabled}
-        placeholder={`给 ${agent} 发消息…`}
+        placeholder={t("bnw.rt.composerPlaceholder", { agent })}
         onChange={(e) => setText(e.target.value)}
         onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); void send(); } }} />
     </Composer>
@@ -115,14 +118,15 @@ export function FocusComposer({ store, mesh, agent, working, disabled }: { store
 // C2 — docked composer-adjacent approval bar. FIFO: only the OLDEST pending for this agent
 // renders, the rest summarized as 「还有 N 个待授权」. resolvePermission is the real mutation.
 export function ApprovalBar({ store, mesh, agent, pending, disabled }: { store: Store; mesh: string; agent: string; pending: PermissionReq[]; disabled: boolean }) {
+  const { t } = useI18n();
   const { busy, run } = useBusy();
   if (pending.length === 0) return null;
   const oldest = pending[0]; // store keeps pending in arrival order (FIFO)
   return (
     <div data-bnw-approval className="flex flex-col gap-1.5 border-t border-border bg-surface-raised px-3 py-2">
       <div className="flex items-center justify-between">
-        <span className="text-xs text-text-muted">⚠ 待授权（最早一条）</span>
-        {pending.length > 1 ? <span data-bnw-approval-queue className="rounded-full bg-warning-subtle px-2 py-0.5 text-xs font-medium text-warning">还有 {pending.length - 1} 个待授权</span> : null}
+        <span className="text-xs text-text-muted">{t("bnw.rt.pendingApproval")}</span>
+        {pending.length > 1 ? <span data-bnw-approval-queue className="rounded-full bg-warning-subtle px-2 py-0.5 text-xs font-medium text-warning">{t("bnw.rt.moreApprovals", { n: pending.length - 1 })}</span> : null}
       </div>
       <div className="max-h-44 overflow-auto text-sm text-text-primary">{oldest.question}</div>
       <div className="flex flex-wrap gap-2">
@@ -137,14 +141,15 @@ export function ApprovalBar({ store, mesh, agent, pending, disabled }: { store: 
 
 // #13 — pending-turn queue: list + remove (real removeQueuedTurn). Nav is reading the list.
 export function QueueList({ store, mesh, agent, queue, disabled }: { store: Store; mesh: string; agent: string; queue?: QueueSummary; disabled: boolean }) {
+  const { t } = useI18n();
   const { busy, run } = useBusy();
   const items = queue?.items ?? [];
-  if (!queue?.count) return <p className="text-xs text-text-muted">无排队 prompt。</p>;
+  if (!queue?.count) return <p className="text-xs text-text-muted">{t("bnw.rt.noQueue")}</p>;
   return (
     <div className="flex flex-col gap-1">
-      <div className="flex items-center gap-1.5 text-xs text-text-muted"><span aria-hidden="true">↕</span> queued · {queue.count}</div>
+      <div className="flex items-center gap-1.5 text-xs text-text-muted"><span aria-hidden="true">↕</span> {t("bnw.rt.queued")} · {queue.count}</div>
       {items.length === 0 ? (
-        <p className="truncate text-xs text-text-secondary">下一条：{queue.latestPreview}</p>
+        <p className="truncate text-xs text-text-secondary">{t("bnw.rt.nextUp")}：{queue.latestPreview}</p>
       ) : items.map((it) => (
         <div key={it.id} className="flex items-center gap-1.5">
           <span className="min-w-0 flex-1 truncate text-xs text-text-secondary">{it.preview}</span>
@@ -158,6 +163,7 @@ export function QueueList({ store, mesh, agent, queue, disabled }: { store: Stor
 
 // #18 — mesh lifecycle: start (resume/fresh) / stop / new-all-sessions (real mutations).
 export function LifecycleControls({ store, mesh, status }: { store: Store; mesh: string; status: MeshSummary["status"] }) {
+  const { t } = useI18n();
   const { busy, run } = useBusy();
   const [strategy, setStrategy] = useState<StartSessionStrategy>("resume");
   const running = status === "running" || status === "starting";
@@ -165,17 +171,17 @@ export function LifecycleControls({ store, mesh, status }: { store: Store; mesh:
     <div data-bnw-lifecycle className="flex flex-wrap items-center gap-2">
       {!running ? (
         <>
-          <label className="inline-flex items-center gap-1 text-xs text-text-muted">start
+          <label className="inline-flex items-center gap-1 text-xs text-text-muted">{t("start")}
             <Select aria-label="start strategy" value={strategy} className="w-24" onChange={(e) => setStrategy(e.target.value as StartSessionStrategy)}>
               <option value="resume">resume</option><option value="fresh">fresh</option>
             </Select>
           </label>
-          <Button size="sm" variant="primary" busy={busy} aria-label={`start ${mesh}`} onClick={() => void run(store.startMesh(mesh, strategy))}>Start</Button>
+          <Button size="sm" variant="primary" busy={busy} aria-label={`start ${mesh}`} onClick={() => void run(store.startMesh(mesh, strategy))}>{t("start")}</Button>
         </>
       ) : (
         <>
-          <ConfirmButton size="sm" variant="danger" confirmLabel="停止?" aria-label={`stop ${mesh}`} onConfirm={() => void run(store.stopMesh(mesh))}>Stop</ConfirmButton>
-          <ConfirmButton size="sm" variant="secondary" confirmLabel="重置所有会话?" aria-label={`new all sessions ${mesh}`} onConfirm={() => void run(store.newAllSessions(mesh))}>新建全部会话</ConfirmButton>
+          <ConfirmButton size="sm" variant="danger" confirmLabel={t("stop.confirm")} aria-label={`stop ${mesh}`} onConfirm={() => void run(store.stopMesh(mesh))}>{t("stop")}</ConfirmButton>
+          <ConfirmButton size="sm" variant="secondary" confirmLabel={t("new sessions all.confirm")} aria-label={`new all sessions ${mesh}`} onConfirm={() => void run(store.newAllSessions(mesh))}>{t("new sessions all")}</ConfirmButton>
         </>
       )}
     </div>
@@ -184,6 +190,7 @@ export function LifecycleControls({ store, mesh, status }: { store: Store; mesh:
 
 // #17 — live add agent / add edge to a running mesh (real addAgent / addEdge mutations).
 export function TopologyEditor({ store, mesh, agentIds, disabled }: { store: Store; mesh: string; agentIds: string[]; disabled: boolean }) {
+  const { t } = useI18n();
   const { busy, run } = useBusy();
   const [tab, setTab] = useState<"agent" | "edge" | null>(null);
   // add-agent fields
@@ -213,9 +220,9 @@ export function TopologyEditor({ store, mesh, agentIds, disabled }: { store: Sto
         <div data-bnw-add-agent className="flex flex-wrap items-end gap-2 rounded-lg border border-border bg-surface-sunken p-2">
           <Input aria-label="new agent id" placeholder="agent id" value={id} disabled={disabled} className="w-32" onChange={(e) => setId(e.target.value)} />
           <Select aria-label="new agent harness" value={harness} disabled={disabled} className="w-28" onChange={(e) => setHarness(e.target.value as HarnessId)}>{HARNESSES.map((h) => <option key={h} value={h}>{h}</option>)}</Select>
-          <Input aria-label="new agent project" placeholder="project path" value={project} disabled={disabled} className="w-40" onChange={(e) => setProject(e.target.value)} />
+          <Input aria-label="new agent project" placeholder={t("bnw.rt.projectPath")} value={project} disabled={disabled} className="w-40" onChange={(e) => setProject(e.target.value)} />
           <Select aria-label="new agent role" value={role} disabled={disabled} className="w-24" onChange={(e) => setRole(e.target.value as AgentRole)}><option value="member">member</option><option value="router">router</option></Select>
-          <Button size="sm" variant="primary" busy={busy} disabled={disabled || !id.trim() || !project.trim()} aria-label="confirm add agent" onClick={() => void addAgent()}>添加</Button>
+          <Button size="sm" variant="primary" busy={busy} disabled={disabled || !id.trim() || !project.trim()} aria-label="confirm add agent" onClick={() => void addAgent()}>{t("bnw.rt.add")}</Button>
         </div>
       ) : null}
       {tab === "edge" ? (
@@ -224,7 +231,7 @@ export function TopologyEditor({ store, mesh, agentIds, disabled }: { store: Sto
           <span aria-hidden="true" className="text-text-muted">→</span>
           <Select aria-label="new edge to" value={to} disabled={disabled} className="w-28" onChange={(e) => setTo(e.target.value)}>{agentIds.map((a) => <option key={a} value={a}>{a}</option>)}</Select>
           <label className="inline-flex items-center gap-1 text-xs text-text-secondary"><input type="checkbox" className="accent-accent" aria-label="new edge steer" checked={steer} disabled={disabled} onChange={(e) => setSteer(e.target.checked)} /> steer</label>
-          <Button size="sm" variant="primary" busy={busy} disabled={disabled || from === to} aria-label="confirm add edge" onClick={() => void addEdge()}>添加</Button>
+          <Button size="sm" variant="primary" busy={busy} disabled={disabled || from === to} aria-label="confirm add edge" onClick={() => void addEdge()}>{t("bnw.rt.add")}</Button>
         </div>
       ) : null}
     </div>

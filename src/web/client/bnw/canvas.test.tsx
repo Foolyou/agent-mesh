@@ -2,10 +2,16 @@
 // GatewayState (no store/WS) to assert real edges → directed arrows, recent-mail highlight,
 // nodes, force-directed toolbar, add-agent/edge controls, and the Esc-close affordance.
 import { test, expect } from "bun:test";
+import { createElement, type ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { MeshCanvas } from "./canvas";
 import type { GatewayState, PerMeshState, MeshSummary } from "../../types";
 import type { Store } from "../store";
+import { I18nContext, translate } from "../i18n";
+
+// canvas copy now goes through t() — render under an en I18nContext provider.
+const EN = { lang: "en" as const, t: (k: string, v?: Record<string, string | number>) => translate(k, "en", v) };
+const render = (el: ReactElement) => renderToStaticMarkup(createElement(I18nContext.Provider, { value: EN }, el));
 
 function pm(partial: Partial<PerMeshState> = {}): PerMeshState {
   return {
@@ -31,7 +37,7 @@ const STUB = { wakeAgent: async () => {}, stopAgent: async () => {}, addAgent: a
 
 test("MeshCanvas: real edges → directed arrows + recent-mail highlight + nodes", () => {
   const s = state({ demo: pm({ mail: [{ id: "m1", ts: "", from: "router", to: "codex-1", body: "go" }] }) });
-  const out = renderToStaticMarkup(<MeshCanvas store={STUB} state={s} mesh="demo" />);
+  const out = render(<MeshCanvas store={STUB} state={s} mesh="demo" />);
   expect(out).toContain("data-bnw-canvas");
   expect(out).toContain("data-bnw-edges");
   expect(out).toContain('id="bnw-arrow"'); // direction marker
@@ -42,11 +48,11 @@ test("MeshCanvas: real edges → directed arrows + recent-mail highlight + nodes
   expect((out.match(/data-bnw-node="true"/g) ?? []).length).toBe(3);
   expect(out).toContain("router");
   expect(out).toContain("codex-1");
-  expect(out).toContain("1 活跃"); // header recent count
+  expect(out).toContain("1 active"); // header recent count
 });
 
 test("MeshCanvas: force-directed toolbar (default on) + zoom/fit + Esc close", () => {
-  const out = renderToStaticMarkup(<MeshCanvas store={STUB} state={state()} mesh="demo" />);
+  const out = render(<MeshCanvas store={STUB} state={state()} mesh="demo" />);
   expect(out).toContain("data-bnw-autolayout");
   expect(out).toContain('aria-label="force-directed layout"');
   expect(out).toContain('checked=""'); // default on
@@ -58,7 +64,7 @@ test("MeshCanvas: force-directed toolbar (default on) + zoom/fit + Esc close", (
 });
 
 test("MeshCanvas: per-node stop/wake/actions + #17 add-agent/edge controls", () => {
-  const out = renderToStaticMarkup(<MeshCanvas store={STUB} state={state()} mesh="demo" />);
+  const out = render(<MeshCanvas store={STUB} state={state()} mesh="demo" />);
   expect(out).toContain('aria-label="stop codex-1"'); // running member → stop
   expect(out).toContain('aria-label="wake kimi-1"'); // cold member → wake
   expect(out).toContain('aria-label="router actions"'); // ⋯ → focus
@@ -68,6 +74,6 @@ test("MeshCanvas: per-node stop/wake/actions + #17 add-agent/edge controls", () 
 });
 
 test("MeshCanvas: unknown mesh → not-found", () => {
-  const out = renderToStaticMarkup(<MeshCanvas store={STUB} state={state()} mesh="ghost" />);
-  expect(out).toContain("mesh 不存在");
+  const out = render(<MeshCanvas store={STUB} state={state()} mesh="ghost" />);
+  expect(out).toContain("mesh not found");
 });

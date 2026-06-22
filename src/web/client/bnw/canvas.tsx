@@ -9,6 +9,7 @@ import type { Store } from "../store";
 import type { GatewayState, MeshSummary, PerMeshState } from "../../types";
 import type { AgentStatus, AgentActivity } from "../../../acp/types";
 import { bnwHref, navigate } from "../router";
+import { useI18n } from "../i18n";
 import { TopologyEditor } from "./runtime-controls";
 
 const NODE_W = 190, NODE_H = 66, CANVAS_W = 980, CANVAS_H = 620;
@@ -39,6 +40,7 @@ function computeLayout(agents: MeshSummary["agents"], seed: number): Record<stri
 }
 
 export function MeshCanvas({ store, state, mesh }: { store: Store; state: GatewayState; mesh: string }) {
+  const { t } = useI18n();
   const summary = state.meshes.find((m) => m.name === mesh);
   const pm: PerMeshState | undefined = state.perMesh[mesh];
   const [seed, setSeed] = useState(0);
@@ -80,7 +82,7 @@ export function MeshCanvas({ store, state, mesh }: { store: Store; state: Gatewa
   }, [mesh]);
 
   if (!summary) {
-    return <PanelFrame title="Topology canvas"><EmptyState title="mesh 不存在" description={`没有名为 “${mesh}” 的 mesh。`} action={<RouteLink href={bnwHref({ k: "home" })}>返回</RouteLink>} /></PanelFrame>;
+    return <PanelFrame title={t("bnw.cv.title")}><EmptyState title={t("bnw.rt.meshMissing")} description={t("bnw.rt.meshMissingDesc", { name: mesh })} action={<RouteLink href={bnwHref({ k: "home" })}>{t("back")}</RouteLink>} /></PanelFrame>;
   }
   const disabled = summary.status === "stopped" || summary.status === "dead";
   const recentCount = edges.filter((e) => recent.has(`${e.from}->${e.to}`)).length;
@@ -89,22 +91,22 @@ export function MeshCanvas({ store, state, mesh }: { store: Store; state: Gatewa
   return (
     <div data-mockup="frame" data-bnw-canvas className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-border bg-surface text-text-primary">
       <header className="flex flex-wrap items-center gap-2 border-b border-border bg-surface-raised px-3 py-2">
-        <span className="text-sm font-semibold">Topology canvas · {summary.name}</span>
-        <span className="text-xs text-text-muted">{agents.length} agents · {edges.length} edges · {recentCount} 活跃</span>
+        <span className="text-sm font-semibold">{t("bnw.cv.title")} · {summary.name}</span>
+        <span className="text-xs text-text-muted">{agents.length} agents · {edges.length} edges · {recentCount} {t("bnw.cv.active")}</span>
         <span className="flex-1" aria-hidden="true" />
-        <label className="inline-flex items-center gap-1.5 text-xs text-text-secondary"><input type="checkbox" className="accent-accent" aria-label="force-directed layout" data-bnw-autolayout checked={autoLayout} onChange={(e) => setAutoLayout(e.target.checked)} /> 力导向</label>
-        <Button size="sm" variant="ghost" aria-label="重新布局" data-bnw-relayout onClick={relayout}>重新布局</Button>
+        <label className="inline-flex items-center gap-1.5 text-xs text-text-secondary"><input type="checkbox" className="accent-accent" aria-label="force-directed layout" data-bnw-autolayout checked={autoLayout} onChange={(e) => setAutoLayout(e.target.checked)} /> {t("bnw.cv.forceLayout")}</label>
+        <Button size="sm" variant="ghost" aria-label={t("bnw.cv.relayout")} data-bnw-relayout onClick={relayout}>{t("bnw.cv.relayout")}</Button>
         <span className="mx-1 h-5 w-px bg-border" aria-hidden="true" />
         <Button size="sm" variant="ghost" iconOnly aria-label="zoom out" onClick={() => setZoom((z) => Math.max(0.6, +(z - 0.2).toFixed(1)))}>－</Button>
         <span className="text-xs tabular-nums text-text-muted">{Math.round(zoom * 100)}%</span>
         <Button size="sm" variant="ghost" iconOnly aria-label="zoom in" onClick={() => setZoom((z) => Math.min(1.6, +(z + 0.2).toFixed(1)))}>＋</Button>
         <Button size="sm" variant="ghost" aria-label="fit to window" onClick={() => setZoom(1)}>fit</Button>
-        <RouteLink href={bnwHref({ k: "runtime", mesh })} className="text-sm" aria-label="close canvas">Esc 关闭</RouteLink>
+        <RouteLink href={bnwHref({ k: "runtime", mesh })} className="text-sm" aria-label="close canvas">{t("bnw.cv.escClose")}</RouteLink>
       </header>
       <div className="flex flex-wrap items-center gap-3 border-b border-border bg-surface-sunken px-3 py-1 text-xs text-text-muted">
-        <span className="inline-flex items-center gap-1"><span className="text-accent">▶</span> 信息流方向（mail）</span>
-        <span className="inline-flex items-center gap-1"><span className="text-accent">●</span> 高亮 = 近期有 mail 流动</span>
-        <span className="inline-flex items-center gap-1"><Icon name="pin" size={12} className="text-accent" /> 拖拽=固定</span>
+        <span className="inline-flex items-center gap-1"><span className="text-accent">▶</span> {t("bnw.cv.flowDir")}</span>
+        <span className="inline-flex items-center gap-1"><span className="text-accent">●</span> {t("bnw.cv.recentMail")}</span>
+        <span className="inline-flex items-center gap-1"><Icon name="pin" size={12} className="text-accent" /> {t("bnw.cv.dragPin")}</span>
         <span className="flex-1" aria-hidden="true" />
         <TopologyEditor store={store} mesh={mesh} agentIds={agents.map((a) => a.id)} disabled={disabled} />
       </div>
