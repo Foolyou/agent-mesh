@@ -3,9 +3,17 @@
 // the presentational pieces against HarnessProbeRow fixtures + the loading shell.
 import { test, expect } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
+import type { ReactElement } from "react";
 import { BnwHarnesses, HarnessRow, SelfInstallerGuide, InstallProgressCard, OldVersionAgentsCard } from "./harnesses";
 import type { HarnessProbeRow } from "../../types";
 import type { Store } from "../store";
+import { I18nContext, translate, type TFn } from "../i18n";
+
+// Copy now flows through t(); render under an en I18nContext so assertions read English (the
+// default context returns raw keys). The browser e2e covers zh + live switch.
+const EN = { lang: "en" as const, t: ((k, vars) => translate(k, "en", vars)) as TFn };
+const wrap = (el: ReactElement) => <I18nContext.Provider value={EN}>{el}</I18nContext.Provider>;
+const r = (el: ReactElement) => renderToStaticMarkup(wrap(el));
 
 const base = (o: Partial<HarnessProbeRow> & Pick<HarnessProbeRow, "id" | "label">): HarnessProbeRow => ({
   installed: false, auth: "unknown", installable: "npm", lastProbeAt: 0, runningAgentsUsingOldVersion: [], ...o,
@@ -16,7 +24,7 @@ const OPENCODE = base({ id: "opencode", label: "OpenCode", installed: false, ins
 const noop = () => {};
 
 test("HarnessRow ok: dual-version line + installed chip + reprobe, no install button", () => {
-  const out = renderToStaticMarkup(<HarnessRow row={CLAUDE} onReprobe={noop} onInstall={noop} />);
+  const out = r(<HarnessRow row={CLAUDE} onReprobe={noop} onInstall={noop} />);
   expect(out).toContain("data-harness-row");
   expect(out).toContain("Claude");
   expect(out).toContain("claude-agent-acp 1.4.2 · claude 0.141.0");
@@ -27,14 +35,14 @@ test("HarnessRow ok: dual-version line + installed chip + reprobe, no install bu
 });
 
 test("HarnessRow outdated+auth: update button + auth-required chip", () => {
-  const out = renderToStaticMarkup(<HarnessRow row={CODEX} onReprobe={noop} onInstall={noop} />);
+  const out = r(<HarnessRow row={CODEX} onReprobe={noop} onInstall={noop} />);
   expect(out).toContain("update available — v1.2.3 → v1.2.5");
   expect(out).toContain("auth required");
   expect(out).toContain('aria-label="update codex"');
 });
 
 test("HarnessRow self-install: guide (copy/docs/reprobe-to-detect), no duplicate top reprobe/install", () => {
-  const out = renderToStaticMarkup(<HarnessRow row={OPENCODE} onReprobe={noop} onInstall={noop} />);
+  const out = r(<HarnessRow row={OPENCODE} onReprobe={noop} onInstall={noop} />);
   expect(out).toContain("data-self-installer");
   expect(out).toContain("npm i -g opencode");
   expect(out).toContain('aria-label="copy install command for opencode"');
@@ -45,7 +53,7 @@ test("HarnessRow self-install: guide (copy/docs/reprobe-to-detect), no duplicate
 });
 
 test("InstallProgressCard states: running(spinner,no close) / done(close) / interrupted(retry+close)", () => {
-  const mk = (status: "running" | "done" | "interrupted") => renderToStaticMarkup(<InstallProgressCard install={{ harness: "codex", pkgSpec: "codex-acp@1.2.5", status, liveText: "x", lines: ["line a"] }} onRetry={noop} onClose={noop} />);
+  const mk = (status: "running" | "done" | "interrupted") => r(<InstallProgressCard install={{ harness: "codex", pkgSpec: "codex-acp@1.2.5", status, liveText: "x", lines: ["line a"] }} onRetry={noop} onClose={noop} />);
   const running = mk("running");
   expect(running).toContain("data-install-progress");
   expect(running).toContain('role="status"'); // spinner
@@ -58,7 +66,7 @@ test("InstallProgressCard states: running(spinner,no close) / done(close) / inte
 
 test("OldVersionAgentsCard: after-idle + force(confirm) controls per agent", () => {
   const agents = [{ harnessId: "codex" as const, target: "1.2.5", entry: "demo/codex-1" }];
-  const out = renderToStaticMarkup(<OldVersionAgentsCard agents={agents} store={{} as Store} />);
+  const out = r(<OldVersionAgentsCard agents={agents} store={{} as Store} />);
   expect(out).toContain("data-old-agents");
   expect(out).toContain("demo/codex-1");
   expect(out).toContain("running an older codex → v1.2.5");
@@ -67,13 +75,13 @@ test("OldVersionAgentsCard: after-idle + force(confirm) controls per agent", () 
 });
 
 test("SelfInstallerGuide disabled: copy/reprobe disabled", () => {
-  const out = renderToStaticMarkup(<SelfInstallerGuide id="kimi" command="npm i -g kimi" docsUrl="https://k" disabled onReprobe={noop} />);
+  const out = r(<SelfInstallerGuide id="kimi" command="npm i -g kimi" docsUrl="https://k" disabled onReprobe={noop} />);
   expect(out).toMatch(/aria-label="copy install command for kimi"[^>]*disabled/);
 });
 
 test("BnwHarnesses shell: PanelFrame + refresh; SSR (no effects) shows loading skeleton", () => {
   const STUB = { listHarnesses: async () => [] } as unknown as Store;
-  const out = renderToStaticMarkup(<BnwHarnesses store={STUB} />);
+  const out = r(<BnwHarnesses store={STUB} />);
   expect(out).toContain('data-harnesses="panel"');
   expect(out).toContain("Harnesses");
   expect(out).toContain('aria-label="refresh harness status"');

@@ -3,9 +3,17 @@
 // the presentational pieces against fixtures + assert the loading skeleton of the shell.
 import { test, expect } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
+import type { ReactElement } from "react";
 import { BnwDoctor, DoctorSummary, DoctorFindings, DaemonTable, DoctorRecovery } from "./doctor";
 import type { DoctorReport, GatewayState, PsDetail } from "../../types";
 import type { Store } from "../store";
+import { I18nContext, translate, type TFn } from "../i18n";
+
+// Copy now flows through t(); render under an en I18nContext so assertions read English (the
+// default context returns raw keys). The browser e2e covers zh + live switch.
+const EN = { lang: "en" as const, t: ((k, vars) => translate(k, "en", vars)) as TFn };
+const wrap = (el: ReactElement) => <I18nContext.Provider value={EN}>{el}</I18nContext.Provider>;
+const r = (el: ReactElement) => renderToStaticMarkup(wrap(el));
 
 const REPORT: DoctorReport = {
   checks: [
@@ -27,32 +35,32 @@ const noop = () => {};
 test("BnwDoctor shell: PanelFrame + refresh; SSR (no effects) shows loading skeleton", () => {
   const STUB = { fetchDoctor: async () => REPORT, fetchPsDetail: async () => PS } as unknown as Store;
   const state: GatewayState = { appVersion: "build-x", meshes: [], assistant: { status: "absent", transcript: [] }, perMesh: {} };
-  const out = renderToStaticMarkup(<BnwDoctor store={STUB} state={state} />);
+  const out = r(<BnwDoctor store={STUB} state={state} />);
   expect(out).toContain('data-doctor="panel"');
-  expect(out).toContain("Doctor / 系统");
+  expect(out).toContain("Doctor / system");
   expect(out).toContain('aria-label="refresh diagnostics"');
   expect(out).toContain("animate-pulse"); // loading skeleton present pre-effect (effects don't run in SSR)
   expect(out).not.toContain("data-doctor-summary"); // not loaded yet
 });
 
 test("DoctorSummary: worst chip + counts + version line + copy/run actions", () => {
-  const out = renderToStaticMarkup(<DoctorSummary report={REPORT} appVersion="build-x" offline={false} running={false} onRun={noop} onCopy={noop} />);
+  const out = r(<DoctorSummary report={REPORT} appVersion="build-x" offline={false} running={false} onRun={noop} onCopy={noop} />);
   expect(out).toContain("data-doctor-summary");
   expect(out).toContain("worst: error");
-  expect(out).toContain("1 ok · 1 warn · 1 error · 3 总计");
+  expect(out).toContain("1 ok · 1 warn · 1 error · 3 total");
   expect(out).toContain("agent-mesh build-x");
   expect(out).toContain('aria-label="copy diagnostics"');
   expect(out).toContain('aria-label="run doctor"');
 });
 
 test("DoctorSummary offline: cached version tag + actions disabled", () => {
-  const out = renderToStaticMarkup(<DoctorSummary report={REPORT} appVersion="build-x" offline={true} running={false} onRun={noop} onCopy={noop} />);
-  expect(out).toContain("（cached）");
+  const out = r(<DoctorSummary report={REPORT} appVersion="build-x" offline={true} running={false} onRun={noop} onCopy={noop} />);
+  expect(out).toContain("(cached)");
   expect(out).toMatch(/aria-label="run doctor"[^>]*disabled/);
 });
 
 test("DoctorFindings: each check renders id + severity chip + detail + fixHint", () => {
-  const out = renderToStaticMarkup(<DoctorFindings report={REPORT} />);
+  const out = r(<DoctorFindings report={REPORT} />);
   expect(out).toContain("doctor findings (3)");
   expect(out).toContain("host.key");
   expect(out).toContain("codex-acp outdated");
@@ -61,7 +69,7 @@ test("DoctorFindings: each check renders id + severity chip + detail + fixHint",
 });
 
 test("DaemonTable: real ps rows (pid/uptime/agents) + restart control", () => {
-  const out = renderToStaticMarkup(<DaemonTable ps={PS} disabled={false} onRestart={noop} />);
+  const out = r(<DaemonTable ps={PS} disabled={false} onRestart={noop} />);
   expect(out).toContain("data-daemons");
   expect(out).toContain("mesh-host daemons · ps (1)");
   expect(out).toContain("dev-mesh");
@@ -71,24 +79,24 @@ test("DaemonTable: real ps rows (pid/uptime/agents) + restart control", () => {
 });
 
 test("DaemonTable empty: none running", () => {
-  expect(renderToStaticMarkup(<DaemonTable ps={{ running: [], leaks: [] }} disabled={false} onRestart={noop} />)).toContain("none running.");
+  expect(r(<DaemonTable ps={{ running: [], leaks: [] }} disabled={false} onRestart={noop} />)).toContain("none running.");
 });
 
 test("DoctorRecovery: leak rows + per-leak reap + reap-all; restart/reap disabled when offline", () => {
-  const out = renderToStaticMarkup(<DoctorRecovery ps={PS} disabled={false} busy={false} onReap={noop} />);
+  const out = r(<DoctorRecovery ps={PS} disabled={false} busy={false} onReap={noop} />);
   expect(out).toContain("data-recovery");
-  expect(out).toContain("孤儿/僵尸进程 (2)");
+  expect(out).toContain("orphan/zombie processes (2)");
   expect(out).toContain('aria-label="reap all orphans"');
   expect(out).toContain('aria-label="reap scratch"');
   expect(out).toContain('aria-label="reap old-mesh"');
   expect(out).toContain("stale_record");
   expect(out).toContain("orphan_socket");
-  const off = renderToStaticMarkup(<DoctorRecovery ps={PS} disabled={true} busy={false} onReap={noop} />);
+  const off = r(<DoctorRecovery ps={PS} disabled={true} busy={false} onReap={noop} />);
   expect(off).toMatch(/aria-label="reap scratch"[^>]*disabled/);
 });
 
 test("DoctorRecovery empty: no leaks message + reap-all disabled", () => {
-  const out = renderToStaticMarkup(<DoctorRecovery ps={{ running: [], leaks: [] }} disabled={false} busy={false} onReap={noop} />);
-  expect(out).toContain("无孤儿/僵尸进程。");
+  const out = r(<DoctorRecovery ps={{ running: [], leaks: [] }} disabled={false} busy={false} onReap={noop} />);
+  expect(out).toContain("no orphan/zombie processes.");
   expect(out).toMatch(/aria-label="reap all orphans"[^>]*disabled/);
 });

@@ -1407,6 +1407,53 @@ try {
     await page.evaluate(() => { localStorage.setItem("mesh.lang", "zh"); });
   });
 
+  // i18n remaining-surfaces cleanup (slice 1: harnesses / channels / doctor) — each surface's
+  //  app-copy switches en↔zh; en app-copy carries no hardcoded CJK. Probe/status routes were
+  //  registered by the earlier 7.4-A steps and persist, so these surfaces render with data here.
+  await step("i18n surfaces (harnesses/channels/doctor): en↔zh + no hardcoded CJK in en", async () => {
+    const hasCJK = (s: string) => /[㐀-䶿一-鿿豈-﫿]/.test(s);
+    const collect = (sels: string[]) => page.evaluate((ss) => ss
+      .map((s) => { const el = document.querySelector(s) as HTMLElement | null; return el ? el.innerText : ""; })
+      .join("\n"), sels);
+    // `scan` = the app-copy regions checked for stray CJK (defaults to the panel). Channels uses a
+    //  tighter set so it excludes binding rows, which carry user-provided chat names (e.g. "demo 群").
+    // `ready` = a data-loaded element to await (surfaces fetch via effects); `scan` = the app-copy
+    //  regions checked for stray CJK. Channels scan excludes binding rows (user-provided chat names
+    //  like "demo 群" are data, not app-copy).
+    const surfaces = [
+      { path: "/bnw/harnesses", sel: '[data-harnesses="panel"]', ready: "[data-harness-row]", scan: ['[data-harnesses="panel"]'], en: "reprobe", zh: "重新探测" },
+      { path: "/bnw/channels", sel: '[data-channels="panel"]', ready: "[data-channel-status]", scan: ['[data-channel-status]', '[data-pending-senders]', '[data-authorized-senders]'], en: "feishu", zh: "飞书" },
+      { path: "/bnw/doctor", sel: '[data-doctor="panel"]', ready: "[data-doctor-findings]", scan: ['[data-doctor-summary]', '[data-doctor-findings]', '[data-recovery]'], en: "doctor findings", zh: "检查项" },
+    ];
+    await page.setViewportSize({ width: 1440, height: 900 });
+
+    // ── en: clear the suite's preseeded zh, then assert each surface's app-copy is English ──
+    await page.goto(`${BASE}${surfaces[0].path}`, { waitUntil: "domcontentloaded" });
+    await page.evaluate(() => { localStorage.removeItem("mesh.lang"); });
+    await page.reload({ waitUntil: "domcontentloaded" });
+    for (const s of surfaces) {
+      await page.goto(`${BASE}${s.path}`, { waitUntil: "domcontentloaded" });
+      await page.waitForSelector(s.ready, { timeout: 8000 });
+      const appCopy = await collect(s.scan);
+      assert(!hasCJK(appCopy), `i18n guard: CJK in en ${s.path} app-copy: ${appCopy.replace(/\s+/g, " ").slice(0, 120)}`);
+      assert((await collect([s.sel])).toLowerCase().includes(s.en), `i18n en: ${s.path} app-copy English (want "${s.en}")`);
+    }
+    await sleep(80); await page.screenshot({ path: `${SHOTS}/bnw-i18n-doctor-en.png`, fullPage: true });
+
+    // ── live switch en→zh, then assert each surface localized ──
+    await page.goto(`${BASE}/bnw/settings?tab=language`, { waitUntil: "domcontentloaded" });
+    await page.getByRole("radio", { name: "中文" }).click();
+    await page.waitForFunction(() => document.documentElement.lang === "zh", { timeout: 8000 });
+    for (const s of surfaces) {
+      await page.goto(`${BASE}${s.path}`, { waitUntil: "domcontentloaded" });
+      await page.waitForSelector(s.ready, { timeout: 8000 });
+      assert((await collect([s.sel])).includes(s.zh), `i18n zh: ${s.path} localized (want "${s.zh}")`);
+    }
+    await sleep(80); await page.screenshot({ path: `${SHOTS}/bnw-i18n-doctor-zh.png`, fullPage: true });
+    // leave the suite's zh baseline set for later legacy steps
+    await page.evaluate(() => { localStorage.setItem("mesh.lang", "zh"); });
+  });
+
   // i18n assistant-body slice — Mesh Assistant app-copy (intro / composer / fullscreen toggle)
   //  switches en↔zh; en app-copy carries no hardcoded CJK. The conversation transcript is data
   //  (excluded): assert on the always-present intro + composer, and CJK-scan only the composer.

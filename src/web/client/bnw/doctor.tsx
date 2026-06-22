@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import { Button, ErrorBanner, PanelFrame, Skeleton, Spinner, StatusChip, type Status } from "../ui/index";
 import type { Store } from "../store";
 import type { DoctorReport, GatewayState, MeshProcDetail, ProcLeak, PsDetail, Severity } from "../../types";
+import { useI18n } from "../i18n";
 
 const SEV_TONE: Record<Severity, Status> = { ok: "ready", info: "idle", warning: "attention", error: "blocked" };
 type Phase = "loading" | "ready" | "error" | "offline";
@@ -46,6 +47,7 @@ function buildCopyText(report: DoctorReport | null, ps: PsDetail | null): string
 }
 
 export function BnwDoctor({ store, state }: { store: Store; state: GatewayState }) {
+  const { t } = useI18n();
   const [report, setReport] = useState<DoctorReport | null>(null);
   const [ps, setPs] = useState<PsDetail | null>(null);
   const [phase, setPhase] = useState<Phase>("loading");
@@ -79,22 +81,22 @@ export function BnwDoctor({ store, state }: { store: Store; state: GatewayState 
   }
 
   const actions = (
-    <Button size="sm" variant="ghost" disabled={disabled} aria-label="refresh diagnostics" onClick={() => void load("run")}>refresh</Button>
+    <Button size="sm" variant="ghost" disabled={disabled} aria-label="refresh diagnostics" onClick={() => void load("run")}>{t("bnw.refresh")}</Button>
   );
 
   return (
-    <PanelFrame title="Doctor / 系统" actions={actions} className="h-full" bodyClassName="min-h-0">
+    <PanelFrame title={t("bnw.doctorSystem")} actions={actions} className="h-full" bodyClassName="min-h-0">
       <div data-doctor="panel" className="flex min-h-0 flex-col">
         {offline ? (
           <div role="status" className="mb-3 flex items-center gap-2 rounded-lg border border-border bg-danger-subtle px-3 py-1.5 text-xs text-danger">
-            <Spinner size={12} label="reconnecting" /> 服务不可达 — 显示最近已知诊断，恢复操作禁用。
+            <Spinner size={12} label="reconnecting" /> {t("bnw.dr.offline")}
           </div>
         ) : null}
         <div className="mx-auto flex w-full max-w-[900px] flex-col gap-4">
           {phase === "loading" ? (
             <div className="flex flex-col gap-3"><Skeleton variant="line" /><Skeleton variant="row" /><Skeleton variant="card" /></div>
           ) : phase === "error" ? (
-            <ErrorBanner title="Doctor probe failed" onRetry={() => void load("run")}>诊断请求失败 — backend 仍在线则可重试。</ErrorBanner>
+            <ErrorBanner title={t("bnw.dr.probeFailed")} onRetry={() => void load("run")}>{t("bnw.dr.probeFailedDesc")}</ErrorBanner>
           ) : (
             <>
               <DoctorSummary report={report} appVersion={state.appVersion} offline={offline} running={running}
@@ -113,25 +115,27 @@ export function BnwDoctor({ store, state }: { store: Store; state: GatewayState 
 export function DoctorSummary({ report, appVersion, offline, running, onRun, onCopy }: {
   report: DoctorReport | null; appVersion?: string; offline: boolean; running: boolean; onRun: () => void; onCopy: () => void;
 }) {
+  const { t } = useI18n();
   const s = report?.summary ?? { total: 0, ok: 0, warnings: 0, errors: 0, worst: "ok" as Severity };
   return (
     <div data-doctor-summary className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-surface-raised p-3">
-      <StatusChip status={SEV_TONE[s.worst]} variant="soft" label={`worst: ${s.worst}`} />
-      <span className="text-xs text-text-muted">{s.ok} ok · {s.warnings} warn · {s.errors} error · {s.total} 总计</span>
-      <span className="text-xs text-text-muted">· agent-mesh {appVersion ?? "dev"}{offline ? "（cached）" : ""}</span>
+      <StatusChip status={SEV_TONE[s.worst]} variant="soft" label={t("bnw.dr.worst", { w: s.worst })} />
+      <span className="text-xs text-text-muted">{t("bnw.dr.counts", { ok: s.ok, warn: s.warnings, err: s.errors, total: s.total })}</span>
+      <span className="text-xs text-text-muted">· agent-mesh {appVersion ?? "dev"}{offline ? t("bnw.dr.cached") : ""}</span>
       <span className="flex-1" aria-hidden="true" />
-      <Button size="sm" variant="ghost" disabled={offline} aria-label="copy diagnostics" onClick={onCopy}>copy 诊断</Button>
-      <Button size="sm" variant="secondary" disabled={offline} busy={running} aria-label="run doctor" onClick={onRun}>{running ? "running…" : "run doctor"}</Button>
+      <Button size="sm" variant="ghost" disabled={offline} aria-label="copy diagnostics" onClick={onCopy}>{t("bnw.dr.copyDiag")}</Button>
+      <Button size="sm" variant="secondary" disabled={offline} busy={running} aria-label="run doctor" onClick={onRun}>{running ? t("bnw.dr.running") : t("bnw.dr.runDoctor")}</Button>
     </div>
   );
 }
 
 export function DoctorFindings({ report }: { report: DoctorReport | null }) {
+  const { t } = useI18n();
   const checks = report?.checks ?? [];
   return (
     <div data-doctor-findings className="flex flex-col gap-1.5 rounded-lg border border-border bg-surface-raised p-3">
-      <span className="text-xs uppercase tracking-wider text-text-muted">doctor findings ({checks.length})</span>
-      {checks.length === 0 ? <span className="text-xs text-text-muted">no findings.</span> : checks.map((c) => (
+      <span className="text-xs uppercase tracking-wider text-text-muted">{t("bnw.dr.findings", { n: checks.length })}</span>
+      {checks.length === 0 ? <span className="text-xs text-text-muted">{t("bnw.dr.noFindings")}</span> : checks.map((c) => (
         <div key={c.id} className="flex flex-col gap-0.5 border-b border-border py-1.5 last:border-0">
           <div className="flex flex-wrap items-center gap-2">
             <StatusChip status={SEV_TONE[c.severity]} variant="dot" />
@@ -148,18 +152,19 @@ export function DoctorFindings({ report }: { report: DoctorReport | null }) {
 }
 
 export function DaemonTable({ ps, disabled, onRestart }: { ps: PsDetail | null; disabled: boolean; onRestart: (name: string) => void }) {
+  const { t } = useI18n();
   const daemons: MeshProcDetail[] = ps?.running ?? [];
   return (
     <div data-daemons className="flex flex-col gap-1.5 rounded-lg border border-border bg-surface-raised p-3">
       <span className="text-xs uppercase tracking-wider text-text-muted">mesh-host daemons · ps ({daemons.length})</span>
-      {daemons.length === 0 ? <span className="text-xs text-text-muted">none running.</span> : daemons.map((d) => (
+      {daemons.length === 0 ? <span className="text-xs text-text-muted">{t("bnw.dr.noneRunning")}</span> : daemons.map((d) => (
         <div key={d.name} className="flex flex-wrap items-center gap-2 border-b border-border py-1.5 text-sm last:border-0">
           <StatusChip status="working" variant="dot" />
           <span className="font-medium text-text-primary">{d.name}</span>
           <span className="font-mono text-xs text-text-muted">pid {d.pid} · up {fmtUptime(d.startedAt)} · {d.agents.length} agents</span>
           <span className="hidden min-w-0 flex-1 truncate font-mono text-xs text-text-muted lg:block">{d.socketPath}</span>
           <span className="flex-1 lg:hidden" aria-hidden="true" />
-          <Button size="sm" variant="ghost" className="hidden lg:inline-flex" disabled={disabled} aria-label={`restart daemon ${d.name}`} onClick={() => onRestart(d.name)}>restart</Button>
+          <Button size="sm" variant="ghost" className="hidden lg:inline-flex" disabled={disabled} aria-label={`restart daemon ${d.name}`} onClick={() => onRestart(d.name)}>{t("bnw.dr.restart")}</Button>
         </div>
       ))}
     </div>
@@ -167,17 +172,18 @@ export function DaemonTable({ ps, disabled, onRestart }: { ps: PsDetail | null; 
 }
 
 export function DoctorRecovery({ ps, disabled, busy, onReap }: { ps: PsDetail | null; disabled: boolean; busy: boolean; onReap: (names?: string[]) => void }) {
+  const { t } = useI18n();
   const leaks: ProcLeak[] = ps?.leaks ?? [];
   return (
     <>
       {/* Recovery (reap orphan/stale leaks) is an operator/desktop action — deferred to CLI on mobile. */}
       <div data-recovery className="hidden flex-col gap-2 rounded-lg border border-border bg-surface-raised p-3 lg:flex">
         <div className="flex items-center justify-between gap-2">
-          <span className="text-xs uppercase tracking-wider text-text-muted">恢复 · 孤儿/僵尸进程 ({leaks.length})</span>
-          <Button size="sm" variant="secondary" disabled={disabled || leaks.length === 0} busy={busy} aria-label="reap all orphans" onClick={() => onReap()}>reap all</Button>
+          <span className="text-xs uppercase tracking-wider text-text-muted">{t("bnw.dr.recovery", { n: leaks.length })}</span>
+          <Button size="sm" variant="secondary" disabled={disabled || leaks.length === 0} busy={busy} aria-label="reap all orphans" onClick={() => onReap()}>{t("bnw.dr.reapAll")}</Button>
         </div>
         {leaks.length === 0 ? (
-          <span className="text-xs text-text-muted">无孤儿/僵尸进程。</span>
+          <span className="text-xs text-text-muted">{t("bnw.dr.noLeaks")}</span>
         ) : (
           <div className="flex flex-col gap-1.5">
             {leaks.map((l) => (
@@ -187,13 +193,13 @@ export function DoctorRecovery({ ps, disabled, busy, onReap }: { ps: PsDetail | 
                 <StatusChip status="idle" variant="soft" label={l.kind} />
                 <span className="min-w-0 flex-1 text-xs text-text-muted">{l.detail}</span>
                 {busy ? <Spinner size={12} label="reaping" /> : null}
-                <Button size="sm" variant="ghost" disabled={disabled} aria-label={`reap ${l.name}`} onClick={() => onReap([l.name])}>reap</Button>
+                <Button size="sm" variant="ghost" disabled={disabled} aria-label={`reap ${l.name}`} onClick={() => onReap([l.name])}>{t("bnw.dr.reap")}</Button>
               </div>
             ))}
           </div>
         )}
       </div>
-      <p className="text-xs text-text-muted lg:hidden">恢复操作（reap / restart daemon）在桌面端或 CLI 执行。</p>
+      <p className="text-xs text-text-muted lg:hidden">{t("bnw.dr.recoveryMobileNote")}</p>
     </>
   );
 }
