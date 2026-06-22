@@ -20,15 +20,16 @@ import {
   compose, applyComposition, saveMode, saveAccent, clearActive,
   loadThemeSelection, loadCustomPalette, applyPalette, saveCustomPalette, saveActive,
 } from "../themes";
-import { loadLang, saveLang, type Lang } from "../i18n";
+import { loadLang, saveLang, useI18n, type Lang } from "../i18n";
 import { pollDeviceStatus, type DeviceAuthPhase } from "../device-auth";
 import { loadDefaultView, saveDefaultView, loadDefaultDevice, saveDefaultDevice, type DefaultView, type DefaultDevice } from "./prefs";
 import { bnwHref, type BnwRoute } from "../router";
 
 type SettingsRoute = Extract<BnwRoute, { k: "settings" }>;
 type Tab = "appearance" | "language" | "prefs" | "devices";
-const TABS: { id: Tab; label: string }[] = [
-  { id: "appearance", label: "外观" }, { id: "language", label: "语言" }, { id: "prefs", label: "偏好" }, { id: "devices", label: "设备" },
+const TABS: { id: Tab; labelKey: string }[] = [
+  { id: "appearance", labelKey: "bnw.set.tab.appearance" }, { id: "language", labelKey: "bnw.set.tab.language" },
+  { id: "prefs", labelKey: "bnw.set.tab.prefs" }, { id: "devices", labelKey: "bnw.set.tab.devices" },
 ];
 const MODE_LABEL: Record<Mode, string> = { "dark-slate": "Dark·Slate", "light-cool": "Light·Cool", "eye-care-warm": "Eye-care·Warm" };
 const ACCENT_LABEL: Record<Accent, string> = { "signal-teal": "Signal Teal", ember: "Ember", "fleet-azure": "Fleet Azure" };
@@ -52,12 +53,13 @@ export function BnwSettings({ route }: { route: SettingsRoute }) {
 }
 
 function PanelShell({ tab, children }: { tab: Tab; children: ReactNode }) {
+  const { t } = useI18n();
   return (
-    <PanelFrame title="设置 Settings" actions={<span className="text-xs text-text-muted">本地偏好即时生效</span>} className="h-full" bodyClassName="min-h-0">
+    <PanelFrame title={t("bnw.set.title")} actions={<span className="text-xs text-text-muted">{t("bnw.set.localHint")}</span>} className="h-full" bodyClassName="min-h-0">
       <div data-settings="panel" className="flex min-h-0 flex-col">
         <nav aria-label="settings tabs" className="mb-3">
           <Cluster>
-            {TABS.map((t) => <RouteLink key={t.id} href={bnwHref({ k: "settings", tab: t.id })} active={t.id === tab} className="text-sm">{t.label}</RouteLink>)}
+            {TABS.map((tb) => <RouteLink key={tb.id} href={bnwHref({ k: "settings", tab: tb.id })} active={tb.id === tab} className="text-sm">{t(tb.labelKey)}</RouteLink>)}
           </Cluster>
         </nav>
         <div className="mx-auto flex w-full max-w-[860px] flex-col gap-4">{children}</div>
@@ -67,6 +69,7 @@ function PanelShell({ tab, children }: { tab: Tab; children: ReactNode }) {
 }
 
 function AppearanceTab() {
+  const { t } = useI18n();
   const [{ mode, accent }, setSel] = useState(() => loadThemeSelection());
   const [palette, setPalette] = useState<Palette>(() => loadCustomPalette());
 
@@ -82,18 +85,18 @@ function AppearanceTab() {
   function resetToComposition() { applyComposition(compose(mode, accent)); clearActive(); }
 
   return (
-    <Group title="外观 · 主题">
+    <Group title={t("bnw.set.appearanceTheme")}>
       <div className="flex flex-col gap-1">
-        <span className="text-xs text-text-muted">背景模式</span>
+        <span className="text-xs text-text-muted">{t("bnw.set.bgMode")}</span>
         <SegmentedControl ariaLabel="theme mode" value={mode} onChange={(m) => pickMode(m as Mode)} size="sm" options={MODES.map((m) => ({ value: m, label: MODE_LABEL[m] }))} />
       </div>
       <div className="flex flex-col gap-1">
-        <span className="text-xs text-text-muted">强调色 Accent</span>
+        <span className="text-xs text-text-muted">{t("bnw.set.accentLabel")}</span>
         <SegmentedControl ariaLabel="accent" value={accent} onChange={(a) => pickAccent(a as Accent)} size="sm" options={ACCENTS.map((a) => ({ value: a, label: ACCENT_LABEL[a] }))} />
       </div>
       {/* 9-combo live preview grid — each cell is a real selectable composition swatch. */}
       <div data-theme-matrix className="flex flex-col gap-1">
-        <span className="text-xs text-text-muted">9 组 mode × accent 预览（点击应用）</span>
+        <span className="text-xs text-text-muted">{t("bnw.set.previewHint")}</span>
         <div className="grid grid-cols-3 gap-1.5">
           {MODES.flatMap((m) => ACCENTS.map((a) => {
             const c = compose(m, a);
@@ -112,7 +115,7 @@ function AppearanceTab() {
       </div>
       {/* Custom palette editor — live apply, tolerant of transient invalid hex (no throw). */}
       <details data-custom-palette className="rounded-lg border border-border bg-surface-sunken px-2.5 py-1.5">
-        <summary className="cursor-pointer text-xs text-text-muted">自定义调色板（高级）</summary>
+        <summary className="cursor-pointer text-xs text-text-muted">{t("bnw.set.customPalette")}</summary>
         <div className="mt-2 flex flex-col gap-1.5">
           {THEME_KEYS.map((k) => (
             <div key={k} className="flex items-center gap-2">
@@ -121,7 +124,7 @@ function AppearanceTab() {
               <Input value={palette[k]} aria-label={`palette ${k}`} className="w-28 font-mono" onChange={(e) => editPalette(k, e.target.value)} />
             </div>
           ))}
-          <div className="mt-1"><Button size="sm" variant="ghost" aria-label="reset to composition" onClick={resetToComposition}>恢复为 mode × accent</Button></div>
+          <div className="mt-1"><Button size="sm" variant="ghost" aria-label="reset to composition" onClick={resetToComposition}>{t("bnw.set.resetComposition")}</Button></div>
         </div>
       </details>
     </Group>
@@ -129,52 +132,55 @@ function AppearanceTab() {
 }
 
 function LanguageTab() {
+  const { t } = useI18n();
   const [lang, setLangState] = useState<Lang>(() => loadLang());
   function pick(l: Lang) { setLangState(l); saveLang(l); }
   return (
-    <Group title="语言 · language">
+    <Group title={t("bnw.set.languageTitle")}>
       <SegmentedControl ariaLabel="language" value={lang} onChange={(l) => pick(l as Lang)} size="sm" options={[{ value: "en", label: "English" }, { value: "zh", label: "中文" }]} />
-      <span className="text-xs text-text-muted">技术名词（mesh / router / agent / harness）两种语言均保留英文。</span>
-      <span className="text-xs text-text-muted">语言选择已持久化（mesh.lang，作用于 &lt;html lang&gt; 与旧控制台）；/bnw 视图字符串的完整 i18n 接入为后续单独一轮。</span>
+      <span className="text-xs text-text-muted">{t("bnw.set.langNote1")}</span>
+      <span className="text-xs text-text-muted">{t("bnw.set.langNote2")}</span>
     </Group>
   );
 }
 
 function PrefsTab() {
+  const { t } = useI18n();
   const [view, setView] = useState<DefaultView>(() => loadDefaultView());
   const [dev, setDev] = useState<DefaultDevice>(() => loadDefaultDevice());
   return (
-    <Group title="偏好 · preferences">
+    <Group title={t("bnw.set.prefsTitle")}>
       <div className="flex flex-wrap items-start gap-6">
-        <label className="flex flex-col gap-1 text-xs text-text-muted">默认落地视图
-          <SegmentedControl ariaLabel="default landing view" value={view} onChange={(v) => { setView(v as DefaultView); saveDefaultView(v as DefaultView); }} size="sm" options={[{ value: "runtime", label: "运行态" }, { value: "board", label: "看板" }]} />
+        <label className="flex flex-col gap-1 text-xs text-text-muted">{t("bnw.set.defaultView")}
+          <SegmentedControl ariaLabel="default landing view" value={view} onChange={(v) => { setView(v as DefaultView); saveDefaultView(v as DefaultView); }} size="sm" options={[{ value: "runtime", label: t("bnw.runtime") }, { value: "board", label: t("bnw.board") }]} />
         </label>
-        <label className="flex flex-col gap-1 text-xs text-text-muted">默认设备布局
-          <SegmentedControl ariaLabel="default device" value={dev} onChange={(d) => { setDev(d as DefaultDevice); saveDefaultDevice(d as DefaultDevice); }} size="sm" options={[{ value: "desktop", label: "桌面" }, { value: "mobile", label: "移动" }]} />
+        <label className="flex flex-col gap-1 text-xs text-text-muted">{t("bnw.set.defaultDevice")}
+          <SegmentedControl ariaLabel="default device" value={dev} onChange={(d) => { setDev(d as DefaultDevice); saveDefaultDevice(d as DefaultDevice); }} size="sm" options={[{ value: "desktop", label: t("bnw.set.desktop") }, { value: "mobile", label: t("bnw.set.mobile") }]} />
         </label>
       </div>
-      <span className="text-xs text-text-muted">偏好保存在本机（localStorage，非服务端）。默认落地视图即时生效；默认设备布局暂为占位——当前布局随视口自适应，手动覆盖将随 Step 7.5 落地。</span>
+      <span className="text-xs text-text-muted">{t("bnw.set.prefsNote")}</span>
     </Group>
   );
 }
 
 const DEV_TONE: Record<DeviceAuthPhase, Status> = { approved: "ready", pending: "attention", revoked: "blocked", unknown: "idle" };
 function DevicesTab() {
+  const { t } = useI18n();
   const [phase, setPhase] = useState<DeviceAuthPhase | null>(null);
   useEffect(() => { let alive = true; void pollDeviceStatus().then((p) => { if (alive) setPhase(p); }); return () => { alive = false; }; }, []);
   return (
-    <Group title="设备授权 · device management">
+    <Group title={t("bnw.set.devicesTitle")}>
       <div data-device-row className="flex flex-wrap items-center gap-2 text-sm">
         <StatusChip status={phase ? DEV_TONE[phase] : "idle"} variant="dot" />
-        <span className="font-medium text-text-primary">本设备 · this device</span>
-        <StatusChip status={phase ? DEV_TONE[phase] : "idle"} variant="soft" label={phase ?? "checking…"} />
+        <span className="font-medium text-text-primary">{t("bnw.set.thisDevice")}</span>
+        <StatusChip status={phase ? DEV_TONE[phase] : "idle"} variant="soft" label={phase ?? t("bnw.set.checking")} />
       </div>
       {/* Honest placeholder (no web seam exists): list/approve/revoke/bootstrap are host-CLI authoritative. */}
       <div data-device-mgmt className="flex flex-col gap-1.5 rounded-lg border border-dashed border-border bg-surface-sunken px-2.5 py-1.5">
-        <span className="text-xs text-text-muted">设备清单 / 批准 / 撤销 / 铸造 bootstrap 均为**宿主端权威**，用宿主 CLI 执行：</span>
+        <span className="text-xs text-text-muted">{t("bnw.set.devicesCliHint")}</span>
         <code className="font-mono text-xs text-text-secondary">mesh device list | approve &lt;code&gt; | revoke &lt;deviceId|label&gt;</code>
         <code className="font-mono text-xs text-text-secondary">mesh auth bootstrap [--ttl &lt;seconds&gt;]</code>
-        <span className="text-xs text-text-muted">WebUI 仅只读显示本设备状态；Web 端设备管理将随 device-auth 切片到来（不在本片新增 web 鉴权入口）。</span>
+        <span className="text-xs text-text-muted">{t("bnw.set.devicesNote")}</span>
       </div>
     </Group>
   );

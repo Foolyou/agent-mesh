@@ -424,9 +424,10 @@ try {
     assert(await ls("mesh.lang") === "en", "language persisted");
     await sleep(80); await page.screenshot({ path: `${SHOTS}/bnw-settings-language-desktop.png`, fullPage: true });
 
-    // prefs → client-local persist (no fake server write)
+    // prefs → client-local persist (no fake server write). Lang is en here (set just above), so
+    // the default-view option reads "board" (t(bnw.board) @ en), not the zh 看板.
     await page.goto(`${BASE}/bnw/settings?tab=prefs`, { waitUntil: "domcontentloaded" });
-    await page.getByRole("radio", { name: "看板" }).click();
+    await page.getByRole("radio", { name: "board" }).click();
     await page.waitForFunction(() => localStorage.getItem("mesh.bnw.defaultView") === "board", { timeout: 8000 });
     await sleep(80); await page.screenshot({ path: `${SHOTS}/bnw-settings-prefs-desktop.png`, fullPage: true });
 
@@ -1351,6 +1352,57 @@ try {
     await page.waitForSelector('[data-bnw-board-detail]', { timeout: 8000 });
     const detailZh = await collect(['[data-bnw-board-detail]']);
     assert(detailZh.includes("子任务") && detailZh.includes("活动") && detailZh.includes("评论"), "i18n zh: detail section headers 子任务/活动/评论");
+    // leave the suite's zh baseline set for later legacy steps
+    await page.evaluate(() => { localStorage.setItem("mesh.lang", "zh"); });
+  });
+
+  // i18n settings-body slice — appearance/language/prefs/devices app-copy switches en↔zh; en
+  // settings app-copy carries no hardcoded CJK. The language picker's own "中文" option is a
+  // language NAME (always shown), not app-copy — so the en CJK guard scans the non-language tabs
+  // and asserts the language tab's note positively instead.
+  await step("i18n settings body: en↔zh (appearance/language/prefs/devices) + no hardcoded CJK in en", async () => {
+    const hasCJK = (s: string) => /[㐀-䶿一-鿿豈-﫿]/.test(s);
+    const collect = (sels: string[]) => page.evaluate((ss) => ss
+      .map((s) => { const el = document.querySelector(s) as HTMLElement | null; return el ? el.innerText : ""; })
+      .join("\n"), sels);
+    const panel = () => collect(['[data-settings="panel"]']);
+    await page.setViewportSize({ width: 1440, height: 900 });
+
+    // ── en: clear the suite's preseeded zh, then assert settings app-copy is English ──
+    await page.goto(`${BASE}/bnw/settings?tab=appearance`, { waitUntil: "domcontentloaded" });
+    await page.evaluate(() => { localStorage.removeItem("mesh.lang"); });
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-theme-matrix]', { timeout: 8000 });
+    const appearanceEn = await panel();
+    assert(!hasCJK(appearanceEn), `i18n guard: CJK in en appearance app-copy: ${appearanceEn.replace(/\s+/g, " ").slice(0, 120)}`);
+    assert(appearanceEn.toLowerCase().includes("appearance"), "i18n en: appearance title English");
+    await page.goto(`${BASE}/bnw/settings?tab=prefs`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[aria-label="default landing view"]', { timeout: 8000 });
+    const prefsEn = await panel();
+    assert(!hasCJK(prefsEn), `i18n guard: CJK in en prefs app-copy: ${prefsEn.replace(/\s+/g, " ").slice(0, 120)}`);
+    await page.goto(`${BASE}/bnw/settings?tab=devices`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-device-mgmt]', { timeout: 8000 });
+    const devicesEn = await panel();
+    assert(!hasCJK(devicesEn), `i18n guard: CJK in en devices app-copy: ${devicesEn.replace(/\s+/g, " ").slice(0, 120)}`);
+    // language tab: assert the note is English (not CJK-scanned — it legitimately shows 中文)
+    await page.goto(`${BASE}/bnw/settings?tab=language`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[aria-label="language"]', { timeout: 8000 });
+    assert((await panel()).includes("stay English in both languages"), "i18n en: language note English");
+    await sleep(80); await page.screenshot({ path: `${SHOTS}/bnw-i18n-settings-en.png`, fullPage: true });
+
+    // ── live switch en→zh via the language picker (no reload) ──
+    await page.getByRole("radio", { name: "中文" }).click();
+    await page.waitForFunction(() => document.documentElement.lang === "zh", { timeout: 8000 });
+    await page.goto(`${BASE}/bnw/settings?tab=appearance`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-theme-matrix]', { timeout: 8000 });
+    assert((await panel()).includes("外观"), "i18n zh: appearance 外观");
+    await page.goto(`${BASE}/bnw/settings?tab=prefs`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[aria-label="default landing view"]', { timeout: 8000 });
+    assert((await panel()).includes("默认落地视图"), "i18n zh: prefs 默认落地视图");
+    await page.goto(`${BASE}/bnw/settings?tab=devices`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-device-mgmt]', { timeout: 8000 });
+    assert((await panel()).includes("本设备"), "i18n zh: devices 本设备");
+    await sleep(80); await page.screenshot({ path: `${SHOTS}/bnw-i18n-settings-zh.png`, fullPage: true });
     // leave the suite's zh baseline set for later legacy steps
     await page.evaluate(() => { localStorage.setItem("mesh.lang", "zh"); });
   });

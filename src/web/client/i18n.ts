@@ -457,6 +457,36 @@ const DICT: Record<string, Entry> = {
   "bnw.bd.prio.normal": ["normal", "普通"],
   "bnw.bd.prio.high": ["high", "高"],
   "bnw.bd.prio.urgent": ["urgent", "紧急"],
+
+  // ── /bnw settings body (i18n settings slice). Technical terms stay English: mesh / accent /
+  //    device-auth / CLI / bootstrap + theme brand names (Dark·Slate / Light·Cool / Eye-care·Warm /
+  //    Signal Teal / Ember / Fleet Azure) + language names (English / 中文) + raw palette hex. ──
+  "bnw.set.title": ["Settings", "设置"],
+  "bnw.set.localHint": ["local preferences apply instantly", "本地偏好即时生效"],
+  "bnw.set.tab.appearance": ["appearance", "外观"],
+  "bnw.set.tab.language": ["language", "语言"],
+  "bnw.set.tab.prefs": ["preferences", "偏好"],
+  "bnw.set.tab.devices": ["devices", "设备"],
+  "bnw.set.appearanceTheme": ["appearance · theme", "外观 · 主题"],
+  "bnw.set.bgMode": ["background mode", "背景模式"],
+  "bnw.set.accentLabel": ["accent", "强调色"],
+  "bnw.set.previewHint": ["9 mode × accent combos (click to apply)", "9 组 mode × accent 预览（点击应用）"],
+  "bnw.set.customPalette": ["custom palette (advanced)", "自定义调色板（高级）"],
+  "bnw.set.resetComposition": ["reset to mode × accent", "恢复为 mode × accent"],
+  "bnw.set.languageTitle": ["language", "语言"],
+  "bnw.set.langNote1": ["Technical terms (mesh / router / agent / harness) stay English in both languages.", "技术名词（mesh / router / agent / harness）两种语言均保留英文。"],
+  "bnw.set.langNote2": ["Language is persisted (mesh.lang) and applies to <html lang>, the /bnw views, and the legacy console.", "语言选择已持久化（mesh.lang），作用于 <html lang>、/bnw 视图与旧控制台。"],
+  "bnw.set.prefsTitle": ["preferences", "偏好"],
+  "bnw.set.defaultView": ["default landing view", "默认落地视图"],
+  "bnw.set.defaultDevice": ["default device layout", "默认设备布局"],
+  "bnw.set.desktop": ["desktop", "桌面"],
+  "bnw.set.mobile": ["mobile", "移动"],
+  "bnw.set.prefsNote": ["Preferences are stored locally (localStorage, not server-side). Default landing view applies immediately; default device layout is a placeholder — the layout currently follows the viewport.", "偏好保存在本机（localStorage，非服务端）。默认落地视图即时生效；默认设备布局暂为占位——当前布局随视口自适应。"],
+  "bnw.set.devicesTitle": ["device management", "设备授权"],
+  "bnw.set.thisDevice": ["this device", "本设备"],
+  "bnw.set.checking": ["checking…", "检查中…"],
+  "bnw.set.devicesCliHint": ["Device list / approve / revoke / mint bootstrap are host-authoritative — run them with the host CLI:", "设备清单 / 批准 / 撤销 / 铸造 bootstrap 均为宿主端权威，用宿主 CLI 执行："],
+  "bnw.set.devicesNote": ["The WebUI only shows this device's status (read-only); web-side device management arrives with the device-auth slice — no new web auth entry is added here.", "WebUI 仅只读显示本设备状态；Web 端设备管理将随 device-auth 切片到来（不在本片新增 web 鉴权入口）。"],
 };
 
 export function translate(key: string, lang: Lang, vars?: Record<string, string | number>): string {

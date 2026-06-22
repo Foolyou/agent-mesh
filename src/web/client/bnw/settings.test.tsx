@@ -4,15 +4,21 @@
 import { test, expect } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { BnwSettings } from "./settings";
+import { I18nContext, translate, type TFn } from "../i18n";
 
-const render = (tab?: string) => renderToStaticMarkup(<BnwSettings route={{ k: "settings", tab }} />);
+// Settings copy now flows through t(); render under an en I18nContext so assertions read the
+// English strings (the default context returns raw keys). The browser e2e covers zh + live switch.
+const EN = { lang: "en" as const, t: ((k, vars) => translate(k, "en", vars)) as TFn };
+const render = (tab?: string) => renderToStaticMarkup(
+  <I18nContext.Provider value={EN}><BnwSettings route={{ k: "settings", tab }} /></I18nContext.Provider>,
+);
 
 test("Settings appearance (default tab): mode/accent + 9-combo live grid + custom palette", () => {
   const out = render();
   expect(out).toContain('data-settings="panel"');
-  expect(out).toContain("设置 Settings");
+  expect(out).toContain("Settings");
   expect(out).toContain('aria-label="settings tabs"');
-  expect(out).toContain("外观 · 主题");
+  expect(out).toContain("appearance · theme");
   expect(out).toContain('aria-label="theme mode"');
   expect(out).toContain('aria-label="accent"');
   // 9-combo live preview grid — 9 selectable composition cells
@@ -28,26 +34,26 @@ test("Settings appearance (default tab): mode/accent + 9-combo live grid + custo
 
 test("Settings ?tab=language: en/zh picker + technical-terms note", () => {
   const out = render("language");
-  expect(out).toContain("语言 · language");
+  expect(out).toContain("language");
   expect(out).toContain('aria-label="language"');
   expect(out).toContain("English");
-  expect(out).toContain("两种语言均保留英文");
+  expect(out).toContain("stay English in both languages");
   expect(out).not.toContain("data-theme-matrix"); // not the appearance tab
 });
 
 test("Settings ?tab=prefs: default-view + default-device (client-local, honest)", () => {
   const out = render("prefs");
-  expect(out).toContain("偏好 · preferences");
+  expect(out).toContain("preferences");
   expect(out).toContain('aria-label="default landing view"');
   expect(out).toContain('aria-label="default device"');
-  expect(out).toContain("本机（localStorage，非服务端）"); // explicit: not a server write
+  expect(out).toContain("localStorage, not server-side"); // explicit: not a server write
 });
 
 test("Settings ?tab=devices: own-device status + host-CLI placeholder, NO web approve/revoke", () => {
   const out = render("devices");
-  expect(out).toContain("设备授权 · device management");
+  expect(out).toContain("device management");
   expect(out).toContain("data-device-row");
-  expect(out).toContain("本设备 · this device");
+  expect(out).toContain("this device");
   expect(out).toContain("data-device-mgmt");
   expect(out).toContain("mesh device list");
   expect(out).toContain("mesh auth bootstrap");
@@ -56,5 +62,5 @@ test("Settings ?tab=devices: own-device status + host-CLI placeholder, NO web ap
 });
 
 test("Settings: unknown ?tab falls back to appearance", () => {
-  expect(render("bogus")).toContain("外观 · 主题");
+  expect(render("bogus")).toContain("appearance · theme");
 });
