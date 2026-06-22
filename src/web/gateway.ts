@@ -66,7 +66,7 @@ export interface ManagerLike {
   newAllSessions(name: string): Promise<void>;
   defineMesh(config: MeshConfig): Promise<void>;
   deleteMesh(name: string): Promise<void>;
-  reloadDefinitions(): Promise<void>;
+  reloadDefinitionsPreservingRuntime(): Promise<void>;
   stopAll(): Promise<void>;
   listResolvedHarnesses?(): { mesh: string; agentId: string; harnessId: HarnessId; version?: string; path?: string; spawnedAt: string }[];
 }
@@ -733,7 +733,7 @@ export class WebGateway {
   }
   async reload(): Promise<void> {
     // Safe reload: must NOT clobber running/starting meshes (which would orphan their daemons/agents).
-    await this.manager.reloadDefinitions();
+    await this.manager.reloadDefinitionsPreservingRuntime();
     this.refreshMeshes();
   }
   async defineMesh(config: MeshConfig): Promise<void> {

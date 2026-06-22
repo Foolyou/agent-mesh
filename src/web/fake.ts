@@ -105,7 +105,7 @@ export class FakeManager {
     this.boards.delete(name); // mirror prod lifecycle: delete/recreate must not expose stale board state
     await deleteArtifactMesh(this.root, name);
   }
-  async reloadDefinitions(): Promise<void> {}
+  async reloadDefinitionsPreservingRuntime(): Promise<void> {}
 
   async startMesh(name: string): Promise<void> {
     const e = this.require(name);

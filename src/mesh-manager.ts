@@ -133,7 +133,7 @@ export class MeshManager {
    *   - known in memory but absent from disk: left unchanged (no deletion semantics here).
    *  {@link mergeDefinitionsFromDisk} stays add-only for the Feishu watcher; this method additionally
    *  refreshes stopped/dead configs, which is what an explicit user reload should do. */
-  async reloadDefinitions(): Promise<void> {
+  async reloadDefinitionsPreservingRuntime(): Promise<void> {
     for (const config of await this.store.load()) {
       if (!config?.name) continue; // skip nameless junk
       validateArtifactNames(config);

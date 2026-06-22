@@ -79,7 +79,7 @@ function fakeManager() {
       return { ok: true, state: BOARD_DOC, change: {} };
     },
     async defineMesh(config: { name: string }) { rec(`defineMesh:${config.name}`); },
-    async deleteMesh() {}, async reloadDefinitions() { rec("reload"); }, async stopAll() {},
+    async deleteMesh() {}, async reloadDefinitionsPreservingRuntime() { rec("reload"); }, async stopAll() {},
   };
 }
 // Assistant stub (WebGateway AssistantLike) so promptAssistant/interrupt reach a recorder.
@@ -950,7 +950,7 @@ try {
     await page.locator('[data-bnw-mesh-pager] [aria-label="previous mesh page"]').click();
     await meshNav.getByText("demo", { exact: true }).waitFor({ timeout: 8000 });
     assert(await meshNav.getByText("delta", { exact: true }).count() === 0, "#19 prev → page 1 restored");
-    // #20 — desktop reload ConfirmButton (two-click) reaches manager.reloadDefinitions → rec("reload")
+    // #20 — desktop reload ConfirmButton (two-click) reaches manager.reloadDefinitionsPreservingRuntime → rec("reload")
     const reloadBtn = meshNav.locator('[aria-label="reload mesh definitions"]');
     await reloadBtn.click(); // arm
     await reloadBtn.click(); // confirm

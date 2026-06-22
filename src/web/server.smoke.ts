@@ -38,7 +38,7 @@ function fakeManager() {
     interruptAgent() {},
     async defineMesh() {},
     async deleteMesh() {},
-    async reloadDefinitions() {},
+    async reloadDefinitionsPreservingRuntime() {},
     async stopAll() {},
   };
 }

@@ -647,41 +647,44 @@ test("mergeDefinitionsFromDisk ignores a DIRECTORY named like a mesh config", as
   expect(mgr.listMeshes().map((m) => m.name)).toEqual(["echo"]); // dir-mesh NOT added; no EISDIR throw
 });
 
-// ── reloadDefinitions (mesh-reload-preserve-running): the WebUI "reload definitions" safe path ──
+// ── reloadDefinitionsPreservingRuntime (mesh-reload-preserve-running): the WebUI "reload definitions" safe path ──
 
-test("reloadDefinitions adds a new disk mesh as stopped and refreshes a STOPPED mesh's config from disk", async () => {
+test("reloadDefinitionsPreservingRuntime adds a new disk mesh as stopped and refreshes a STOPPED mesh's config from disk", async () => {
   await mgr.defineMesh(cfg); // "echo" stopped in memory + on disk (harness claude)
   // a NEW mesh appears only on disk (CLI / hand-edit)
   await writeFile(join(dir, "meshes", "extra.json"), JSON.stringify({ name: "extra", agents: [{ id: "r", harness: "claude", project: "test_mesh_0", role: "router" }], edges: [] }));
   // the existing STOPPED mesh's file is edited on disk
   await writeFile(join(dir, "meshes", "echo.json"), JSON.stringify({ name: "echo", agents: [{ id: "r", harness: "codex", project: "test_mesh_0", role: "router" }], edges: [] }));
-  await mgr.reloadDefinitions();
+  await mgr.reloadDefinitionsPreservingRuntime();
   const list = mgr.listMeshes();
   expect(list.map((m) => m.name).sort()).toEqual(["echo", "extra"]);
   expect(list.find((m) => m.name === "extra")!.status).toBe("stopped"); // new file-only mesh added stopped
   expect(mgr.configOf("echo").agents[0].harness).toBe("codex"); // STOPPED entry refreshed from disk (unlike add-only merge)
 });
 
-test("reloadDefinitions leaves a known mesh whose file is gone unchanged (no deletion semantics)", async () => {
+test("reloadDefinitionsPreservingRuntime leaves a known mesh whose file is gone unchanged (no deletion semantics)", async () => {
   await mgr.defineMesh(cfg); // "echo" on disk + in memory
   await rm(join(dir, "meshes", "echo.json")); // definition removed from disk
-  await mgr.reloadDefinitions();
+  await mgr.reloadDefinitionsPreservingRuntime();
   expect(mgr.listMeshes().map((m) => m.name)).toEqual(["echo"]); // still present; reload does not delete
 });
 
-hostTest("reloadDefinitions preserves a RUNNING mesh's status, client, and config; still adds a new disk mesh stopped", async () => {
+hostTest("reloadDefinitionsPreservingRuntime preserves a RUNNING mesh's status, client, and config; still adds a new disk mesh stopped", async () => {
   await mgr.defineMesh(cfg);
   await mgr.startMesh("echo");
   expect(mgr.listMeshes()[0].status).toBe("running");
   const pid = mgr.pidOf("echo")!;
   expect(pid).toBeGreaterThan(0);
+  const clientBefore = (mgr as any).entries.get("echo").client; // capture the exact client object
+  expect(clientBefore).toBeDefined();
   // disk churn a naive reload would wrongly apply: echo's config edited + a brand-new mesh added
   await writeFile(join(dir, "meshes", "echo.json"), JSON.stringify({ name: "echo", agents: [{ id: "r", harness: "codex", project: "test_mesh_0", role: "router" }], edges: [] }));
   await writeFile(join(dir, "meshes", "extra.json"), JSON.stringify({ name: "extra", agents: [{ id: "r", harness: "claude", project: "test_mesh_0", role: "router" }], edges: [] }));
-  await mgr.reloadDefinitions();
+  await mgr.reloadDefinitionsPreservingRuntime();
   const list = mgr.listMeshes();
   expect(list.find((m) => m.name === "echo")!.status).toBe("running"); // NOT clobbered to stopped (would orphan the daemon)
   expect(mgr.pidOf("echo")).toBe(pid); // client preserved → mesh stays interactable/stoppable
+  expect((mgr as any).entries.get("echo").client).toBe(clientBefore); // SAME client reference (object identity), not just same pid
   expect(mgr.configOf("echo").agents[0].harness).toBe("claude"); // RUNNING config left exactly as-is (not the disk's codex)
   expect(list.find((m) => m.name === "extra")!.status).toBe("stopped"); // new file-only mesh still discovered
 }, HOST_TEST_TIMEOUT);

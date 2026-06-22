@@ -47,7 +47,7 @@ function fakeManager() {
     async newAllSessions() {},
     async defineMesh() {},
     async deleteMesh() {},
-    async reloadDefinitions() {},
+    async reloadDefinitionsPreservingRuntime() {},
     async stopAll() {},
   };
 }

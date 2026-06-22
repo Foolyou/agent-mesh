@@ -90,7 +90,7 @@ function fakeManager() {
       calls.push(["delete", n]);
       alive = false;
     },
-    async reloadDefinitions() {
+    async reloadDefinitionsPreservingRuntime() {
       calls.push(["reload"]);
     },
     async stopAll() {},
