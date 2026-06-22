@@ -133,14 +133,15 @@ async function setupStubs(page: Page) {
   await page.route("**/api/agents/router/files/report.md", (r) => r.fulfill({ status: 200, contentType: "text/markdown", body: "# Gate summary\n\nThe device-auth gate is ready for review.\n" }));
 }
 
-// Run the 9 mode×accent combos at the page's current viewport. `mobile` adds a 更多-overlay
-// crawl (the management list is mobile-only). Combo failures are suffixed with the viewport.
-async function runCombos(page: Page, anonPage: Page, viewport: "desktop" | "mobile") {
+// Run the 9 mode×accent combos at the page's current viewport + language. `mobile` adds a
+// 更多-overlay crawl. Language is set deterministically per combo (i18n pass → both en + zh).
+// Combo failures are suffixed with the viewport + lang.
+async function runCombos(page: Page, anonPage: Page, viewport: "desktop" | "mobile", lang: "en" | "zh") {
   for (const mode of MODES) {
     for (const accent of ACCENTS) {
-      const combo = `${mode} × ${accent} [${viewport}]`;
+      const combo = `${mode} × ${accent} [${viewport}·${lang}]`;
       try {
-        await page.evaluate(([m, a]) => { localStorage.setItem("mesh.theme.mode", m); localStorage.setItem("mesh.theme.accent", a); localStorage.removeItem("mesh.theme"); }, [mode, accent]);
+        await page.evaluate(([m, a, l]) => { localStorage.setItem("mesh.theme.mode", m); localStorage.setItem("mesh.theme.accent", a); localStorage.setItem("mesh.lang", l); localStorage.removeItem("mesh.theme"); }, [mode, accent, lang]);
         // overview (real snapshot agents)
         await page.goto(`${BASE}/bnw/mesh/demo`, { waitUntil: "domcontentloaded" });
         await page.waitForSelector('[data-bnw-agents]', { timeout: 8000 });
@@ -151,7 +152,7 @@ async function runCombos(page: Page, anonPage: Page, viewport: "desktop" | "mobi
           await page.locator('[data-bnw-more-toggle]').click();
           await page.waitForSelector('[data-bnw-more]', { timeout: 8000 });
           await sleep(60); await crawl(page, `${combo} · more-overlay`);
-          await page.locator('[aria-label="关闭更多"]').click();
+          await page.locator('[data-bnw-more-close]').click(); // stable hook (aria is now localized)
         }
         // board list (real readBoard fetch)
         await page.goto(`${BASE}/bnw/mesh/demo/board`, { waitUntil: "domcontentloaded" });
@@ -208,7 +209,7 @@ async function runCombos(page: Page, anonPage: Page, viewport: "desktop" | "mobi
         await page.waitForSelector('[data-notif-type="harness-upgrade"]', { timeout: 8000 });
         await sleep(60); await crawl(page, `${combo} · notifications`);
         // 7.4-A.2b-ii — device-auth gate (unauthenticated page; mockup 12)
-        await anonPage.evaluate(([m, a]) => { localStorage.setItem("mesh.theme.mode", m); localStorage.setItem("mesh.theme.accent", a); localStorage.removeItem("mesh.theme"); }, [mode, accent]);
+        await anonPage.evaluate(([m, a, l]) => { localStorage.setItem("mesh.theme.mode", m); localStorage.setItem("mesh.theme.accent", a); localStorage.setItem("mesh.lang", l); localStorage.removeItem("mesh.theme"); }, [mode, accent, lang]);
         await anonPage.goto(`${BASE}/bnw/`, { waitUntil: "domcontentloaded" });
         await anonPage.waitForSelector('[data-device-code]', { timeout: 8000 });
         await sleep(60); await crawl(anonPage, `${combo} · device-auth`);
@@ -231,8 +232,9 @@ try {
   const anonCtx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   const anonPage = await anonCtx.newPage();
   await anonPage.goto(`${BASE}/bnw/`, { waitUntil: "domcontentloaded" });
-  console.log("desktop /bnw × 9:");
-  await runCombos(page, anonPage, "desktop");
+  console.log("desktop /bnw × 9 × {en,zh}:");
+  await runCombos(page, anonPage, "desktop", "en");
+  await runCombos(page, anonPage, "desktop", "zh");
 
   // ── mobile pass (390×844) — 7.5-A: same crawl at the mobile breakpoint so the
   // bottom-tab shell + 更多 overlay + stacked surface layouts all clear WCAG AA ────
@@ -243,11 +245,12 @@ try {
   const manonCtx = await browser.newContext({ viewport: { width: 390, height: 844 } });
   const manonPage = await manonCtx.newPage();
   await manonPage.goto(`${BASE}/bnw/`, { waitUntil: "domcontentloaded" });
-  console.log("mobile /bnw × 9:");
-  await runCombos(mpage, manonPage, "mobile");
+  console.log("mobile /bnw × 9 × {en,zh}:");
+  await runCombos(mpage, manonPage, "mobile", "en");
+  await runCombos(mpage, manonPage, "mobile", "zh");
 
-  if (fails.length) throw new Error(`/bnw a11y failed in ${fails.length}/18 combos: ${fails.join(", ")}`);
-  console.log(`BNW A11Y OK — /bnw × 9 mode×accent combos all ≥ AA, desktop + mobile (${pass}/18)`);
+  if (fails.length) throw new Error(`/bnw a11y failed in ${fails.length}/36 combos: ${fails.join(", ")}`);
+  console.log(`BNW A11Y OK — /bnw × 9 mode×accent × {en,zh} all ≥ AA, desktop + mobile (${pass}/36)`);
 } finally {
   await browser.close();
   handle.stop();

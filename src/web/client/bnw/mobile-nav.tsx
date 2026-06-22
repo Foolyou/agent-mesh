@@ -7,17 +7,19 @@
 // bottom bar). Recorded in coverage/01-app-shell.md.
 import { Badge, ConfirmButton, Icon, RouteLink, type IconName } from "../ui/index";
 import { bnwHref, type BnwRoute } from "../router";
+import { useI18n } from "../i18n";
 
 // Management surfaces that live under 更多 on mobile (mirror of the desktop topbar nav +
-// the left-nav "+ 新建" entry). Order matches the desktop topbar reading order.
-const MORE_LINKS: { route: BnwRoute; label: string; icon: IconName }[] = [
-  { route: { k: "assistant" }, label: "Mesh 助手", icon: "message" },
-  { route: { k: "harnesses" }, label: "Harnesses", icon: "package" },
-  { route: { k: "channels" }, label: "渠道", icon: "broadcast" },
-  { route: { k: "doctor" }, label: "Doctor / 系统", icon: "activity" },
-  { route: { k: "settings" }, label: "设置", icon: "gear" },
-  { route: { k: "notifications" }, label: "通知", icon: "bell" },
-  { route: { k: "newMesh" }, label: "新建 mesh", icon: "plus" },
+// the left-nav "+ 新建" entry). Order matches the desktop topbar reading order. Labels are
+// i18n keys resolved at render via t().
+const MORE_LINKS: { route: BnwRoute; labelKey: string; icon: IconName }[] = [
+  { route: { k: "assistant" }, labelKey: "bnw.assistantFull", icon: "message" },
+  { route: { k: "harnesses" }, labelKey: "bnw.harnesses", icon: "package" },
+  { route: { k: "channels" }, labelKey: "bnw.channels", icon: "broadcast" },
+  { route: { k: "doctor" }, labelKey: "bnw.doctorSystem", icon: "activity" },
+  { route: { k: "settings" }, labelKey: "bnw.settings", icon: "gear" },
+  { route: { k: "notifications" }, labelKey: "bnw.notifications", icon: "bell" },
+  { route: { k: "newMesh" }, labelKey: "bnw.newMesh", icon: "plus" },
 ];
 
 // Routes reachable from 更多 → keep the 更多 tab visually active when one is current.
@@ -55,19 +57,20 @@ export function BottomTabs({ route, tabMesh, moreOpen, onToggleMore, onNavigate 
   onToggleMore: () => void;
   onNavigate: () => void;
 }) {
+  const { t } = useI18n();
   const onRuntime = !moreOpen && route.k === "runtime";
   const onBoard = !moreOpen && route.k === "board";
   const moreActive = moreOpen || MORE_KEYS.has(route.k);
   return (
     <nav
       data-bnw-bottomtabs
-      aria-label="主导航"
+      aria-label="main navigation"
       className="fixed inset-x-0 bottom-0 z-30 flex border-t border-border bg-surface-raised lg:hidden"
       style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
     >
-      <Tab label="运行态" icon="play" active={onRuntime} onClick={onNavigate}
+      <Tab label={t("bnw.runtime")} icon="play" active={onRuntime} onClick={onNavigate}
         href={tabMesh ? bnwHref({ k: "runtime", mesh: tabMesh }) : undefined} />
-      <Tab label="看板" icon="columns" active={onBoard} onClick={onNavigate}
+      <Tab label={t("bnw.board")} icon="columns" active={onBoard} onClick={onNavigate}
         href={tabMesh ? bnwHref({ k: "board", mesh: tabMesh, view: "list", filters: {} }) : undefined} />
       <button
         type="button"
@@ -77,7 +80,7 @@ export function BottomTabs({ route, tabMesh, moreOpen, onToggleMore, onNavigate 
         className={`flex flex-1 flex-col items-center justify-center gap-0.5 px-1 py-1.5 text-xs rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus-ring ${moreActive ? "text-text-primary font-medium" : "text-text-muted"}`}
       >
         <Icon name="menu" size={18} />
-        更多
+        {t("bnw.more")}
       </button>
     </nav>
   );
@@ -94,15 +97,16 @@ export function MoreMenu({ onClose, unreadCount, onReload, reloadDisabled, reloa
   reloadDisabled: boolean;
   reloading: boolean;
 }) {
+  const { t } = useI18n();
   return (
     <div data-bnw-more className="absolute inset-0 z-20 flex flex-col bg-surface lg:hidden">
       <div className="flex items-center justify-between border-b border-border px-4 py-3">
-        <span className="font-semibold">更多</span>
-        <button type="button" onClick={onClose} aria-label="关闭更多" className="rounded-sm px-2 py-1 text-text-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus-ring">✕</button>
+        <span className="font-semibold">{t("bnw.more")}</span>
+        <button type="button" data-bnw-more-close onClick={onClose} aria-label={t("bnw.closeMore")} className="rounded-sm px-2 py-1 text-text-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus-ring">✕</button>
       </div>
       <ul className="flex-1 overflow-auto pb-24">
         {MORE_LINKS.map((l) => (
-          <li key={`${l.route.k}:${l.label}`}>
+          <li key={l.route.k}>
             <RouteLink
               href={bnwHref(l.route)}
               unstyled
@@ -110,9 +114,9 @@ export function MoreMenu({ onClose, unreadCount, onReload, reloadDisabled, reloa
               className="flex items-center gap-3 border-b border-border px-4 py-3.5 text-sm text-text-primary"
             >
               <Icon name={l.icon} size={18} className="w-5" />
-              <span className="flex-1">{l.label}</span>
+              <span className="flex-1">{t(l.labelKey)}</span>
               {l.route.k === "notifications" && unreadCount > 0
-                ? <Badge count={unreadCount} max={99} tone="urgent" label="未读通知" />
+                ? <Badge count={unreadCount} max={99} tone="urgent" label={t("bnw.unread")} />
                 : null}
               <span aria-hidden="true" className="text-text-muted">›</span>
             </RouteLink>
@@ -121,8 +125,8 @@ export function MoreMenu({ onClose, unreadCount, onReload, reloadDisabled, reloa
         {/* #20 — reload mesh definitions (mobile lives in 更多 per coverage 01; two-click confirm) */}
         <li className="flex items-center gap-3 border-b border-border px-4 py-3 text-sm text-text-primary">
           <Icon name="refresh" size={18} className="w-5" />
-          <span className="flex-1">重新加载 mesh 定义</span>
-          <ConfirmButton size="sm" variant="ghost" confirmLabel="重新加载?" disabled={reloadDisabled} busy={reloading} aria-label="reload mesh definitions (mobile)" onConfirm={onReload}><Icon name="refresh" size={14} /></ConfirmButton>
+          <span className="flex-1">{t("bnw.reloadDefs")}</span>
+          <ConfirmButton size="sm" variant="ghost" confirmLabel={t("bnw.reloadConfirm")} disabled={reloadDisabled} busy={reloading} aria-label="reload mesh definitions (mobile)" onConfirm={onReload}><Icon name="refresh" size={14} /></ConfirmButton>
         </li>
       </ul>
     </div>

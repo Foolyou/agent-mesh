@@ -287,6 +287,52 @@ const DICT: Record<string, Entry> = {
   "build.save": ["save mesh", "保存 mesh"],
   "build.saving": ["saving…", "保存中…"],
   "build.defining": ["defining…", "定义中…"],
+
+  // ── /bnw shell + nav (i18n foundation slice). Technical nouns (mesh/router/agent/harness/
+  //    edge/epic/issue + feature names Harness/Doctor) stay English in BOTH languages. ──
+  "bnw.connected": ["connected", "在线"],
+  "bnw.offline": ["offline", "离线"],
+  "bnw.selectMesh": ["select mesh", "选择 mesh"],
+  "bnw.meshes": ["meshes", "meshes"],
+  "bnw.newMeshShort": ["new", "新建"],
+  "bnw.noMesh": ["no mesh", "无 mesh"],
+  "bnw.connecting": ["connecting…", "连接中…"],
+  "bnw.reloadDefs": ["reload mesh definitions", "重新加载 mesh 定义"],
+  "bnw.reloadConfirm": ["reload?", "重新加载?"],
+  "bnw.runtime": ["runtime", "运行态"],
+  "bnw.board": ["board", "看板"],
+  "bnw.canvas": ["canvas", "画布"],
+  "bnw.assistant": ["assistant", "助手"],
+  "bnw.assistantFull": ["Mesh Assistant", "Mesh 助手"],
+  "bnw.harness": ["Harness", "Harness"],
+  "bnw.harnesses": ["Harnesses", "Harnesses"],
+  "bnw.channels": ["channels", "渠道"],
+  "bnw.doctor": ["Doctor", "Doctor"],
+  "bnw.doctorSystem": ["Doctor / system", "Doctor / 系统"],
+  "bnw.settings": ["settings", "设置"],
+  "bnw.notifications": ["notifications", "通知"],
+  "bnw.unread": ["unread notifications", "未读通知"],
+  "bnw.more": ["more", "更多"],
+  "bnw.closeMore": ["close more", "关闭更多"],
+  "bnw.newMesh": ["new mesh", "新建 mesh"],
+  "bnw.management": ["management", "管理"],
+  "bnw.mainNav": ["main navigation", "主导航"],
+  "bnw.shell.offline": [
+    "Disconnected — reconnecting… (showing last known; changes disabled)",
+    "连接已断开 — 正在重连…（显示最近已知内容，变更已禁用）",
+  ],
+  "bnw.reconnect": ["reconnect now", "立即重连"],
+  "bnw.nf.title": ["404 · page not found", "404 · 页面不存在"],
+  "bnw.nf.desc": ["no matching /bnw route:", "没有匹配的 /bnw 路由："],
+  "bnw.nf.home": ["back to console", "返回控制台"],
+  "bnw.eb.title": ["surface error", "界面错误"],
+  "bnw.eb.head": ["this surface crashed", "这个界面出错了"],
+  "bnw.eb.body": [
+    "a render error was thrown — the topbar and navigation still work. retry this surface or go home.",
+    "渲染时抛出异常——顶栏与导航仍可用。可重试本界面或返回首页。",
+  ],
+  "bnw.eb.retry": ["retry", "重试"],
+  "bnw.eb.home": ["back home", "返回首页"],
 };
 
 export function translate(key: string, lang: Lang, vars?: Record<string, string | number>): string {
@@ -313,13 +359,28 @@ export function loadLang(): Lang {
   return "en";
 }
 
+// Subscribers re-render on a language change so a `saveLang` from anywhere (e.g. the settings
+// language tab) updates every consumer immediately, no refresh. Module-level so it's decoupled
+// from any single provider and survives across the /bnw tree.
+const langListeners = new Set<(l: Lang) => void>();
+export function subscribeLang(cb: (l: Lang) => void): () => void {
+  langListeners.add(cb);
+  return () => { langListeners.delete(cb); };
+}
+
 export function saveLang(l: Lang): void {
   try {
     localStorage.setItem(LANG_KEY, l);
-    document.documentElement.lang = l;
   } catch {
     /* unavailable */
   }
+  try {
+    if (typeof document !== "undefined") document.documentElement.lang = l;
+  } catch {
+    /* unavailable */
+  }
+  // Notify regardless of storage/DOM availability so the live UI still re-renders.
+  for (const cb of langListeners) { try { cb(l); } catch { /* listener threw */ } }
 }
 
 export type TFn = (key: string, vars?: Record<string, string | number>) => string;

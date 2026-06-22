@@ -6,11 +6,14 @@
 import { Component, type ReactNode } from "react";
 import { Button, Icon, PanelFrame, RouteLink } from "../ui/index";
 import { bnwHref } from "../router";
+import { translate, type TFn } from "../i18n";
 
 interface Props {
   children: ReactNode;
   /** When this changes (e.g. the route), a caught error auto-clears so navigation recovers. */
   resetKey?: string;
+  /** i18n translator from the provider (class component → can't useI18n). Falls back to en. */
+  t?: TFn;
 }
 interface State { error: Error | null }
 
@@ -31,18 +34,19 @@ export class BnwErrorBoundary extends Component<Props, State> {
   render() {
     const { error } = this.state;
     if (!error) return this.props.children;
+    const t: TFn = this.props.t ?? ((k, v) => translate(k, "en", v));
     return (
-      <PanelFrame title="界面错误">
+      <PanelFrame title={t("bnw.eb.title")}>
         <div data-bnw-error-boundary className="flex flex-col items-center gap-3 py-8 text-center">
           <Icon name="alert" size={32} className="text-danger" />
-          <h2 className="text-base font-semibold text-text-primary">这个界面出错了</h2>
+          <h2 className="text-base font-semibold text-text-primary">{t("bnw.eb.head")}</h2>
           <p className="max-w-md text-xs text-text-muted">
-            渲染时抛出异常——顶栏与导航仍可用。可重试本界面或返回首页。
+            {t("bnw.eb.body")}
             {error.message ? <span className="mt-1 block break-all font-mono text-text-secondary">{error.message}</span> : null}
           </p>
           <div className="flex flex-wrap items-center justify-center gap-2">
-            <Button variant="primary" size="sm" aria-label="retry surface" onClick={this.reset}>重试</Button>
-            <RouteLink href={bnwHref({ k: "home" })} onClick={this.reset}>返回首页</RouteLink>
+            <Button variant="primary" size="sm" aria-label="retry surface" onClick={this.reset}>{t("bnw.eb.retry")}</Button>
+            <RouteLink href={bnwHref({ k: "home" })} onClick={this.reset}>{t("bnw.eb.home")}</RouteLink>
           </div>
         </div>
       </PanelFrame>

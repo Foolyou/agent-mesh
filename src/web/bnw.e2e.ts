@@ -209,6 +209,11 @@ try {
 
   await step("/bnw/ mounts the new shell + lands on default mesh runtime", async () => {
     await page.goto(`${BASE}/bnw/`, { waitUntil: "domcontentloaded" });
+    // i18n: the product default is English; this legacy suite asserts the Chinese shell labels,
+    // so preseed zh once for the whole run (persists in localStorage; the dedicated i18n step
+    // drives en↔zh explicitly and restores zh). Set after origin is established, then reload.
+    await page.evaluate(() => { localStorage.setItem("mesh.lang", "zh"); });
+    await page.reload({ waitUntil: "domcontentloaded" });
     await page.waitForSelector('[data-bnw="shell"]', { timeout: 10000 });
     // home → default mesh runtime (replace nav once meshes arrive over WS)
     await page.waitForSelector('[data-bnw-surface="runtime"]', { timeout: 10000 });
@@ -432,8 +437,12 @@ try {
     if (await page.getByText("mesh device list").count() === 0) throw new Error("host-CLI device guidance missing");
     await sleep(80); await page.screenshot({ path: `${SHOTS}/bnw-settings-devices-desktop.png`, fullPage: true });
 
-    // reset all theme/lang/pref keys so later steps + screenshots render the default theme.
-    await page.evaluate(() => ["mesh.theme", "mesh.theme.custom", "mesh.theme.mode", "mesh.theme.accent", "mesh.lang", "mesh.bnw.defaultView", "mesh.bnw.defaultDevice"].forEach((k) => localStorage.removeItem(k)));
+    // reset all theme/pref keys so later steps + screenshots render the default theme; restore
+    // the suite's zh language baseline (later legacy steps assert Chinese shell labels).
+    await page.evaluate(() => {
+      ["mesh.theme", "mesh.theme.custom", "mesh.theme.mode", "mesh.theme.accent", "mesh.lang", "mesh.bnw.defaultView", "mesh.bnw.defaultDevice"].forEach((k) => localStorage.removeItem(k));
+      localStorage.setItem("mesh.lang", "zh");
+    });
   });
 
   await step("7.4-C.2 notifications: topbar badge + list + mark-read/all + follow + synthetic frontend-update", async () => {
@@ -1194,6 +1203,70 @@ try {
     await page.waitForSelector('[data-bnw-surface="runtime"]', { timeout: 8000 });
     await sleep(120); await page.screenshot({ path: `${SHOTS}/bnw-icons-dark-topbar.png`, fullPage: true });
     await page.evaluate(() => { localStorage.removeItem("mesh.theme.mode"); localStorage.removeItem("mesh.theme.accent"); });
+  });
+
+  // i18n foundation slice — shell/nav copy switches en↔zh immediately (no refresh) via the
+  // settings language tab; refresh preserves the language + <html lang>; en-mode shell chrome
+  // has no leftover hardcoded CJK (the hardcoding guard).
+  await step("i18n shell: en↔zh live switch + persistence + no hardcoded CJK in chrome", async () => {
+    const htmlLang = () => page.evaluate(() => document.documentElement.lang);
+    // Explicit shell-chrome regions touched by this slice (NOT a page-wide scan — surface bodies
+    // are intentionally untranslated this slice, so a broad regex would false-positive). Collect
+    // each region's rendered text and assert no CJK leaks under en (technical Latin terms pass).
+    const hasCJK = (s: string) => /[㐀-䶿一-鿿豈-﫿]/.test(s);
+    const collect = (sels: string[]) => page.evaluate((ss) => ss
+      .map((s) => { const el = document.querySelector(s) as HTMLElement | null; return el ? el.innerText : ""; })
+      .join("\n"), sels);
+    const DESKTOP_SHELL = ['header', 'nav[aria-label="meshes"]', 'nav[aria-label="management"]', 'main > div.mb-3'];
+    const MOBILE_SHELL = ['header', '[data-bnw-bottomtabs]', '[data-bnw-more]'];
+
+    // en default (clear the suite's preseeded zh for this check)
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(`${BASE}/bnw/mesh/demo`, { waitUntil: "domcontentloaded" });
+    await page.evaluate(() => { localStorage.removeItem("mesh.lang"); });
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-bnw-surface="runtime"]', { timeout: 8000 });
+    assert((await htmlLang()) === "en", "i18n default <html lang> = en");
+    assert(await page.locator('nav[aria-label="management"]').getByText("settings", { exact: true }).count() > 0, "i18n en: management shows English");
+    // hardcoding guard (desktop chrome): topbar + desktop mesh nav + management nav + sub-nav
+    const desktopShell = await collect(DESKTOP_SHELL);
+    assert(!hasCJK(desktopShell), `i18n guard: CJK leaked in en desktop shell chrome: ${desktopShell.replace(/\s+/g, " ").slice(0, 120)}`);
+    await sleep(80); await page.screenshot({ path: `${SHOTS}/bnw-i18n-shell-en.png`, fullPage: true });
+    // hardcoding guard (mobile chrome): topbar + bottom tabs + open 更多 overlay
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(`${BASE}/bnw/mesh/demo`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-bnw-bottomtabs]', { timeout: 8000 });
+    await page.locator('[data-bnw-more-toggle]').click();
+    await page.waitForSelector('[data-bnw-more]', { timeout: 8000 });
+    const mobileShell = await collect(MOBILE_SHELL);
+    assert(!hasCJK(mobileShell), `i18n guard: CJK leaked in en mobile shell chrome: ${mobileShell.replace(/\s+/g, " ").slice(0, 120)}`);
+    await page.setViewportSize({ width: 1440, height: 900 });
+
+    // live switch en→zh via the settings language tab (no reload)
+    await page.goto(`${BASE}/bnw/settings?tab=language`, { waitUntil: "domcontentloaded" });
+    await page.getByRole("radio", { name: "中文" }).click();
+    await page.waitForFunction(() => document.documentElement.lang === "zh", { timeout: 8000 });
+    // shell (persistent across the surface) updated immediately — management nav now Chinese
+    assert(await page.locator('nav[aria-label="management"]').getByText("设置", { exact: true }).count() > 0, "i18n live zh: management updates without refresh");
+
+    // SPA-nav to a mesh route → sub-nav + tabs reflect zh (no reload)
+    await page.goto(`${BASE}/bnw/mesh/demo`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-bnw-surface="runtime"]', { timeout: 8000 });
+    assert((await htmlLang()) === "zh", "i18n zh persists across navigation");
+    assert(await page.getByText("运行态", { exact: true }).count() > 0, "i18n zh: sub-nav 运行态");
+    await sleep(80); await page.screenshot({ path: `${SHOTS}/bnw-i18n-shell-zh.png`, fullPage: true });
+
+    // refresh preserves language + <html lang>
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-bnw-surface="runtime"]', { timeout: 8000 });
+    assert((await htmlLang()) === "zh", "i18n zh preserved across refresh");
+    assert(await page.locator('nav[aria-label="management"]').getByText("设置", { exact: true }).count() > 0, "i18n zh chrome after refresh");
+
+    // round-trip back to en works immediately, then restore the suite's zh baseline for later steps
+    await page.goto(`${BASE}/bnw/settings?tab=language`, { waitUntil: "domcontentloaded" });
+    await page.getByRole("radio", { name: "English" }).click();
+    await page.waitForFunction(() => document.documentElement.lang === "en", { timeout: 8000 });
+    await page.evaluate(() => { localStorage.setItem("mesh.lang", "zh"); });
   });
 
   await step("screenshots: overview / focus (C2 docked approval) / canvas / mobile overview", async () => {

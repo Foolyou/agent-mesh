@@ -11,6 +11,7 @@ import {
 } from "../ui/index";
 import type { MeshStatus } from "../../types";
 import { useRoute, navigate, bnwHref, type BnwRoute } from "../router";
+import { useI18n } from "../i18n";
 import { BottomTabs, MoreMenu } from "./mobile-nav";
 import { BnwErrorBoundary } from "./error-boundary";
 import { RuntimeOverview, RuntimeFocus } from "./runtime";
@@ -77,13 +78,14 @@ function SurfacePlaceholder({ route }: { route: BnwRoute }) {
 // 7.5-C — in-app SPA 404 matching surface-13's not-found-in-shell treatment (🧭 card +
 // 返回控制台). The shell chrome stays mounted; only the stage shows the not-found view.
 function NotFound({ path }: { path: string }) {
+  const { t } = useI18n();
   return (
-    <PanelFrame title="Not found">
+    <PanelFrame title={t("bnw.nf.title")}>
       <div data-bnw-not-found className="flex flex-col items-center gap-2 py-10 text-center">
         <Icon name="compass" size={32} className="text-text-muted" />
-        <h2 className="text-base font-semibold text-text-primary">404 · 页面不存在</h2>
-        <p className="max-w-md text-xs text-text-muted">没有匹配的 /bnw 路由：<code className="break-all font-mono text-text-secondary">{path}</code></p>
-        <RouteLink href={bnwHref({ k: "home" })} unstyled className="mt-1 inline-flex items-center rounded-lg bg-accent px-3 py-1.5 text-sm font-medium text-on-accent hover:bg-accent-hover">返回控制台</RouteLink>
+        <h2 className="text-base font-semibold text-text-primary">{t("bnw.nf.title")}</h2>
+        <p className="max-w-md text-xs text-text-muted">{t("bnw.nf.desc")}<code className="break-all font-mono text-text-secondary">{path}</code></p>
+        <RouteLink href={bnwHref({ k: "home" })} unstyled className="mt-1 inline-flex items-center rounded-lg bg-accent px-3 py-1.5 text-sm font-medium text-on-accent hover:bg-accent-hover">{t("bnw.nf.home")}</RouteLink>
       </div>
     </PanelFrame>
   );
@@ -114,6 +116,7 @@ export function BnwApp() {
   const state = useStore(store);
   const connected = useConnected(store);
   const route = useRoute();
+  const { t } = useI18n();
   // 7.5-A — mobile "更多" overlay (local state, not a route). Any navigation closes it.
   const [moreOpen, setMoreOpen] = useState(false);
   useEffect(() => { setMoreOpen(false); }, [route]);
@@ -180,35 +183,35 @@ export function BnwApp() {
       {/* topbar */}
       <header className="flex items-center gap-3 border-b border-border bg-surface-raised px-4 py-2.5">
         <span className="inline-flex items-center gap-1.5 font-semibold"><span aria-hidden="true">◆</span> Mesh</span>
-        <span className="inline-flex items-center gap-1.5 text-xs text-text-muted" aria-label={connected ? "connected" : "disconnected"}>
+        <span className="inline-flex items-center gap-1.5 text-xs text-text-muted" aria-label={connected ? t("bnw.connected") : t("bnw.offline")}>
           <span className={`inline-block h-2 w-2 rounded-full ${connected ? "bg-success" : "bg-danger"}`} aria-hidden="true" />
-          {connected ? "connected" : "offline"}
+          {connected ? t("bnw.connected") : t("bnw.offline")}
         </span>
         {/* mobile: a mesh switcher in the topbar (desktop uses the left nav rows) */}
         {state.meshes.length > 0 ? (
           <Select
-            aria-label="选择 mesh"
+            aria-label={t("bnw.selectMesh")}
             className="lg:hidden"
             value={tabMesh ?? ""}
             onChange={(e) => switchMesh(e.target.value)}
           >
-            {!tabMesh ? <option value="">选择 mesh…</option> : null}
+            {!tabMesh ? <option value="">{t("bnw.selectMesh")}</option> : null}
             {state.meshes.map((m) => <option key={m.name} value={m.name}>{m.name}</option>)}
           </Select>
         ) : null}
         <span className="flex-1" aria-hidden="true" />
         {/* desktop management links; on mobile these fold into the 更多 bottom tab */}
         <nav aria-label="management" className="hidden items-center gap-3 lg:flex">
-          <ManageLink route={{ k: "assistant" }} label="助手" />
-          <ManageLink route={{ k: "harnesses" }} label="Harness" />
-          <ManageLink route={{ k: "channels" }} label="渠道" />
-          <ManageLink route={{ k: "doctor" }} label="Doctor" />
-          <ManageLink route={{ k: "settings" }} label="设置" />
+          <ManageLink route={{ k: "assistant" }} label={t("bnw.assistant")} />
+          <ManageLink route={{ k: "harnesses" }} label={t("bnw.harness")} />
+          <ManageLink route={{ k: "channels" }} label={t("bnw.channels")} />
+          <ManageLink route={{ k: "doctor" }} label={t("bnw.doctor")} />
+          <ManageLink route={{ k: "settings" }} label={t("bnw.settings")} />
         </nav>
-        <RouteLink href={bnwHref({ k: "notifications" })} aria-label="通知" className="relative inline-flex items-center gap-1">
+        <RouteLink href={bnwHref({ k: "notifications" })} aria-label={t("bnw.notifications")} className="relative inline-flex items-center gap-1">
           <Icon name="bell" size={18} />
           {/* 7.4-C.2 — real unread count from the folded notifications snapshot/deltas */}
-          {(state.notifications?.unreadCount ?? 0) > 0 ? <Badge count={state.notifications!.unreadCount} max={99} tone="urgent" label="未读通知" /> : null}
+          {(state.notifications?.unreadCount ?? 0) > 0 ? <Badge count={state.notifications!.unreadCount} max={99} tone="urgent" label={t("bnw.unread")} /> : null}
         </RouteLink>
       </header>
 
@@ -218,9 +221,9 @@ export function BnwApp() {
       {!connected ? (
         <div data-bnw-offline role="status" className="flex flex-wrap items-center gap-2 border-b border-border bg-warning-subtle px-4 py-1.5 text-xs text-warning">
           <Spinner size={12} label="reconnecting" />
-          <span>连接已断开 — 正在重连…（显示最近已知内容，变更已禁用）</span>
+          <span>{t("bnw.shell.offline")}</span>
           <span className="flex-1" aria-hidden="true" />
-          <Button size="sm" variant="ghost" aria-label="reconnect now" onClick={() => store.reconnect()}>立即重连</Button>
+          <Button size="sm" variant="ghost" aria-label="reconnect now" onClick={() => store.reconnect()}>{t("bnw.reconnect")}</Button>
         </div>
       ) : null}
 
@@ -229,15 +232,15 @@ export function BnwApp() {
         {/* desktop left mesh nav — fully hidden on mobile (the topbar select + bottom tabs cover it) */}
         <nav aria-label="meshes" className="hidden w-[232px] shrink-0 flex-col gap-1 overflow-auto border-r border-border bg-surface-raised p-2 lg:flex">
           <div className="mb-1 flex items-center justify-between gap-1 px-1">
-            <span className="text-xs uppercase tracking-wider text-text-muted">meshes</span>
+            <span className="text-xs uppercase tracking-wider text-text-muted">{t("bnw.meshes")}</span>
             <div className="flex items-center gap-1">
               {/* #20 — reload mesh definitions (two-click confirm; disabled offline) */}
-              <ConfirmButton size="sm" variant="ghost" confirmLabel="重新加载?" disabled={!connected} busy={reloading} aria-label="reload mesh definitions" onConfirm={() => void doReload()}><Icon name="refresh" size={14} /></ConfirmButton>
-              <RouteLink href={bnwHref({ k: "newMesh" })} className="text-xs">+ 新建</RouteLink>
+              <ConfirmButton size="sm" variant="ghost" confirmLabel={t("bnw.reloadConfirm")} disabled={!connected} busy={reloading} aria-label="reload mesh definitions" onConfirm={() => void doReload()}><Icon name="refresh" size={14} /></ConfirmButton>
+              <RouteLink href={bnwHref({ k: "newMesh" })} className="text-xs">+ {t("bnw.newMeshShort")}</RouteLink>
             </div>
           </div>
           {state.meshes.length === 0 ? (
-            <div className="px-1 py-2 text-xs text-text-muted">{connected ? "无 mesh" : "连接中…"}</div>
+            <div className="px-1 py-2 text-xs text-text-muted">{connected ? t("bnw.noMesh") : t("bnw.connecting")}</div>
           ) : (
             pageMeshes.map((m) => (
               <StatusListRow
@@ -265,16 +268,16 @@ export function BnwApp() {
           {activeMesh && route.k !== "notFound" ? (
             <div className="mb-3 hidden lg:block">
               <Cluster>
-                <RouteLink href={bnwHref({ k: "runtime", mesh: activeMesh })} active={route.k === "runtime"} className="text-sm">运行态</RouteLink>
-                <RouteLink href={bnwHref({ k: "board", mesh: activeMesh, view: "list", filters: {} })} active={route.k === "board"} className="text-sm">看板</RouteLink>
-                <RouteLink href={bnwHref({ k: "runtime", mesh: activeMesh, canvas: true })} active={route.k === "runtime" && (route as any).canvas} className="text-sm">画布</RouteLink>
+                <RouteLink href={bnwHref({ k: "runtime", mesh: activeMesh })} active={route.k === "runtime"} className="text-sm">{t("bnw.runtime")}</RouteLink>
+                <RouteLink href={bnwHref({ k: "board", mesh: activeMesh, view: "list", filters: {} })} active={route.k === "board"} className="text-sm">{t("bnw.board")}</RouteLink>
+                <RouteLink href={bnwHref({ k: "runtime", mesh: activeMesh, canvas: true })} active={route.k === "runtime" && (route as any).canvas} className="text-sm">{t("bnw.canvas")}</RouteLink>
               </Cluster>
             </div>
           ) : null}
           {/* 7.5-C — stage-level boundary: a surface render crash shows a retry card here while
               the topbar / nav / sub-nav / bottom tabs stay alive. resetKey=route → auto-recovers
               on navigation. */}
-          <BnwErrorBoundary resetKey={bnwHref(route)}><MaybeThrow>{body}</MaybeThrow></BnwErrorBoundary>
+          <BnwErrorBoundary resetKey={bnwHref(route)} t={t}><MaybeThrow>{body}</MaybeThrow></BnwErrorBoundary>
         </main>
         {/* No generic right-context stub — each surface owns its own context (e.g. runtime
             focus renders an `<agent> · activity` panel; overview/canvas are full-width). */}

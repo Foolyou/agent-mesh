@@ -1,11 +1,15 @@
 // Step 7.5-A — focused SSR coverage for the mobile shell nav (bottom tabs + 更多 list).
+// i18n foundation slice: nav copy goes through t(), so render under an en I18nContext provider.
 import { expect, test } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { BottomTabs, MoreMenu } from "./mobile-nav";
 import type { BnwRoute } from "../router";
+import { I18nContext, translate } from "../i18n";
 
-const render = (el: React.ReactElement) => renderToStaticMarkup(el);
+const EN = { lang: "en" as const, t: (k: string, v?: Record<string, string | number>) => translate(k, "en", v) };
+const render = (el: React.ReactElement) =>
+  renderToStaticMarkup(createElement(I18nContext.Provider, { value: EN }, el));
 
 test("BottomTabs routes 运行态/看板 to the active mesh and toggles 更多", () => {
   const route: BnwRoute = { k: "runtime", mesh: "demo" };
@@ -44,11 +48,11 @@ test("MoreMenu lists the management routes and shows an unread badge", () => {
   expect(html).toContain('href="/bnw/settings"');
   expect(html).toContain('href="/bnw/notifications"');
   expect(html).toContain('href="/bnw/mesh/new"');
-  expect(html).toContain('aria-label="关闭更多"');
+  expect(html).toContain('aria-label="close more"'); // t(bnw.closeMore) @ en
   // #20 — reload mesh definitions lives in 更多 on mobile
   expect(html).toContain('aria-label="reload mesh definitions (mobile)"');
   // unread badge surfaces on the 通知 row
-  expect(html).toContain('aria-label="未读通知"');
+  expect(html).toContain('aria-label="unread notifications"'); // t(bnw.unread) @ en
 });
 
 test("MoreMenu hides the unread badge at zero", () => {
