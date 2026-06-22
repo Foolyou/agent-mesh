@@ -5,7 +5,7 @@
 // Accepted deviation (lead-released 7.5-A): mockup 01 sketches 更多 as a bottom *sheet*; we
 // ship it as a full-screen route list (no router change — a local overlay toggled from the
 // bottom bar). Recorded in coverage/01-app-shell.md.
-import { Badge, ConfirmButton, Icon, RouteLink, type IconName } from "../ui/index";
+import { Badge, Icon, RouteLink, type IconName } from "../ui/index";
 import { bnwHref, type BnwRoute } from "../router";
 import { useI18n } from "../i18n";
 
@@ -90,12 +90,13 @@ export function BottomTabs({ route, tabMesh, moreOpen, onToggleMore, onNavigate 
  * Full-screen 更多 management list (mobile only). Overlays the surface stage; each row is a real
  * RouteLink that SPA-navigates and closes the overlay. Hidden at `lg` and up.
  */
-export function MoreMenu({ onClose, unreadCount, onReload, reloadDisabled, reloading }: {
+export function MoreMenu({ onClose, unreadCount, onReload, reloadDisabled, reloadTooltip }: {
   onClose: () => void;
   unreadCount: number;
+  /** #7 — open the shared reload confirmation dialog (no longer an inline two-click confirm). */
   onReload: () => void;
   reloadDisabled: boolean;
-  reloading: boolean;
+  reloadTooltip: string;
 }) {
   const { t } = useI18n();
   return (
@@ -122,11 +123,15 @@ export function MoreMenu({ onClose, unreadCount, onReload, reloadDisabled, reloa
             </RouteLink>
           </li>
         ))}
-        {/* #20 — reload mesh definitions (mobile lives in 更多 per coverage 01; two-click confirm) */}
-        <li className="flex items-center gap-3 border-b border-border px-4 py-3 text-sm text-text-primary">
-          <Icon name="refresh" size={18} className="w-5" />
-          <span className="flex-1">{t("bnw.reloadDefs")}</span>
-          <ConfirmButton size="sm" variant="ghost" confirmLabel={t("bnw.reloadConfirm")} disabled={reloadDisabled} busy={reloading} aria-label="reload mesh definitions (mobile)" onConfirm={onReload}><Icon name="refresh" size={14} /></ConfirmButton>
+        {/* #20/#7 — reload mesh definitions (mobile lives in 更多 per coverage 01); opens the
+            shared confirmation dialog rather than an inline two-click confirm */}
+        <li>
+          <button type="button" disabled={reloadDisabled} aria-label="reload mesh definitions (mobile)" title={reloadTooltip} onClick={onReload}
+            className="flex w-full items-center gap-3 border-b border-border px-4 py-3.5 text-left text-sm text-text-primary hover:bg-hover disabled:opacity-60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus-ring">
+            <Icon name="refresh" size={18} className="w-5" />
+            <span className="flex-1">{t("bnw.reloadDefs")}</span>
+            <span aria-hidden="true" className="text-text-muted">›</span>
+          </button>
         </li>
       </ul>
     </div>

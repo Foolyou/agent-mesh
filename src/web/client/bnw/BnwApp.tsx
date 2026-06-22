@@ -6,7 +6,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createStore, useStore, useConnected, type Store } from "../store";
 import {
-  Badge, Button, Cluster, ConfirmButton, EmptyState, Icon, PanelFrame, RouteLink, Select, Spinner,
+  Badge, Button, Cluster, EmptyState, Icon, PanelFrame, RouteLink, Select, Spinner,
   StatusListRow, type Status,
 } from "../ui/index";
 import type { MeshStatus } from "../../types";
@@ -95,6 +95,30 @@ function ManageLink({ route, label }: { route: BnwRoute; label: string }) {
   return <RouteLink href={bnwHref(route)} className="text-sm">{label}</RouteLink>;
 }
 
+// #7 — explicit reload-confirmation dialog (replaces the bare two-click ConfirmButton). Shared by
+// the desktop left-nav reload button and the mobile More reload row; all copy via t().
+function ReloadConfirm({ open, busy, onCancel, onConfirm, t }: {
+  open: boolean; busy: boolean; onCancel: () => void; onConfirm: () => void; t: ReturnType<typeof useI18n>["t"];
+}) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  useEffect(() => { if (open) ref.current?.querySelector<HTMLElement>('[aria-label="confirm reload"]')?.focus(); }, [open]);
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(0,0,0,0.45)" }}
+      onKeyDown={(e) => { if (e.key === "Escape") { e.preventDefault(); onCancel(); } }}>
+      <div ref={ref} role="dialog" aria-modal="true" aria-label={t("bnw.reload.title")} data-bnw-reload-dialog
+        className="flex w-[460px] max-w-full flex-col gap-3 rounded-xl border border-border-strong bg-surface-raised p-4 text-text-primary shadow-sm">
+        <h2 className="text-sm font-semibold">{t("bnw.reload.title")}</h2>
+        <p className="text-xs text-text-muted">{t("bnw.reload.body")}</p>
+        <div className="flex justify-end gap-2">
+          <Button variant="ghost" size="sm" aria-label="cancel reload" onClick={onCancel}>{t("cancel")}</Button>
+          <Button variant="primary" size="sm" busy={busy} aria-label="confirm reload" onClick={onConfirm}>{t("bnw.reload.action")}</Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // 7.5-C — test seam for the stage ErrorBoundary: throws during render iff `window.__bnwForceError`
 // is set, so e2e can verify a surface crash is contained + that clearing the flag and resetting
 // the boundary recovers. Inert in production (no one sets the global). Re-reads the live flag on
@@ -149,7 +173,8 @@ export function BnwApp() {
   const pageMeshes = state.meshes.slice(meshPage * PER_PAGE, meshPage * PER_PAGE + PER_PAGE);
   // #20 — reload mesh definitions from the server (two-click confirm; disabled offline).
   const [reloading, setReloading] = useState(false);
-  const doReload = async () => { setReloading(true); try { await store.reload(); } finally { setReloading(false); } };
+  const [reloadOpen, setReloadOpen] = useState(false); // #7 — reload confirmation dialog
+  const doReload = async () => { setReloading(true); try { await store.reload(); } finally { setReloading(false); setReloadOpen(false); } };
 
   let body: ReactNode;
   if (route.k === "notFound") body = <NotFound path={route.path} />;
@@ -235,7 +260,7 @@ export function BnwApp() {
             <span className="text-xs uppercase tracking-wider text-text-muted">{t("bnw.meshes")}</span>
             <div className="flex items-center gap-1">
               {/* #20 — reload mesh definitions (two-click confirm; disabled offline) */}
-              <ConfirmButton size="sm" variant="ghost" confirmLabel={t("bnw.reloadConfirm")} disabled={!connected} busy={reloading} aria-label="reload mesh definitions" onConfirm={() => void doReload()}><Icon name="refresh" size={14} /></ConfirmButton>
+              <Button size="sm" variant="ghost" disabled={!connected} busy={reloading} aria-label="reload mesh definitions" title={t("bnw.reload.tooltip")} onClick={() => setReloadOpen(true)}><Icon name="refresh" size={14} /></Button>
               <RouteLink href={bnwHref({ k: "newMesh" })} className="text-xs">+ {t("bnw.newMeshShort")}</RouteLink>
             </div>
           </div>
@@ -282,7 +307,7 @@ export function BnwApp() {
         {/* No generic right-context stub — each surface owns its own context (e.g. runtime
             focus renders an `<agent> · activity` panel; overview/canvas are full-width). */}
         {/* 7.5-A — mobile 更多 overlay covers the body region (under the fixed bottom tabs) */}
-        {moreOpen ? <MoreMenu onClose={() => setMoreOpen(false)} unreadCount={state.notifications?.unreadCount ?? 0} onReload={() => void doReload()} reloadDisabled={!connected} reloading={reloading} /> : null}
+        {moreOpen ? <MoreMenu onClose={() => setMoreOpen(false)} unreadCount={state.notifications?.unreadCount ?? 0} onReload={() => { setMoreOpen(false); setReloadOpen(true); }} reloadDisabled={!connected} reloadTooltip={t("bnw.reload.tooltip")} /> : null}
       </div>
 
       {/* 7.5-A — mobile bottom tab bar (hidden at lg+) */}
@@ -293,6 +318,9 @@ export function BnwApp() {
         onToggleMore={() => setMoreOpen((v) => !v)}
         onNavigate={() => setMoreOpen(false)}
       />
+
+      {/* #7 — shared reload confirmation dialog (desktop + mobile trigger the same treatment) */}
+      <ReloadConfirm open={reloadOpen} busy={reloading} onCancel={() => setReloadOpen(false)} onConfirm={() => void doReload()} t={t} />
     </div>
   );
 }
