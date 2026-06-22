@@ -102,7 +102,6 @@ export function RuntimeOverview({ store, state, mesh }: { store: Store; state: G
           })}
         </div>
       )}
-      <p className="mt-3 text-xs text-text-muted">实时加 agent / 加 edge（#17）接线于 7.1-C。</p>
     </PanelFrame>
   );
 }

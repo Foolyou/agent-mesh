@@ -19,7 +19,11 @@ export interface TextareaProps extends TextareaHTMLAttributes<HTMLTextAreaElemen
   error?: boolean;
 }
 export function Textarea({ error, className = "", ...rest }: TextareaProps) {
-  return <textarea aria-invalid={error || undefined} className={`${FIELD_BASE} ${edge(error)} ${className}`} {...rest} />;
+  // w-full on the Textarea primitive (not FIELD_BASE): multi-line inputs always fill their
+  // container — a bare `block` textarea otherwise falls back to its `cols` width and shrinks
+  // into the top-left of a wide composer (the reported mobile bug). Input/Select keep their
+  // narrow inline widths (board search, settings hex, new-mesh compact fields).
+  return <textarea aria-invalid={error || undefined} className={`${FIELD_BASE} w-full ${edge(error)} ${className}`} {...rest} />;
 }
 
 export interface SelectProps extends SelectHTMLAttributes<HTMLSelectElement> {

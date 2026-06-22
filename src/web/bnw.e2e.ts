@@ -1000,6 +1000,70 @@ try {
     await page.setViewportSize({ width: 1440, height: 900 });
   });
 
+  // Composer textareas must fill their container width (mobile bug: textarea shrank to its
+  // cols width in the composer's top-left). Assert the fill ratio on desktop and mobile.
+  await step("composer textareas fill container width (runtime focus + assistant, desktop+mobile)", async () => {
+    const fillRatio = (taSel: string) => page.locator(taSel).evaluate((ta) => {
+      const group = (ta as HTMLElement).closest('[role="group"]') as HTMLElement;
+      return (ta as HTMLElement).getBoundingClientRect().width / group.getBoundingClientRect().width;
+    });
+    for (const vp of [{ width: 1440, height: 900 }, { width: 390, height: 844 }] as const) {
+      await page.setViewportSize(vp);
+      await page.goto(`${BASE}/bnw/mesh/demo/agent/router`, { waitUntil: "domcontentloaded" });
+      await page.waitForSelector('[aria-label="message input"]', { timeout: 8000 });
+      const r1 = await fillRatio('[aria-label="message input"]');
+      assert(r1 > 0.85, `runtime composer textarea must fill width @${vp.width} (got ${r1.toFixed(2)})`);
+      await page.goto(`${BASE}/bnw/assistant`, { waitUntil: "domcontentloaded" });
+      await page.waitForSelector('[aria-label="assistant input"]', { timeout: 8000 });
+      const r2 = await fillRatio('[aria-label="assistant input"]');
+      assert(r2 > 0.85, `assistant composer textarea must fill width @${vp.width} (got ${r2.toFixed(2)})`);
+    }
+    await page.setViewportSize({ width: 1440, height: 900 });
+  });
+
+  // Dev-note leak guard (user feedback #2): no implementation/slice/parity notes leak into
+  // rendered /bnw UI. Curated patterns capture dev notes (接线于 / 7.x-Y / parenthesised #N)
+  // WITHOUT flagging legitimate board issue IDs, which render bare ("#12", never "(#12)").
+  await step("/bnw dev-note leak guard: no 接线于 / slice / parenthesised-#N leakage in rendered UI", async () => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    const BANNED = ["接线于", "7\\.[0-9]-[A-D]", "（#[0-9]+）", "\\(#[0-9]+\\)"];
+    const surfaces: [string, string][] = [
+      ["/bnw/mesh/demo", '[data-bnw-surface="runtime"]'],
+      ["/bnw/mesh/demo/agent/router", '[data-bnw-focus="split"]'],
+      ["/bnw/mesh/demo/canvas", '[data-bnw-canvas]'],
+      ["/bnw/mesh/demo/board", '[data-bnw-board-list]'],
+      ["/bnw/mesh/demo/board/issue/12", '[data-bnw-board-detail]'],
+      ["/bnw/mesh/new", '[data-bnw-newmesh]'],
+      ["/bnw/assistant", '[data-bnw-assistant="panel"]'],
+      ["/bnw/harnesses", '[data-harness-row]'],
+      ["/bnw/channels", '[data-channel-status]'],
+      ["/bnw/doctor", '[data-doctor="panel"]'],
+      ["/bnw/settings", '[data-theme-matrix]'],
+      ["/bnw/notifications", '[data-notifications="center"]'],
+      ["/bnw/mesh/demo/agent/router/file/report.md", '[data-artifact-kind="markdown"]'], // file/artifact viewer (stubbed md)
+    ];
+    const scan = async (p: import("playwright").Page, label: string) => {
+      const hits = await p.evaluate((banned) => {
+        const text = (document.body as HTMLElement).innerText;
+        return banned.map((re) => (text.match(new RegExp(re)) ?? [])[0]).filter(Boolean);
+      }, BANNED);
+      assert(hits.length === 0, `dev-note leak on ${label}: ${hits.join(", ")}`);
+    };
+    for (const [path, sel] of surfaces) {
+      await page.goto(`${BASE}${path}`, { waitUntil: "domcontentloaded" });
+      await page.waitForSelector(sel, { timeout: 8000 });
+      await scan(page, path);
+    }
+    // device-auth gate (anonymous context replaces the console) — also leak-free
+    const anonLeak = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    try {
+      const ap = await anonLeak.newPage();
+      await ap.goto(`${BASE}/bnw/`, { waitUntil: "domcontentloaded" });
+      await ap.waitForSelector('[data-device-auth="gate"]', { timeout: 8000 });
+      await scan(ap, "/bnw/ (device-auth gate)");
+    } finally { await anonLeak.close(); }
+  });
+
   await step("screenshots: overview / focus (C2 docked approval) / canvas / mobile overview", async () => {
     await page.setViewportSize({ width: 1440, height: 900 });
     // desktop overview
