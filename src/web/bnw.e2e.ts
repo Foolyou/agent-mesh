@@ -950,10 +950,10 @@ try {
     await page.locator('[data-bnw-mesh-pager] [aria-label="previous mesh page"]').click();
     await meshNav.getByText("demo", { exact: true }).waitFor({ timeout: 8000 });
     assert(await meshNav.getByText("delta", { exact: true }).count() === 0, "#19 prev → page 1 restored");
-    // #20 — desktop reload ConfirmButton (two-click) reaches manager.loadDefinitions → rec("reload")
-    const reloadBtn = meshNav.locator('[aria-label="reload mesh definitions"]');
-    await reloadBtn.click(); // arm
-    await reloadBtn.click(); // confirm
+    // #20/#7 — desktop reload opens the confirmation dialog → confirm → manager.loadDefinitions
+    await meshNav.locator('[aria-label="reload mesh definitions"]').click();
+    await page.waitForSelector('[data-bnw-reload-dialog]', { timeout: 8000 });
+    await page.locator('[aria-label="confirm reload"]').click();
     await waitCall("reload");
 
     // ── assistant (05): #21 ──────────────────────────────────────────────────
@@ -1003,8 +1003,9 @@ try {
     await page.waitForSelector('[data-bnw-more]', { timeout: 8000 });
     const mReload = page.locator('[data-bnw-more] [aria-label="reload mesh definitions (mobile)"]');
     assert(await mReload.count() > 0, "#20 mobile reload row in 更多");
-    await mReload.click(); // arm
-    await mReload.click(); // confirm
+    await mReload.click(); // opens the shared confirmation dialog (closes 更多)
+    await page.waitForSelector('[data-bnw-reload-dialog]', { timeout: 8000 });
+    await page.locator('[aria-label="confirm reload"]').click();
     await waitCall("reload");
     await page.setViewportSize({ width: 1440, height: 900 });
   });
@@ -1285,6 +1286,44 @@ try {
     await page.getByRole("radio", { name: "English" }).click();
     await page.waitForFunction(() => document.documentElement.lang === "en", { timeout: 8000 });
     await page.evaluate(() => { localStorage.setItem("mesh.lang", "zh"); });
+  });
+
+  // #7 — reload control: explicit confirmation dialog (replaces two-click), desktop + mobile,
+  // cancel once + confirm once; the real reload path still reaches manager.loadDefinitions.
+  await step("#7 reload confirmation dialog: desktop + mobile, cancel + confirm → manager reload", async () => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(`${BASE}/bnw/mesh/demo`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-bnw-surface="runtime"]', { timeout: 8000 });
+    // desktop: tooltip present on the reload trigger
+    assert(((await page.locator('nav[aria-label="meshes"] [aria-label="reload mesh definitions"]').getAttribute("title")) ?? "").length > 0, "#7 reload trigger has a tooltip");
+    // open → dialog shows title + body; cancel → no reload, dialog closes
+    calls.length = 0;
+    await page.locator('nav[aria-label="meshes"] [aria-label="reload mesh definitions"]').click();
+    await page.waitForSelector('[data-bnw-reload-dialog]', { timeout: 8000 });
+    assert(await page.locator('[data-bnw-reload-dialog]').getByText("重新加载 mesh 定义?").count() > 0, "#7 dialog title (zh suite)");
+    assert(await page.locator('[data-bnw-reload-dialog]').getByText("meshes/*.json", { exact: false }).count() > 0, "#7 dialog body explains meshes/*.json");
+    await page.locator('[aria-label="cancel reload"]').click();
+    assert(await page.locator('[data-bnw-reload-dialog]').count() === 0, "#7 cancel closes the dialog");
+    assert(!calls.some((c) => c.includes("reload")), "#7 cancel does NOT reload");
+    await sleep(80); // screenshot the dialog open (desktop)
+    await page.locator('nav[aria-label="meshes"] [aria-label="reload mesh definitions"]').click();
+    await page.waitForSelector('[data-bnw-reload-dialog]', { timeout: 8000 });
+    await page.screenshot({ path: `${SHOTS}/bnw-reload-dialog-desktop.png`, fullPage: true });
+    await page.locator('[aria-label="confirm reload"]').click(); // confirm → real reload
+    await waitCall("reload");
+    // mobile: 更多 reload row opens the same dialog; screenshot + confirm
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(`${BASE}/bnw/mesh/demo`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-bnw-bottomtabs]', { timeout: 8000 });
+    await page.locator('[data-bnw-more-toggle]').click();
+    await page.waitForSelector('[data-bnw-more]', { timeout: 8000 });
+    await page.locator('[data-bnw-more] [aria-label="reload mesh definitions (mobile)"]').click();
+    await page.waitForSelector('[data-bnw-reload-dialog]', { timeout: 8000 });
+    await sleep(80); await page.screenshot({ path: `${SHOTS}/bnw-reload-dialog-mobile.png`, fullPage: true });
+    calls.length = 0;
+    await page.locator('[aria-label="confirm reload"]').click();
+    await waitCall("reload");
+    await page.setViewportSize({ width: 1440, height: 900 });
   });
 
   await step("screenshots: overview / focus (C2 docked approval) / canvas / mobile overview", async () => {

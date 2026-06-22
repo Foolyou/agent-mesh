@@ -39,7 +39,7 @@ test("BottomTabs reflects 更多 open state via aria-expanded", () => {
 });
 
 test("MoreMenu lists the management routes and shows an unread badge", () => {
-  const html = render(createElement(MoreMenu, { onClose: () => {}, unreadCount: 3, onReload: () => {}, reloadDisabled: false, reloading: false }));
+  const html = render(createElement(MoreMenu, { onClose: () => {}, unreadCount: 3, onReload: () => {}, reloadDisabled: false, reloadTooltip: "reload" }));
   expect(html).toContain('data-bnw-more');
   expect(html).toContain('href="/bnw/assistant"');
   expect(html).toContain('href="/bnw/harnesses"');
@@ -56,6 +56,6 @@ test("MoreMenu lists the management routes and shows an unread badge", () => {
 });
 
 test("MoreMenu hides the unread badge at zero", () => {
-  const html = render(createElement(MoreMenu, { onClose: () => {}, unreadCount: 0, onReload: () => {}, reloadDisabled: false, reloading: false }));
+  const html = render(createElement(MoreMenu, { onClose: () => {}, unreadCount: 0, onReload: () => {}, reloadDisabled: false, reloadTooltip: "reload" }));
   expect(html).not.toContain('aria-label="未读通知"');
 });
