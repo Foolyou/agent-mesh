@@ -37,7 +37,7 @@ const fake: any = {
   async setMode() {}, async setModel() {}, async setAgentEffort() {}, interruptAgent() {}, wakeAgent() {},
   async newAgentSession() {}, async newAllSessions() {}, stopAgent() {}, removeQueuedTurn() {}, steerAgent() {},
   async addEdge() {}, async addAgent() {}, async readBoard() { return BOARD; }, async boardCommand() { return { ok: true, state: BOARD, change: {} }; },
-  async defineMesh() {}, async deleteMesh() {}, async loadDefinitions() {}, async stopAll() {},
+  async defineMesh() {}, async deleteMesh() {}, async reloadDefinitions() {}, async stopAll() {},
 };
 
 // ── ported color math + crawler (kept in sync with a11y.e2e.ts) ───────────────

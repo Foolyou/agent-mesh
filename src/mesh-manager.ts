@@ -123,6 +123,30 @@ export class MeshManager {
     }
   }
 
+  /** Safe reload for the WebUI "reload definitions" action: re-read definitions from disk WITHOUT
+   *  clobbering live meshes. Unlike {@link loadDefinitions} (which resets every entry to
+   *  `{status:"stopped"}` and drops the client — only correct at boot when nothing is running):
+   *   - running/starting: preserved EXACTLY (config, status, and client untouched) — the daemon and
+   *     its agents keep running and stay attached; never orphaned.
+   *   - stopped/dead: config refreshed from disk (status and any client slot preserved).
+   *   - new on disk: added as stopped.
+   *   - known in memory but absent from disk: left unchanged (no deletion semantics here).
+   *  {@link mergeDefinitionsFromDisk} stays add-only for the Feishu watcher; this method additionally
+   *  refreshes stopped/dead configs, which is what an explicit user reload should do. */
+  async reloadDefinitions(): Promise<void> {
+    for (const config of await this.store.load()) {
+      if (!config?.name) continue; // skip nameless junk
+      validateArtifactNames(config);
+      const existing = this.entries.get(config.name);
+      if (!existing) {
+        this.entries.set(config.name, { config, status: "stopped" }); // new disk mesh
+      } else if (existing.status !== "running" && existing.status !== "starting") {
+        existing.config = config; // stopped/dead: refresh config; keep status + client slot
+      }
+      // running/starting: leave the live entry fully untouched.
+    }
+  }
+
   async defineMesh(config: MeshConfig): Promise<void> {
     validateArtifactNames(config);
     const existing = this.entries.get(config.name);

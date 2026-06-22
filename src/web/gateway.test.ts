@@ -1,11 +1,18 @@
 import { test, expect } from "bun:test";
 import { MAX_SNAPSHOT_TRANSCRIPT_ITEMS, WebGateway } from "./gateway";
 import { uploadPath } from "./uploads";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { MeshManager } from "../mesh-manager";
 import { updateNotifications, mutateEmit } from "../notifications";
 import type { MeshEvent, MeshConfig } from "../acp/types";
+
+// Real-manager reload test needs a fake mesh-host daemon; skip on WSL-UNC where it can't spawn.
+const FIXTURE = join(import.meta.dir, "..", "fixtures", "echo-host.ts");
+const HOST_TEST_TIMEOUT = process.platform === "win32" ? 30_000 : 10_000;
+const RUNNING_FROM_WSL_UNC = process.platform === "win32" && /^\\\\wsl(?:\.localhost|\$)\\/i.test(process.cwd());
+const hostTest = RUNNING_FROM_WSL_UNC ? test.skip : test;
 
 const CFG: MeshConfig = {
   name: "demo",
@@ -83,7 +90,7 @@ function fakeManager() {
       calls.push(["delete", n]);
       alive = false;
     },
-    async loadDefinitions() {
+    async reloadDefinitions() {
       calls.push(["reload"]);
     },
     async stopAll() {},
@@ -1047,3 +1054,26 @@ test("deterministic load: persisted notifications appear in the FIRST snapshot/l
     await rm(root, { recursive: true, force: true });
   }
 });
+
+// ── reload (mesh-reload-preserve-running): WebUI reload must not orphan running meshes ──
+hostTest("gateway.reload() keeps a running mesh running (client preserved) and discovers a new disk mesh", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "gw-reload-"));
+  const mgr = new MeshManager({ meshesDir: join(dir, "meshes"), runDir: join(dir, "run"), hostScript: FIXTURE });
+  const gw = new WebGateway(mgr);
+  try {
+    await mgr.defineMesh({ name: "echo", agents: [{ id: "r", harness: "claude", project: "test_mesh_0", role: "router" }], edges: [] });
+    await mgr.startMesh("echo");
+    const pid = mgr.pidOf("echo")!;
+    expect(gw.snapshot().meshes.find((m) => m.name === "echo")!.status).toBe("running");
+    // a new mesh appears on disk only (CLI / hand-edit) — exactly the case reload should discover
+    await writeFile(join(dir, "meshes", "extra.json"), JSON.stringify({ name: "extra", agents: [{ id: "r", harness: "claude", project: "test_mesh_0", role: "router" }], edges: [] }));
+    await gw.reload();
+    const meshes = gw.snapshot().meshes;
+    expect(meshes.find((m) => m.name === "echo")!.status).toBe("running"); // NOT clobbered to stopped → daemon not orphaned
+    expect(mgr.pidOf("echo")).toBe(pid); // client preserved → still stoppable/interactable
+    expect(meshes.find((m) => m.name === "extra")!.status).toBe("stopped"); // new disk mesh discovered as stopped
+  } finally {
+    await mgr.stopAll();
+    await rm(dir, { recursive: true, force: true });
+  }
+}, HOST_TEST_TIMEOUT);

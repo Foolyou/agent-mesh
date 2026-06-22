@@ -112,7 +112,7 @@ function fakeManager(config: MeshConfig = CFG) {
     async deleteMesh(n: string) {
       calls.push(["delete", n]);
     },
-    async loadDefinitions() {
+    async reloadDefinitions() {
       calls.push(["reload"]);
     },
     async stopAll() {},
@@ -764,7 +764,7 @@ test("POST /api/meshes/demo/permissions/r1/resolve delegates to resolvePermissio
   expect(m.calls).toContainEqual(["resolve", "demo", "r1", "allow"]);
 });
 
-test("POST /api/meshes/reload delegates to loadDefinitions", async () => {
+test("POST /api/meshes/reload delegates to reloadDefinitions", async () => {
   const m = fakeManager();
   const gw = new WebGateway(m as any);
   const r = await handleApi(gw, "POST", "/api/meshes/reload", {});
