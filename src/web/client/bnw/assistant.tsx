@@ -9,6 +9,7 @@ import type { GatewayState } from "../../types";
 import type { AssistantStatus } from "../../types";
 import { bnwHref } from "../router";
 import { TranscriptItemView } from "./runtime";
+import { useI18n, tStatus } from "../i18n";
 
 function asstDot(s: AssistantStatus, working?: boolean): Status {
   if (s === "ready") return working ? "working" : "ready";
@@ -18,6 +19,7 @@ function asstDot(s: AssistantStatus, working?: boolean): Status {
 }
 
 export function BnwAssistant({ store, state, full }: { store: Store; state: GatewayState; full: boolean }) {
+  const { t } = useI18n();
   const asst = state.assistant;
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
@@ -35,29 +37,29 @@ export function BnwAssistant({ store, state, full }: { store: Store; state: Gate
 
   const column = (
     <PanelFrame
-      title="Mesh Assistant"
-      description={asst.status}
+      title={t("bnw.assistantFull")}
+      description={tStatus(t, asst.status)}
       actions={<Cluster>
         <StatusChip status={asstDot(asst.status, working)} variant="dot" />
-        <RouteLink href={bnwHref({ k: "assistant", full: !full })} className="text-sm" aria-label={full ? "exit fullscreen" : "fullscreen"}>{full ? "⊟ 退出全屏" : "⊞ 全屏"}</RouteLink>
+        <RouteLink href={bnwHref({ k: "assistant", full: !full })} className="text-sm" aria-label={full ? "exit fullscreen" : "fullscreen"}>{full ? `⊟ ${t("bnw.as.exitFull")}` : `⊞ ${t("bnw.as.full")}`}</RouteLink>
       </Cluster>}
       className="h-full" bodyClassName="flex min-h-0 flex-1 flex-col gap-2"
     >
-      <p className="text-xs text-text-muted">全局构建助手：描述目标，助手用 mesh-build 工具帮你搭/调 mesh。</p>
+      <p className="text-xs text-text-muted">{t("bnw.as.intro")}</p>
       <div ref={scrollRef} data-bnw-assistant-transcript className="flex min-h-0 flex-1 flex-col gap-2 overflow-auto">
         {asst.transcript.length === 0 ? (
-          <EmptyState title="开始对话" description="例如：建一个 router(claude) + codex 成员的 app mesh。" />
+          <EmptyState title={t("bnw.as.emptyTitle")} description={t("bnw.as.emptyDesc")} />
         ) : asst.transcript.map((it) => <TranscriptItemView key={it.id} it={it} />)}
       </div>
       <Composer
         ariaLabel="Assistant composer"
         actions={<div className="flex items-center gap-2">
-          {working ? <Button size="sm" variant="ghost" aria-label="interrupt assistant" onClick={() => void store.interruptAssistant()}>打断</Button> : null}
-          <Button size="sm" variant="primary" busy={busy} disabled={!text.trim()} aria-label="send" onClick={() => void send()}>Send</Button>
+          {working ? <Button size="sm" variant="ghost" aria-label="interrupt assistant" onClick={() => void store.interruptAssistant()}>{t("bnw.rt.interrupt")}</Button> : null}
+          <Button size="sm" variant="primary" busy={busy} disabled={!text.trim()} aria-label="send" onClick={() => void send()}>{t("bnw.rt.send")}</Button>
         </div>}
-        hint={working ? "assistant 正在工作…" : undefined}
+        hint={working ? t("bnw.as.working") : undefined}
       >
-        <Textarea aria-label="assistant input" rows={2} value={text} placeholder="给 Mesh Assistant 发消息…"
+        <Textarea aria-label="assistant input" rows={2} value={text} placeholder={t("bnw.as.placeholder")}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); void send(); } }} />
       </Composer>

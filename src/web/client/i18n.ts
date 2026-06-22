@@ -487,6 +487,17 @@ const DICT: Record<string, Entry> = {
   "bnw.set.checking": ["checking…", "检查中…"],
   "bnw.set.devicesCliHint": ["Device list / approve / revoke / mint bootstrap are host-authoritative — run them with the host CLI:", "设备清单 / 批准 / 撤销 / 铸造 bootstrap 均为宿主端权威，用宿主 CLI 执行："],
   "bnw.set.devicesNote": ["The WebUI only shows this device's status (read-only); web-side device management arrives with the device-auth slice — no new web auth entry is added here.", "WebUI 仅只读显示本设备状态；Web 端设备管理将随 device-auth 切片到来（不在本片新增 web 鉴权入口）。"],
+
+  // ── /bnw Mesh Assistant body (i18n assistant slice). Technical/brand stay English: mesh /
+  //    router / agent / codex / claude / mesh-build / "Mesh Assistant" name; conversation
+  //    transcript is data and is never translated. ──
+  "bnw.as.full": ["fullscreen", "全屏"],
+  "bnw.as.exitFull": ["exit fullscreen", "退出全屏"],
+  "bnw.as.intro": ["Global build assistant — describe a goal and it builds/tweaks meshes with the mesh-build tools.", "全局构建助手：描述目标,助手用 mesh-build 工具帮你搭/调 mesh。"],
+  "bnw.as.emptyTitle": ["start a conversation", "开始对话"],
+  "bnw.as.emptyDesc": ["e.g. build an app mesh with a router(claude) + a codex member.", "例如：建一个 router(claude) + codex 成员的 app mesh。"],
+  "bnw.as.working": ["assistant is working…", "assistant 正在工作…"],
+  "bnw.as.placeholder": ["message the Mesh Assistant…", "给 Mesh Assistant 发消息…"],
 };
 
 export function translate(key: string, lang: Lang, vars?: Record<string, string | number>): string {

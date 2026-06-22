@@ -1407,6 +1407,40 @@ try {
     await page.evaluate(() => { localStorage.setItem("mesh.lang", "zh"); });
   });
 
+  // i18n assistant-body slice — Mesh Assistant app-copy (intro / composer / fullscreen toggle)
+  //  switches en↔zh; en app-copy carries no hardcoded CJK. The conversation transcript is data
+  //  (excluded): assert on the always-present intro + composer, and CJK-scan only the composer.
+  await step("i18n assistant body: en↔zh (intro/composer) + no hardcoded CJK in en", async () => {
+    const hasCJK = (s: string) => /[㐀-䶿一-鿿豈-﫿]/.test(s);
+    const collect = (sels: string[]) => page.evaluate((ss) => ss
+      .map((s) => { const el = document.querySelector(s) as HTMLElement | null; return el ? el.innerText : ""; })
+      .join("\n"), sels);
+    await page.setViewportSize({ width: 1440, height: 900 });
+
+    // ── en: clear the suite's preseeded zh, then assert assistant app-copy is English ──
+    await page.goto(`${BASE}/bnw/assistant`, { waitUntil: "domcontentloaded" });
+    await page.evaluate(() => { localStorage.removeItem("mesh.lang"); });
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-bnw-assistant="panel"]', { timeout: 8000 });
+    const composerEn = await collect(['[aria-label="Assistant composer"]']); // composer app-copy only (no transcript data)
+    assert(!hasCJK(composerEn), `i18n guard: CJK in en assistant composer app-copy: ${composerEn.replace(/\s+/g, " ").slice(0, 120)}`);
+    assert(composerEn.includes("Send"), "i18n en: assistant Send English");
+    assert((await collect(['[data-bnw-assistant="panel"]'])).toLowerCase().includes("global build assistant"), "i18n en: assistant intro English");
+    await sleep(80); await page.screenshot({ path: `${SHOTS}/bnw-i18n-assistant-en.png`, fullPage: true });
+
+    // ── live switch en→zh ──
+    await page.goto(`${BASE}/bnw/settings?tab=language`, { waitUntil: "domcontentloaded" });
+    await page.getByRole("radio", { name: "中文" }).click();
+    await page.waitForFunction(() => document.documentElement.lang === "zh", { timeout: 8000 });
+    await page.goto(`${BASE}/bnw/assistant`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-bnw-assistant="panel"]', { timeout: 8000 });
+    assert((await collect(['[data-bnw-assistant="panel"]'])).includes("全局构建助手"), "i18n zh: assistant intro 全局构建助手");
+    assert((await collect(['[aria-label="Assistant composer"]'])).includes("发送"), "i18n zh: assistant Send 发送");
+    await sleep(80); await page.screenshot({ path: `${SHOTS}/bnw-i18n-assistant-zh.png`, fullPage: true });
+    // leave the suite's zh baseline set for later legacy steps
+    await page.evaluate(() => { localStorage.setItem("mesh.lang", "zh"); });
+  });
+
   // #7 — reload control: explicit confirmation dialog (replaces two-click), desktop + mobile,
   // cancel once + confirm once; the real reload path still reaches manager.loadDefinitions.
   await step("#7 reload confirmation dialog: desktop + mobile, cancel + confirm → manager reload", async () => {
