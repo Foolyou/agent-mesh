@@ -187,6 +187,7 @@ export function RuntimeFocus({ store, state, mesh, agent, full }: { store: Store
   // pinned as new items arrive, and expose a button to return when scrolled up.
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const [atBottom, setAtBottom] = useState(true);
+  const [selOpen, setSelOpen] = useState(false); // #4 — mobile ⋯ controls disclosure (no route change)
   const onScroll = () => {
     const el = scrollRef.current;
     if (el) setAtBottom(el.scrollHeight - el.scrollTop - el.clientHeight < 40);
@@ -209,21 +210,47 @@ export function RuntimeFocus({ store, state, mesh, agent, full }: { store: Store
   const editable = a.status !== "dead"; // can't mutate a dead agent
 
   const focusColumn = (
-    <PanelFrame
-      title={`${agent}`}
-      description={`${a.harness} · ${a.role} · ${a.status}`}
-      actions={<Cluster className="flex-wrap">
-        <StatusChip status={agentDot(a.status, a.activity)} variant="dot" />
-        {cold ? <WakeButton store={store} mesh={mesh} agent={agent} /> : null}
-        <RouteLink href={bnwHref({ k: "runtime", mesh, agent, full: !full })} className="text-sm whitespace-nowrap">{full ? "⊟ 退出全屏" : "⊞ 全屏"}</RouteLink>
-        <RouteLink href={bnwHref({ k: "runtime", mesh })} className="text-sm whitespace-nowrap">‹ 概览</RouteLink>
-      </Cluster>}
-      className="h-full"
-      bodyClassName="flex min-h-0 flex-1 flex-col gap-2"
-    >
-      {/* #10 — real runtime selectors (mode/model/effort/kimi thinking) */}
-      <RuntimeSelectors store={store} mesh={mesh} agent={agent} harness={a.harness}
-        modes={pm?.modes[agent]} models={pm?.models[agent]} efforts={pm?.efforts[agent]} disabled={!editable} />
+    <PanelFrame className="h-full" bodyClassName="flex min-h-0 flex-1 flex-col gap-2">
+      {/* #4 — full-bleed focus header (replaces PanelFrame's own header so mobile can collapse
+          to a single compact row). Desktop keeps the exact title/desc-left + actions-right row. */}
+      <header className="-mx-4 -mt-3 mb-1 border-b border-border px-4 py-3">
+        {/* desktop (≥lg): unchanged horizontal layout */}
+        <div className="hidden lg:flex lg:items-start lg:gap-3">
+          <div className="min-w-0 flex-1">
+            <h2 className="truncate text-sm font-semibold text-text-primary">{agent}</h2>
+            <p className="mt-0.5 text-xs text-text-secondary">{a.harness} · {a.role} · {a.status}</p>
+          </div>
+          <div className="shrink-0">
+            <Cluster className="flex-wrap">
+              <StatusChip status={agentDot(a.status, a.activity)} variant="dot" />
+              {cold ? <WakeButton store={store} mesh={mesh} agent={agent} /> : null}
+              <RouteLink href={bnwHref({ k: "runtime", mesh, agent, full: !full })} className="text-sm whitespace-nowrap">{full ? "⊟ 退出全屏" : "⊞ 全屏"}</RouteLink>
+              <RouteLink href={bnwHref({ k: "runtime", mesh })} className="text-sm whitespace-nowrap">‹ 概览</RouteLink>
+            </Cluster>
+          </div>
+        </div>
+        {/* mobile (<lg): one compact thin row — ● name · status + 全屏/概览 + ⋯ overflow */}
+        <div className="flex items-center gap-2 lg:hidden">
+          <StatusChip status={agentDot(a.status, a.activity)} variant="dot" />
+          <span className="min-w-0 flex-1 truncate text-sm"><span className="font-semibold text-text-primary">{agent}</span> <span className="text-text-muted">· {a.status}</span></span>
+          {cold ? <WakeButton store={store} mesh={mesh} agent={agent} /> : null}
+          <RouteLink href={bnwHref({ k: "runtime", mesh, agent, full: !full })} aria-label={full ? "退出全屏" : "全屏"} className="text-sm whitespace-nowrap">{full ? "⊟" : "⊞"}</RouteLink>
+          <RouteLink href={bnwHref({ k: "runtime", mesh })} className="text-sm whitespace-nowrap">概览</RouteLink>
+          <button type="button" data-bnw-focus-more aria-label="agent controls" aria-expanded={selOpen} onClick={() => setSelOpen((v) => !v)}
+            className="shrink-0 rounded-lg border border-border-strong px-2 py-0.5 text-sm text-text-primary hover:bg-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus-ring">⋯</button>
+        </div>
+      </header>
+      {/* #10 selectors — desktop inline; mobile folded behind ⋯ (stacked, label-over-full-width) */}
+      <div className="hidden lg:block">
+        <RuntimeSelectors store={store} mesh={mesh} agent={agent} harness={a.harness}
+          modes={pm?.modes[agent]} models={pm?.models[agent]} efforts={pm?.efforts[agent]} disabled={!editable} />
+      </div>
+      {selOpen ? (
+        <div data-bnw-focus-controls className="rounded-lg border border-border bg-surface-sunken p-2 lg:hidden">
+          <RuntimeSelectors store={store} mesh={mesh} agent={agent} harness={a.harness}
+            modes={pm?.modes[agent]} models={pm?.models[agent]} efforts={pm?.efforts[agent]} disabled={!editable} stacked />
+        </div>
+      ) : null}
       <UsageLine pm={pm} agent={agent} />
       {/* #13 — pending-turn queue is a compact `queued · N` chip at the transcript top
           (not a separate right column); expands inline for prev/next + remove. */}

@@ -19,9 +19,12 @@ function useBusy() {
 }
 
 // #10 — per-agent runtime selectors (mode / model / effort / kimi-thinking), real mutations.
-export function RuntimeSelectors({ store, mesh, agent, harness, modes, models, efforts, disabled }: {
+export function RuntimeSelectors({ store, mesh, agent, harness, modes, models, efforts, disabled, stacked = false }: {
   store: Store; mesh: string; agent: string; harness: HarnessId;
   modes?: AgentModes; models?: AgentModels; efforts?: AgentEfforts; disabled: boolean;
+  /** #4 — stacked layout (label above, full-width select) for the mobile ⋯ disclosure panel.
+   *  Default `false` keeps the desktop inline horizontal row exactly as before. */
+  stacked?: boolean;
 }) {
   const [busy, setBusy] = useState<string | null>(null);
   const set = async (which: string, p: Promise<{ error?: string }>) => {
@@ -30,27 +33,32 @@ export function RuntimeSelectors({ store, mesh, agent, harness, modes, models, e
   };
   const showEffort = supportsRuntimeEffort(harness) && (efforts?.available?.length ?? 0) > 0;
   const showThinking = supportsThinkingToggle(harness);
+  // stacked: each field is a full-width block (label over select); inline: the original
+  // fixed-width horizontal labels (desktop unchanged).
+  const wrap = stacked ? "flex flex-col gap-2 text-xs" : "flex flex-wrap items-center gap-2 text-xs";
+  const lbl = stacked ? "flex flex-col gap-1 text-text-muted" : "inline-flex items-center gap-1 text-text-muted";
+  const sel = (inline: string) => (stacked ? "w-full" : inline);
   return (
-    <div data-bnw-selectors className="flex flex-wrap items-center gap-2 text-xs">
+    <div data-bnw-selectors className={wrap}>
       {(modes?.available?.length ?? 0) > 0 ? (
-        <label className="inline-flex items-center gap-1 text-text-muted">mode
-          <Select aria-label={`${agent} mode`} value={modes!.current} disabled={disabled || busy === "mode"} className="w-28"
+        <label className={lbl}>mode
+          <Select aria-label={`${agent} mode`} value={modes!.current} disabled={disabled || busy === "mode"} className={sel("w-28")}
             onChange={(e) => void set("mode", store.setMode(mesh, agent, e.target.value))}>
             {modes!.available.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
           </Select>
         </label>
       ) : null}
       {(models?.available?.length ?? 0) > 0 ? (
-        <label className="inline-flex items-center gap-1 text-text-muted">model
-          <Select aria-label={`${agent} model`} value={models!.current} disabled={disabled || busy === "model"} className="w-32"
+        <label className={lbl}>model
+          <Select aria-label={`${agent} model`} value={models!.current} disabled={disabled || busy === "model"} className={sel("w-32")}
             onChange={(e) => void set("model", store.setModel(mesh, agent, e.target.value))}>
             {models!.available.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
           </Select>
         </label>
       ) : null}
       {showEffort ? (
-        <label className="inline-flex items-center gap-1 text-text-muted">effort
-          <Select aria-label={`${agent} effort`} value={efforts!.current} disabled={disabled || busy === "effort"} className="w-24"
+        <label className={lbl}>effort
+          <Select aria-label={`${agent} effort`} value={efforts!.current} disabled={disabled || busy === "effort"} className={sel("w-24")}
             onChange={(e) => void set("effort", store.setEffort(mesh, agent, e.target.value))}>
             {efforts!.available.map((ef) => <option key={ef.id} value={ef.id}>{ef.name}</option>)}
           </Select>

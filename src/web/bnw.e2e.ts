@@ -1064,6 +1064,45 @@ try {
     } finally { await anonLeak.close(); }
   });
 
+  // #4 proposal — mobile runtime-focus compaction: one-line header + ⋯ controls disclosure.
+  // Desktop must stay the existing inline horizontal layout. Light-theme screenshots (user
+  // reported it there): desktop focus + mobile collapsed + mobile ⋯-expanded.
+  await step("#4 mobile focus: compact header + ⋯ controls disclosure (desktop inline unchanged)", async () => {
+    // desktop: selectors inline, no ⋯ overflow control
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(`${BASE}/bnw/mesh/demo/agent/router`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-bnw-focus="split"]', { timeout: 8000 });
+    await page.evaluate((s) => (window as any).__meshStore.apply({ t: "snapshot", state: s }), SEED_PARITY_FOCUS);
+    await page.waitForSelector('[aria-label="router mode"]', { timeout: 8000 });
+    assert(await page.locator('[aria-label="router mode"]').isVisible(), "#4 desktop selectors inline visible");
+    assert(!(await page.locator('[data-bnw-focus-more]').isVisible()), "#4 ⋯ overflow hidden on desktop");
+    // mobile: compact header, ⋯ present, selectors collapsed until tapped
+    await page.setViewportSize({ width: 390, height: 844 });
+    assert(await page.locator('[data-bnw-focus-more]').isVisible(), "#4 ⋯ shown on mobile");
+    assert((await page.locator('[data-bnw-focus-controls]').count()) === 0, "#4 controls collapsed by default on mobile");
+    assert(!(await page.locator('[aria-label="router mode"]').first().isVisible()), "#4 inline selectors hidden on mobile until ⋯");
+    await page.locator('[data-bnw-focus-more]').click();
+    await page.waitForSelector('[data-bnw-focus-controls]', { timeout: 8000 });
+    assert(await page.locator('[data-bnw-focus-controls] [aria-label="router mode"]').isVisible(), "#4 ⋯ reveals stacked selectors");
+    // light-theme proposal screenshots (desktop + mobile collapsed + mobile expanded)
+    await page.evaluate(() => { localStorage.setItem("mesh.theme.mode", "light-cool"); localStorage.setItem("mesh.theme.accent", "signal-teal"); localStorage.removeItem("mesh.theme"); });
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(`${BASE}/bnw/mesh/demo/agent/router`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-bnw-focus="split"]', { timeout: 8000 });
+    await page.evaluate((s) => (window as any).__meshStore.apply({ t: "snapshot", state: s }), SEED_PARITY_FOCUS);
+    await page.waitForSelector('[aria-label="router mode"]', { timeout: 8000 });
+    await sleep(120); await page.screenshot({ path: `${SHOTS}/bnw-focus-desktop-light.png`, fullPage: true });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.waitForSelector('[data-bnw-focus-more]', { timeout: 8000 });
+    await sleep(120); await page.screenshot({ path: `${SHOTS}/bnw-focus-mobile-collapsed-light.png`, fullPage: true });
+    await page.locator('[data-bnw-focus-more]').click();
+    await page.waitForSelector('[data-bnw-focus-controls]', { timeout: 8000 });
+    await sleep(120); await page.screenshot({ path: `${SHOTS}/bnw-focus-mobile-expanded-light.png`, fullPage: true });
+    // restore default theme for the remaining steps
+    await page.evaluate(() => { localStorage.removeItem("mesh.theme.mode"); localStorage.removeItem("mesh.theme.accent"); });
+    await page.setViewportSize({ width: 1440, height: 900 });
+  });
+
   await step("screenshots: overview / focus (C2 docked approval) / canvas / mobile overview", async () => {
     await page.setViewportSize({ width: 1440, height: 900 });
     // desktop overview
