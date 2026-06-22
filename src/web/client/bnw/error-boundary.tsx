@@ -4,7 +4,7 @@
 // error+retry treatment (coverage/13-global-states.md). Error boundaries must be class
 // components — this is the one class component in the otherwise-functional /bnw tree.
 import { Component, type ReactNode } from "react";
-import { Button, PanelFrame, RouteLink } from "../ui/index";
+import { Button, Icon, PanelFrame, RouteLink } from "../ui/index";
 import { bnwHref } from "../router";
 
 interface Props {
@@ -34,7 +34,7 @@ export class BnwErrorBoundary extends Component<Props, State> {
     return (
       <PanelFrame title="界面错误">
         <div data-bnw-error-boundary className="flex flex-col items-center gap-3 py-8 text-center">
-          <span className="text-3xl" aria-hidden="true">💥</span>
+          <Icon name="alert" size={32} className="text-danger" />
           <h2 className="text-base font-semibold text-text-primary">这个界面出错了</h2>
           <p className="max-w-md text-xs text-text-muted">
             渲染时抛出异常——顶栏与导航仍可用。可重试本界面或返回首页。

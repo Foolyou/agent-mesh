@@ -6,7 +6,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createStore, useStore, useConnected, type Store } from "../store";
 import {
-  Badge, Button, Cluster, ConfirmButton, EmptyState, PanelFrame, RouteLink, Select, Spinner,
+  Badge, Button, Cluster, ConfirmButton, EmptyState, Icon, PanelFrame, RouteLink, Select, Spinner,
   StatusListRow, type Status,
 } from "../ui/index";
 import type { MeshStatus } from "../../types";
@@ -80,7 +80,7 @@ function NotFound({ path }: { path: string }) {
   return (
     <PanelFrame title="Not found">
       <div data-bnw-not-found className="flex flex-col items-center gap-2 py-10 text-center">
-        <span className="text-3xl" aria-hidden="true">🧭</span>
+        <Icon name="compass" size={32} className="text-text-muted" />
         <h2 className="text-base font-semibold text-text-primary">404 · 页面不存在</h2>
         <p className="max-w-md text-xs text-text-muted">没有匹配的 /bnw 路由：<code className="break-all font-mono text-text-secondary">{path}</code></p>
         <RouteLink href={bnwHref({ k: "home" })} unstyled className="mt-1 inline-flex items-center rounded-lg bg-accent px-3 py-1.5 text-sm font-medium text-on-accent hover:bg-accent-hover">返回控制台</RouteLink>
@@ -206,7 +206,7 @@ export function BnwApp() {
           <ManageLink route={{ k: "settings" }} label="设置" />
         </nav>
         <RouteLink href={bnwHref({ k: "notifications" })} aria-label="通知" className="relative inline-flex items-center gap-1">
-          <span aria-hidden="true">🔔</span>
+          <Icon name="bell" size={18} />
           {/* 7.4-C.2 — real unread count from the folded notifications snapshot/deltas */}
           {(state.notifications?.unreadCount ?? 0) > 0 ? <Badge count={state.notifications!.unreadCount} max={99} tone="urgent" label="未读通知" /> : null}
         </RouteLink>
@@ -232,7 +232,7 @@ export function BnwApp() {
             <span className="text-xs uppercase tracking-wider text-text-muted">meshes</span>
             <div className="flex items-center gap-1">
               {/* #20 — reload mesh definitions (two-click confirm; disabled offline) */}
-              <ConfirmButton size="sm" variant="ghost" confirmLabel="重新加载?" disabled={!connected} busy={reloading} aria-label="reload mesh definitions" onConfirm={() => void doReload()}>↻</ConfirmButton>
+              <ConfirmButton size="sm" variant="ghost" confirmLabel="重新加载?" disabled={!connected} busy={reloading} aria-label="reload mesh definitions" onConfirm={() => void doReload()}><Icon name="refresh" size={14} /></ConfirmButton>
               <RouteLink href={bnwHref({ k: "newMesh" })} className="text-xs">+ 新建</RouteLink>
             </div>
           </div>

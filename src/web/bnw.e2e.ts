@@ -1146,6 +1146,56 @@ try {
     await page.setViewportSize({ width: 1440, height: 900 });
   });
 
+  // #6 — emoji icons replaced by the SVG Icon set: no raw icon-emoji in /bnw chrome, the
+  // notification bell is an SVG with its accessible label preserved, icons inherit currentColor.
+  await step("#6 SVG icon sweep: bell is SVG (labelled) + no raw icon-emoji in /bnw chrome", async () => {
+    // curated icon-emoji that were swept (NOT board issue ids / plain text arrows kept as content)
+    const ICON_EMOJI = ["🔔", "🧭", "💥", "🛰", "🔑", "🤝", "🧩", "📡", "🩺", "🏷", "🔍", "🗖", "🗕", "⛔", "💭", "📎", "📌", "🎉"];
+    const scanEmoji = async (label: string) => {
+      const hits = await page.evaluate((emojis) => emojis.filter((e) => (document.body as HTMLElement).innerText.includes(e)), ICON_EMOJI);
+      assert(hits.length === 0, `raw icon-emoji on ${label}: ${hits.join(" ")}`);
+    };
+    // topbar bell = SVG, accessible label preserved (decorative svg inside the labelled link)
+    await page.goto(`${BASE}/bnw/mesh/demo`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-bnw-surface="runtime"]', { timeout: 8000 });
+    assert(await page.locator('[aria-label="通知"] svg').count() > 0, "#6 topbar bell is an SVG");
+    assert(await page.locator('[aria-label="通知"]').isVisible(), "#6 notification accessible label preserved");
+    await scanEmoji("runtime overview chrome");
+    // notifications surface: type icons are SVG, no emoji
+    await page.goto(`${BASE}/bnw/notifications`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-notifications="center"]', { timeout: 8000 });
+    assert(await page.locator('[data-notif] svg').count() > 0, "#6 notification type icons are SVG");
+    await scanEmoji("notifications");
+    // board toolbar icons (search/tag/fullscreen) are SVG, no emoji
+    await page.goto(`${BASE}/bnw/mesh/demo/board`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-bnw-board-list]', { timeout: 8000 });
+    assert(await page.locator('[aria-label="manage labels"] svg').count() > 0, "#6 board manage-labels icon is SVG");
+    await scanEmoji("board list");
+    // mobile bottom-tab + 更多 nav icons are SVG, no emoji
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(`${BASE}/bnw/mesh/demo`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-bnw-bottomtabs]', { timeout: 8000 });
+    assert(await page.locator('[data-bnw-bottomtabs] svg').count() >= 3, "#6 bottom-tab icons are SVG");
+    await page.locator('[data-bnw-more-toggle]').click();
+    await page.waitForSelector('[data-bnw-more]', { timeout: 8000 });
+    assert(await page.locator('[data-bnw-more] svg').count() >= 7, "#6 更多 list icons are SVG");
+    await scanEmoji("mobile shell + 更多");
+    // dark-mode icon screenshots (icons inherit currentColor + stay visible)
+    await page.evaluate(() => { localStorage.setItem("mesh.theme.mode", "dark-slate"); localStorage.setItem("mesh.theme.accent", "signal-teal"); localStorage.removeItem("mesh.theme"); });
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-bnw-more]', { timeout: 8000 }).catch(() => {});
+    await page.waitForSelector('[data-bnw-bottomtabs]', { timeout: 8000 });
+    await sleep(120); await page.screenshot({ path: `${SHOTS}/bnw-icons-dark-mobile-more.png`, fullPage: true });
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(`${BASE}/bnw/notifications`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-notifications="center"]', { timeout: 8000 });
+    await sleep(120); await page.screenshot({ path: `${SHOTS}/bnw-icons-dark-notifications.png`, fullPage: true });
+    await page.goto(`${BASE}/bnw/mesh/demo`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-bnw-surface="runtime"]', { timeout: 8000 });
+    await sleep(120); await page.screenshot({ path: `${SHOTS}/bnw-icons-dark-topbar.png`, fullPage: true });
+    await page.evaluate(() => { localStorage.removeItem("mesh.theme.mode"); localStorage.removeItem("mesh.theme.accent"); });
+  });
+
   await step("screenshots: overview / focus (C2 docked approval) / canvas / mobile overview", async () => {
     await page.setViewportSize({ width: 1440, height: 900 });
     // desktop overview

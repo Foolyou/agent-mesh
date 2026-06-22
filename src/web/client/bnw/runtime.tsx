@@ -10,8 +10,8 @@
 // live add-agent/edge (#17) remain deferred to 7.1-C.
 import { useEffect, useRef, useState } from "react";
 import {
-  Badge, Cluster, EmptyState, PanelFrame, ProgressBar, RouteLink, Spinner,
-  StatusChip, type Status,
+  Badge, Cluster, EmptyState, Icon, PanelFrame, ProgressBar, RouteLink, Spinner,
+  StatusChip, type IconName, type Status,
 } from "../ui/index";
 import type { Store } from "../store";
 import type { GatewayState, MeshSummary, PerMeshState, TranscriptItem } from "../../types";
@@ -112,10 +112,10 @@ const clip = (s: string, n = 140) => (s.length > n ? s.slice(0, n) + "…" : s);
 
 export function TranscriptItemView({ it }: { it: TranscriptItem }) {
   const [open, setOpen] = useState(false);
-  const Toggle = ({ label }: { label: string }) => (
+  const Toggle = ({ label, icon }: { label: string; icon?: IconName }) => (
     <button type="button" data-bnw-expand aria-expanded={open} onClick={() => setOpen((v) => !v)}
       className="inline-flex items-center gap-1 rounded-sm text-left hover:text-text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus-ring">
-      <span aria-hidden="true">{open ? "▾" : "▸"}</span>{label}
+      <span aria-hidden="true">{open ? "▾" : "▸"}</span>{icon ? <Icon name={icon} size={12} /> : null}{label}
     </button>
   );
   switch (it.kind) {
@@ -128,14 +128,14 @@ export function TranscriptItemView({ it }: { it: TranscriptItem }) {
     case "thought":
       return (
         <div className="px-1 text-xs italic text-text-muted">
-          <Toggle label={`💭 ${open ? "思考" : clip(it.text, 80)}`} />
+          <Toggle icon="message-circle" label={open ? "思考" : clip(it.text, 80)} />
           {open ? <div className="mt-0.5 whitespace-pre-wrap">{it.text}</div> : null}
         </div>
       );
     case "tool_call":
       return (
         <div className="rounded-lg border border-border bg-surface-sunken px-2.5 py-1.5 text-xs">
-          <div className="flex items-center gap-1.5 text-text-secondary"><Toggle label={`🔧 ${it.title}`} /><span className="text-text-muted">· {it.status}</span></div>
+          <div className="flex items-center gap-1.5 text-text-secondary"><Toggle icon="wrench" label={it.title} /><span className="text-text-muted">· {it.status}</span></div>
           {open ? (
             <div className="mt-1 flex flex-col gap-1">
               {it.input ? <pre className="max-h-32 overflow-auto whitespace-pre-wrap text-text-muted">in: {it.input}</pre> : null}
@@ -148,16 +148,16 @@ export function TranscriptItemView({ it }: { it: TranscriptItem }) {
     case "mail":
       return (
         <div className="rounded border border-border px-2 py-1 text-xs text-text-secondary">
-          <Toggle label={`✉ ${it.from} → ${it.to}`} />
+          <Toggle icon="mail" label={`${it.from} → ${it.to}`} />
           <div className="mt-0.5 whitespace-pre-wrap text-text-muted">{open ? it.body : clip(it.body)}</div>
         </div>
       );
     case "plan":
-      return <div className="rounded border border-border px-2 py-1 text-xs text-text-secondary">📋 plan · {it.entries.length} 步</div>;
+      return <div className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-xs text-text-secondary"><Icon name="clipboard" size={12} /> plan · {it.entries.length} 步</div>;
     case "attachment":
       return (
         <div className="rounded border border-border px-2 py-1 text-xs text-text-secondary">
-          <Toggle label={`📎 ${it.name ?? it.path}`} />
+          <Toggle icon="paperclip" label={it.name ?? it.path} />
           {open ? <div className="mt-0.5 text-text-muted">{it.path}{it.caption ? ` · ${it.caption}` : ""}</div> : null}
         </div>
       );

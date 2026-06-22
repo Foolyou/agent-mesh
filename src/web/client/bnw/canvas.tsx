@@ -4,7 +4,7 @@
 // nodes out force-directed (default on, deterministic — router-centric), supports
 // drag-to-pin, zoom/fit/Esc, per-node stop/wake/⋯, and live add-agent/add-edge (#17).
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Badge, Button, Cluster, EmptyState, PanelFrame, RouteLink, StatusChip, type Status } from "../ui/index";
+import { Badge, Button, Cluster, EmptyState, Icon, PanelFrame, RouteLink, StatusChip, type Status } from "../ui/index";
 import type { Store } from "../store";
 import type { GatewayState, MeshSummary, PerMeshState } from "../../types";
 import type { AgentStatus, AgentActivity } from "../../../acp/types";
@@ -104,7 +104,7 @@ export function MeshCanvas({ store, state, mesh }: { store: Store; state: Gatewa
       <div className="flex flex-wrap items-center gap-3 border-b border-border bg-surface-sunken px-3 py-1 text-xs text-text-muted">
         <span className="inline-flex items-center gap-1"><span className="text-accent">▶</span> 信息流方向（mail）</span>
         <span className="inline-flex items-center gap-1"><span className="text-accent">●</span> 高亮 = 近期有 mail 流动</span>
-        <span className="inline-flex items-center gap-1"><span className="text-accent">📌</span> 拖拽=固定</span>
+        <span className="inline-flex items-center gap-1"><Icon name="pin" size={12} className="text-accent" /> 拖拽=固定</span>
         <span className="flex-1" aria-hidden="true" />
         <TopologyEditor store={store} mesh={mesh} agentIds={agents.map((a) => a.id)} disabled={disabled} />
       </div>
@@ -141,7 +141,7 @@ export function MeshCanvas({ store, state, mesh }: { store: Store; state: Gatewa
                     className="flex cursor-move items-center gap-1.5 border-b border-border px-2 py-1.5">
                     <StatusChip status={agentDot(a.status, a.activity)} variant="dot" />
                     <span className="min-w-0 flex-1 truncate text-sm font-medium text-text-primary">{a.id}</span>
-                    {isPinned ? <span aria-label={`${a.id} pinned`} className="text-xs text-accent">📌</span> : null}
+                    {isPinned ? <span aria-label={`${a.id} pinned`} className="text-accent"><Icon name="pin" size={12} /></span> : null}
                     {np > 0 ? <Badge count={np} tone="urgent" /> : null}
                   </div>
                   <div className="flex items-center gap-1 px-2 py-1.5 text-xs text-text-muted">

@@ -3,17 +3,17 @@
 // via store.markNotificationRead / markAllNotificationsRead. Follow actions resolve ONLY through a
 // structured source → bnwHref (never an arbitrary URL). Independent /bnw view.
 import { useState } from "react";
-import { Badge, Button, Cluster, EmptyState, PanelFrame, RouteLink, StatusChip, type Status } from "../ui/index";
+import { Badge, Button, Cluster, EmptyState, Icon, PanelFrame, RouteLink, StatusChip, type IconName, type Status } from "../ui/index";
 import { useUpgrade, useConnected, type Store } from "../store";
 import { bnwHref, type BnwRoute } from "../router";
 import type { GatewayState, NotificationRecord, NotificationSource, NotificationType } from "../../types";
 
-const TYPE_META: Record<NotificationType, { icon: string; tone: Status; chip: string }> = {
-  "harness-upgrade": { icon: "⬆", tone: "attention", chip: "harness" },
-  "frontend-update": { icon: "⟳", tone: "ready", chip: "update" },
-  "service-status": { icon: "🛰", tone: "working", chip: "service" },
-  "system-alert": { icon: "⚙", tone: "idle", chip: "system" },
-  "device-auth": { icon: "🔑", tone: "attention", chip: "device" },
+const TYPE_META: Record<NotificationType, { icon: IconName; tone: Status; chip: string }> = {
+  "harness-upgrade": { icon: "arrow-up", tone: "attention", chip: "harness" },
+  "frontend-update": { icon: "refresh", tone: "ready", chip: "update" },
+  "service-status": { icon: "broadcast", tone: "working", chip: "service" },
+  "system-alert": { icon: "gear", tone: "idle", chip: "system" },
+  "device-auth": { icon: "key", tone: "attention", chip: "device" },
 };
 const FILTERS: { id: NotificationType | "all"; label: string }[] = [
   { id: "all", label: "全部" }, { id: "harness-upgrade", label: "harness" }, { id: "frontend-update", label: "update" },
@@ -87,7 +87,7 @@ export function BnwNotifications({ store, state }: { store: Store; state: Gatewa
           {state.notifications === undefined && !offline ? (
             <div className="flex flex-col gap-2"><div className="h-12 animate-pulse rounded-lg bg-border" /><div className="h-12 animate-pulse rounded-lg bg-border" /></div>
           ) : all.length === 0 ? (
-            <EmptyState icon={<span className="text-2xl">🎉</span>} title="全部已读" description="没有新的系统通知。harness 升级、前端更新、服务状态等会出现在这里。" />
+            <EmptyState icon={<Icon name="check-circle" size={28} className="text-success" />} title="全部已读" description="没有新的系统通知。harness 升级、前端更新、服务状态等会出现在这里。" />
           ) : list.length === 0 ? (
             <span className="px-1 py-2 text-xs text-text-muted">该分类下暂无通知。</span>
           ) : (
@@ -116,7 +116,8 @@ export function NotifItem({ n, store, offline }: { n: NotificationRecord; store:
     <div data-notif data-notif-type={n.type} data-unread={unread ? "1" : undefined} className={`flex flex-col gap-1 rounded-lg border px-3 py-2 ${unread ? "border-border-strong bg-surface-raised" : "border-border bg-surface-sunken"}`}>
       <div className="flex flex-wrap items-center gap-2">
         {unread ? <span data-unread-dot aria-label="unread" className="h-2 w-2 rounded-full bg-accent" /> : <span className="h-2 w-2" aria-hidden="true" />}
-        <StatusChip status={meta.tone} variant="soft" label={`${meta.icon} ${meta.chip}`} />
+        <Icon name={meta.icon} size={14} className="text-text-secondary" />
+        <StatusChip status={meta.tone} variant="soft" label={meta.chip} />
         <span className="min-w-0 flex-1 truncate text-sm font-medium text-text-primary">{n.title}</span>
         <span className="shrink-0 text-xs text-text-muted">{relTime(n.createdAt)}</span>
       </div>

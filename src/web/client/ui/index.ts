@@ -21,3 +21,4 @@ export { Composer, type ComposerProps } from "./Composer";
 export { AttachmentCard, type AttachmentCardProps } from "./AttachmentCard";
 export { VersionLine, formatVersion, type VersionLineProps, type VersionItem } from "./VersionLine";
 export { AssigneeTag, initials, type AssigneeTagProps } from "./AssigneeTag";
+export { Icon, type IconName, type IconProps } from "./Icon";

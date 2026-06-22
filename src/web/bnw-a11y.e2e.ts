@@ -181,9 +181,11 @@ async function runCombos(page: Page, anonPage: Page, viewport: "desktop" | "mobi
         await page.goto(`${BASE}/bnw/assistant`, { waitUntil: "domcontentloaded" });
         await page.waitForSelector('[data-bnw-assistant="panel"]', { timeout: 8000 });
         await sleep(60); await crawl(page, `${combo} · assistant`);
-        // 7.4-A — doctor (summary + findings + daemon table + recovery/leak rows)
+        // 7.4-A — doctor (summary + findings + daemon table + recovery/leak rows). Wait for the
+        // post-fetch content (summary), not just the panel frame, so the crawl never races an
+        // unrendered doctor (the frame paints before fetchDoctor resolves → <12 text nodes flake).
         await page.goto(`${BASE}/bnw/doctor`, { waitUntil: "domcontentloaded" });
-        await page.waitForSelector('[data-doctor="panel"]', { timeout: 8000 });
+        await page.waitForSelector('[data-doctor-summary]', { timeout: 8000 });
         await sleep(60); await crawl(page, `${combo} · doctor`);
         // 7.4-A.2a — harnesses (rows + status/auth chips + self-install guide + old-version agents)
         await page.goto(`${BASE}/bnw/harnesses`, { waitUntil: "domcontentloaded" });

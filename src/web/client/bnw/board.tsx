@@ -9,7 +9,7 @@
 // terminal, set-status, comment, dispatch, kanban drag→set_status. No fakes.
 import { useEffect, useState } from "react";
 import {
-  AssigneeTag, Badge, Button, Cluster, Composer, ConfirmButton, EmptyState, Input, PanelFrame,
+  AssigneeTag, Badge, Button, Cluster, Composer, ConfirmButton, EmptyState, Icon, Input, PanelFrame,
   ProgressBar, RouteLink, SegmentedControl, Select, StatusChip, Textarea, type Status,
 } from "../ui/index";
 import type { Store } from "../store";
@@ -79,7 +79,7 @@ function useBusy() {
 }
 
 function LabelChip({ name }: { name: string }) {
-  return <span className="inline-flex items-center gap-0.5 rounded border border-border bg-surface-sunken px-1.5 py-0.5 text-xs text-text-secondary">🏷 {name}</span>;
+  return <span className="inline-flex items-center gap-1 rounded border border-border bg-surface-sunken px-1.5 py-0.5 text-xs text-text-secondary"><Icon name="tag" size={11} />{name}</span>;
 }
 function PrioTag({ prio }: { prio: string }) {
   return <span className={`text-xs font-medium ${prio === "urgent" || prio === "high" ? "text-danger" : "text-text-muted"}`}>{prio}</span>;
@@ -106,7 +106,7 @@ function BoardFilterShell({ mesh, route, board, onToggleCreate, onToggleManage, 
     <div data-bnw-board-filters className="flex flex-col gap-2">
       <div role="toolbar" aria-label="board filters" className="flex items-center gap-2">
         <span className="relative flex min-w-0 flex-1 items-center">
-          <span aria-hidden="true" className="pointer-events-none absolute left-2 text-text-muted">🔍</span>
+          <Icon name="search" size={14} className="pointer-events-none absolute left-2 text-text-muted" />
           <input aria-label="search issues" value={f.q ?? ""} placeholder="搜索 issue… 例如 status:open label:bug"
             onChange={(e) => setF({ q: e.target.value || undefined })}
             className="w-full min-w-0 rounded-lg border border-border-strong bg-surface-sunken py-1 pl-7 pr-2 text-sm text-text-primary placeholder:text-text-muted" />
@@ -116,8 +116,8 @@ function BoardFilterShell({ mesh, route, board, onToggleCreate, onToggleManage, 
         <span className="shrink-0"><Cluster>
           <SegmentedControl ariaLabel="Board view" value={route.view} size="sm" onChange={(v) => go(f, v as BoardView)} options={[{ value: "list", label: "List" }, { value: "kanban", label: "Board" }]} />
           <Select aria-label="sort" value={f.sort ?? "number"} onChange={(e) => setF({ sort: e.target.value })} className="w-24"><option value="number">number</option><option value="updated">updated</option><option value="created">created</option><option value="priority">priority</option></Select>
-          <Button size="sm" variant="secondary" aria-label="manage labels" onClick={onToggleManage}>🏷 标签</Button>
-          <Button size="sm" variant="ghost" iconOnly aria-label={fs ? "exit fullscreen" : "fullscreen"} onClick={onToggleFs}>{fs ? "🗕" : "🗖"}</Button>
+          <Button size="sm" variant="secondary" aria-label="manage labels" onClick={onToggleManage}><Icon name="tag" size={13} /> 标签</Button>
+          <Button size="sm" variant="ghost" iconOnly aria-label={fs ? "exit fullscreen" : "fullscreen"} onClick={onToggleFs}>{fs ? <Icon name="minimize" size={14} /> : <Icon name="maximize" size={14} />}</Button>
           <Button size="sm" variant="primary" aria-label="new issue" onClick={onToggleCreate}>+ 新建</Button>
         </Cluster></span>
       </div>
@@ -187,7 +187,7 @@ function LabelManager({ apply, board }: { apply: Apply; board: BoardDocument }) 
       <div className="flex flex-col gap-1.5">
         {labels.map((l) => (
           <div key={l.id} className="flex flex-wrap items-center gap-2">
-            <span className="inline-flex items-center rounded px-1.5 py-0.5 text-xs" style={{ background: l.color, color: labelInk(l.color) }}>🏷 {l.name}</span>
+            <span className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-xs" style={{ background: l.color, color: labelInk(l.color) }}><Icon name="tag" size={11} />{l.name}</span>
             <Input defaultValue={l.name} aria-label={`rename ${l.name}`} className="w-32" onBlur={(e) => { const v = e.target.value.trim(); if (v && v !== l.name) void apply({ type: "update_label", id: l.id, name: v }); }} />
             <PaletteRow selected={l.color} onPick={(c) => void apply({ type: "update_label", id: l.id, color: c })} ariaLabel={`recolor ${l.name}`} />
             <ConfirmButton size="sm" variant="ghost" confirmLabel="删除?" aria-label={`delete ${l.name}`} onConfirm={() => void apply({ type: "delete_label", id: l.id })}>×</ConfirmButton>
@@ -208,7 +208,7 @@ function IssueRow({ mesh, task, board, filters }: { mesh: string; task: Task; bo
       <StatusChip status={boardDot(task.status)} variant="dot" />
       <span className="w-9 shrink-0 text-xs tabular-nums text-text-muted">#{task.id}</span>
       <span className="min-w-0 flex-1 truncate text-sm text-text-primary">{task.title}</span>
-      {blockedBy(task, board) ? <span className="text-danger" title="blocked" aria-label="blocked">⛔</span> : null}
+      {blockedBy(task, board) ? <span className="text-danger" title="blocked" aria-label="blocked"><Icon name="ban" size={14} /></span> : null}
       <span className="hidden items-center gap-1 lg:flex">{names.map((n) => <LabelChip key={n} name={n} />)}</span>
       <AssigneeTag name={task.assignee || "—"} size="sm" iconOnly />
       <PrioTag prio={task.priority} />
@@ -369,7 +369,7 @@ export function BnwBoard({ store, state, mesh, route }: { store: Store; state: G
     <PanelFrame
       title={title}
       actions={route.issue
-        ? <Cluster><Button size="sm" variant="ghost" iconOnly aria-label={fs ? "exit fullscreen" : "fullscreen"} onClick={() => setFs((v) => !v)}>{fs ? "🗕" : "🗖"}</Button><StatusChip status={boardDot(detailTask?.status ?? "todo")} variant="soft" label={detailTask?.status} /></Cluster>
+        ? <Cluster><Button size="sm" variant="ghost" iconOnly aria-label={fs ? "exit fullscreen" : "fullscreen"} onClick={() => setFs((v) => !v)}>{fs ? <Icon name="minimize" size={14} /> : <Icon name="maximize" size={14} />}</Button><StatusChip status={boardDot(detailTask?.status ?? "todo")} variant="soft" label={detailTask?.status} /></Cluster>
         : <Badge count={board.tasks.filter((t) => isOpen(t.status)).length} tone="neutral" />}
       className="h-full" bodyClassName="flex min-h-0 flex-1 flex-col gap-3"
     >
