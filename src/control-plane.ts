@@ -23,6 +23,14 @@ import { boardsDirFor, readBoard, writeBoard } from "./board-store";
 
 const COMPACT_COOLDOWN_MS = 180_000;
 const NEAR_LIMIT_WARNING_COOLDOWN_MS = 10 * 60_000;
+// Post-compaction rebrief heuristic (B-heuristic): a usage_update whose `used` falls to <= half the
+// previous frame, from a prior occupancy worth acting on, is treated as "a compaction happened"
+// (manual /compact or harness-internal) and schedules a rebrief. Conservative on purpose — see the
+// threshold rationale in docs/design/briefing-reliability.md §7. A miss just means no auto-rebrief
+// (the agent can still call mesh_briefing); a false positive costs one harmless rebrief.
+const REBRIEF_DROP_RATIO = 0.5;
+const REBRIEF_DROP_PREV_FLOOR = MIN_AUTO_COMPACT_CONTEXT_WINDOW / 2; // prior `used` >= 40k to matter
+const REBRIEF_DROP_COOLDOWN_MS = COMPACT_COOLDOWN_MS; // collapse multi-frame post-compact drops to one
 /** Upper bound on a published attachment's caption/name, so a card can't bloat the
  *  snapshot / ws transcript payload (these are replayed on every reattach). */
 export const MAX_ATTACHMENT_LABEL_CHARS = 2048;
@@ -287,6 +295,9 @@ export class ControlPlane {
   private agentLastOutboundMail = new Map<AgentId, number>();
   private agentLastTurnCompleted = new Map<AgentId, number>();
   private agentLastCompactAt = new Map<AgentId, number>();
+  /** Last time the usage-drop rebrief heuristic fired, per agent — collapses a multi-frame
+   *  post-compaction usage_update sequence into a single scheduled rebrief. */
+  private agentLastRebriefHeuristicAt = new Map<AgentId, number>();
   private agentNearLimitWarnedAt = new Map<AgentId, number>();
   /** Per-agent in-flight /compact turn, shared by the reactive (post-reply) and the
    *  pre-send guard paths. Concurrent triggers for one agent coalesce onto this single
@@ -350,7 +361,7 @@ export class ControlPlane {
     return advertised || resolved || configured;
   }
 
-  private updateAgentUsage(id: AgentId, usage: { used: number; size: number; percent: number; cost?: number }): void {
+  private updateAgentUsage(id: AgentId, usage: { used: number; size: number; percent: number; cost?: number; source: "usage_update" | "token_count" }): void {
     // Normalize the denominator against the Zed-style model→window table so an early,
     // under-reported harness size (claude-agent-acp's DEFAULT_CONTEXT_WINDOW=200000) does
     // not drive the UI waterline or auto-compact. The window is sticky per model and never
@@ -362,9 +373,40 @@ export class ControlPlane {
     const percent = window > 0 ? usage.used / window : usage.percent;
     const normalized: ContextUsage = { used: usage.used, size: window, percent, updatedAt: Date.now() };
     if (usage.cost !== undefined) normalized.cost = usage.cost;
+    // Read the prior frame BEFORE overwriting, so the drop heuristic can compare occupancy.
+    const prev = this.agentContextUsage.get(id);
+    if (prev) this.maybeRebriefOnUsageDrop(id, usage.source, prev.used, normalized.used);
     this.agentContextUsage.set(id, normalized);
     this.emit({ kind: "agent_usage", agent: id, used: normalized.used, size: normalized.size, percent: normalized.percent, cost: normalized.cost, ts: now() });
     void this.maybeAutoCompact(id, normalized);
+  }
+
+  /** Mark an agent for rebrief AND stamp the rebrief cooldown. The single stamp is what dedups the
+   *  two trigger sources: after a controller-triggered /compact (B-core, end_turn) schedules a
+   *  rebrief, the harness's own post-compact usage_update drop arrives within the cooldown and is
+   *  suppressed by maybeRebriefOnUsageDrop — so the same compaction never rebriefs twice, even
+   *  though the end_turn event and the usage drop are separate signals arriving at different times.
+   *  (Set idempotency alone would not suffice: the drop can land AFTER compose() already consumed
+   *  the flag, which would otherwise re-arm it for a spurious second rebrief.) */
+  private scheduleRebrief(id: AgentId): void {
+    this.needsRebrief.add(id);
+    this.agentLastRebriefHeuristicAt.set(id, Date.now());
+  }
+
+  /** Post-compaction rebrief heuristic: a sharp `used` drop on a usage_update frame means a
+   *  compaction likely happened OUTSIDE the controller-triggered path (manual /compact or a
+   *  harness-internal compaction), where B-core's compact_completed signal never fires. Schedule a
+   *  rebrief so the next real prompt re-injects the briefing. */
+  private maybeRebriefOnUsageDrop(id: AgentId, source: "usage_update" | "token_count", prevUsed: number, newUsed: number): void {
+    // ONLY usage_update is cumulative occupancy. Codex token_count.total_tokens is per-request and
+    // swings every turn, so a token_count drop is normal and must never trigger a rebrief.
+    if (source !== "usage_update") return;
+    if (prevUsed < REBRIEF_DROP_PREV_FLOOR) return; // prior occupancy too small for a drop to matter
+    if (newUsed > prevUsed * REBRIEF_DROP_RATIO) return; // not a sharp enough fall
+    const last = this.agentLastRebriefHeuristicAt.get(id);
+    if (last !== undefined && Date.now() - last < REBRIEF_DROP_COOLDOWN_MS) return; // dedup / collapse multi-frame drops
+    this.scheduleRebrief(id);
+    this.log(`usage-drop rebrief heuristic: ${id} used ${prevUsed}->${newUsed}; scheduling rebrief on next prompt`);
   }
 
   private updateAgentCommands(id: AgentId, commands: string[]): void {
@@ -377,6 +419,7 @@ export class ControlPlane {
     this.agentResolvedModel.delete(id);
     this.agentAdvertisedCommands.delete(id);
     this.agentLastCompactAt.delete(id);
+    this.agentLastRebriefHeuristicAt.delete(id);
     this.agentNearLimitWarnedAt.delete(id);
     this.compactInFlight.delete(id);
     // A pending rebrief is moot once the agent is stopped/cleared; a fresh respawn re-briefs anyway.
@@ -441,7 +484,7 @@ export class ControlPlane {
       try {
         const stopReason = await this.sendBarePrompt(agentId, "/compact", { reason });
         if (stopReason === "end_turn") {
-          this.needsRebrief.add(agentId);
+          this.scheduleRebrief(agentId);
           this.emit({ kind: "compact_completed", agent: agentId, ts: Date.now() });
         } else {
           this.emit({ kind: "compact_failed", agent: agentId, error: `compaction did not complete (stopReason=${stopReason ?? "unknown"})`, ts: Date.now() });

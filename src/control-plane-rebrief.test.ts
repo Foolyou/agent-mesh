@@ -251,3 +251,108 @@ test("over-threshold drainPendingMail compacts first, then the SAME drain prompt
     member.finishCurrent("end_turn");
   });
 });
+
+// ── B-heuristic: usage-drop rebrief (covers manual /compact + harness-internal compaction) ──────
+
+const usageFrame = (used: number, size: number, source: "usage_update" | "token_count") =>
+  ({ used, size, percent: used / size, source });
+
+test("usage_update sharp drop schedules a rebrief; next real prompt carries the briefing", async () => {
+  await withPlane(async (cp, conns) => {
+    const member = conns.member;
+    // Prior occupancy high, then a sharp drop (a compaction the controller did NOT trigger).
+    member.opts.onContextUsage?.(usageFrame(90_000, 100_000, "usage_update"));
+    member.opts.onContextUsage?.(usageFrame(8_000, 100_000, "usage_update"));
+    expect((cp as any).needsRebrief.has("member")).toBe(true);
+
+    const p = cp.prompt("member", "after manual compact");
+    await tick();
+    expect(lastText(member)).toContain(REBRIEF_MARK);
+    expect(lastText(member)).toContain("[MESH BRIEFING]");
+    member.finishCurrent("end_turn");
+    await p;
+  });
+});
+
+test("token_count drop NEVER schedules a rebrief (per-request, not cumulative)", async () => {
+  await withPlane(async (cp, conns) => {
+    const member = conns.member;
+    member.opts.onContextUsage?.(usageFrame(90_000, 100_000, "usage_update")); // prior occupancy
+    // A big token_count fall is normal per-request noise — must be ignored.
+    member.opts.onContextUsage?.(usageFrame(3_000, 200_000, "token_count"));
+    expect((cp as any).needsRebrief.has("member")).toBe(false);
+
+    const p = cp.prompt("member", "next");
+    await tick();
+    expect(lastText(member)).not.toContain(REBRIEF_MARK);
+    member.finishCurrent("end_turn");
+    await p;
+  });
+});
+
+test("usage_update drops that are too small, below the floor, or rising do not rebrief", async () => {
+  await withPlane(async (cp, conns) => {
+    const member = conns.member;
+    // Below the prior-occupancy floor (30k < 40k): a drop from here is ignored.
+    member.opts.onContextUsage?.(usageFrame(30_000, 100_000, "usage_update"));
+    member.opts.onContextUsage?.(usageFrame(2_000, 100_000, "usage_update"));
+    expect((cp as any).needsRebrief.has("member")).toBe(false);
+    // Rising usage: not a drop.
+    member.opts.onContextUsage?.(usageFrame(90_000, 100_000, "usage_update"));
+    expect((cp as any).needsRebrief.has("member")).toBe(false);
+    // A shallow fall (90k -> 60k, > 50%): not sharp enough.
+    member.opts.onContextUsage?.(usageFrame(60_000, 100_000, "usage_update"));
+    expect((cp as any).needsRebrief.has("member")).toBe(false);
+  });
+});
+
+test("controller compact event + post-compact usage drop produce exactly ONE rebrief (dedup)", async () => {
+  await withPlane(async (cp, conns) => {
+    const member = conns.member;
+    seedOverThreshold(cp, "member"); // advertises compact + seeds used=90_000
+
+    const real = cp.prompt("member", "real work");
+    await tick();
+    expect(texts(member)).toEqual(["/compact"]);
+
+    member.finishCurrent("end_turn"); // B-core: scheduleRebrief (flag + cooldown stamp)
+    // Harness emits its post-compact usage drop right after — it must be SUPPRESSED by the cooldown,
+    // not re-arm needsRebrief for a second rebrief.
+    member.opts.onContextUsage?.(usageFrame(5_000, 100_000, "usage_update"));
+    await tick();
+
+    const first = lastText(member);
+    expect(first).toContain(REBRIEF_MARK); // the held real prompt carries the (single) rebrief
+    member.finishCurrent("end_turn");
+    await real;
+
+    // Second prompt must NOT be rebriefed again — the flag was consumed once and the drop was deduped.
+    const p2 = cp.prompt("member", "again");
+    await tick();
+    expect(lastText(member)).not.toContain(REBRIEF_MARK);
+    member.finishCurrent("end_turn");
+    await p2;
+  });
+});
+
+test("multi-frame usage drops within cooldown collapse to a single rebrief", async () => {
+  await withPlane(async (cp, conns) => {
+    const member = conns.member;
+    member.opts.onContextUsage?.(usageFrame(90_000, 100_000, "usage_update"));
+    member.opts.onContextUsage?.(usageFrame(8_000, 100_000, "usage_update")); // fires
+    expect((cp as any).needsRebrief.has("member")).toBe(true);
+
+    // Consume the rebrief.
+    const p = cp.prompt("member", "x");
+    await tick();
+    expect(lastText(member)).toContain(REBRIEF_MARK);
+    member.finishCurrent("end_turn");
+    await p;
+    expect((cp as any).needsRebrief.has("member")).toBe(false);
+
+    // A second qualifying drop within the cooldown must NOT re-arm the flag.
+    member.opts.onContextUsage?.(usageFrame(90_000, 100_000, "usage_update"));
+    member.opts.onContextUsage?.(usageFrame(8_000, 100_000, "usage_update"));
+    expect((cp as any).needsRebrief.has("member")).toBe(false);
+  });
+});

@@ -92,7 +92,7 @@ test("known 1M model: early under-reported 200K size does not compact (table is 
   await withControlPlane(async (cp, conn, events) => {
     conn.opts.onAvailableCommands?.(["compact", "init"]);
     // claude-agent-acp's early frame: heavy used, but the harness still reports the 200K default.
-    conn.opts.onContextUsage?.({ used: 230331, size: 200000, percent: 230331 / 200000 });
+    conn.opts.onContextUsage?.({ used: 230331, size: 200000, percent: 230331 / 200000, source: "usage_update" });
     await tick();
 
     const usage = cp.getAgentContextUsage("router");
@@ -108,7 +108,7 @@ test("known 1M model: early under-reported 200K size does not compact (table is 
 test("known 1M model: real 90% usage compacts even when the harness reports 200K", async () => {
   await withControlPlane(async (cp, conn, events) => {
     conn.opts.onAvailableCommands?.(["compact"]);
-    conn.opts.onContextUsage?.({ used: 910000, size: 200000, percent: 910000 / 200000 });
+    conn.opts.onContextUsage?.({ used: 910000, size: 200000, percent: 910000 / 200000, source: "usage_update" });
     await tick();
 
     expect(cp.getAgentContextUsage("router")?.size).toBe(1_000_000);
@@ -122,7 +122,7 @@ test("known 200K model (Opus 4.1) still compacts over threshold", async () => {
   await withControlPlane(async (cp, conn, events) => {
     conn.opts.onAvailableCommands?.(["compact"]);
     await cp.setModel("router", "claude-opus-4-1");
-    conn.opts.onContextUsage?.({ used: 190000, size: 200000, percent: 0.95 });
+    conn.opts.onContextUsage?.({ used: 190000, size: 200000, percent: 0.95, source: "usage_update" });
     await tick();
 
     expect(cp.getAgentContextUsage("router")?.size).toBe(200000);
@@ -134,13 +134,13 @@ test("model switch from 1M to 200K does not leak the 1M denominator", async () =
   await withControlPlane(async (cp, conn, events) => {
     conn.opts.onAvailableCommands?.(["compact"]);
     // Establish the 1M window on Opus 4.8.
-    conn.opts.onContextUsage?.({ used: 100000, size: 200000, percent: 0.5 });
+    conn.opts.onContextUsage?.({ used: 100000, size: 200000, percent: 0.5, source: "usage_update" });
     await tick();
     expect(cp.getAgentContextUsage("router")?.size).toBe(1_000_000);
 
     // Switch to a 200K model; a subsequent frame must adopt the 200K window, not keep 1M.
     await cp.setModel("router", "claude-opus-4-1");
-    conn.opts.onContextUsage?.({ used: 190000, size: 200000, percent: 0.95 });
+    conn.opts.onContextUsage?.({ used: 190000, size: 200000, percent: 0.95, source: "usage_update" });
     await tick();
 
     expect(cp.getAgentContextUsage("router")?.size).toBe(200000);
@@ -151,12 +151,12 @@ test("model switch from 1M to 200K does not leak the 1M denominator", async () =
 
 test("model switch to an unknown model drops the sticky 1M and uses the reported size", async () => {
   await withControlPlane(async (cp, conn) => {
-    conn.opts.onContextUsage?.({ used: 100000, size: 200000, percent: 0.5 });
+    conn.opts.onContextUsage?.({ used: 100000, size: 200000, percent: 0.5, source: "usage_update" });
     await tick();
     expect(cp.getAgentContextUsage("router")?.size).toBe(1_000_000);
 
     await cp.setModel("router", "mystery-model");
-    conn.opts.onContextUsage?.({ used: 50000, size: 250000, percent: 0.2 });
+    conn.opts.onContextUsage?.({ used: 50000, size: 250000, percent: 0.2, source: "usage_update" });
     await tick();
     expect(cp.getAgentContextUsage("router")?.size).toBe(250000); // reported, not the prior 1M
   });
@@ -165,16 +165,16 @@ test("model switch to an unknown model drops the sticky 1M and uses the reported
 test("unknown model keeps the window monotonic across frames", async () => {
   await withControlPlane(async (cp, conn) => {
     await cp.setModel("router", "mystery-model");
-    conn.opts.onContextUsage?.({ used: 10000, size: 200000, percent: 0.05 });
+    conn.opts.onContextUsage?.({ used: 10000, size: 200000, percent: 0.05, source: "usage_update" });
     await tick();
     expect(cp.getAgentContextUsage("router")?.size).toBe(200000);
 
-    conn.opts.onContextUsage?.({ used: 20000, size: 1_000_000, percent: 0.02 });
+    conn.opts.onContextUsage?.({ used: 20000, size: 1_000_000, percent: 0.02, source: "usage_update" });
     await tick();
     expect(cp.getAgentContextUsage("router")?.size).toBe(1_000_000);
 
     // A later, smaller frame must not shrink the established window.
-    conn.opts.onContextUsage?.({ used: 30000, size: 200000, percent: 0.15 });
+    conn.opts.onContextUsage?.({ used: 30000, size: 200000, percent: 0.15, source: "usage_update" });
     await tick();
     expect(cp.getAgentContextUsage("router")?.size).toBe(1_000_000);
   });
@@ -183,7 +183,7 @@ test("unknown model keeps the window monotonic across frames", async () => {
 test("snapshotEvents replays the normalized usage so reattach restores the chip", async () => {
   await withControlPlane(async (cp, conn) => {
     conn.opts.onAvailableCommands?.(["compact"]);
-    conn.opts.onContextUsage?.({ used: 230331, size: 200000, percent: 1.15 });
+    conn.opts.onContextUsage?.({ used: 230331, size: 200000, percent: 1.15, source: "usage_update" });
     await tick();
 
     const snap = (cp as any).snapshotEvents() as any[];
@@ -195,7 +195,7 @@ test("snapshotEvents replays the normalized usage so reattach restores the chip"
 
 test("force respawn clears the sticky window so it recomputes fresh", async () => {
   await withControlPlane(async (cp, conn) => {
-    conn.opts.onContextUsage?.({ used: 100000, size: 200000, percent: 0.5 });
+    conn.opts.onContextUsage?.({ used: 100000, size: 200000, percent: 0.5, source: "usage_update" });
     await tick();
     expect(cp.getAgentContextUsage("router")?.size).toBe(1_000_000);
 
@@ -282,7 +282,7 @@ test("claude agent with NO configured/resolved model falls back to the 1M window
   const session = { sessionId: "s-router", models: { currentModelId: "default", availableModels: [{ modelId: "default", name: "Default" }] } };
   await withHarnessAgent("claude", undefined, session, async (cp, conn, events) => {
     conn.opts.onAvailableCommands?.(["compact"]);
-    conn.opts.onContextUsage?.({ used: 230331, size: 200000, percent: 230331 / 200000 });
+    conn.opts.onContextUsage?.({ used: 230331, size: 200000, percent: 230331 / 200000, source: "usage_update" });
     await tick();
     expect(cp.getAgentContextUsage("router")?.size).toBe(1_000_000);
     expect(cp.getAgentContextUsage("router")?.percent).toBeCloseTo(0.23, 2);
@@ -297,7 +297,7 @@ test("claude SDK init model takes precedence over the 1M harness default (Opus 4
   await withHarnessAgent("claude", undefined, session, async (cp, conn, events) => {
     conn.opts.onAvailableCommands?.(["compact"]);
     conn.opts.onExtNotification?.("_claude/sdkMessage", { type: "system", subtype: "init", model: "claude-opus-4-1" }, undefined);
-    conn.opts.onContextUsage?.({ used: 190000, size: 200000, percent: 0.95 });
+    conn.opts.onContextUsage?.({ used: 190000, size: 200000, percent: 0.95, source: "usage_update" });
     await tick();
     expect(cp.getAgentContextUsage("router")?.size).toBe(200000); // real Opus 4.1 window, not 1M
     expect(compactStarted(events)).toBe(true); // 95% of the real 200K window
@@ -309,7 +309,7 @@ test("codex agent is unaffected by the claude default: keeps its reported model_
   // keep that reported size and never inherit the claude 1M fallback.
   const session = { sessionId: "s-router" };
   await withHarnessAgent("codex", undefined, session, async (cp, conn) => {
-    conn.opts.onContextUsage?.({ used: 5337, size: 258400, percent: 5337 / 258400 });
+    conn.opts.onContextUsage?.({ used: 5337, size: 258400, percent: 5337 / 258400, source: "usage_update" });
     await tick();
     expect(cp.getAgentContextUsage("router")?.size).toBe(258400); // reported codex window, not 1M
   });
@@ -318,7 +318,7 @@ test("codex agent is unaffected by the claude default: keeps its reported model_
 test("config model 'sonnet[1m]' with NO advertised models normalizes to the 1M window", async () => {
   // Session advertises no models -> sessionModels stays empty -> the configured alias is used.
   await withAgentModel("sonnet[1m]", { sessionId: "s-router" }, async (cp, conn) => {
-    conn.opts.onContextUsage?.({ used: 100000, size: 200000, percent: 0.5 });
+    conn.opts.onContextUsage?.({ used: 100000, size: 200000, percent: 0.5, source: "usage_update" });
     await tick();
     expect(cp.getAgentContextUsage("router")?.size).toBe(1_000_000);
     expect(cp.getAgentContextUsage("router")?.percent).toBeCloseTo(0.1, 2);
@@ -331,7 +331,7 @@ test("advertised 'default' shadowing config 'sonnet[1m]' still resolves 1M via c
     models: { currentModelId: "default", availableModels: [{ modelId: "default", name: "Default" }] },
   };
   await withAgentModel("sonnet[1m]", session, async (cp, conn) => {
-    conn.opts.onContextUsage?.({ used: 100000, size: 200000, percent: 0.5 });
+    conn.opts.onContextUsage?.({ used: 100000, size: 200000, percent: 0.5, source: "usage_update" });
     await tick();
     // advertised "default" → unknown window; falls back to the configured sonnet[1m] → 1M.
     expect(cp.getAgentContextUsage("router")?.size).toBe(1_000_000);

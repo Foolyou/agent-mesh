@@ -23,10 +23,28 @@ test("recordStreamState tracks usage and advertised commands for control-plane c
 
   expect((c as any).contextUsage).toEqual({ used: 23, size: 100, percent: 0.23 });
   expect(Array.from((c as any).advertisedCommands)).toEqual(["compact", "review"]);
+  // The callback payload is source-tagged (usage_update here) so the control plane's drop heuristic
+  // can distinguish cumulative usage_update frames from per-request token_count frames.
   expect(calls).toEqual([
-    ["usage", { used: 23, size: 100, percent: 0.23 }],
+    ["usage", { used: 23, size: 100, percent: 0.23, source: "usage_update" }],
     ["commands", ["compact", "review"]],
   ]);
+});
+
+test("recordStreamState tags token_count frames with source token_count (per-request, not cumulative)", () => {
+  const calls: any[] = [];
+  const c = Object.create(AcpAgentConnection.prototype) as AcpAgentConnection;
+  (c as any).id = "a";
+  (c as any).contextUsage = null;
+  (c as any).advertisedCommands = new Set<string>();
+  (c as any).opts = { onContextUsage: (usage: any) => calls.push(usage) };
+
+  (c as any).recordStreamState({
+    sessionUpdate: "event_msg",
+    payload: { type: "token_count", last_token_usage: { total_tokens: 1234 }, model_context_window: 200000 },
+  });
+
+  expect(calls).toEqual([{ used: 1234, size: 200000, percent: 1234 / 200000, source: "token_count" }]);
 });
 
 test("prompt constructs ACP text plus readable image blocks and skips missing files", async () => {

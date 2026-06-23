@@ -75,7 +75,7 @@ class CompactGatedConnection {
   }
   /** Push context usage over the auto-compact threshold (size >= MIN window, used/size >= 85%). */
   reportOverThreshold(): void {
-    this.opts.onContextUsage?.({ used: 90_000, size: 100_000, percent: 0.9 });
+    this.opts.onContextUsage?.({ used: 90_000, size: 100_000, percent: 0.9, source: "usage_update" });
   }
   prompt(text: string): Promise<unknown> {
     this.prompts.push(text);

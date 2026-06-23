@@ -179,7 +179,7 @@ test("reactive + pre-send eligibility back-to-back produce a single compact", as
     const member = conns.member;
     // Reactive path: usage update while idle triggers auto-threshold compaction.
     member.opts.onAvailableCommands?.(["compact"]);
-    member.opts.onContextUsage?.({ used: 90_000, size: 100_000, percent: 0.9 });
+    member.opts.onContextUsage?.({ used: 90_000, size: 100_000, percent: 0.9, source: "usage_update" });
     await tick();
     expect(texts(member)).toEqual(["/compact"]);
     expect(compactStarts(events)).toHaveLength(1);
