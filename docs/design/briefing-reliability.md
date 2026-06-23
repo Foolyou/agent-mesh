@@ -41,23 +41,34 @@ without changing the fresh-session first-briefing behavior and without a hard va
 `const instructions = me.instructions?.trim(); if (instructions) { … }` block (`:133-138`).
 
 **Change:** replace the two silent `if (present)` blocks with always-emitted sections that state
-presence *or* absence explicitly. Sketch (illustrative, not final code):
+presence *or* absence explicitly. The absence wording is **scoped strictly to the mesh
+configuration** — it must NOT imply the agent has no instructions at all, since system / developer /
+harness / project (CLAUDE.md / AGENTS.md) / user instructions still reach the agent through their own
+channels and outrank anything here. Sketch (illustrative, not final code):
 
 - Charter section (`:127`):
   - if `charter` present → unchanged ("Team charter — … Follow it in all your work:" + indented body).
-  - if absent → emit: `Team charter — this mesh has NO charter defined. There is no shared team
-    charter; do not invent one. Treat only the roster/edges/role facts above as authoritative.`
+  - if absent → emit: `Team charter — this mesh configuration has no team charter defined. There is
+    no shared team charter for this mesh; do not invent one. Treat only the roster/edges/role facts
+    above as the authoritative mesh setup.`
 - Role-instructions section (`:133`):
   - if `instructions` present → unchanged.
-  - if absent → emit: `Your role-specific instructions — none are defined for your role. You have
-    no private role instructions beyond the mesh norms below; do not infer extra duties.`
+  - if absent → emit: `Your role-specific instructions — this mesh configuration defines no
+    per-agent role instructions for you. Continue following the system, developer, harness, project,
+    and user instructions you receive through their normal channels; this mesh simply adds no extra
+    private role instructions. Do not infer extra duties from the absence.`
 
-The factual baseline already injected **stays untouched**: roster (`:74-75`), router line (`:77`),
-per-agent harness/role/canMail (built into `roster`), project is implicit in roster. We only add
-explicit negative statements; we do **not** remove or reorder existing fact lines.
+The factual baseline already injected **stays untouched**: roster (`:74-75` — each line is
+`id — harness, role; can mail: …`, `:13`), router line (`:77`). NOTE: the roster line does **not**
+include each agent's `project` path (confirmed: no `project` token in `src/mesh-briefing.ts`), so we
+do not claim project is conveyed by the briefing; whether to surface `project` is an open question
+(§10), not part of this implementation. We only add explicit negative statements; we do **not**
+remove or reorder existing fact lines.
 
-**Why not silent omission:** an explicit "NO charter defined" line is itself the grounding signal —
-the model sees the field was checked and is empty, rather than seeing nothing and filling the gap.
+**Why not silent omission:** an explicit "this mesh configuration has no team charter defined" line
+is itself the grounding signal — the model sees the field was checked and is empty, rather than
+seeing nothing and filling the gap. The wording deliberately frames the gap as a *mesh-config* fact,
+not a global absence of guidance.
 
 ### A2. Identity/charter discipline line in the briefing norms
 
@@ -148,39 +159,54 @@ to call it is logged as a **follow-up risk** (§9), out of scope here.
 (`:369-377`, where compaction/usage state is already reset on stop) so a stopped/cleared agent does
 not carry a stale rebrief.
 
-### B3. Usage-drop heuristic in `updateAgentUsage()`
+### B3. Source-tagged usage-drop heuristic (usage_update only)
 
-**File:** `src/control-plane.ts`
-**Anchor:** `updateAgentUsage()` (`:349-364`). The previous usage is readable via
-`this.agentContextUsage.get(id)` **before** the overwrite at `:361`.
+**File:** `src/control-plane.ts` + `src/acp/client.ts`
+**Anchor:** `updateAgentUsage()` (`:349-364`); the feed from `src/acp/client.ts:144`
+`onContextUsage` wired at `src/control-plane.ts:1167`.
 
-**Change:** between reading the prior usage and the `.set` at `:361`, compute a drop heuristic on the
-`usage_update`-derived `used` (NOT codex `token_count`; `updateAgentUsage` is only ever fed from
-`onContextUsage` → `parseUsageUpdate`, `src/acp/usage-compat.ts:18`, and the
-`src/control-plane.ts:1167` wiring). Sketch:
+**Critical correction (reviewer Medium #1):** `updateAgentUsage()` is **NOT** fed only from
+`parseUsageUpdate`. `recordStreamState()` (`src/acp/client.ts:274-292`) calls the **same**
+`onContextUsage` callback for **both** sources — `parseUsageUpdate` (`:280`) and `parseTokenCount`
+(`:291`). For codex, `token_count.total_tokens` is **per-request, not cumulative context occupancy**
+(`src/acp/usage-compat.ts:29-35`), so it naturally rises and falls every turn. Running the drop
+heuristic on the merged stream would fire `needsRebrief` on ordinary `token_count` fluctuation —
+a false-positive every turn. **Source MUST be distinguished.**
+
+**Change (two parts):**
+1. **Tag the source at the boundary.** Extend the `onContextUsage` payload with a discriminator,
+   e.g. `onContextUsage?({ used, size, percent, cost?, source: "usage_update" | "token_count" })`
+   (`src/acp/client.ts:144`), and set it at the two call sites in `recordStreamState`
+   (`:280` → `"usage_update"`, `:291` → `"token_count"`). `updateAgentUsage()` threads `source`
+   through; the existing normalize/emit/`maybeAutoCompact` behavior is unchanged for both sources.
+   (Alternative considered: a dedicated `onUsageUpdate`-only callback; rejected because the
+   single-callback + tag keeps the existing window-normalization in one place.)
+2. **Gate the heuristic on `source === "usage_update"`.** Between reading the prior usage and the
+   `.set` at `:361`, run the drop check **only** for the `usage_update` source. Sketch:
 
 ```
 const prev = this.agentContextUsage.get(id);
 // … existing normalize …
-if (prev && this.looksLikeCompaction(prev.used, normalized.used, normalized.size)) {
-  this.markNeedsRebrief(id);   // source: usage-drop heuristic
+if (source === "usage_update" && prev && this.looksLikeCompaction(prev.used, normalized.used, normalized.size)) {
+  this.markNeedsRebrief(id);   // source: usage_update drop heuristic only
 }
 this.agentContextUsage.set(id, normalized);
 ```
 
 `looksLikeCompaction(prevUsed, newUsed, window)` returns true only when **all** hold:
 - `prevUsed >= MIN_AUTO_COMPACT_CONTEXT_WINDOW * DROP_PREV_FLOOR_FRAC` — prior occupancy was large
-  enough that a drop is meaningful (avoids firing on tiny early-session jitter);
-- `newUsed <= prevUsed * DROP_RATIO` — occupancy fell to a small fraction;
+  enough that a drop is worth acting on (filters tiny early-session jitter). This is a *permissive*
+  floor, not proof the context was near the compaction threshold — see §7.
+- `newUsed <= prevUsed * DROP_RATIO` — occupancy fell to a small fraction between frames;
 - a short **drop cooldown** has elapsed since the last heuristic fire for this agent (a new
   `agentLastRebriefHeuristicAt` map), so a noisy multi-frame drop sets the flag once.
 
 Add an inline comment block marking this **heuristic / harness-dependent**: it assumes the harness
 emits a post-compact `usage_update` with a sharply lower `used`. If a harness only emits
-`token_count` (per-request, see `src/acp/usage-compat.ts:29-35`) this path never fires — that is
-acceptable because B1 still covers controller-triggered compaction.
+`token_count` this path never fires — acceptable because B1 still covers controller-triggered
+compaction, and the A2 discipline lets the agent self-recall via `mesh_briefing`.
 
-**Threshold values (see §6 rationale):** `DROP_RATIO = 0.5`, `DROP_PREV_FLOOR_FRAC = 0.5`
+**Threshold values (see §7 rationale):** `DROP_RATIO = 0.5`, `DROP_PREV_FLOOR_FRAC = 0.5`
 (i.e. prior `used ≥ 40_000` given `MIN_AUTO_COMPACT_CONTEXT_WINDOW = 80_000`), drop cooldown
 `= COMPACT_COOLDOWN_MS` (180_000) reused. All as named constants near `COMPACT_COOLDOWN_MS`
 (`src/control-plane.ts:24`).
@@ -219,6 +245,24 @@ by the `mesh_briefing` tool handler (`meshBriefingText`, "authoritative over any
 you remember"). The rebrief rides the **next real prompt** (mail wake / operator / drain) — no extra
 turn is spawned.
 
+**Drain-path ordering fix (reviewer Medium #2).** `compose()` consuming `needsRebrief` is necessary
+but not sufficient: the *order* of compose vs. the pre-send compaction guard matters. The two
+real-prompt paths currently differ:
+- `sendPromptWithResumeFallback` (`:1476-1494`) — **correct order**: `compactBeforePrompt(id)` is
+  awaited at `:1477` *before* `compose(id, text)` at `:1494`. So if the pre-send `/compact` succeeds
+  and sets `needsRebrief`, the *same* prompt's `compose` consumes it → rebrief rides that prompt. ✓
+- `drainPendingMail` (`:1401-1415`) — **inverted order**: it calls `compose(...)` at `:1403` *first*,
+  then the pre-send guard `compactBeforePrompt(id)` runs at `:1416` inside the `send` closure. So a
+  pre-send `/compact` that sets `needsRebrief` arrives *after* this drain prompt was already composed
+  → the rebrief slips to the next prompt instead of this drain. ✗
+
+**Change:** in `drainPendingMail`, move the `compose()` call to *after* `compactBeforePrompt(id)`
+settles — i.e. compose the drain text **inside** the `send` closure (after the guard await and the
+`conns.get(id) !== conn` supersede re-check), so it mirrors `sendPromptWithResumeFallback`'s order.
+Equivalently, route the drain through the unified `sendPromptWithResumeFallback` path. Either way the
+invariant is: **compose runs after the pre-send compaction guard has settled**, on every real-prompt
+path, so a freshly-set `needsRebrief` always rides the very prompt that triggered the compaction.
+
 ### B5. Tests
 
 New/extended test files (test edits are allowed only in the implementation phase, not now):
@@ -230,12 +274,22 @@ New/extended test files (test edits are allowed only in the implementation phase
      prompt is prefixed with a fresh briefing.
   4. Usage drop (`used` 90k→5k on a ≥80k window) via `usage_update` → `needsRebrief` set, next prompt
      rebriefed; a small/no drop does NOT set it; repeated drop frames within cooldown set it once.
-  5. An already-`loaded`/`briefed` session still rebriefs when `needsRebrief` is set (B4 runs before
+  5. **`token_count`-sourced drop does NOT set `needsRebrief`** (reviewer Medium #1): feed a large
+     `token_count` decrease (codex per-request style, e.g. 60k→3k) through the `"token_count"` source
+     and assert the flag stays clear and no rebrief occurs.
+  6. **Drain ordering** (reviewer Medium #2): an over-threshold `drainPendingMail` runs `/compact`
+     first, and the *same* drain prompt is then delivered carrying the rebrief prefix (not deferred to
+     the next prompt). Pair it with the analogous already-correct `sendPromptWithResumeFallback` case.
+  7. An already-`loaded`/`briefed` session still rebriefs when `needsRebrief` is set (B4 runs before
      the early returns).
-  6. `sendBarePrompt("/compact")` itself is never prefixed with a briefing (bypasses `compose`).
-- `src/mesh-briefing.test.ts`: charter-absent → briefing contains the explicit "NO charter defined"
-  line; instructions-absent → explicit "none are defined" line; both-present → unchanged; norms card
-  contains the A2 identity-discipline bullet.
+  8. `sendBarePrompt("/compact")` itself is never prefixed with a briefing (bypasses `compose`).
+- `src/mesh-briefing.test.ts`: charter-absent → briefing contains the explicit "this mesh
+  configuration has no team charter defined" line; instructions-absent → explicit "defines no
+  per-agent role instructions" line; both-present → unchanged; norms card contains the A2
+  identity-discipline bullet. **Absence wording assertion (reviewer Medium #3):** the
+  instructions-absent line must reference "system, developer, harness, project, and user
+  instructions … through their normal channels" and must NOT assert the agent has no instructions /
+  must NOT negate higher-priority or project (CLAUDE.md / AGENTS.md) guidance.
 - `src/mesh-validate.test.ts` (or `diagnostics*.test.ts`): `collectMeshConfigWarnings` returns notes
   for missing charter/instructions; `validateMeshConfig` still passes (no throw) for those configs;
   diagnostics emits a non-fatal `warning` check for a valid-but-charterless mesh.
@@ -244,26 +298,32 @@ New/extended test files (test edits are allowed only in the implementation phase
 
 ## 4. Commit split plan
 
-Two independent, separately-revertable commits (A before B; A has zero dependency on B, B has zero
-dependency on A):
+Three independent, separately-revertable commits (per reviewer Low guidance). A has zero dependency
+on B; within B, **B-heuristic depends on B-core** (it reuses `markNeedsRebrief`/`needsRebrief`) but
+B-core stands alone, so B-heuristic can be reverted independently while B-core stays:
 
-- **Commit 1 — `feat(briefing): ground empty charter/instructions + identity discipline (A1/A2/A3)`**
-  - `src/mesh-briefing.ts` (A1 explicit sections, A2 norms bullet)
+- **Commit 1 — A: `feat(briefing): ground empty charter/instructions + identity discipline`**
+  - `src/mesh-briefing.ts` (A1 explicit mesh-config-scoped absence sections, A2 norms bullet)
   - `src/mesh-validate.ts` (A3 `collectMeshConfigWarnings`)
-  - `src/diagnostics.ts` + `src/diagnostics-sources.ts` (A3 surfacing)
+  - `src/diagnostics.ts` + `src/diagnostics-sources.ts` (A3 doctor surfacing)
   - tests: `mesh-briefing.test.ts`, `mesh-validate`/`diagnostics` tests
-- **Commit 2 — `feat(briefing): auto-rebrief after compaction (B1–B5)`**
-  - `src/control-plane.ts` (B1 gate, B2 flag, B3 heuristic, B4 compose consume)
+- **Commit 2 — B-core: `feat(briefing): rebrief after controller-triggered compaction`**
+  - `src/control-plane.ts` (B1 stopReason gate in `runCompact` + `sendBarePrompt` return type;
+    B2 `needsRebrief` flag; B4 `compose()` consume + drain-path ordering fix)
   - `src/acp/client.ts` — only if B1 needs a typed `stopReason` surfaced (prompt already returns it;
-    likely no change beyond the existing return)
-  - tests: control-plane rebrief tests
+    likely no change)
+  - tests: control-plane tests for cancelled/superseded/`end_turn`, drain ordering, loaded/briefed
+    rebrief, bare-`/compact` non-pollution
+- **Commit 3 — B-heuristic: `feat(briefing): source-tagged usage-drop rebrief heuristic`**
+  - `src/acp/client.ts` (B3 part 1: `source` tag on `onContextUsage` at `:280`/`:291`)
+  - `src/control-plane.ts` (B3 part 2: `looksLikeCompaction` gated on `source === "usage_update"`,
+    new threshold constants + `agentLastRebriefHeuristicAt`)
+  - tests: usage_update drop sets rebrief; `token_count` drop does NOT; cooldown collapses frames
 
-**Finer split (optional, only if review prefers):** B could split into B-core (B1+B2+B4: controller
-`end_turn`-gated rebrief) and B-heuristic (B3 usage-drop) as two commits, because B3 is the
-harness-dependent/heuristic part and a reviewer may want to land/measure the deterministic path first.
-Recommended only if the reviewer wants the heuristic isolated for independent rollback; otherwise one
-B commit keeps the feature coherent. Per per-commit-await-approval discipline, each commit STOPs for
-lead approval before the next.
+**Why this split:** B-heuristic is the harness-dependent / heuristic part and the most likely to need
+tuning or rollback; isolating it lets B-core's deterministic `end_turn`-gated rebrief land and be
+measured first, and lets B-heuristic be reverted alone without losing controller-triggered rebrief.
+Per per-commit-await-approval discipline, each commit STOPs for lead approval before the next.
 
 ---
 
@@ -288,8 +348,10 @@ lead approval before the next.
 
 - **Rebrief size:** one `buildMeshBriefing()` output ≈ the first-briefing block. For a typical
   small mesh that's on the order of ~1–2 KB of text (roster + tools + norms card + charter/role if
-  present; charter/instructions capped at 4000 chars each by `mesh-validate.ts:62/81`). Worst case
-  (both maxed) ≈ a few KB. It is prepended to **one** real prompt, not added every turn.
+  present). **Worst case can exceed ~8 KB**: charter and per-agent instructions are each capped at
+  4000 chars (`mesh-validate.ts:62/81`), so both maxed ≈ 8 KB *plus* the roster + tools + norms-card
+  boilerplate on top. It is prepended to **one** real prompt, not added every turn, and only fires
+  after a compaction (i.e. right when occupancy just dropped).
 - **Frequency:** at most once per actual compaction. Compaction itself is rate-limited by
   `COMPACT_COOLDOWN_MS = 180_000` (3 min) and only fires near threshold (default `85%`,
   `auto-compact.ts:1`), so rebrief inherits that ceiling: ≤ 1 rebrief / 3 min / agent, and in
@@ -305,20 +367,24 @@ lead approval before the next.
 ## 7. usage-drop threshold rationale
 
 - `MIN_AUTO_COMPACT_CONTEXT_WINDOW = 80_000` (`auto-compact.ts:2`) is the existing floor below which
-  auto-compact is disabled — so a meaningful compaction only happens on windows ≥ 80k. Requiring
-  `prevUsed ≥ 40_000` (`DROP_PREV_FLOOR_FRAC = 0.5`) means we only treat a drop as compaction when the
-  prior occupancy was at least half that floor, filtering out small-context noise.
-- `DROP_RATIO = 0.5`: a real compaction summarizes a near-threshold context (≈85% of window) down to a
-  small fraction; observed post-compact `used` is typically a small residual. Requiring the new `used`
-  to be ≤ 50% of the previous is a conservative bar that ordinary turn-to-turn growth (which only ever
-  *increases* `used` within a turn) cannot satisfy — `used` dropping by half between frames is not
-  something normal accumulation produces; only a compaction or a session reset does.
+  auto-compact is disabled. Requiring `prevUsed ≥ 40_000` (`DROP_PREV_FLOOR_FRAC = 0.5`) only filters
+  out small-context noise — it is a **permissive** floor, **not** evidence the context was anywhere
+  near the compaction threshold. A drop from, say, 45k → 5k would qualify even though 45k may be well
+  under the 85% waterline. We accept this looseness because the cost of acting is one harmless rebrief
+  (see below); it is explicitly not a proof-of-compaction.
+- `DROP_RATIO = 0.5`: requiring the new `used` to be ≤ 50% of the previous frame's. Within a single
+  turn `used` generally accumulates upward, so a halving between frames is unusual for `usage_update`
+  — but this is a heuristic signal, not a guarantee; a harness could in principle emit a transient
+  lower frame for other reasons. Source-tagging (B3) already excludes the per-request `token_count`
+  stream, which is the main known source of legitimate large swings.
 - **Cooldown = `COMPACT_COOLDOWN_MS` (180_000):** post-compact a harness may emit several
   `usage_update` frames; reusing the compaction cooldown collapses them to a single rebrief.
-- These are **heuristic** constants, named and commented as such, and tunable. They are deliberately
-  conservative: a missed detection just means no auto-rebrief (the agent can still call `mesh_briefing`
-  via the A2 discipline), while a false positive only costs one harmless rebrief. Both failure modes
-  are low-harm, which justifies simple ratio thresholds over anything more elaborate.
+- These are **heuristic** constants, named and commented as such, and tunable. The asymmetric cost
+  structure is what justifies a simple ratio rule rather than anything more elaborate: a missed
+  detection just means no auto-rebrief (the agent can still call `mesh_briefing` via the A2
+  discipline), and a false positive costs exactly one harmless rebrief on the next prompt. We
+  deliberately do not claim the thresholds *detect compaction*; they detect a *large usage_update
+  drop*, which we treat as a cheap, best-effort rebrief trigger.
 
 ---
 
@@ -326,15 +392,17 @@ lead approval before the next.
 
 | Risk | Mitigation | Rollback |
 |---|---|---|
-| B3 heuristic false-positive (spurious rebrief) | conservative ratios + cooldown; rebrief is harmless (a few KB once) | revert Commit 2 (or just the B3 sub-commit if split) |
+| B3 heuristic false-positive (spurious rebrief) | source-tagging excludes `token_count`; conservative ratios + cooldown; rebrief is harmless | revert Commit 3 (B-heuristic) alone — B-core rebrief stays |
 | B3 false-negative (harness emits no usage drop, e.g. token_count-only) | B1 still rebriefs on controller-triggered `end_turn`; A2 lets agent self-recall | n/a (degrades to current behavior) |
 | `end_turn` token differs per harness | verify codex & claude both emit `end_turn` on `/compact` success during impl; if not, map per-harness success set | gate behind a known-success allowlist |
-| `sendBarePrompt` return-type change ripples | only compact callers use it; typed `string \| undefined` | revert Commit 2 |
+| `sendBarePrompt` return-type change ripples | only compact callers use it; typed `string \| undefined` | revert Commit 2 (B-core) |
 | A1 wording leaks into snapshot tests | update the absent-case assertions (B5) | revert Commit 1 |
 | kill mid-`/compact` hang (pre-existing) | **not addressed this round**; logged as follow-up | — |
 
-**Rollback granularity:** A and B are independent commits; either can be reverted alone. If B is
-split, the usage-drop heuristic reverts independently of the deterministic `end_turn` path.
+**Rollback granularity:** three commits (A, B-core, B-heuristic). A is fully independent. B-core
+(deterministic `end_turn`-gated rebrief) stands alone. B-heuristic (source-tagged usage-drop) reverts
+independently of B-core, so a misbehaving heuristic can be dropped without losing controller-triggered
+rebrief.
 
 ---
 
@@ -362,6 +430,12 @@ split, the usage-drop heuristic reverts independently of the deterministic `end_
 - B1 success token: confirm both codex and claude report `stopReason === "end_turn"` on a successful
   `/compact` (the implementer will verify against a live `/compact` during the dev phase; if a harness
   uses a different success token, B1 uses a per-harness success allowlist instead of a bare equality).
-- A3 surface: is the doctor (`config.meshes` warning) the desired channel, or should missing-charter
-  also be a one-time `log`/event at mesh load? (Design picks doctor as least-intrusive.)
-- B split preference: single B commit (recommended) vs. B-core + B-heuristic.
+- A3 surface: design defaults to **doctor-only** (`config.meshes` warning), matching the lead's
+  stated preference. Open question: also emit a one-time `log`/event at mesh load for
+  missing-charter/instructions? Default = no (doctor-only); flagged for prdmgr to confirm.
+- **Project exposure (Low):** the briefing roster does not include each agent's `project` path
+  (confirmed, §2 A1). Should the roster line surface `project` so agents can ground "where do I
+  work"? Left as an open question — **not** included in this implementation; would be a separate
+  small change to the roster `map` (`src/mesh-briefing.ts:13`) if desired.
+- B split: now **3 commits** (A; B-core; B-heuristic) per reviewer Low guidance (§4); B-heuristic is
+  independently revertable. Confirm this is the desired granularity.
