@@ -240,6 +240,10 @@ export class ControlPlane {
   private sessionEfforts = new Map<AgentId, RuntimeEffortOptions>();
   /** Agents that have already received the one-time mesh briefing. */
   private briefed = new Set<AgentId>();
+  /** Agents that need the mesh briefing re-injected on their next real prompt — set after a
+   *  successful compaction (which may have summarized the original briefing out of history),
+   *  consumed by compose() ahead of the loaded/briefed early-returns. */
+  private needsRebrief = new Set<AgentId>();
   /** Agents whose current process was attached to a loaded ACP session. */
   private loadedSessions = new Set<AgentId>();
   /** Loaded sessions whose first prompt has not yet succeeded. */
@@ -375,6 +379,8 @@ export class ControlPlane {
     this.agentLastCompactAt.delete(id);
     this.agentNearLimitWarnedAt.delete(id);
     this.compactInFlight.delete(id);
+    // A pending rebrief is moot once the agent is stopped/cleared; a fresh respawn re-briefs anyway.
+    this.needsRebrief.delete(id);
   }
 
   private emitNearContextLimitWarning(id: AgentId, usage: { percent: number }): void {
@@ -420,7 +426,12 @@ export class ControlPlane {
   /** Start (or coalesce onto) a single /compact turn for one agent and return a promise
    *  that resolves — never rejects — when it settles. Telemetry mirrors the original
    *  reactive path; failures are surfaced as compact_failed and swallowed so callers that
-   *  await this (the pre-send guard) still go on to deliver the real prompt. */
+   *  await this (the pre-send guard) still go on to deliver the real prompt.
+   *
+   *  Only a "end_turn" stopReason counts as a real compaction: the harness ran /compact to
+   *  completion, so its summary may have dropped the original mesh briefing → mark needsRebrief.
+   *  A cancel/supersede also RESOLVES the prompt (it does not throw) but did NOT compact, so it
+   *  must not emit compact_completed nor set needsRebrief; it is surfaced as compact_failed. */
   private runCompact(agentId: AgentId, nowMs: number, reason: string): Promise<void> {
     const existing = this.compactInFlight.get(agentId);
     if (existing) return existing;
@@ -428,8 +439,13 @@ export class ControlPlane {
     this.emit({ kind: "compact_started", agent: agentId, reason, ts: nowMs });
     const run = (async () => {
       try {
-        await this.sendBarePrompt(agentId, "/compact", { reason });
-        this.emit({ kind: "compact_completed", agent: agentId, ts: Date.now() });
+        const stopReason = await this.sendBarePrompt(agentId, "/compact", { reason });
+        if (stopReason === "end_turn") {
+          this.needsRebrief.add(agentId);
+          this.emit({ kind: "compact_completed", agent: agentId, ts: Date.now() });
+        } else {
+          this.emit({ kind: "compact_failed", agent: agentId, error: `compaction did not complete (stopReason=${stopReason ?? "unknown"})`, ts: Date.now() });
+        }
       } catch (err) {
         this.emit({ kind: "compact_failed", agent: agentId, error: String(err), ts: Date.now() });
       }
@@ -789,6 +805,17 @@ export class ControlPlane {
   /** Prepend the one-time mesh briefing to an agent's very first prompt, so it knows
    *  it is part of a collaborating mesh before it does any work. */
   private compose(id: AgentId, text: string): string {
+    // Post-compaction rebrief: consumed BEFORE the loaded/briefed early-returns so a resumed or
+    // already-briefed agent still gets a fresh, authoritative briefing prefixed to its next real
+    // prompt (riding the prompt, no extra turn). Cleared on consume so it fires exactly once.
+    if (this.needsRebrief.has(id)) {
+      this.needsRebrief.delete(id);
+      const briefing = buildMeshBriefing(this.mesh, id);
+      if (briefing) {
+        this.briefed.add(id);
+        return `(Context was compacted; re-injecting the authoritative mesh briefing — this supersedes any earlier briefing you remember.)\n\n${briefing}\n\n---\n\n${text}`;
+      }
+    }
     if (this.loadedSessions.has(id)) return text;
     if (this.briefed.has(id)) return text;
     this.briefed.add(id);
@@ -866,7 +893,7 @@ export class ControlPlane {
    * First use: trigger ACP slash commands like "/compact" without the agent seeing
    * a "[MAIL #N from lead]:" wrapper that would make the slash detector miss it.
    */
-  async sendBarePrompt(agentId: AgentId, text: string, opts: { reason?: string } = {}): Promise<void> {
+  async sendBarePrompt(agentId: AgentId, text: string, opts: { reason?: string } = {}): Promise<string | undefined> {
     if (!this.mesh.agent(agentId)) throw new Error(`no such agent "${agentId}"`);
     const status = this.mesh.status(agentId);
     if (status === "dead" || status === "stopped") throw new Error(`agent "${agentId}" is ${status}`);
@@ -874,7 +901,10 @@ export class ControlPlane {
     if (!conn) throw new Error(`no connection for agent ${agentId}`);
     const turn = this.systemTurn(agentId, text, opts.reason);
     this.emit({ kind: "bare_prompt", agent: agentId, reason: opts.reason ?? "", ts: Date.now() });
-    await this.trackTurn(agentId, () => conn.prompt(text, [], turn)).finally(() => this.finishTurnHealth(agentId, turn));
+    // Return the turn's stopReason so callers (runCompact) can distinguish a real completion
+    // ("end_turn") from a cancel/supersede that also resolves but did NOT do the work.
+    const res = await this.trackTurn(agentId, () => conn.prompt(text, [], turn)).finally(() => this.finishTurnHealth(agentId, turn));
+    return (res as { stopReason?: string } | undefined)?.stopReason;
   }
 
   /** Remove a not-yet-started user/operator prompt from one agent's queue.
@@ -1400,17 +1430,21 @@ export class ControlPlane {
 
   private drainPendingMail(id: AgentId): void {
     if (!this.conns.get(id)) return;
-    const prompt = this.compose(
-      id,
-      "You may have pending mail that arrived while you were cold or spawning. Please call check_mail now and handle all pending messages.",
-    );
     // This path sends conn.prompt directly (bypassing sendPromptWithResumeFallback), so apply
     // the same pre-send compaction guard before delivering the drain prompt. Re-read the current
     // connection at send time: a /compact await can be superseded by a newSession/forceFresh, and
     // sending to the killed old conn would leak a turnCount (its prompt never settles).
+    //
+    // compose() runs INSIDE send (after the guard settles), matching sendPromptWithResumeFallback's
+    // order: an over-threshold drain compacts first, and if that compaction sets needsRebrief the
+    // SAME drain prompt carries the rebrief — rather than composing up-front and deferring it.
     const send = () => {
       const conn = this.conns.get(id);
       if (!conn) return;
+      const prompt = this.compose(
+        id,
+        "You may have pending mail that arrived while you were cold or spawning. Please call check_mail now and handle all pending messages.",
+      );
       this.trackTurn(id, () => conn.prompt(prompt)).catch((err) => this.log(`drainPendingMail(${id}) failed: ${String(err)}`));
     };
     const pending = this.compactBeforePrompt(id);
