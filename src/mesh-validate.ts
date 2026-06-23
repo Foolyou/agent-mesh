@@ -96,6 +96,24 @@ export function validateMeshConfig(config: MeshConfig): void {
   }
 }
 
+/** Non-fatal advisory notes about a config that already PASSES validateMeshConfig: things an
+ *  operator may want to know but that are perfectly valid — currently a missing team charter and
+ *  agents without per-agent role instructions. Pure; never throws and never affects the
+ *  validateMeshConfig pass/fail contract. Surfaced through diagnostics (the doctor), not the
+ *  validation path, so valid-but-charterless configs keep loading unchanged. */
+export function collectMeshConfigWarnings(config: MeshConfig): string[] {
+  const warnings: string[] = [];
+  if (!config.charter || !config.charter.trim()) {
+    warnings.push("no team charter defined (agents get a generic briefing without shared goals/norms)");
+  }
+  const agents = Array.isArray(config.agents) ? config.agents : [];
+  const withoutInstructions = agents.filter((a) => !a.instructions || !a.instructions.trim()).map((a) => a.id);
+  if (withoutInstructions.length) {
+    warnings.push(`no per-agent role instructions for: ${withoutInstructions.join(", ")}`);
+  }
+  return warnings;
+}
+
 export function validateAddEdge(config: MeshConfig, edgeInput: MeshEdgeInput, statusOf: (id: string) => AgentStatus | undefined = () => undefined): MeshEdge {
   const edge = normalizeMeshEdge(edgeInput);
   const ids = new Set(config.agents.map((a) => a.id));

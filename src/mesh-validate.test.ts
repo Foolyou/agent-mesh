@@ -1,6 +1,6 @@
 // src/mesh-validate.test.ts
 import { test, expect } from "bun:test";
-import { validateAddAgent, validateMeshConfig } from "./mesh-validate";
+import { validateAddAgent, validateMeshConfig, collectMeshConfigWarnings } from "./mesh-validate";
 import type { HarnessId, MeshConfig, ThinkingEffort } from "./acp/types";
 
 const ok: MeshConfig = {
@@ -14,6 +14,35 @@ const ok: MeshConfig = {
 
 test("accepts a valid mesh", () => {
   expect(() => validateMeshConfig(ok)).not.toThrow();
+});
+
+test("collectMeshConfigWarnings: flags missing charter and instructionless agents (non-fatal)", () => {
+  // The base `ok` config has no charter and no per-agent instructions: still VALID…
+  expect(() => validateMeshConfig(ok)).not.toThrow();
+  // …but advisable to know about.
+  const w = collectMeshConfigWarnings(ok);
+  expect(w.some((s) => /no team charter/i.test(s))).toBe(true);
+  expect(w.some((s) => /no per-agent role instructions for: r, m/.test(s))).toBe(true);
+});
+
+test("collectMeshConfigWarnings: silent when charter and all instructions are present", () => {
+  const full: MeshConfig = {
+    ...ok,
+    charter: "Ship it.",
+    agents: ok.agents.map((a) => ({ ...a, instructions: "do your part" })),
+  };
+  expect(collectMeshConfigWarnings(full)).toEqual([]);
+});
+
+test("collectMeshConfigWarnings: blank-after-trim charter/instructions count as missing", () => {
+  const blank: MeshConfig = {
+    ...ok,
+    charter: "   ",
+    agents: ok.agents.map((a) => ({ ...a, instructions: "\n\t " })),
+  };
+  const w = collectMeshConfigWarnings(blank);
+  expect(w.some((s) => /no team charter/i.test(s))).toBe(true);
+  expect(w.some((s) => /no per-agent role instructions/i.test(s))).toBe(true);
 });
 
 test("rejects unsafe names", () => {

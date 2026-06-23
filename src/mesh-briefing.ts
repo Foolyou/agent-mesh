@@ -39,6 +39,10 @@ export function buildNormsCard(): string {
     "  - Mail is delivered as [MAIL #N from X]. When replying, pass reply_to: N so the recipient knows",
     "    exactly which mail you answer. When your mesh works with task slugs, tag outgoing mail with",
     "    task: \"<slug>\" so parallel threads stay separable.",
+    "  - When asked about your own identity, your role, the team/mesh setup, the roster, or the charter:",
+    "    call mesh_briefing (and mesh_status for live peer state) to retrieve the authoritative current",
+    "    configuration before answering. If the configuration does not specify something (e.g. no charter",
+    "    or no role instructions), say it is not specified — do not infer or fill it in.",
   ].join("\n");
 }
 
@@ -124,17 +128,38 @@ export function buildMeshBriefing(mesh: Mesh, agentId: AgentId): string {
     "  - This directory is outside your worktree, so it does not dirty the user's repository; it is removed automatically when the mesh is deleted.",
   );
 
+  // Charter and per-agent instructions are stated explicitly whether present OR absent, so an
+  // agent asked about its setup sees the field was checked and is empty (grounding) rather than a
+  // silent gap it might confabulate. The absence wording is scoped strictly to THIS mesh config —
+  // it must not imply the agent has no guidance at all, since system/developer/harness/project
+  // (CLAUDE.md/AGENTS.md)/user instructions still reach it through their own channels and outrank
+  // anything here.
   const charter = mesh.charter;
+  lines.push("");
   if (charter) {
-    lines.push("");
     lines.push("Team charter — the shared goal and working norms for this mesh. Follow it in all your work:");
     lines.push(charter.replace(/^/gm, "  "));
+  } else {
+    lines.push(
+      "Team charter — this mesh configuration has no team charter defined. There is no shared team " +
+        "charter for this mesh, so do not invent one; treat the roster, edges, and role facts above as " +
+        "the authoritative mesh setup. This says nothing about your other guidance: keep following the " +
+        "system, developer, harness, project (CLAUDE.md/AGENTS.md), and user instructions you receive " +
+        "through their normal channels.",
+    );
   }
   const instructions = me.instructions?.trim();
+  lines.push("");
   if (instructions) {
-    lines.push("");
     lines.push("Your role-specific instructions — additional guidance for you specifically (only you see this):");
     lines.push(instructions.replace(/^/gm, "  "));
+  } else {
+    lines.push(
+      "Your role-specific instructions — this mesh configuration defines no per-agent role " +
+        "instructions for you. This mesh adds no extra private role instructions; continue following " +
+        "the system, developer, harness, project (CLAUDE.md/AGENTS.md), and user instructions you " +
+        "receive through their normal channels. Do not infer extra duties from this absence.",
+    );
   }
 
   lines.push("");
