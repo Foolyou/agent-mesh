@@ -141,7 +141,7 @@ export interface AcpConnectionOptions {
   onPromptStarted?: (turn: AgentTurn) => void;
   onPromptSignal?: (turn: AgentTurn | undefined, signal: unknown) => void;
   onExtNotification?: (method: string, params: unknown, turn: AgentTurn | undefined) => void;
-  onContextUsage?: (usage: { used: number; size: number; percent: number; cost?: number }) => void;
+  onContextUsage?: (usage: { used: number; size: number; percent: number; cost?: number; source: "usage_update" | "token_count" }) => void;
   onAvailableCommands?: (commands: string[]) => void;
 }
 
@@ -277,7 +277,10 @@ export class AcpAgentConnection {
       const contextUsage: { used: number; size: number; percent: number; cost?: number } = { used: usage.used, size: usage.size, percent: usage.usagePercent };
       if (usage.cost !== undefined) contextUsage.cost = usage.cost;
       this.contextUsage = contextUsage;
-      this.opts.onContextUsage?.(contextUsage);
+      // source is tagged on the callback so consumers can tell cumulative-occupancy usage_update
+      // frames from the per-request token_count frames below — the post-compaction drop heuristic
+      // only trusts the former (token_count.total_tokens is per-request and swings every turn).
+      this.opts.onContextUsage?.({ ...contextUsage, source: "usage_update" });
     }
 
     const tokenCount = parseTokenCount(update);
@@ -288,7 +291,7 @@ export class AcpAgentConnection {
         percent: tokenCount.lastTokens / tokenCount.contextWindow,
       };
       this.contextUsage = contextUsage;
-      this.opts.onContextUsage?.(contextUsage);
+      this.opts.onContextUsage?.({ ...contextUsage, source: "token_count" });
     }
 
     const commands = parseAvailableCommands(update);

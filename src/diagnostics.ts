@@ -228,7 +228,7 @@ export function harnessChecks(probes: readonly HarnessProbeLike[]): DoctorCheck[
 /** Config validity input: one entry per mesh config + the feishu channel config summary. `error`
  *  holds a validateMeshConfig / parse message (secret-free). */
 export interface ConfigInputs {
-  meshes: { name: string; ok: boolean; error?: string }[];
+  meshes: { name: string; ok: boolean; error?: string; warnings?: string[] }[];
   feishu?: { configured: boolean; enabled: boolean; bindings: number; reason?: string };
 }
 
@@ -241,6 +241,12 @@ export function configChecks(inputs: ConfigInputs): DoctorCheck[] {
     out.push(check("config.meshes", "error", `${bad.length}/${inputs.meshes.length} mesh config(s) invalid: ${bad.map((m) => `${m.name} (${m.error ?? "invalid"})`).join("; ")}`, "fix the reported meshes/*.json validation errors"));
   } else {
     out.push(check("config.meshes", "ok", `${inputs.meshes.length} mesh config(s) valid`));
+  }
+  // Non-fatal grounding advisories for valid meshes (missing charter / per-agent instructions).
+  // Separate check id so it never clobbers the config.meshes ok/error/info result above.
+  const advisories = inputs.meshes.filter((m) => m.ok && m.warnings && m.warnings.length);
+  if (advisories.length) {
+    out.push(check("config.meshes.grounding", "warning", `${advisories.length} mesh(es) with grounding advisories: ${advisories.map((m) => `${m.name} (${m.warnings!.join("; ")})`).join("; ")}`, "optional: add a mesh charter and/or per-agent instructions; safe to ignore if intentional"));
   }
   if (inputs.feishu) {
     const f = inputs.feishu;

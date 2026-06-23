@@ -24,7 +24,7 @@
 import { readdir, readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { validateMeshConfig } from "./mesh-validate";
+import { validateMeshConfig, collectMeshConfigWarnings } from "./mesh-validate";
 import { normalizeMeshEdges, type MeshConfig } from "./acp/types";
 import { probeHarnesses } from "./harness-probe";
 import { readFeishuConfig } from "./channels/config";
@@ -57,8 +57,9 @@ export async function meshConfigChecks(root: string): Promise<ConfigInputs["mesh
     const name = f.slice(0, -5);
     try {
       const parsed = JSON.parse(await readFile(join(meshesDir(root), f), "utf8")) as MeshConfig;
-      validateMeshConfig({ ...parsed, edges: normalizeMeshEdges((parsed as { edges?: unknown }).edges as never) });
-      out.push({ name, ok: true });
+      const normalized = { ...parsed, edges: normalizeMeshEdges((parsed as { edges?: unknown }).edges as never) };
+      validateMeshConfig(normalized);
+      out.push({ name, ok: true, warnings: collectMeshConfigWarnings(normalized) });
     } catch (e) {
       out.push({ name, ok: false, error: e instanceof Error ? e.message : String(e) });
     }

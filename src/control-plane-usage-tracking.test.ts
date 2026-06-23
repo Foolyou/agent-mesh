@@ -56,7 +56,7 @@ async function withControlPlane(fn: (cp: ControlPlane, created: UsageTrackingCon
 
 test("ControlPlane tracks per-agent context usage callbacks", async () => {
   await withControlPlane(async (cp, created) => {
-    created[0].opts.onContextUsage?.({ used: 100, size: 1000, percent: 0.1 });
+    created[0].opts.onContextUsage?.({ used: 100, size: 1000, percent: 0.1, source: "usage_update" });
 
     expect(cp.getAgentContextUsage("router")).toMatchObject({ used: 100, size: 1000, percent: 0.1 });
     expect(cp.getAgentContextUsage("router")?.updatedAt).toBeGreaterThan(0);
@@ -74,7 +74,7 @@ test("ControlPlane tracks normalized advertised commands callbacks", async () =>
 
 test("meshStatusText exposes usage and advertised commands as agent records", async () => {
   await withControlPlane(async (cp, created) => {
-    created[0].opts.onContextUsage?.({ used: 100, size: 1000, percent: 0.1 });
+    created[0].opts.onContextUsage?.({ used: 100, size: 1000, percent: 0.1, source: "usage_update" });
     created[0].opts.onAvailableCommands?.(["init", "compact"]);
 
     const status = (cp as any).meshStatusText("router");
@@ -94,7 +94,7 @@ test("meshStatusText exposes usage and advertised commands as agent records", as
 
 test("ControlPlane clears usage and commands on fresh spawn", async () => {
   await withControlPlane(async (cp, created) => {
-    created[0].opts.onContextUsage?.({ used: 100, size: 1000, percent: 0.1 });
+    created[0].opts.onContextUsage?.({ used: 100, size: 1000, percent: 0.1, source: "usage_update" });
     created[0].opts.onAvailableCommands?.(["compact", "init"]);
 
     await cp.respawnAgent("router", "force");
@@ -106,7 +106,7 @@ test("ControlPlane clears usage and commands on fresh spawn", async () => {
 
 test("ControlPlane clears usage and commands on stopAgent", async () => {
   await withControlPlane(async (cp, created) => {
-    created[0].opts.onContextUsage?.({ used: 100, size: 1000, percent: 0.1 });
+    created[0].opts.onContextUsage?.({ used: 100, size: 1000, percent: 0.1, source: "usage_update" });
     created[0].opts.onAvailableCommands?.(["compact", "init"]);
 
     await cp.stopAgent("router");
@@ -118,7 +118,7 @@ test("ControlPlane clears usage and commands on stopAgent", async () => {
 
 test("ControlPlane clears usage and commands on force respawn", async () => {
   await withControlPlane(async (cp, created) => {
-    created[0].opts.onContextUsage?.({ used: 100, size: 1000, percent: 0.1 });
+    created[0].opts.onContextUsage?.({ used: 100, size: 1000, percent: 0.1, source: "usage_update" });
     created[0].opts.onAvailableCommands?.(["compact", "init"]);
 
     await cp.respawnAgent("router", "force");

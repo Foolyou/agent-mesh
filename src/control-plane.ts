@@ -23,6 +23,14 @@ import { boardsDirFor, readBoard, writeBoard } from "./board-store";
 
 const COMPACT_COOLDOWN_MS = 180_000;
 const NEAR_LIMIT_WARNING_COOLDOWN_MS = 10 * 60_000;
+// Post-compaction rebrief heuristic (B-heuristic): a usage_update whose `used` falls to <= half the
+// previous frame, from a prior occupancy worth acting on, is treated as "a compaction happened"
+// (manual /compact or harness-internal) and schedules a rebrief. Conservative on purpose — see the
+// threshold rationale in docs/design/briefing-reliability.md §7. A miss just means no auto-rebrief
+// (the agent can still call mesh_briefing); a false positive costs one harmless rebrief.
+const REBRIEF_DROP_RATIO = 0.5;
+const REBRIEF_DROP_PREV_FLOOR = MIN_AUTO_COMPACT_CONTEXT_WINDOW / 2; // prior `used` >= 40k to matter
+const REBRIEF_DROP_COOLDOWN_MS = COMPACT_COOLDOWN_MS; // collapse multi-frame post-compact drops to one
 /** Upper bound on a published attachment's caption/name, so a card can't bloat the
  *  snapshot / ws transcript payload (these are replayed on every reattach). */
 export const MAX_ATTACHMENT_LABEL_CHARS = 2048;
@@ -240,6 +248,10 @@ export class ControlPlane {
   private sessionEfforts = new Map<AgentId, RuntimeEffortOptions>();
   /** Agents that have already received the one-time mesh briefing. */
   private briefed = new Set<AgentId>();
+  /** Agents that need the mesh briefing re-injected on their next real prompt — set after a
+   *  successful compaction (which may have summarized the original briefing out of history),
+   *  consumed by compose() ahead of the loaded/briefed early-returns. */
+  private needsRebrief = new Set<AgentId>();
   /** Agents whose current process was attached to a loaded ACP session. */
   private loadedSessions = new Set<AgentId>();
   /** Loaded sessions whose first prompt has not yet succeeded. */
@@ -283,6 +295,13 @@ export class ControlPlane {
   private agentLastOutboundMail = new Map<AgentId, number>();
   private agentLastTurnCompleted = new Map<AgentId, number>();
   private agentLastCompactAt = new Map<AgentId, number>();
+  /** Last time the usage-drop rebrief heuristic fired, per agent — collapses a multi-frame
+   *  post-compaction usage_update sequence into a single scheduled rebrief. */
+  private agentLastRebriefHeuristicAt = new Map<AgentId, number>();
+  /** Last `used` seen on a usage_update frame, per agent — the dedicated baseline for the drop
+   *  heuristic. Kept separate from agentContextUsage so token_count frames (which also write
+   *  agentContextUsage for UI/auto-compact) cannot poison the comparison. */
+  private agentLastUsageUpdateUsed = new Map<AgentId, number>();
   private agentNearLimitWarnedAt = new Map<AgentId, number>();
   /** Per-agent in-flight /compact turn, shared by the reactive (post-reply) and the
    *  pre-send guard paths. Concurrent triggers for one agent coalesce onto this single
@@ -346,7 +365,7 @@ export class ControlPlane {
     return advertised || resolved || configured;
   }
 
-  private updateAgentUsage(id: AgentId, usage: { used: number; size: number; percent: number; cost?: number }): void {
+  private updateAgentUsage(id: AgentId, usage: { used: number; size: number; percent: number; cost?: number; source: "usage_update" | "token_count" }): void {
     // Normalize the denominator against the Zed-style model→window table so an early,
     // under-reported harness size (claude-agent-acp's DEFAULT_CONTEXT_WINDOW=200000) does
     // not drive the UI waterline or auto-compact. The window is sticky per model and never
@@ -358,9 +377,46 @@ export class ControlPlane {
     const percent = window > 0 ? usage.used / window : usage.percent;
     const normalized: ContextUsage = { used: usage.used, size: window, percent, updatedAt: Date.now() };
     if (usage.cost !== undefined) normalized.cost = usage.cost;
+    // The drop heuristic compares against a usage_update-ONLY baseline (agentLastUsageUpdateUsed),
+    // NOT agentContextUsage. agentContextUsage is written by both sources (it serves UI/auto-compact),
+    // so a token_count frame landing between two usage_update frames would poison the baseline and
+    // mask a later real usage_update compaction drop (e.g. 90k usage_update -> 3k token_count -> 8k
+    // usage_update would compare 3k->8k and miss it). Only usage_update updates/queries the baseline.
+    if (usage.source === "usage_update") {
+      const prevUsed = this.agentLastUsageUpdateUsed.get(id);
+      if (prevUsed !== undefined) this.maybeRebriefOnUsageDrop(id, prevUsed, normalized.used);
+      this.agentLastUsageUpdateUsed.set(id, normalized.used);
+    }
     this.agentContextUsage.set(id, normalized);
     this.emit({ kind: "agent_usage", agent: id, used: normalized.used, size: normalized.size, percent: normalized.percent, cost: normalized.cost, ts: now() });
     void this.maybeAutoCompact(id, normalized);
+  }
+
+  /** Mark an agent for rebrief AND stamp the rebrief cooldown. The single stamp is what dedups the
+   *  two trigger sources: after a controller-triggered /compact (B-core, end_turn) schedules a
+   *  rebrief, the harness's own post-compact usage_update drop arrives within the cooldown and is
+   *  suppressed by maybeRebriefOnUsageDrop — so the same compaction never rebriefs twice, even
+   *  though the end_turn event and the usage drop are separate signals arriving at different times.
+   *  (Set idempotency alone would not suffice: the drop can land AFTER compose() already consumed
+   *  the flag, which would otherwise re-arm it for a spurious second rebrief.) */
+  private scheduleRebrief(id: AgentId): void {
+    this.needsRebrief.add(id);
+    this.agentLastRebriefHeuristicAt.set(id, Date.now());
+  }
+
+  /** Post-compaction rebrief heuristic: a sharp `used` drop between two usage_update frames means a
+   *  compaction likely happened OUTSIDE the controller-triggered path (manual /compact or a
+   *  harness-internal compaction), where B-core's compact_completed signal never fires. Schedule a
+   *  rebrief so the next real prompt re-injects the briefing. Caller (updateAgentUsage) has already
+   *  gated on source === "usage_update" and supplies the usage_update-only baseline as prevUsed —
+   *  token_count frames (per-request, not cumulative) never reach here. */
+  private maybeRebriefOnUsageDrop(id: AgentId, prevUsed: number, newUsed: number): void {
+    if (prevUsed < REBRIEF_DROP_PREV_FLOOR) return; // prior occupancy too small for a drop to matter
+    if (newUsed > prevUsed * REBRIEF_DROP_RATIO) return; // not a sharp enough fall
+    const last = this.agentLastRebriefHeuristicAt.get(id);
+    if (last !== undefined && Date.now() - last < REBRIEF_DROP_COOLDOWN_MS) return; // dedup / collapse multi-frame drops
+    this.scheduleRebrief(id);
+    this.log(`usage-drop rebrief heuristic: ${id} used ${prevUsed}->${newUsed}; scheduling rebrief on next prompt`);
   }
 
   private updateAgentCommands(id: AgentId, commands: string[]): void {
@@ -373,8 +429,12 @@ export class ControlPlane {
     this.agentResolvedModel.delete(id);
     this.agentAdvertisedCommands.delete(id);
     this.agentLastCompactAt.delete(id);
+    this.agentLastRebriefHeuristicAt.delete(id);
+    this.agentLastUsageUpdateUsed.delete(id);
     this.agentNearLimitWarnedAt.delete(id);
     this.compactInFlight.delete(id);
+    // A pending rebrief is moot once the agent is stopped/cleared; a fresh respawn re-briefs anyway.
+    this.needsRebrief.delete(id);
   }
 
   private emitNearContextLimitWarning(id: AgentId, usage: { percent: number }): void {
@@ -420,7 +480,12 @@ export class ControlPlane {
   /** Start (or coalesce onto) a single /compact turn for one agent and return a promise
    *  that resolves — never rejects — when it settles. Telemetry mirrors the original
    *  reactive path; failures are surfaced as compact_failed and swallowed so callers that
-   *  await this (the pre-send guard) still go on to deliver the real prompt. */
+   *  await this (the pre-send guard) still go on to deliver the real prompt.
+   *
+   *  Only a "end_turn" stopReason counts as a real compaction: the harness ran /compact to
+   *  completion, so its summary may have dropped the original mesh briefing → mark needsRebrief.
+   *  A cancel/supersede also RESOLVES the prompt (it does not throw) but did NOT compact, so it
+   *  must not emit compact_completed nor set needsRebrief; it is surfaced as compact_failed. */
   private runCompact(agentId: AgentId, nowMs: number, reason: string): Promise<void> {
     const existing = this.compactInFlight.get(agentId);
     if (existing) return existing;
@@ -428,8 +493,13 @@ export class ControlPlane {
     this.emit({ kind: "compact_started", agent: agentId, reason, ts: nowMs });
     const run = (async () => {
       try {
-        await this.sendBarePrompt(agentId, "/compact", { reason });
-        this.emit({ kind: "compact_completed", agent: agentId, ts: Date.now() });
+        const stopReason = await this.sendBarePrompt(agentId, "/compact", { reason });
+        if (stopReason === "end_turn") {
+          this.scheduleRebrief(agentId);
+          this.emit({ kind: "compact_completed", agent: agentId, ts: Date.now() });
+        } else {
+          this.emit({ kind: "compact_failed", agent: agentId, error: `compaction did not complete (stopReason=${stopReason ?? "unknown"})`, ts: Date.now() });
+        }
       } catch (err) {
         this.emit({ kind: "compact_failed", agent: agentId, error: String(err), ts: Date.now() });
       }
@@ -789,6 +859,17 @@ export class ControlPlane {
   /** Prepend the one-time mesh briefing to an agent's very first prompt, so it knows
    *  it is part of a collaborating mesh before it does any work. */
   private compose(id: AgentId, text: string): string {
+    // Post-compaction rebrief: consumed BEFORE the loaded/briefed early-returns so a resumed or
+    // already-briefed agent still gets a fresh, authoritative briefing prefixed to its next real
+    // prompt (riding the prompt, no extra turn). Cleared on consume so it fires exactly once.
+    if (this.needsRebrief.has(id)) {
+      this.needsRebrief.delete(id);
+      const briefing = buildMeshBriefing(this.mesh, id);
+      if (briefing) {
+        this.briefed.add(id);
+        return `(Context was compacted; re-injecting the authoritative mesh briefing — this supersedes any earlier briefing you remember.)\n\n${briefing}\n\n---\n\n${text}`;
+      }
+    }
     if (this.loadedSessions.has(id)) return text;
     if (this.briefed.has(id)) return text;
     this.briefed.add(id);
@@ -866,7 +947,7 @@ export class ControlPlane {
    * First use: trigger ACP slash commands like "/compact" without the agent seeing
    * a "[MAIL #N from lead]:" wrapper that would make the slash detector miss it.
    */
-  async sendBarePrompt(agentId: AgentId, text: string, opts: { reason?: string } = {}): Promise<void> {
+  async sendBarePrompt(agentId: AgentId, text: string, opts: { reason?: string } = {}): Promise<string | undefined> {
     if (!this.mesh.agent(agentId)) throw new Error(`no such agent "${agentId}"`);
     const status = this.mesh.status(agentId);
     if (status === "dead" || status === "stopped") throw new Error(`agent "${agentId}" is ${status}`);
@@ -874,7 +955,10 @@ export class ControlPlane {
     if (!conn) throw new Error(`no connection for agent ${agentId}`);
     const turn = this.systemTurn(agentId, text, opts.reason);
     this.emit({ kind: "bare_prompt", agent: agentId, reason: opts.reason ?? "", ts: Date.now() });
-    await this.trackTurn(agentId, () => conn.prompt(text, [], turn)).finally(() => this.finishTurnHealth(agentId, turn));
+    // Return the turn's stopReason so callers (runCompact) can distinguish a real completion
+    // ("end_turn") from a cancel/supersede that also resolves but did NOT do the work.
+    const res = await this.trackTurn(agentId, () => conn.prompt(text, [], turn)).finally(() => this.finishTurnHealth(agentId, turn));
+    return (res as { stopReason?: string } | undefined)?.stopReason;
   }
 
   /** Remove a not-yet-started user/operator prompt from one agent's queue.
@@ -1400,17 +1484,21 @@ export class ControlPlane {
 
   private drainPendingMail(id: AgentId): void {
     if (!this.conns.get(id)) return;
-    const prompt = this.compose(
-      id,
-      "You may have pending mail that arrived while you were cold or spawning. Please call check_mail now and handle all pending messages.",
-    );
     // This path sends conn.prompt directly (bypassing sendPromptWithResumeFallback), so apply
     // the same pre-send compaction guard before delivering the drain prompt. Re-read the current
     // connection at send time: a /compact await can be superseded by a newSession/forceFresh, and
     // sending to the killed old conn would leak a turnCount (its prompt never settles).
+    //
+    // compose() runs INSIDE send (after the guard settles), matching sendPromptWithResumeFallback's
+    // order: an over-threshold drain compacts first, and if that compaction sets needsRebrief the
+    // SAME drain prompt carries the rebrief — rather than composing up-front and deferring it.
     const send = () => {
       const conn = this.conns.get(id);
       if (!conn) return;
+      const prompt = this.compose(
+        id,
+        "You may have pending mail that arrived while you were cold or spawning. Please call check_mail now and handle all pending messages.",
+      );
       this.trackTurn(id, () => conn.prompt(prompt)).catch((err) => this.log(`drainPendingMail(${id}) failed: ${String(err)}`));
     };
     const pending = this.compactBeforePrompt(id);

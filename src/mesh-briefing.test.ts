@@ -65,12 +65,22 @@ test("an agent with no outgoing edges is told so", () => {
   expect(b).toContain("no outgoing edges");
 });
 
-test("team charter is injected when present and omitted when absent", () => {
+test("team charter is injected when present and explicitly marked absent when missing", () => {
   const withCharter = new Mesh({ ...cfg, charter: "Ship a tiny CLI. Be concise. Always write a test." });
   const b = buildMeshBriefing(withCharter, "codex-1");
-  expect(b).toContain("Team charter");
+  expect(b).toContain("Team charter — the shared goal");
   expect(b).toContain("Ship a tiny CLI");
-  expect(buildMeshBriefing(new Mesh(cfg), "codex-1")).not.toContain("Team charter");
+  expect(b).not.toContain("no team charter defined");
+  // Absent: explicit grounding line, NOT a silent omission.
+  const absent = buildMeshBriefing(new Mesh(cfg), "codex-1");
+  expect(absent).toContain("this mesh configuration has no team charter defined");
+  expect(absent).toContain("do not invent one");
+});
+
+test("charter-absence wording is scoped to the mesh config and does not negate other guidance", () => {
+  const absent = buildMeshBriefing(new Mesh(cfg), "codex-1");
+  expect(absent).toMatch(/system, developer, harness, project \(CLAUDE\.md\/AGENTS\.md\), and user instructions/);
+  expect(absent).toContain("their normal channels");
 });
 
 test("per-agent instructions are injected for that agent with indentation", () => {
@@ -81,12 +91,15 @@ test("per-agent instructions are injected for that agent with indentation", () =
     ),
   });
   const b = buildMeshBriefing(mesh, "codex-1");
-  expect(b).toContain("Your role-specific instructions");
+  expect(b).toContain("Your role-specific instructions — additional guidance");
   expect(b).toContain("  Focus on implementation.\n  Report blockers early.");
-  expect(buildMeshBriefing(mesh, "opencode-1")).not.toContain("Your role-specific instructions");
+  // opencode-1 has no instructions of its own → it gets the explicit-absence line, not codex-1's text.
+  const other = buildMeshBriefing(mesh, "opencode-1");
+  expect(other).not.toContain("Focus on implementation");
+  expect(other).toContain("defines no per-agent role instructions for you");
 });
 
-test("blank or missing per-agent instructions leave the briefing unchanged", () => {
+test("absent per-agent instructions emit an explicit, scoped grounding line (not a silent gap)", () => {
   const base = buildMeshBriefing(new Mesh(cfg), "codex-1");
   const blank = buildMeshBriefing(
     new Mesh({
@@ -95,8 +108,12 @@ test("blank or missing per-agent instructions leave the briefing unchanged", () 
     }),
     "codex-1",
   );
+  // Blank-after-trim is treated identically to missing.
   expect(blank).toBe(base);
-  expect(base).not.toContain("Your role-specific instructions");
+  expect(base).toContain("Your role-specific instructions — this mesh configuration defines no per-agent role");
+  // Absence wording must NOT claim the agent has no instructions at all / must not negate higher-priority sources.
+  expect(base).toMatch(/continue following the system, developer, harness, project \(CLAUDE\.md\/AGENTS\.md\), and user instructions/);
+  expect(base).toContain("Do not infer extra duties from this absence");
 });
 
 test("team charter appears before per-agent instructions when both are present", () => {
@@ -114,7 +131,7 @@ test("team charter appears before per-agent instructions when both are present",
   expect(instructionsIndex).toBeGreaterThan(charterIndex);
 });
 
-test("per-agent instructions can appear without a team charter", () => {
+test("per-agent instructions can appear alongside an absent-charter grounding line", () => {
   const b = buildMeshBriefing(
     new Mesh({
       ...cfg,
@@ -122,9 +139,21 @@ test("per-agent instructions can appear without a team charter", () => {
     }),
     "codex-1",
   );
-  expect(b).not.toContain("Team charter");
-  expect(b).toContain("Your role-specific instructions");
+  expect(b).not.toContain("Team charter — the shared goal"); // no present-charter section
+  expect(b).toContain("this mesh configuration has no team charter defined"); // explicit absence instead
+  expect(b).toContain("Your role-specific instructions — additional guidance");
   expect(b).toContain("  Solo private guidance.");
+});
+
+test("norms card carries the identity/charter discipline (consult mesh_briefing/mesh_status, answer 'not specified')", () => {
+  const card = buildNormsCard();
+  expect(card).toContain("mesh_briefing");
+  expect(card).toContain("mesh_status");
+  expect(card).toMatch(/identity, your role, the team\/mesh setup, the roster, or the charter/);
+  expect(card).toMatch(/not specified/);
+  expect(card).toContain("do not infer or fill it in");
+  // The discipline rides every briefing because the card is embedded at the end.
+  expect(buildMeshBriefing(new Mesh(cfg), "codex-1")).toContain("retrieve the authoritative current");
 });
 
 test("briefing tells agents to attach user-visible artifacts through the official artifact directory", () => {

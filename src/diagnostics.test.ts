@@ -132,6 +132,25 @@ test("configChecks: no meshes => info; healthy feishu => ok", () => {
   expect(m["config.feishu"]).toMatchObject({ severity: "ok", ok: true });
 });
 
+test("configChecks: valid mesh with grounding warnings => separate non-fatal advisory; config.meshes stays ok", () => {
+  const checks = configChecks({
+    meshes: [{ name: "demo", ok: true, warnings: ["no team charter defined", "no per-agent role instructions for: m"] }],
+  });
+  const m = Object.fromEntries(checks.map((c) => [c.id, c]));
+  // The primary result is unchanged (valid config still passes).
+  expect(m["config.meshes"]).toMatchObject({ severity: "ok", ok: true });
+  // The advisory is a distinct, non-fatal check id so it never clobbers config.meshes.
+  expect(m["config.meshes.grounding"]).toMatchObject({ severity: "warning" });
+  expect(m["config.meshes.grounding"].detail).toContain("demo (no team charter defined; no per-agent role instructions for: m)");
+});
+
+test("configChecks: valid meshes without warnings emit no grounding advisory", () => {
+  const checks = configChecks({ meshes: [{ name: "demo", ok: true, warnings: [] }] });
+  const m = Object.fromEntries(checks.map((c) => [c.id, c]));
+  expect(m["config.meshes"]).toMatchObject({ severity: "ok", ok: true });
+  expect(m["config.meshes.grounding"]).toBeUndefined();
+});
+
 // ── backend / auth / base / process ──────────────────────────────────────────
 
 test("backendCheck: healthy=ok, record-but-unhealthy=warning, absent=info", () => {
