@@ -290,6 +290,34 @@ test("token_count drop NEVER schedules a rebrief (per-request, not cumulative)",
   });
 });
 
+test("a token_count frame between two usage_update frames does NOT poison the drop baseline", async () => {
+  // Regression: the heuristic must keep a usage_update-only baseline. Otherwise the token_count
+  // frame overwrites the shared baseline and the real usage_update compaction drop is masked.
+  await withPlane(async (cp, conns) => {
+    const member = conns.member;
+    member.opts.onContextUsage?.(usageFrame(90_000, 100_000, "usage_update")); // baseline = 90k
+    member.opts.onContextUsage?.(usageFrame(3_000, 200_000, "token_count")); // must NOT move baseline
+    member.opts.onContextUsage?.(usageFrame(8_000, 100_000, "usage_update")); // real compaction drop vs 90k
+    expect((cp as any).needsRebrief.has("member")).toBe(true);
+
+    const p = cp.prompt("member", "after manual compact");
+    await tick();
+    expect(lastText(member)).toContain(REBRIEF_MARK);
+    member.finishCurrent("end_turn");
+    await p;
+  });
+});
+
+test("usage_update high then successive token_count lows do NOT rebrief", async () => {
+  await withPlane(async (cp, conns) => {
+    const member = conns.member;
+    member.opts.onContextUsage?.(usageFrame(90_000, 100_000, "usage_update")); // baseline = 90k
+    member.opts.onContextUsage?.(usageFrame(3_000, 200_000, "token_count"));
+    member.opts.onContextUsage?.(usageFrame(1_000, 200_000, "token_count"));
+    expect((cp as any).needsRebrief.has("member")).toBe(false);
+  });
+});
+
 test("usage_update drops that are too small, below the floor, or rising do not rebrief", async () => {
   await withPlane(async (cp, conns) => {
     const member = conns.member;
@@ -310,14 +338,17 @@ test("controller compact event + post-compact usage drop produce exactly ONE reb
   await withPlane(async (cp, conns) => {
     const member = conns.member;
     seedOverThreshold(cp, "member"); // advertises compact + seeds used=90_000
+    // Establish a real usage_update baseline so the post-compact drop below genuinely QUALIFIES —
+    // the cooldown (not a missing baseline) is what must suppress the second rebrief.
+    (cp as any).agentLastUsageUpdateUsed.set("member", 90_000);
 
     const real = cp.prompt("member", "real work");
     await tick();
     expect(texts(member)).toEqual(["/compact"]);
 
     member.finishCurrent("end_turn"); // B-core: scheduleRebrief (flag + cooldown stamp)
-    // Harness emits its post-compact usage drop right after — it must be SUPPRESSED by the cooldown,
-    // not re-arm needsRebrief for a second rebrief.
+    // Harness emits its post-compact usage drop right after (90k -> 5k, a qualifying drop) — it must
+    // be SUPPRESSED by the cooldown, not re-arm needsRebrief for a second rebrief.
     member.opts.onContextUsage?.(usageFrame(5_000, 100_000, "usage_update"));
     await tick();
 

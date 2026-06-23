@@ -298,6 +298,10 @@ export class ControlPlane {
   /** Last time the usage-drop rebrief heuristic fired, per agent — collapses a multi-frame
    *  post-compaction usage_update sequence into a single scheduled rebrief. */
   private agentLastRebriefHeuristicAt = new Map<AgentId, number>();
+  /** Last `used` seen on a usage_update frame, per agent — the dedicated baseline for the drop
+   *  heuristic. Kept separate from agentContextUsage so token_count frames (which also write
+   *  agentContextUsage for UI/auto-compact) cannot poison the comparison. */
+  private agentLastUsageUpdateUsed = new Map<AgentId, number>();
   private agentNearLimitWarnedAt = new Map<AgentId, number>();
   /** Per-agent in-flight /compact turn, shared by the reactive (post-reply) and the
    *  pre-send guard paths. Concurrent triggers for one agent coalesce onto this single
@@ -373,9 +377,16 @@ export class ControlPlane {
     const percent = window > 0 ? usage.used / window : usage.percent;
     const normalized: ContextUsage = { used: usage.used, size: window, percent, updatedAt: Date.now() };
     if (usage.cost !== undefined) normalized.cost = usage.cost;
-    // Read the prior frame BEFORE overwriting, so the drop heuristic can compare occupancy.
-    const prev = this.agentContextUsage.get(id);
-    if (prev) this.maybeRebriefOnUsageDrop(id, usage.source, prev.used, normalized.used);
+    // The drop heuristic compares against a usage_update-ONLY baseline (agentLastUsageUpdateUsed),
+    // NOT agentContextUsage. agentContextUsage is written by both sources (it serves UI/auto-compact),
+    // so a token_count frame landing between two usage_update frames would poison the baseline and
+    // mask a later real usage_update compaction drop (e.g. 90k usage_update -> 3k token_count -> 8k
+    // usage_update would compare 3k->8k and miss it). Only usage_update updates/queries the baseline.
+    if (usage.source === "usage_update") {
+      const prevUsed = this.agentLastUsageUpdateUsed.get(id);
+      if (prevUsed !== undefined) this.maybeRebriefOnUsageDrop(id, prevUsed, normalized.used);
+      this.agentLastUsageUpdateUsed.set(id, normalized.used);
+    }
     this.agentContextUsage.set(id, normalized);
     this.emit({ kind: "agent_usage", agent: id, used: normalized.used, size: normalized.size, percent: normalized.percent, cost: normalized.cost, ts: now() });
     void this.maybeAutoCompact(id, normalized);
@@ -393,14 +404,13 @@ export class ControlPlane {
     this.agentLastRebriefHeuristicAt.set(id, Date.now());
   }
 
-  /** Post-compaction rebrief heuristic: a sharp `used` drop on a usage_update frame means a
+  /** Post-compaction rebrief heuristic: a sharp `used` drop between two usage_update frames means a
    *  compaction likely happened OUTSIDE the controller-triggered path (manual /compact or a
    *  harness-internal compaction), where B-core's compact_completed signal never fires. Schedule a
-   *  rebrief so the next real prompt re-injects the briefing. */
-  private maybeRebriefOnUsageDrop(id: AgentId, source: "usage_update" | "token_count", prevUsed: number, newUsed: number): void {
-    // ONLY usage_update is cumulative occupancy. Codex token_count.total_tokens is per-request and
-    // swings every turn, so a token_count drop is normal and must never trigger a rebrief.
-    if (source !== "usage_update") return;
+   *  rebrief so the next real prompt re-injects the briefing. Caller (updateAgentUsage) has already
+   *  gated on source === "usage_update" and supplies the usage_update-only baseline as prevUsed —
+   *  token_count frames (per-request, not cumulative) never reach here. */
+  private maybeRebriefOnUsageDrop(id: AgentId, prevUsed: number, newUsed: number): void {
     if (prevUsed < REBRIEF_DROP_PREV_FLOOR) return; // prior occupancy too small for a drop to matter
     if (newUsed > prevUsed * REBRIEF_DROP_RATIO) return; // not a sharp enough fall
     const last = this.agentLastRebriefHeuristicAt.get(id);
@@ -420,6 +430,7 @@ export class ControlPlane {
     this.agentAdvertisedCommands.delete(id);
     this.agentLastCompactAt.delete(id);
     this.agentLastRebriefHeuristicAt.delete(id);
+    this.agentLastUsageUpdateUsed.delete(id);
     this.agentNearLimitWarnedAt.delete(id);
     this.compactInFlight.delete(id);
     // A pending rebrief is moot once the agent is stopped/cleared; a fresh respawn re-briefs anyway.
